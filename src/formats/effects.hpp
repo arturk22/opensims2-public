@@ -66,6 +66,8 @@ constexpr uint64_t RandomWalk = 1ull << 20;   // randomWalk: one walking force f
 constexpr uint64_t Shape = 1ull << 22;        // the "texture" is a shape (mesh)
 constexpr uint64_t Light = 1ull << 23;        // texture -light: lit by the scene
 constexpr uint64_t AcceptOverride = 1ull << 24; // the texture can be replaced (balloon icons)
+constexpr uint64_t Attractor = 1ull << 26;    // force -attractor
+constexpr uint64_t AttractorPoint = 1ull << 27; // the attractor has its own point (else the effect's target)
 constexpr uint64_t CycleKill = 1ull << 30;    // rate -cycleKill: each new cycle clears the old ones
 constexpr uint64_t DirectLayer = 1ull << 31;  // texture -directLayer: the layer as it is, not x 8 + 7
 // Flags that need the full time-stepped physics (the binary's mask, built
@@ -155,6 +157,12 @@ struct Particles {
     float terrainBounce = 0, killHeight = 0;
     V2 randomWalkDelay{}, randomWalkStrength{};
     float randomWalkTurnX = 0, randomWalkTurnY = 0;
+    // The attractor (version < 8; cAttractorDescription): its point (in the
+    // emitter's frame, with pflag::AttractorPoint), the pull over the
+    // distance / range (clamped to 1) and that range.
+    V3 attractor{};
+    Curve attractorStrength;
+    float attractorRange = 1;
 };
 
 // A particle system whose particles are whole effects (meta particles).

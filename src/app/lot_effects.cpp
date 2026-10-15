@@ -191,7 +191,10 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                     fx::V3 where{-1, -1, -1};
                     if (auto at = placementOf(id, e.slotType, e.slot, view, sims, vm, e.node)) {
                         where = at->position;
-                        r.handle = system_->start(e.name, *at);
+                        // Mode 1 starts hard, mode 0 soft (TryChangeEffect ->
+                        // PerformEffectAction 2 / 0); an effect the lot saved comes
+                        // back as a hard start (inferred: its Read not followed).
+                        r.handle = system_->start(e.name, *at, e.hard || !e.node.empty());
                         if (r.handle >= 0 && !e.icon.empty())
                             system_->setIcon(r.handle, e.icon, e.iconFrame);
                         // An object's thumbnail in the balloon (flag 0x04: the
@@ -269,8 +272,9 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                 for (int k = 0; k < 3; ++k)
                     p.position[size_t(k)] += m.at[size_t(k)];
             }
+        // (Started soft, as the VM's mode 0: a burst plays, no pre-roll.)
         if (m.handle < 0 || !system_->alive(m.handle))
-            m.handle = system_->start(m.name, p);
+            m.handle = system_->start(m.name, p, false);
         else
             system_->move(m.handle, p);
         system_->setState(m.handle, m.state);
@@ -412,7 +416,7 @@ void LotEffects::animationEffects(const std::vector<const SimActor*>& actors, do
             r.bone = bone;
             r.end = e.at - e.event->ticks / 1000.0 + e.anim->duration / 1000.0;
             if (auto at = bonePlacement(*a, bone))
-                r.handle = system_->start(name, *at);
+                r.handle = system_->start(name, *at, hard);
             if (std::getenv("OS2_DEBUG_FX"))
                 std::fprintf(stderr, "opensims2: animation effect %s on %s (%s) at %.2f s%s\n", name.c_str(),
                              bone.c_str(), op.c_str(), e.at, r.handle < 0 ? " not found" : "");

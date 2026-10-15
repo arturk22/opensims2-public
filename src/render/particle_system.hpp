@@ -12,7 +12,6 @@
 #include <array>
 #include <memory>
 #include <cstdint>
-#include <random>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -68,12 +67,29 @@ struct EffectSound {
     V3 position{};
 };
 
+// The effects' random numbers: the game's generator (BV FUN_00171b0c,
+// shared by RandomRange / RandomVector3): state *= 0x278dde6d, value =
+// (int32 state x 2^-32 + 0.5) x (b - a) + a. The game seeds it from the
+// clock; here the seed is given.
+class SwarmRandom {
+public:
+    explicit SwarmRandom(uint32_t seed = 1) : state_(seed ? seed : 1) {}
+    float range(float a, float b);
+    float range(const V2& r) { return range(r[0], r[1]); }
+
+private:
+    uint32_t state_;
+};
+
 class EffectSystem {
 public:
     explicit EffectSystem(const EffectsLibrary& library, uint32_t seed = 1);
 
-    // Starts the named effect; -1 if the library has no such effect.
-    int start(std::string_view name, const Placement& where);
+    // Starts the named effect; -1 if the library has no such effect. A hard
+    // start (cTSParticlesEffect::Start with a transition) runs the pre-roll
+    // and leaves out the emitters with a finite number of cycles; a soft
+    // one does neither (the VM's Effect Stop/Start mode 1 / mode 0).
+    int start(std::string_view name, const Placement& where, bool hard = true);
     // Stops emitting; `hard` also removes the particles alive.
     void stop(int handle, bool hard = false);
     void move(int handle, const Placement& where);
@@ -98,23 +114,41 @@ public:
     void collectSounds(std::vector<EffectSound>& out) const;
 
 private:
+    // cTSParticle: position and velocity in its emitter's frame (the
+    // world, or the effect's own with a rigid effect), and what
+    // InitParticle draws for it.
     struct Particle {
         V3 position{}, velocity{};
         float age = 0, life = 1;
         float sizeScale = 1, aspectScale = 1, alphaScale = 1;
         V3 colorScale{1, 1, 1};
-        float walkTimer = 0;
-        float spin = 0; // rotate offset, radians
+        std::array<float, 2> rotate{1, 1}; // the rotations' curve multipliers
+        int frameStart = 0;
     };
+    // cTSParticlesEffect: one particle component.
     struct Emitter {
         const Particles* desc = nullptr;
-        Placement local;  // relative to the instance
+        Placement local;  // relative to the instance (the component's transform)
+        // A rigid visual effect (vflag::Rigid) at any level keeps the
+        // particles in the instance's frame; otherwise they live in the world.
+        bool rigid = false;
         float emitScale = 1, sizeScale = 1, alphaScale = 1, timeScale = 1;
-        float time = 0, pending = 0;
         bool icon = false; // the texture is the instance's icon
-        bool localSpace = false;
+        float time = 0;    // since the instance started (scaled)
         float startDelay = 0, stopAt = -1; // sequences
-        int order = 0; // draw order of the effects that move with their instance (component order)
+        int order = 0; // draw order of the rigid effects' components (component order)
+        // Start / Stop / ApplyEffect state.
+        bool started = false, stopping = false, preRollPending = false;
+        double cycleTime = 0;  // +0x40: the rate clock, in cycles
+        int cycleIndex = 0;    // +0x48
+        float rateRemainder = 0, delayLeft = 0; // +0x54, +0x88
+        V3 lastPosition{};     // +0x128: the emitter last frame
+        V3 accel{};            // +0x58: force + world wind + random walk
+        float walkTimer = 0;   // +0x64
+        std::array<float, 2> walkAngle{}; // heading, elevation (turns)
+        V3 walk{};             // +0x70: the random walk's force
+        V3 attractorPoint{};   // +0x7c: the attractor's point in the particles' frame
+        bool attracts = false;
         std::vector<Particle> particles;
     };
     // A decal (Block::Decal): one quad flat on the ground under the
@@ -166,7 +200,12 @@ private:
         std::vector<MetaParticle> particles;
     };
     struct Instance {
-        Placement where;
+        Placement where;  // the effect's transform (its node's)
+        // The source transform (t2) of the emitters that are not rigid: the
+        // world for an effect started here, the frame of the meta particles
+        // that carry it for a meta particle's effect.
+        Placement source;
+        bool hardStop = false; // vflag::HardStop: a soft stop also clears the particles
         std::vector<Emitter> emitters;
         std::vector<DecalPart> decals;
         std::vector<ModelPart> models;
@@ -182,9 +221,8 @@ private:
     };
 
     void addEffect(Instance& inst, uint32_t visual, const Placement& local, float emitScale, float sizeScale,
-                   float alphaScale, float timeScale, float delay, float stopAt, int depth);
+                   float alphaScale, float timeScale, float delay, float stopAt, int depth, bool rigid);
     void stepInstance(Instance& inst, float dt, bool emit);
-    void stepEmitter(const Instance& inst, Emitter& e, float dt, bool emit);
     void stepChain(Instance& inst, MetaChain& m, float dt, bool emit);
     void spawnMeta(Instance& inst, MetaChain& m);
     void enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth);
@@ -193,12 +231,25 @@ private:
     void collectInstance(const Instance& inst, const V3& sortRoot, int orderBase, std::vector<ParticleQuad>& out) const;
     void collectModelsOf(int handle, const Instance& inst, std::vector<EffectModel>& out) const;
     void collectSoundsOf(int handle, const Instance& inst, std::vector<EffectSound>& out) const;
-    void spawn(const Instance& inst, Emitter& e);
+    // cTSParticlesEffect, BV addresses in docs/effects-mac.md §4e.
+    void startEmitter(const Instance& inst, Emitter& e, bool hard);
+    void applyEmitter(const Instance& inst, Emitter& e, float dt);
+    void generate(const Instance& inst, Emitter& e, float dt);
+    void addRateCurveParticles(const Instance& inst, Emitter& e, float dt);
+    void injectParticles(const Instance& inst, Emitter& e, float dt);
+    void maintainParticles(const Instance& inst, Emitter& e, float dt);
+    void updateRandomWalk(Emitter& e, float dt);
+    Particle initParticle(const Instance& inst, const Emitter& e);
+    bool updatePhysics(const Emitter& e, Particle& p, float dt) const;
+    // The emitter's transform in its particles' frame (t1).
+    Placement emitterFrame(const Instance& inst, const Emitter& e) const;
+    // The particles' frame in the world (t2): the instance with a rigid
+    // effect, the world otherwise.
+    static Placement particleFrame(const Instance& inst, const Emitter& e);
     float random(float a, float b);
-    V3 toWorld(const Instance& inst, const Emitter& e, const V3& p) const;
 
     const EffectsLibrary& lib_;
-    std::mt19937 rng_;
+    SwarmRandom rng_;
     std::unordered_map<int, Instance> instances_;
     int next_ = 1;
     int nextId_ = 1;
@@ -206,6 +257,7 @@ private:
 
 // Composes `child` (relative to `parent`) into a world placement.
 Placement compose(const Placement& parent, const Placement& child);
+Placement inverse(const Placement& p);
 V3 transformPoint(const Placement& p, const V3& v);
 V3 rotate(const Placement& p, const V3& v);
 

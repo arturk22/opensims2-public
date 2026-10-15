@@ -73,6 +73,9 @@ void printParticles(const fx::Particles& p, const char* indent) {
                 p.randomWalkDelay[1], p.randomWalkStrength[0], p.randomWalkStrength[1], p.randomWalkTurnX,
                 p.randomWalkTurnY, p.rotateCount, p.rotateRange[0][0], p.rotateRange[0][1], p.rotateOffset[0],
                 p.rotateRange[1][0], p.rotateRange[1][1], p.rotateOffset[1]);
+    if (!p.attractorStrength.empty())
+        std::printf("%sattractor=[%g %g %g] %s range %g\n", indent, p.attractor[0], p.attractor[1], p.attractor[2],
+                    curveText(p.attractorStrength).c_str(), p.attractorRange);
 }
 
 void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
@@ -204,6 +207,11 @@ int cmdEffects(const std::string& path, const std::vector<std::string>& names) {
             if (n)
                 std::printf("  flag bit %d: %d%s\n", b, n, some.c_str());
         }
+        std::map<size_t, int> attractorCurves;
+        for (const auto& p : lib.particles)
+            ++attractorCurves[p.attractorStrength.size()];
+        for (auto [n, c] : attractorCurves)
+            std::printf("  attractor curve of %zu points: %d\n", n, c);
         for (int b = 0; b < 32; ++b) {
             int n = 0;
             for (const auto& v : lib.visuals)
@@ -267,10 +275,13 @@ int cmdEffectTables(const std::string& res, const std::string& fxPath, uint32_t 
 }
 
 // Runs an effect for `seconds` at the origin and prints its particles.
-int cmdEffectSim(const std::string& path, const std::string& name, float seconds) {
+// "<name>" starts hard (with the pre-roll), "<name>~soft" soft.
+int cmdEffectSim(const std::string& path, const std::string& spec, float seconds) {
     const auto lib = load(path);
     fx::EffectSystem sys(lib);
-    const int h = sys.start(name, {});
+    const bool soft = spec.ends_with("~soft");
+    const std::string name = soft ? spec.substr(0, spec.size() - 5) : spec;
+    const int h = sys.start(name, {}, !soft);
     if (h < 0) {
         std::printf("%s: no such effect\n", name.c_str());
         return 1;

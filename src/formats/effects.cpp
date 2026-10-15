@@ -157,10 +157,10 @@ Particles readParticles(BinReader& r) {
     p.randomWalkStrength = v2(r);
     p.randomWalkTurnX = r.f32();
     p.randomWalkTurnY = r.f32();
-    // version < 8: attractor (vector, strength curve, float)
-    v3(r);
-    curve(r);
-    r.f32();
+    // version < 8: attractor (vector, strength curve, range)
+    p.attractor = v3(r);
+    p.attractorStrength = curve(r);
+    p.attractorRange = r.f32();
     return p;
 }
 

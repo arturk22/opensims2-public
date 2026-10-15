@@ -61,7 +61,7 @@ public:
 
     // Effects by hand at a placement (a cinematic's, the animations'):
     // start returns -1 if there is no such effect.
-    int start(const std::string& name, const fx::Placement& at) { return system_->start(name, at); }
+    int start(const std::string& name, const fx::Placement& at, bool hard = true) { return system_->start(name, at, hard); }
     void move(int handle, const fx::Placement& at) { system_->move(handle, at); }
     void stop(int handle, bool hard) { system_->stop(handle, hard); }
 

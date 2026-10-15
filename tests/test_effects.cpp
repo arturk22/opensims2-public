@@ -142,8 +142,11 @@ static void testSimulation() {
         sys.update(1.0f / 30);
     q.clear();
     sys.collect(q);
-    // 10 a second living 2 s: about 20 alive.
-    check(q.size() >= 15 && q.size() <= 25, "steady particle count");
+    // 10 a second living 2 s: the pre-roll's 0.5 s (generation capped at
+    // pre-roll - 0.01, GenerateNewParticles) and 1 s more: about 15 alive.
+    if (q.size() < 13 || q.size() > 17)
+        std::fprintf(stderr, "particles: %zu\n", q.size());
+    check(q.size() >= 13 && q.size() <= 17, "steady particle count");
     bool rising = true, placed = true;
     for (const auto& p : q) {
         rising = rising && p.position[2] > 0;
@@ -179,6 +182,61 @@ static void testMaintainedCount() {
     for (int i = 0; i < 90; ++i)
         sys.update(1.0f / 30);
     check(!sys.alive(h), "a stopped maintained effect ends");
+}
+
+// Where particles live (cTSVisualEffect::SetTransforms): in the world, so
+// they stay when the effect moves, unless the effect is rigid. A hard start
+// leaves bursts out; a soft one plays them, after the trigger's wait.
+static void testFramesAndStarts() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    lib.particles[0].force = {0, 0, 0};
+    lib.particles[0].emitSpeed = {0, 0};
+    lib.particles[0].flags = 0; // no random walk
+    auto spread = [](EffectSystem& sys, float x) {
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        float far = 0;
+        for (const auto& p : q)
+            far = std::max(far, std::fabs(p.position[0] - x));
+        return std::make_pair(q.size(), far);
+    };
+    for (bool rigid : {false, true}) {
+        lib.visuals[0].flags = rigid ? vflag::Rigid : 0;
+        EffectSystem sys(lib, 3);
+        Placement where;
+        const int h = sys.start("Smoke", where);
+        for (int i = 0; i < 30; ++i)
+            sys.update(1.0f / 30);
+        where.position = {5, 0, 0};
+        sys.move(h, where);
+        sys.update(1.0f / 30);
+        const auto [count, far] = spread(sys, 5.5f);
+        check(count > 5, "particles alive after the move");
+        if (rigid)
+            check(far < 0.01f, "a rigid effect's particles move with it");
+        else
+            check(far > 4.0f, "a world effect's particles stay where they were born");
+    }
+    lib.visuals[0].flags = 0;
+    lib.particles[0].rateCurveCycles = 1; // a burst
+    lib.particles[0].preRoll = 0;
+    {
+        EffectSystem sys(lib, 3);
+        sys.start("Smoke", {}, true);
+        sys.update(0.5f);
+        check(spread(sys, 0.5f).first == 0, "a hard start leaves a burst out");
+    }
+    lib.particles[0].rateTrigger = {1, 1};
+    {
+        EffectSystem sys(lib, 3);
+        sys.start("Smoke", {}, false);
+        sys.update(0.5f);
+        check(spread(sys, 0.5f).first == 0, "a soft start waits the trigger first");
+        for (int i = 0; i < 30; ++i)
+            sys.update(1.0f / 30);
+        check(spread(sys, 0.5f).first > 0, "then the burst plays");
+    }
 }
 
 // A hand-built library: "tank" holds a fish chain (swimming / feeding /
@@ -308,6 +366,7 @@ int main() {
         testParse();
         testSimulation();
         testMaintainedCount();
+        testFramesAndStarts();
         testMetaParticles();
         testCurves();
     } catch (const std::exception& e) {

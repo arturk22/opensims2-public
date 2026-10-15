@@ -8,16 +8,11 @@ namespace os2::fx {
 namespace {
 
 constexpr float kTwoPi = 6.28318530718f;
-constexpr float kMaxStep = 0.1f;      // physics sub-step (seconds)
-constexpr float kMaxPreRoll = 12.0f;  // pre-roll simulated on start (seconds)
-constexpr size_t kMaxParticles = 512; // per emitter
+constexpr float kMaxStep = 0.1f;      // meta particles' physics sub-step (seconds; inferred)
+constexpr float kTimeStep = 1.0f / 15; // the particles' longest physics step and emission slice (BV 0x3d888889)
+constexpr float kFastDrag = 0.05f;    // dt x drag above this takes the time-stepped physics (BV 0x3d4ccccd)
+constexpr size_t kMaxParticles = 512; // per emitter (a guard of ours)
 
-// Particle flag bits (Particles::flags), see docs/effects-mac.md.
-constexpr uint64_t kLocalSpace = 0x3;     // bits 0/1: particles follow the effect (inferred)
-constexpr uint64_t kMaintain = 0x2;       // bit 1: the rate is the count kept alive (GenerateNewParticles BV 0xeb8c90)
-constexpr uint64_t kEllipsoid = 1u << 8;  // emit volume is an ellipsoid (OpenTS2)
-constexpr uint64_t kRandomWalk = 1u << 20; // set on every effect with a real random walk
-constexpr uint64_t kIcon = 1u << 24;      // balloon icon: the texture is replaced
 // Meta particle flags (MetaParticles::flags, the binary's numbering; what
 // they meant here was inferred from the data).
 constexpr uint64_t kMetaKeepCount = mflag::RandomWalk;           // the rate is how many are kept alive (fish, cockroaches)
@@ -29,8 +24,15 @@ V3 add(V3 a, V3 b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V3 mul(V3 a, float s) { return {a[0] * s, a[1] * s, a[2] * s}; }
 float len(V3 a) { return std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]); }
 V3 sub(V3 a, V3 b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
+float sqrlen(V3 a) { return a[0] * a[0] + a[1] * a[1] + a[2] * a[2]; }
 
 } // namespace
+
+float SwarmRandom::range(float a, float b) {
+    state_ *= 0x278dde6du;
+    const float unit = float(int32_t(state_)) * 2.3283064e-10f;
+    return float((double(unit) + 0.5) * double(b - a) + double(a));
+}
 
 V3 rotate(const Placement& p, const V3& v) {
     const auto& r = p.rotation;
@@ -54,19 +56,31 @@ Placement compose(const Placement& parent, const Placement& child) {
     return o;
 }
 
+Placement inverse(const Placement& p) {
+    Placement o;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            o.rotation[size_t(r * 3 + c)] = p.rotation[size_t(c * 3 + r)];
+    o.scale = p.scale != 0 ? 1 / p.scale : 1;
+    o.position = mul(rotate(o, p.position), -o.scale);
+    return o;
+}
+
 EffectSystem::EffectSystem(const EffectsLibrary& library, uint32_t seed) : lib_(library), rng_(seed) {}
 
-float EffectSystem::random(float a, float b) {
-    if (!(b > a))
-        return a;
-    return std::uniform_real_distribution<float>(a, b)(rng_);
-}
+float EffectSystem::random(float a, float b) { return rng_.range(a, b); }
 
 void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& local, float emitScale,
                              float sizeScale, float alphaScale, float timeScale, float delay, float stopAt,
-                             int depth) {
+                             int depth, bool rigid) {
     if (visual >= lib_.visuals.size() || depth > 8)
         return;
+    // A rigid effect (cTSVisualEffect::SetTransforms BV 0xeb1760 with bit 5)
+    // hands its transform to its components' source: their particles live
+    // in its frame, and so in the instance's, which moves with it.
+    rigid = rigid || (lib_.visuals[visual].flags & vflag::Rigid);
+    if (depth == 0)
+        inst.hardStop = (lib_.visuals[visual].flags & vflag::HardStop) != 0;
     const auto& comps = lib_.visuals[visual].components;
     // Selection groups: one component of each group, by its chance (u16
     // weights; the remainder picks none).
@@ -102,7 +116,7 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
         const float ts = timeScale * (c.timeScale > 0 ? c.timeScale : 1);
         switch (c.type) {
         case Block::Visual:
-            addEffect(inst, uint32_t(c.index), here, es, ss, as, ts, delay, stopAt, depth + 1);
+            addEffect(inst, uint32_t(c.index), here, es, ss, as, ts, delay, stopAt, depth + 1, rigid);
             break;
         case Block::Particles:
             if (c.index >= 0 && size_t(c.index) < lib_.particles.size()) {
@@ -110,8 +124,8 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                 e.desc = &lib_.particles[size_t(c.index)];
                 e.local = here;
                 e.emitScale = es, e.sizeScale = ss, e.alphaScale = as, e.timeScale = ts;
-                e.icon = (e.desc->flags & kIcon) != 0;
-                e.localSpace = (e.desc->flags & kLocalSpace) != 0;
+                e.icon = (e.desc->flags & pflag::AcceptOverride) != 0;
+                e.rigid = rigid;
                 e.startDelay = delay;
                 e.stopAt = stopAt;
                 e.order = inst.orderNext++;
@@ -152,7 +166,7 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                     auto child = lib_.indexOf(item.effect);
                     const float d = item.activateTime[0] < 0 ? -1 : random(item.activateTime[0], item.activateTime[1]);
                     if (child)
-                        addEffect(inst, *child, here, es, ss, as, ts, t, d < 0 ? stopAt : t + d, depth + 1);
+                        addEffect(inst, *child, here, es, ss, as, ts, t, d < 0 ? stopAt : t + d, depth + 1, rigid);
                     chain = nullptr; // (the vector may have moved)
                     if (d < 0)
                         break;
@@ -177,28 +191,23 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
     }
 }
 
-int EffectSystem::start(std::string_view name, const Placement& where) {
+int EffectSystem::start(std::string_view name, const Placement& where, bool hard) {
     auto visual = lib_.indexOf(name);
     if (!visual)
         return -1;
     Instance inst;
     inst.where = where;
     inst.id = nextId_++;
-    addEffect(inst, *visual, Placement{}, 1, 1, 1, 1, 0, -1, 0);
-    // Pre-roll: run each emitter for its preRoll so steady effects (smoke,
-    // glows) start in their steady state.
-    for (auto& e : inst.emitters) {
-        // Only steady emitters (rate cycles 0); a burst's pre-roll would
-        // outlive its particles (balloons: life 4, pre-roll 4). Inferred.
-        if (e.startDelay > 0 || e.desc->rateCurveCycles != 0)
-            continue;
-        float left = std::min(e.desc->preRoll, kMaxPreRoll);
-        while (left > 0) {
-            const float dt = std::min(left, kMaxStep);
-            stepEmitter(inst, e, dt, true);
-            left -= dt;
+    addEffect(inst, *visual, Placement{}, 1, 1, 1, 1, 0, -1, 0, false);
+    // cTSVisualEffect::Start starts every component with the same
+    // transition; a sequence's later items start soft when their time comes
+    // (inferred: cTSSequenceEffect not read). The first ApplyEffect runs at
+    // once (with the pre-roll of a hard start), so the effect shows from the start.
+    for (auto& e : inst.emitters)
+        if (e.startDelay <= 0) {
+            startEmitter(inst, e, hard);
+            applyEmitter(inst, e, 0);
         }
-    }
     // Steady meta emitters likewise (the fish are swimming already); the
     // others get their first ones now.
     for (auto& m : inst.metas) {
@@ -206,7 +215,7 @@ int EffectSystem::start(std::string_view name, const Placement& where) {
             stepChain(inst, m, 0, true);
             continue;
         }
-        float left = std::min(m.steps[0]->preRoll, kMaxPreRoll);
+        float left = std::min(m.steps[0]->preRoll, 12.0f);
         while (left > 0) {
             const float dt = std::min(left, kMaxStep);
             stepChain(inst, m, dt, true);
@@ -227,7 +236,9 @@ void EffectSystem::stop(int handle, bool hard) {
     auto it = instances_.find(handle);
     if (it == instances_.end())
         return;
-    if (hard)
+    // cTSVisualEffect::Stop (BV 0xeaff64): an effect with hardStop
+    // always stops hard (the particles go at once).
+    if (hard || it->second.hardStop)
         instances_.erase(it);
     else
         it->second.stopped = true;
@@ -247,106 +258,342 @@ void EffectSystem::setIcon(int handle, std::string texture, int frame) {
 
 bool EffectSystem::alive(int handle) const { return instances_.count(handle) != 0; }
 
-V3 EffectSystem::toWorld(const Instance& inst, const Emitter& e, const V3& p) const {
-    return e.localSpace ? transformPoint(inst.where, p) : p;
+Placement EffectSystem::particleFrame(const Instance& inst, const Emitter& e) {
+    return e.rigid ? inst.where : inst.source;
 }
 
-void EffectSystem::spawn(const Instance& inst, Emitter& e) {
+Placement EffectSystem::emitterFrame(const Instance& inst, const Emitter& e) const {
+    if (e.rigid)
+        return e.local;
+    return compose(inverse(inst.source), compose(inst.where, e.local));
+}
+
+// cTSParticlesEffect::Start (BV 0xeb726c).
+void EffectSystem::startEmitter(const Instance& inst, Emitter& e, bool hard) {
     const Particles& d = *e.desc;
-    if (e.particles.size() >= kMaxParticles)
+    // A hard start leaves out the emitters with a finite number of cycles
+    // (bursts), unless they sustain.
+    if (hard && d.rateCurveCycles != 0 && !(d.flags & pflag::Sustain))
         return;
+    e.started = true;
+    e.stopping = false;
+    e.cycleTime = 0;
+    e.cycleIndex = 0;
+    e.rateRemainder = 0;
+    e.lastPosition = emitterFrame(inst, e).position;
+    e.accel = d.force;
+    e.walk = {0, 0, 0};
+    if (d.flags & pflag::RandomWalk) {
+        e.walkTimer = 0;
+        e.walkAngle = {random(-0.5f, 0.5f), random(-0.5f, 0.5f)};
+        updateRandomWalk(e, 0);
+    }
+    // The wait before the first particles: the delay, else the trigger.
+    if (d.rateDelay[0] >= 0)
+        e.delayLeft = rng_.range(d.rateDelay);
+    else if (d.rateTrigger[0] >= 0)
+        e.delayLeft = rng_.range(d.rateTrigger);
+    else
+        e.delayLeft = 0;
+    e.preRollPending = hard;
+}
+
+// cTSParticlesEffect::UpdateRandomWalk (BV 0xeb70dc): one walking force for
+// the whole effect, a new heading and elevation every delay.
+void EffectSystem::updateRandomWalk(Emitter& e, float dt) {
+    const Particles& d = *e.desc;
+    e.walkTimer -= dt;
+    for (int guard = 0; e.walkTimer <= 0 && guard < 64; ++guard) {
+        e.walkTimer += rng_.range(d.randomWalkDelay);
+        for (float& a : e.walkAngle) {
+            const float turn = random(-d.randomWalkTurnX, d.randomWalkTurnX);
+            a += turn;
+            a += turn >= 0 ? d.randomWalkTurnY : -d.randomWalkTurnY;
+        }
+        const float strength = rng_.range(d.randomWalkStrength);
+        const float h = e.walkAngle[0] * kTwoPi, el = e.walkAngle[1] * kTwoPi;
+        e.walk = {strength * std::cos(h) * std::cos(el), strength * std::sin(h) * std::cos(el),
+                  strength * std::sin(el)};
+    }
+}
+
+// cTSParticlesEffect::InitParticle (BV 0xeb746c).
+EffectSystem::Particle EffectSystem::initParticle(const Instance& inst, const Emitter& e) {
+    const Particles& d = *e.desc;
     Particle p;
-    // Birth point inside the emit volume (box, or the ellipsoid inside it).
+    p.life = std::max(1e-3f, rng_.range(d.life));
+    // Birth point: in the emit box, or the ellipsoid inside it.
     V3 u;
-    if (d.flags & kEllipsoid) {
+    if (d.flags & pflag::Ellipsoid) {
         do
             u = {random(-1, 1), random(-1, 1), random(-1, 1)};
-        while (u[0] * u[0] + u[1] * u[1] + u[2] * u[2] > 1);
+        while (sqrlen(u) > 1);
         for (int k = 0; k < 3; ++k)
             u[k] = (d.emitVolume.lo[k] + d.emitVolume.hi[k]) * 0.5f + u[k] * (d.emitVolume.hi[k] - d.emitVolume.lo[k]) * 0.5f;
     } else {
         for (int k = 0; k < 3; ++k)
             u[k] = random(d.emitVolume.lo[k], d.emitVolume.hi[k]);
     }
-    // Direction: a random vector in the direction box, scaled to a speed
-    // in the speed range (InitParticle's RandomVector3 + ScaleToMagnitude).
+    // Direction: in the direction box (or the birth point, radial), scaled
+    // to a speed in the speed range (ScaleToMagnitude).
     V3 dir;
-    for (int k = 0; k < 3; ++k)
-        dir[k] = random(d.emitDirection.lo[k], d.emitDirection.hi[k]);
+    if (d.flags & pflag::Radial)
+        dir = u;
+    else
+        for (int k = 0; k < 3; ++k)
+            dir[k] = random(d.emitDirection.lo[k], d.emitDirection.hi[k]);
+    const float speed = rng_.range(d.emitSpeed);
     const float l = len(dir);
-    const float speed = random(d.emitSpeed[0], d.emitSpeed[1]);
     V3 v = l > 1e-6f ? mul(dir, speed / l) : V3{0, 0, 0};
-    // Into the effect's frame; world-space particles take the instance's too.
-    const Placement local = e.localSpace ? e.local : compose(inst.where, e.local);
-    p.position = transformPoint(local, u);
-    p.velocity = mul(rotate(local, v), local.scale);
-    p.life = std::max(0.01f, random(d.life[0], d.life[1]));
-    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary);
+    // The bomb: a speed away from its centre.
+    if (d.bomb != 0) {
+        const V3 away = sub(u, d.bombCenter);
+        if (sqrlen(away) > 0)
+            v = add(v, mul(away, d.bomb / len(away)));
+    }
+    // Into the particles' frame: the point by the emitter's transform, the
+    // velocity by its rotation.
+    const Placement t1 = emitterFrame(inst, e);
+    p.position = transformPoint(t1, u);
+    p.velocity = rotate(t1, v);
+    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary) * e.sizeScale;
     p.aspectScale = random(1 - d.aspectVary, 1 + d.aspectVary);
     p.alphaScale = random(1 - d.alphaVary, 1 + d.alphaVary);
     for (int k = 0; k < 3; ++k)
         p.colorScale[size_t(k)] = random(1 - d.colorVary[size_t(k)], 1 + d.colorVary[size_t(k)]);
-    p.walkTimer = random(d.randomWalkDelay[0], d.randomWalkDelay[1]);
-    p.spin = random(d.rotateOffset[0], d.rotateOffset[1]) * kTwoPi;
-    e.particles.push_back(p);
+    for (int i = 0; i < std::max<int>(1, d.rotateCount) && i < 2; ++i) {
+        const V2& r = d.rotateRange[size_t(i)];
+        p.rotate[size_t(i)] = r[1] <= r[0] ? r[0] : rng_.range(r);
+    }
+    p.frameStart = d.frameStart;
+    return p;
 }
 
-void EffectSystem::stepEmitter(const Instance& inst, Emitter& e, float dt, bool emit) {
+// cTSParticlesEffect::UpdateParticlePhysics (BV 0xeb6ecc): false once the
+// particle's life is over. With none of the flags that need forces and a
+// gentle drag, one step (BV 0x1c2aca0); otherwise steps of 1/15 s
+// (UpdateParticlePhysicsTimeStep 0xeb6d50, ApplyForces 0xeb6604).
+bool EffectSystem::updatePhysics(const Emitter& e, Particle& p, float dt) const {
     const Particles& d = *e.desc;
-    dt *= e.timeScale;
-    e.time += dt;
-    const float active = e.time - e.startDelay;
-    if (emit && active >= 0 && (e.stopAt < 0 || e.time < e.stopAt)) {
-        // Rate curve over rateCurveTime seconds, repeated rateCurveCycles
-        // times (0: forever); particles per second.
-        const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
-        const bool done = d.rateCurveCycles > 0 && active >= period * float(d.rateCurveCycles);
-        if (d.flags & kMaintain) {
-            // Topped up after the physics below.
-        } else if (!done) {
-            const float rate = sampleCurve(d.rateCurve, std::fmod(active, period) / period, 0) * e.emitScale;
-            e.pending += rate * dt;
-            // The first particle of a one-cycle burst comes out at once.
-            if (d.rateCurveCycles > 0 && active - dt <= 0 && e.pending < 1 && rate > 0)
-                e.pending = 1;
-            while (e.pending >= 1) {
-                spawn(inst, e);
-                e.pending -= 1;
+    p.age += dt;
+    if (p.age >= p.life)
+        return false;
+    const V3& a = e.accel;
+    if (!(d.flags & pflag::NeedsTimeStep) && dt * d.drag <= kFastDrag) {
+        const V3 v0 = p.velocity;
+        const float keep = 1 - dt * d.drag;
+        p.velocity = mul(add(v0, mul(a, dt)), keep);
+        p.position = add(p.position, mul(add(v0, p.velocity), dt * 0.5f));
+        return true;
+    }
+    float left = dt;
+    do {
+        const float step = left > kTimeStep ? kTimeStep : left;
+        p.position = add(p.position, mul(p.velocity, step));
+        p.velocity = add(p.velocity, mul(a, step));
+        // ApplyForces: the attractor's pull (BV 0x1c2c98c: towards its
+        // point, by the strength curve over distance / range), then the drag.
+        if (e.attracts) {
+            const V3 to = sub(e.attractorPoint, p.position);
+            const float dist = len(to);
+            if (dist > 0) {
+                const float pull = sampleCurve(d.attractorStrength, std::min(dist / std::max(d.attractorRange, 1e-6f), 1.0f), 0);
+                p.velocity = add(p.velocity, mul(to, step * pull / dist));
             }
         }
+        p.velocity = mul(p.velocity, 1 - step * d.drag);
+        left -= step;
+    } while (left > 0);
+    return true;
+}
+
+// cTSParticlesEffect::MaintainParticles (BV 0xeb822c): ceil(rate[0]) alive,
+// the missing ones made at once and moved this frame.
+void EffectSystem::maintainParticles(const Instance& inst, Emitter& e, float dt) {
+    const Particles& d = *e.desc;
+    const float period = std::max(d.rateCurveTime, 1e-6f);
+    e.cycleTime += dt / period;
+    if (e.cycleTime < e.cycleIndex)
+        return;
+    const size_t want = size_t(std::max(0.0f, std::ceil(sampleCurve(d.rateCurve, 0, 0))));
+    while (e.particles.size() < std::min(want, kMaxParticles)) {
+        Particle p = initParticle(inst, e);
+        if (!updatePhysics(e, p, dt))
+            break; // (born dead: the binary drops it and goes on; avoid looping)
+        e.particles.push_back(p);
     }
-    // Physics (UpdateParticlePhysicsTimeStep): position by velocity,
-    // velocity by the constant force, then the drag factor 1 - drag x dt.
-    // The force is in the effect's frame: a component's rotation turns its
-    // emission (the stove's smoke billows out of the front) but not the
-    // force (it still rises). Inferred.
-    const V3 force = e.localSpace ? d.force : rotate(inst.where, d.force);
-    const float drag = d.drag;
-    // (Not for particles that move with the effect: the balloons' leader
-    // bubbles would wander off. Inferred.)
-    const bool walk = (d.flags & kRandomWalk) != 0 && !e.localSpace;
-    for (auto& p : e.particles) {
-        p.age += dt;
-        p.position = add(p.position, mul(p.velocity, dt));
-        p.velocity = add(p.velocity, mul(force, dt));
-        p.velocity = mul(p.velocity, std::max(0.0f, 1 - drag * dt));
-        if (walk && (p.walkTimer -= dt) <= 0) {
-            p.walkTimer = std::max(0.02f, random(d.randomWalkDelay[0], d.randomWalkDelay[1]));
-            const float s = random(d.randomWalkStrength[0], d.randomWalkStrength[1]);
-            const float a = random(0, kTwoPi);
-            p.velocity = add(p.velocity, {std::cos(a) * s, std::sin(a) * s, 0});
+}
+
+// cTSParticlesEffect::InjectParticles (BV 0xeb83f4): at each cycle's start
+// ceil(rate[0]) particles at once, aged since that start.
+void EffectSystem::injectParticles(const Instance& inst, Emitter& e, float dt) {
+    const Particles& d = *e.desc;
+    const float period = std::max(d.rateCurveTime, 1e-6f);
+    e.cycleTime += dt / period;
+    if (e.cycleTime < e.cycleIndex)
+        return;
+    // The emission scale counts only past 20 a burst (where the density
+    // also scales the size; the density is 1 here).
+    const float first = sampleCurve(d.rateCurve, 0, 0);
+    const float scale = first > 20 ? e.emitScale : 1;
+    const int count = int(std::ceil(first * scale));
+    for (int guard = 0; guard < 1000; ++guard) {
+        while (e.cycleTime >= e.cycleIndex) {
+            if (d.flags & pflag::CycleKill)
+                e.particles.clear();
+            const float age = float((e.cycleTime - e.cycleIndex) * period);
+            if (age < d.life[1])
+                for (int i = 0; i < count && e.particles.size() < kMaxParticles; ++i) {
+                    Particle p = initParticle(inst, e);
+                    if (updatePhysics(e, p, age))
+                        e.particles.push_back(p);
+                }
+            ++e.cycleIndex;
+            if (d.rateCurveCycles != 0 && int(d.rateCurveCycles) <= e.cycleIndex) {
+                e.stopping = true;
+                return;
+            }
+            if (d.rateTrigger[0] >= 0)
+                break;
         }
+        if (e.cycleTime < e.cycleIndex && d.rateTrigger[0] < 0)
+            return;
+        // A trigger: the clock waits that long before the next burst.
+        e.cycleTime -= rng_.range(d.rateTrigger) / period;
+        if (e.cycleTime >= e.cycleIndex)
+            continue;
+        e.delayLeft = float((e.cycleIndex - e.cycleTime) * period);
+        e.cycleTime = e.cycleIndex;
+        return;
     }
-    std::erase_if(e.particles, [](const Particle& p) { return p.age >= p.life; });
-    // cTSParticlesEffect::MaintainParticles (BV 0xeb822c): flag bit 1 makes
-    // the rate curve's first value the number of particles kept alive, the
-    // dead replaced at once (one plumbob glow per component, one build-mode
-    // cursor post, 100 abduction stars).
-    if (emit && (d.flags & kMaintain) && active >= 0 && (e.stopAt < 0 || e.time < e.stopAt)) {
-        const size_t want = size_t(std::lround(std::max(sampleCurve(d.rateCurve, 0, 0), 0.0f)));
-        while (e.particles.size() < std::min(want, kMaxParticles))
-            spawn(inst, e);
+}
+
+// cTSParticlesEffect::AddRateCurveParticles (BV 0xeb8728): the rate curve
+// over each cycle, in slices of at most 1/15 s; each new particle is born
+// spread over its slice, set back along the emitter's way this frame and
+// already moved for the time it has lived.
+void EffectSystem::addRateCurveParticles(const Instance& inst, Emitter& e, float dt) {
+    const Particles& d = *e.desc;
+    if (dt <= 0)
+        return;
+    const float period = std::max(d.rateCurveTime, 1e-6f);
+    const Placement t1 = emitterFrame(inst, e);
+    float scale = e.emitScale;
+    if (d.flags & pflag::SizeScale)
+        scale *= t1.scale;
+    else if (d.flags & pflag::AreaScale)
+        scale *= t1.scale * t1.scale;
+    else if (d.flags & pflag::VolumeScale)
+        scale *= t1.scale * t1.scale * t1.scale;
+    const V3 moved = sub(t1.position, e.lastPosition);
+    if (d.rateSpeedScale > 0)
+        scale += len(moved) / dt * d.rateSpeedScale * scale;
+    const float total = dt;
+    float left = dt;
+    for (int guard = 0; guard < 10000; ++guard) {
+        float slice = left > kTimeStep ? kTimeStep : left;
+        const int next = e.cycleIndex + 1;
+        e.cycleTime += slice / period;
+        bool triggered = false;
+        if (e.cycleTime > next) {
+            e.cycleIndex = next;
+            if (d.flags & pflag::CycleKill)
+                e.particles.clear();
+            if (d.rateCurveCycles != 0 && int(d.rateCurveCycles) == e.cycleIndex) {
+                if (!(d.flags & pflag::Sustain)) {
+                    e.stopping = true;
+                    return;
+                }
+                // Sustain: the last cycle's end held.
+                e.cycleIndex = int(d.rateCurveCycles) - 1;
+                e.cycleTime = double(float(d.rateCurveCycles) - 1e-6f);
+            } else if (d.rateTrigger[0] >= 0) {
+                // A trigger: the slice ends with the cycle, the wait follows.
+                triggered = true;
+                const double over = e.cycleTime - e.cycleIndex;
+                e.cycleTime = e.cycleIndex;
+                slice = float(slice - over * period);
+            }
+        }
+        const float value = sampleCurve(d.rateCurve, float(e.cycleTime - e.cycleIndex), 0);
+        const float wanted = scale * slice * value + e.rateRemainder;
+        const int n = std::max(0, int(std::floor(wanted)));
+        e.rateRemainder = wanted - float(n);
+        const float every = n > 0 ? slice / float(n) : 0;
+        float age = left;
+        for (int i = 0; i < n; ++i) {
+            Particle p = initParticle(inst, e);
+            p.position = sub(p.position, mul(moved, age / total));
+            if (e.particles.size() < kMaxParticles && updatePhysics(e, p, age))
+                e.particles.push_back(p);
+            age -= every;
+        }
+        left -= slice;
+        if (triggered) {
+            left -= rng_.range(d.rateTrigger);
+            if (left < 0) {
+                e.delayLeft = -left;
+                return;
+            }
+        }
+        if (left <= 0)
+            return;
     }
+}
+
+// cTSParticlesEffect::GenerateNewParticles (BV 0xeb8c90).
+void EffectSystem::generate(const Instance& inst, Emitter& e, float dt) {
+    const Particles& d = *e.desc;
+    if (e.stopping)
+        return;
+    if (e.delayLeft > 0) {
+        e.delayLeft -= dt;
+        if (e.delayLeft > 0)
+            return;
+        dt = -e.delayLeft;
+    }
+    if (d.preRoll > 0)
+        dt = std::min(dt, d.preRoll - 0.01f);
+    if (d.flags & pflag::Maintain)
+        maintainParticles(inst, e, dt);
+    else if (d.flags & pflag::Inject)
+        injectParticles(inst, e, dt);
+    else
+        addRateCurveParticles(inst, e, dt);
+}
+
+// cTSParticlesEffect::ApplyEffect (BV 0xebb7c8): the pre-roll on the first
+// frame after a hard start, the particles alive moved first, then the new
+// ones, then the random walk.
+void EffectSystem::applyEmitter(const Instance& inst, Emitter& e, float dt) {
+    const Particles& d = *e.desc;
+    if (!e.started)
+        return;
+    if (e.preRollPending) {
+        e.preRollPending = false;
+        dt += d.preRoll;
+    }
+    const Placement t1 = emitterFrame(inst, e);
+    const V3 at = t1.position;
+    if (sqrlen(sub(at, e.lastPosition)) > 1) // a jump: no trail across it
+        e.lastPosition = at;
+    // The attractor's point follows the emitter (FUN_00f5d93c); one without
+    // a point of its own pulls towards the effect's target, which nothing
+    // sets here (inferred: no pull).
+    e.attracts = (d.flags & pflag::Attractor) && (d.flags & pflag::AttractorPoint) && !d.attractorStrength.empty();
+    if (e.attracts)
+        e.attractorPoint = transformPoint(t1, d.attractor);
+    // The force, the world's wind (none on a lot; inferred) and the walk,
+    // in the particles' frame.
+    e.accel = add(d.force, e.walk);
+    std::erase_if(e.particles, [&](Particle& p) { return !updatePhysics(e, p, dt); });
+    if (!inst.stopped && (e.stopAt < 0 || e.time < e.stopAt))
+        generate(inst, e, dt);
+    else
+        e.stopping = true;
+    if (d.flags & pflag::RandomWalk)
+        updateRandomWalk(e, dt);
+    e.lastPosition = at;
 }
 
 void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth) {
@@ -364,7 +611,11 @@ void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int dep
         p.child->id = nextId_++;
         if (base >= 0)
             addEffect(*p.child, uint32_t(base), Placement{}, m.emitScale, m.sizeScale, m.alphaScale, m.timeScale, 0, -1,
-                      depth + 1);
+                      depth + 1, false);
+        // InitParticle (meta, BV 0xf63310): the carried effect starts soft.
+        for (auto& e : p.child->emitters)
+            if (e.startDelay <= 0)
+                startEmitter(*p.child, e, false);
     }
 }
 
@@ -406,6 +657,10 @@ void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParti
     local.scale = std::max(0.0f, sampleCurve(d.sizeCurve, t, 1) * p.sizeScale);
     if (p.child) {
         p.child->where = compose(inst.where, compose(m.local, local));
+        // The meta particles here move with their instance: their effects'
+        // source is the instance's frame (UpdateActiveParticles BV 0xf5f5b0
+        // hands the meta's source to them).
+        p.child->source = inst.where;
         p.child->alpha = inst.alpha * std::clamp(sampleCurve(d.alphaCurve, t, 1), 0.0f, 1.0f);
         p.child->icon = inst.icon;
         p.child->iconFrame = inst.iconFrame;
@@ -519,16 +774,31 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
 }
 
 void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
-    for (auto& e : inst.emitters)
-        stepEmitter(inst, e, dt, emit);
+    (void)emit; // (the emitters look at inst.stopped)
+    for (auto& e : inst.emitters) {
+        const float edt = dt * e.timeScale;
+        e.time += edt;
+        // A sequence's later item starts when its time comes.
+        if (!e.started && e.startDelay > 0 && e.time >= e.startDelay && !inst.stopped &&
+            (e.stopAt < 0 || e.time < e.stopAt))
+            startEmitter(inst, e, false);
+        applyEmitter(inst, e, edt);
+    }
     for (auto& dp : inst.decals)
         dp.age += dt;
     for (auto& mp : inst.models)
         mp.age += dt;
     for (auto& sp : inst.sounds)
         sp.age += dt;
-    for (auto& m : inst.metas)
-        stepChain(inst, m, dt, emit);
+    // Meta particles in steps (theirs are not read yet).
+    for (auto& m : inst.metas) {
+        float left = dt;
+        do {
+            const float step = std::min(left, kMaxStep);
+            stepChain(inst, m, step, !inst.stopped);
+            left -= step;
+        } while (left > 0);
+    }
 }
 
 bool EffectSystem::busy(const Instance& inst) {
@@ -545,11 +815,13 @@ bool EffectSystem::busy(const Instance& inst) {
         if (!inst.stopped && (sp.stopAt < 0 || sp.age < sp.stopAt))
             return true;
     for (const auto& e : inst.emitters) {
-        const auto& d = *e.desc;
-        const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
-        const bool emitting = !inst.stopped && (e.stopAt < 0 || e.time < e.stopAt) &&
-                              (d.rateCurveCycles == 0 || e.time - e.startDelay < period * float(d.rateCurveCycles));
-        if (!e.particles.empty() || emitting)
+        if (!e.particles.empty())
+            return true;
+        if (inst.stopped)
+            continue;
+        if (e.started && !e.stopping)
+            return true;
+        if (!e.started && e.startDelay > 0 && (e.stopAt < 0 || e.time < e.stopAt)) // a sequence item to come
             return true;
     }
     for (const auto& m : inst.metas) {
@@ -571,12 +843,7 @@ void EffectSystem::update(float seconds) {
     seconds = std::min(seconds, 1.0f);
     for (auto it = instances_.begin(); it != instances_.end();) {
         Instance& inst = it->second;
-        float left = seconds;
-        while (left > 0) {
-            const float dt = std::min(left, kMaxStep);
-            stepInstance(inst, dt, !inst.stopped);
-            left -= dt;
-        }
+        stepInstance(inst, seconds, !inst.stopped);
         if (!busy(inst))
             it = instances_.erase(it);
         else
@@ -663,47 +930,51 @@ void EffectSystem::collectInstance(const Instance& inst, const V3& sortRoot, int
                 out.push_back(q);
         }
     for (size_t ei = 0; ei < inst.emitters.size(); ++ei) {
-            const Emitter& e = inst.emitters[ei];
-            const Particles& d = *e.desc;
-            const std::string* tex = e.icon && !inst.icon.empty() ? &inst.icon : &d.material;
-            const float scale = inst.where.scale * e.local.scale;
-            for (const auto& p : e.particles) {
-                const float t = p.age / p.life;
-                ParticleQuad q;
-                q.position = toWorld(inst, e, p.position);
-                // Particles that move with the effect (balloons) sort by the
-                // effect's root position, then in component order.
-                q.sortPosition = e.localSpace ? sortRoot : q.position;
-                q.sortOrder = e.localSpace ? orderBase + e.order : 0;
-                q.velocity = e.localSpace ? rotate(inst.where, p.velocity) : p.velocity;
-                const float size = sampleCurve(d.sizeCurve, t, 1) * p.sizeScale * e.sizeScale * scale;
-                q.width = size;
-                q.height = size * sampleCurve(d.aspectCurve, t, 1) * p.aspectScale;
-                q.rotation = p.spin + sampleCurve(d.rotateCurveX, t, 0) * kTwoPi;
-                const V3 c = sampleColors(d.colors, t);
-                for (int k = 0; k < 3; ++k)
-                    q.color[size_t(k)] = std::clamp(c[size_t(k)] * p.colorScale[size_t(k)], 0.0f, 1.0f);
-                q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * p.alphaScale * e.alphaScale * inst.alpha, 0.0f, 1.0f);
-                q.texture = tex;
-                if (d.tileU > 1 || d.tileV > 1) {
-                    const int cells = std::max(1, int(d.tileU) * int(d.tileV));
-                    int frame = d.frameStart;
-                    if (e.icon && inst.iconFrame >= 0)
-                        frame = inst.iconFrame;
-                    else if (d.frameCount > 0)
-                        frame += int(p.age * d.frameSpeed) % d.frameCount;
-                    frame %= cells;
-                    const float du = 1.0f / std::max<uint8_t>(1, d.tileU), dv = 1.0f / std::max<uint8_t>(1, d.tileV);
-                    const int cu = frame % std::max<uint8_t>(1, d.tileU), cv = frame / std::max<uint8_t>(1, d.tileU);
-                    q.uv = {du * float(cu), dv * float(cv), du * float(cu + 1), dv * float(cv + 1)};
-                }
-                q.draw = d.drawType;
-                q.alignment = d.alignment;
-                q.layer = d.layer;
-                if (q.color[3] > 0.001f && size > 0)
-                    out.push_back(q);
+        const Emitter& e = inst.emitters[ei];
+        const Particles& d = *e.desc;
+        const std::string* tex = e.icon && !inst.icon.empty() ? &inst.icon : &d.material;
+        // The particles' frame (t2) in the world: its scale scales them
+        // (the vertex fill, BV 0xeb8dbc).
+        const Placement frame = particleFrame(inst, e);
+        const int cells = std::max(1, int(d.tileU) * int(d.tileV));
+        for (const auto& p : e.particles) {
+            const float t = p.age / p.life;
+            ParticleQuad q;
+            q.position = transformPoint(frame, p.position);
+            // Particles that move with the effect (balloons) sort by the
+            // effect's root position, then in component order.
+            q.sortPosition = e.rigid ? sortRoot : q.position;
+            q.sortOrder = e.rigid ? orderBase + e.order : 0;
+            q.velocity = rotate(frame, p.velocity);
+            const float size = p.sizeScale * sampleCurve(d.sizeCurve, t, 1) * frame.scale;
+            q.width = size;
+            q.height = size * sampleCurve(d.aspectCurve, t, 1) * p.aspectScale;
+            q.rotation = (sampleCurve(d.rotateCurveX, t, 0) * p.rotate[0] + d.rotateOffset[0]) * kTwoPi;
+            const V3 c = sampleColors(d.colors, t);
+            for (int k = 0; k < 3; ++k)
+                q.color[size_t(k)] = std::clamp(c[size_t(k)] * p.colorScale[size_t(k)], 0.0f, 1.0f);
+            q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * p.alphaScale * e.alphaScale * inst.alpha, 0.0f, 1.0f);
+            q.texture = tex;
+            if (d.tileU > 1 || d.tileV > 1) {
+                // The frame: int(speed x age + start), kept within the count
+                // from the start; its cell by the bits (tile counts are powers of two).
+                const int start = e.icon && inst.iconFrame >= 0 ? inst.iconFrame : p.frameStart;
+                int frame = int(d.frameSpeed * p.age + float(start));
+                if (d.frameCount > 0)
+                    frame = start + (frame - start) % d.frameCount;
+                frame = ((frame % cells) + cells) % cells;
+                const int tu = std::max<int>(1, d.tileU), tv = std::max<int>(1, d.tileV);
+                const float du = 1.0f / float(tu), dv = 1.0f / float(tv);
+                const int cu = frame % tu, cv = (frame / tu) % tv;
+                q.uv = {du * float(cu), dv * float(cv), du * float(cu + 1), dv * float(cv + 1)};
             }
+            q.draw = d.drawType;
+            q.alignment = d.alignment;
+            q.layer = d.layer;
+            if (q.color[3] > 0.001f && size > 0)
+                out.push_back(q);
         }
+    }
     for (const auto& mc : inst.metas)
         for (const auto& p : mc.particles)
             if (p.child)
