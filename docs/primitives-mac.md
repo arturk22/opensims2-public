@@ -922,6 +922,8 @@ caracteres some em 8,8 s; um sim/não de 200 caracteres responde "não" em
 12 s.
 
 **A janela no app (rodada 13; refeita na rodada 14).** `app/dialog_window.*`
+(os diálogos de escolha em `dialog_window_pickers.cpp`, os de roupas em
+`dialog_window_clothes.cpp`)
 desenha cada tipo pela classe do binário (tabela abaixo): o `cTSObjectDialog`
 como o `cTSWinPictureDialog::DoLayout` (medidas, moldura `0xA9500615`,
 botões sobre `0xA9500630`, fontes GenHeader/GenDialogBody/GenButton, o
