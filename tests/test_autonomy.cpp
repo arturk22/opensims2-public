@@ -213,6 +213,13 @@ static void testMood() {
     check(fx.p().motives[3] == 0, "the mood waits for the 60-tick update");
     fx.vm.tick();
     check(fx.p().motives[3] == -17 && fx.p().motives[4] == -17, "the 60-tick update writes Mood and Mood+Mem");
+    fx.p().data[persondata::MoodBooster] = 200;
+    check(std::abs(computeMood(fx.vm, *fx.vm.object(fx.sim)) - (200.0f - 50.0f / 3)) < 1e-3f,
+          "person data 163 is added to the mood");
+    for (int i = 0; i < 60; ++i)
+        fx.vm.tick();
+    check(fx.p().motives[3] == 183 && fx.p().motives[4] == 183 && fx.p().oldMotives[3] == -50.0f / 3,
+          "the base game's mood is not clamped (the old set has the last one, clamped)");
 }
 
 static void testFindBestInteraction() {

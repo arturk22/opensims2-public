@@ -152,7 +152,10 @@ MotiveCurve MotiveCurve::constant(float y) {
 // The person's age tests (base cTSPerson vtable 0x690-0x6a4 on person data
 // 58), asked from the elder down; none true (a negative age) is the adult.
 int curveAgeIndex(const Object& sim) {
-    const int16_t age = sim.person ? sim.person->data[persondata::PersonAge] : lifestage::Adult;
+    return curveAgeIndexOf(sim.person ? sim.person->data[persondata::PersonAge] : lifestage::Adult);
+}
+
+int curveAgeIndexOf(int16_t age) {
     if (age > 0x32)
         return 0;
     if (age >= lifestage::Adult)
@@ -168,8 +171,10 @@ int curveAgeIndex(const Object& sim) {
     return 1;
 }
 
-const MotiveCurveSet& happyCurves(VM& vm, const Object& sim) {
-    return curvesFrom(vm, kGlobalGroup, uint16_t(kHappyCurveStrings + curveAgeIndex(sim)));
+const MotiveCurveSet& happyCurves(VM& vm, const Object& sim) { return happyCurvesOfAge(vm, curveAgeIndex(sim)); }
+
+const MotiveCurveSet& happyCurvesOfAge(VM& vm, int ageIndex) {
+    return curvesFrom(vm, kGlobalGroup, uint16_t(kHappyCurveStrings + ageIndex));
 }
 
 const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim) {
@@ -182,21 +187,39 @@ const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim) {
     return curvesFrom(vm, kGlobalGroup, uint16_t(kScoreCurveStrings + curveAgeIndex(sim)));
 }
 
+// The base game's UpdateMood (cTSPerson, base 0xb76208; docs/motives-mac.md
+// §4): the motives but 0-2 and 10-12 (and person data 118's), each
+// weighted by its happy curve at its value (fmadds), plus person data 163
+// "Mood Booster"; not clamped. (BV's cTSMotives::UpdateMood leaves out
+// only 2 and 10-12 and clamps to +-100: base data gives 0-5 and 10-12 no
+// weight, so only the clamp differs.)
+float moodFrom(const MotiveCurveSet& curves, const std::array<float, kMotiveCount>& motives, int16_t notInMood,
+               int16_t booster) {
+    constexpr uint32_t kNotMood = 0x1C07; // 0, 1, 2, 10, 11, 12
+    float sum = 0, weights = 0;
+    for (int16_t m = 0; m < int16_t(kMotiveCount); ++m) {
+        if (m <= 12 && (kNotMood & (1u << m)))
+            continue;
+        if (notInMood & (1 << m))
+            continue;
+        const float v = motives[size_t(m)];
+        const float w = curves[size_t(m)].at(v);
+        sum = std::fmaf(v, w, sum);
+        weights = weights + w;
+    }
+    // (The game divides even by 0; here no weight at all is a mood of 0.)
+    const float mean = weights != 0.0f ? sum / weights : 0.0f;
+    return mean + float(booster);
+}
+
 float computeMood(VM& vm, Object& sim) {
     if (!sim.person)
         return 0;
-    const auto& curves = happyCurves(vm, sim);
-    const int16_t excluded = sim.person->data[persondata::MotivesNotInMood];
-    float sum = 0, weights = 0;
-    for (int16_t m = motive::Energy; m < int16_t(kMotiveCount); ++m) {
-        if (excluded & (1 << m))
-            continue;
-        const float v = exactMotive(sim, m);
-        const float w = curves[size_t(m)].at(v);
-        sum += w * v;
-        weights += w;
-    }
-    return weights > 0 ? std::clamp(sum / weights, -100.0f, 100.0f) : 0.0f;
+    std::array<float, kMotiveCount> motives{};
+    for (size_t k = 0; k < kMotiveCount; ++k)
+        motives[k] = exactMotive(sim, int16_t(k));
+    return moodFrom(happyCurves(vm, sim), motives, sim.person->data[persondata::MotivesNotInMood],
+                    sim.person->data[persondata::MoodBooster]);
 }
 
 int16_t motiveView(float v) {

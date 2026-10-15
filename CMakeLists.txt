@@ -290,6 +290,9 @@ add_test(NAME queue COMMAND test_queue)
 add_executable(test_autonomy tests/test_autonomy.cpp)
 target_link_libraries(test_autonomy PRIVATE os2_vm)
 add_test(NAME autonomy COMMAND test_autonomy)
+# With the game's data (OS2_DATA): the saved moods of the shipped lots' Sims
+# come out of the base game's UpdateMood (docs/motives-mac.md §4).
+add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
 
 add_executable(test_reach tests/test_reach.cpp)
 target_link_libraries(test_reach PRIVATE os2_vm)

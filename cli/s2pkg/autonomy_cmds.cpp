@@ -25,6 +25,8 @@
 #include "vm/wants.hpp"
 #include "wants_cmds.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -770,9 +772,63 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     return 0;
 }
 
+// The saved mood of every Sim on the lots under a Neighborhoods folder,
+// against the base game's UpdateMood of its saved old motive set (the set
+// the last mood was computed from) plus person data 163 (vm/motives.hpp;
+// docs/motives-mac.md §4).
+int cmdMoodSweep(const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    ResourceIndex index(resRoot(dir / "x"));
+    vm::CodeLibrary code(&index);
+    vm::VM machine(code);
+    size_t sims = 0, exact = 0, close = 0, boosted = 0, unclamped = 0, moodMem = 0, fromCurrent = 0;
+    float worst = 0;
+    std::vector<fs::path> lots;
+    for (const auto& e : fs::recursive_directory_iterator(dir))
+        if (e.path().extension() == ".package" && e.path().parent_path().filename() == "Lots")
+            lots.push_back(e.path());
+    std::sort(lots.begin(), lots.end());
+    for (const auto& lot : lots) {
+        DbpfPackage pkg(lot);
+        const LotObjects saved = LotObjects::load(pkg);
+        for (const auto& st : saved.objects) {
+            if (!st.personRead || st.personData.size() <= vm::persondata::MoodBooster)
+                continue;
+            ++sims;
+            const auto& pd = st.personData;
+            const auto& curves = vm::happyCurvesOfAge(machine, vm::curveAgeIndexOf(pd[vm::persondata::PersonAge]));
+            std::array<float, vm::kMotiveCount> old{}, now{};
+            for (size_t k = 0; k < vm::kMotiveCount; ++k)
+                old[k] = st.motives2[k], now[k] = st.motives[k];
+            const int16_t booster = pd[vm::persondata::MoodBooster];
+            const float mood = vm::moodFrom(curves, old, pd[vm::persondata::MotivesNotInMood], booster);
+            const float saved3 = st.motives[vm::motive::Mood];
+            const bool same = mood == saved3, near = std::abs(mood - saved3) < 0.05f;
+            exact += same;
+            close += near;
+            worst = std::max(worst, std::abs(mood - saved3));
+            boosted += booster != 0;
+            unclamped += saved3 > 100.0f || saved3 < -100.0f;
+            moodMem += st.motives[vm::motive::MoodMem] == saved3;
+            fromCurrent += vm::moodFrom(curves, now, pd[vm::persondata::MotivesNotInMood], booster) == saved3;
+            if (!same || booster)
+                std::printf("%s #%d: saved mood %.4f, computed %.4f%s (booster %d, old mood %.2f)\n",
+                            lot.filename().string().c_str(), st.id, double(saved3), double(mood),
+                            same ? "" : near ? " (close)" : " (DIFFERENT)", booster, double(st.motives2[3]));
+        }
+    }
+    std::printf("%zu Sims on %zu lots: mood = UpdateMood(old set) + person data 163 exactly for %zu, within 0.05 for "
+                "%zu (largest difference %.3g); %zu with a booster, %zu above 100 or below -100; Mood+Mem = Mood for "
+                "%zu; from the current set %zu\n",
+                sims, lots.size(), exact, close, double(worst), boosted, unclamped, moodMem, fromCurrent);
+    return close == sims ? 0 : 1;
+}
+
 } // namespace
 
 int autonomyCommand(const std::string& cmd, int argc, char** argv) {
+    if (cmd == "mood-sweep" && argc == 3)
+        return cmdMoodSweep(argv[2]);
     if (cmd != "autonomy" || argc < 3)
         return -1;
     std::string lotPath, sim;
@@ -829,7 +885,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--no-dialog-timeout] [--skip-failures] [--name-babies]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--no-dialog-timeout] [--skip-failures] [--name-babies]\n"
+           "       s2pkg mood-sweep <Neighborhoods dir>\n";
 }
 
 } // namespace os2

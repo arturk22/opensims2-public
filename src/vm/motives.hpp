@@ -24,9 +24,11 @@
 //   the old set; then the mood, and the memories (memories.hpp).
 // - Mood is the average of the motives weighted by the "Happy Curve Data"
 //   (global STR# 0x226-0x22D, one per age: weight as a function of the
-//   motive's value), leaving out the motives whose bit is set in person
-//   data 118 "Motives Not Included in Mood". Checked against the lots' saved
-//   moods (N001_Lot11: 56.3 from its motives; the PERS's second motive set
+//   motive's value), leaving out 0-2, 10-12 and the motives whose bit is
+//   set in person data 118 "Motives Not Included in Mood", plus person data
+//   163 "Mood Booster", not clamped (the base game's UpdateMood). Checked
+//   against the lots' saved moods (N001_Lot11: 56.3 from its motives;
+//   Mortimer's 232.1 with a booster of 200; the PERS's second motive set
 //   is the one the last mood was computed from).
 // - Autonomy scores an interaction by how much its ads raise the "Interaction
 //   Scores Curve" (global STR# 0x28A-0x291, per age) of each motive.
@@ -56,6 +58,7 @@ constexpr int16_t AutonomyLevel = 36;
 constexpr int16_t FindBestActionObject = 53;
 constexpr int16_t DecayHungerPerDay = 93; // 93 hunger, 94 comfort, 95 bladder, 96 energy, 97 hygiene, 99 social, 101 fun
 constexpr int16_t MotivesNotInMood = 118;
+constexpr int16_t MoodBooster = 163;
 } // namespace persondata
 
 // A piecewise linear curve, as the game's curve STR#s write them:
@@ -80,16 +83,21 @@ using MotiveCurveSet = std::array<MotiveCurve, kMotiveCount>;
 // the person's age tests have it (baby 0-1, toddler 2, child 3-15, teen
 // 16-18, adult 19-50, elder above; none, a negative age: adult).
 int curveAgeIndex(const Object& sim);
+int curveAgeIndexOf(int16_t personAge);
 // The curves for a Sim's age (cTSMotiveCurveSet::LoadFromFile: a STR# with
 // fewer than 16 texts, or none, leaves the rest constant 1; an empty text
 // is a curve without points, 0). The interaction score curves are the
 // Sim's own when its definition's field 0x33 "motive effects id" names a
 // STR# of its group (cTSPerson::LoadMotiveEffects).
 const MotiveCurveSet& happyCurves(VM& vm, const Object& sim);
+const MotiveCurveSet& happyCurvesOfAge(VM& vm, int ageIndex);
 const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim);
 
-// The mood the motives give (weighted average, see above), -100..100.
+// The mood the motives give (weighted average plus the booster, see above):
+// of a Sim's motives now, or of a set of motives.
 float computeMood(VM& vm, Object& sim);
+float moodFrom(const MotiveCurveSet& happy, const std::array<float, kMotiveCount>& motives, int16_t notInMood,
+               int16_t booster);
 
 // Motives as the engine keeps them (floats), picking up what the trees
 // wrote since; what the trees see of a float.
