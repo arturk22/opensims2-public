@@ -1078,5 +1078,16 @@ cantos escuros (à direita, com a sala à direita); a altura das paredes que
 não têm 3 tiles (as 6 linhas a partir do pé; o jogo não escreve células de
 outro tamanho).
 
-Capturas (antes e depois, dia e noite, dentro e fora; N001_Lot11,
-N002_Lot31, N003_Lot52): `docs/screenshots/n16-luz-*.jpg`.
+Capturas (`--vm --run-vm 30 --lighting day|night`, à noite `--lamps 100`,
+paredes cortadas; à esquerda antes da rodada, à direita depois; linhas
+N001_Lot11, N002_Lot31, N003_Lot52): `docs/screenshots/n16-luz-noite-dentro.jpg`,
+`n16-luz-dia-dentro.jpg`, `n16-luz-fora-dia.jpg`, `n16-luz-fora-noite.jpg`;
+e as páginas de piso do light map (`OS2_LIGHTMAP_DUMP`; N001 andar 1 de dia
+e de noite, N002 andar 0 de dia, N003 andar 0 à noite; +y para cima):
+`n16-luz-lightmap.jpg`. O que mudou à vista: os objetos de dentro deixam
+de sair pretos (os cômodos sem luz do jogo os clareiam, de dia e de
+noite); as poças das janelas ficam brancas (a cor da extensão, não a da
+luz) e por tile (a guarda da cópia); as paredes de cima brancas do N003 à
+noite deixam de brilhar; o salão dente de serra do N002 e as faces de
+dentro de cômodos sem piso (a torre da igreja) escurecem; os tiles sem
+piso dos andares de cima ficam pretos na página (não são desenhados).
