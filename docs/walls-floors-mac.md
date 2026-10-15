@@ -180,6 +180,49 @@ paredes os chanfros já fecham o canto.
 - **UV1**: o retângulo do tile no light map (`cLightMapManager` vtable
   `0x48`), cantos e centro.
 
-## 5. O que o código fazia e o que muda
+## 5. O que o código faz (rodada n19, `src/formats/lot_model.cpp`)
 
-(Ver o §5.1 no fim da rodada.)
+| Peça | Antes | Agora (binário) |
+|---|---|---|
+| Nós e alturas | espessura 0,15 para tudo, topo no andar de cima, sótão = telhado − 0,1875 (OpenTS2), meia parede 1,0 | `wallNode` (índices 0–3 do §1), deslocamento −0,01 em todos os z, `wallTopElevation` (meia parede 1,025, sótão telhado − 0,25, saia de deck o andar de cima − 0,15 e espessura 0) |
+| Cantos | cada trecho esticado meia espessura nas pontas (sobrepostos) | chanfro do `ComputeMetaData` com as paredes do mesmo nó; tampa nas pontas soltas |
+| Face | um quad por trecho (dois no sótão), `u` = posição no mundo, `v` = (topo − z)/3 com o topo **cortado** | três colunas (início, meio, fim); `u` 0/0,5/1; `v` a partir do topo cheio (`requiresFlatTop`) ou de 1 no chão; a parede cortada mostra o pé do papel |
+| Topo | quad com `u, v` = (x, y), luz do piso do andar (inferido), normal da inclinação | 6 pontos chanfrados, (x, y), normal para cima, sem light map: material `wall_top 2x` (`2 × wall-top`, sem luz) |
+| Encontros | nada (os trechos esticados se cruzavam) | polígono em leque onde 3+ paredes do nó se encontram |
+| Corte | parede cortada inteira; as outras inteiras | pelas pontas das cortadas: rampa na parede que toca uma ponta baixada; inteira baixa com as duas pontas baixadas (e só essas escondem o que está pendurado nelas, `HideShowAttachedObjects` `0x6c2ee4`) |
+| Paredes baixas | normais e sótão | normais, sótão e meias paredes (nós 0, 2, 3) |
+| Pisos | já um triângulo por quarto com (y, x); rotação lida como potência de 2 | igual, rotação só 2/4/8 (os lotes do jogo têm todos 0 ou 1) |
+
+Testes: `testWallGeometry` (chanfro, tampas, encontro, UV e material do
+topo, o pé do papel, a rampa, meia parede, UV e rotação dos pisos) em
+`tests/test_formats.cpp`. Os dados: as 18 531 paredes dos 69 lotes têm 1
+ou √2 de comprimento (um localizador cada), 184 são saias de deck 16.
+
+Antes/depois (em cima ou à esquerda o antes), `--ui live` com a câmera
+inclinada:
+
+- `docs/screenshots/n19-paredes-corte-antes-depois.jpg`: N001_Lot11 e
+  N003_Lot52 em corte: as rampas nas paredes que tocam as cortadas, o pé do
+  papel nas cortadas, os topos;
+- `docs/screenshots/n19-paredes-cantos-topos-antes-depois.jpg`: cantos
+  chanfrados e topos (N001_Lot11 de perto, a baía de N001_Lot77 com as
+  paredes erguidas, o salão de N002_Lot31);
+- `docs/screenshots/n19-paredes-baixas-antes-depois.jpg`: paredes baixas;
+- `docs/screenshots/n19-pisos-antes-depois.jpg`: pisos (N002_Lot3 com as
+  paredes diagonais e meios tiles, a cozinha xadrez de N001_Lot11): iguais.
+
+**Inferido ou de fora:**
+
+- a máscara de portas e janelas segue a projeção plana da rodada 16 (o `u`
+  ao longo do −x do objeto); o jogo usa o UV1 de cada vértice e o
+  `wallMaskMirrorFlag` do `CombinedWallMaterial`, não lidos por inteiro;
+- o nó 5 (meia parede a +0,75 e 0,1 de espessura sobre piso "tipo 4") não
+  é separado do 3, como o +0,75 das cercas;
+- no modo baixo, fundações e paredes de piscina (nó 0) ficam erguidas (quem
+  chama o `SetLevelUpDownState` para quais andares não foi lido); as meias
+  paredes não entram no corte (o valor do serviço `0xe92db716`);
+- o light map das faces é o nosso atlas (`LotLightMapLayout`, a célula
+  cobre a face chanfrada), não o do `cLightMapManager`;
+- as laterais dos buracos sem máscara (batentes) são nossas, no material do
+  topo;
+- `cFloorThicknessGeometryNode` (a borda dos pisos) não é desenhado.

@@ -906,7 +906,9 @@ para cada quarto da máscara cujo padrão ou rotação muda:
   (`cWallPiece::ComputeSegmentVertices`, BV `0x744520`) **V = altura / 3**
   (uma textura cobre os 3 de altura; mais 0,05 num tipo de trecho) e **U vai
   de 0 a 1 em cada trecho de um tile** (0,5 no meio): uma textura por tile.
-  O `src/formats/lot_model.cpp` já fazia assim (meia espessura 0,075).
+  O código usava a posição no mundo; desde a rodada n19 a parede inteira
+  (chanfros, topo, tampas, encontros, corte por pontas) segue o binário:
+  `docs/walls-floors-mac.md`.
 
 ### 7.6 Portas, janelas e arcos
 
