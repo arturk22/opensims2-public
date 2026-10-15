@@ -650,3 +650,34 @@ Events", "Event - Talk", "Facial Overlay - Continue", ...), "Facial -
 Background - Events", "Events - Notify Out Of Idle" e "Events - Animate
 Overlay Complete" leem o 1, "Facial Overlay - Continue Loop" o 2 e o 3, e as
 árvores do alcance ("Event - Reach - Grab/Put") o 1.
+
+### 10.3 O que mudou no código (rodada n23)
+
+`vm/animation.cpp` (`runEventTree`): as árvores de evento do Animate Sim,
+do Animate Overlay e do Animate Object recebem os 5 parâmetros do
+`HandleEvents` (evento, stack object do pedido, porção em %, voltas,
+abortado), rodam no objeto animado com os temps dele **postos de volta**
+(o Animate Sim não compartilha mais os temps da thread com a árvore), e a
+do Animate Sim recebe também 9997 (no começo do fade de saída, `kBlendTicks`
+antes do fim; no fim com a flag 0x40 "sem blend de saída"), 9998 e 9999 no
+fim. O `AnimationState` guarda o stack object do quadro (`eventStackObject`,
+também ao recarregar) e o objeto de IK continua só para o IK e o save.
+`OS2_DEBUG_ANIM_EVENTS=1` lista cada árvore com os parâmetros; `s2pkg
+event-tree-sweep` conta o que as árvores do jogo comparam e leem.
+
+Prova sem janela (`--lot N001_Lot68 --sim-id Angela --pie Fridge
+--pie-select 3 --run-vm 1500`, 363 árvores): `params 100 553 0 1 0` (o
+"event=100" do pegar, stack object 553), `params 9997 141 86 1 0`, `params
+9999 141 100 1 0`, e os idles parados `params -1 27 42 1 1`. Na bateria de
+assento, o "Facial - Background - Events" (que lê o parâmetro 1) mantém o
+piscar dos Sims (`a-blinkUnderlay-*`), que antes sumia nos primeiros
+segundos; o caso "chess" agora começa pelo menu (`--pie Chessboard`) em vez
+de 8.960 ticks de autonomia, cujo caminho mudou e passou por um corte
+(uma piada contada encostada num namoradeira, `TODO.md`).
+
+Inferido / sobrou: qual chave do motor é a 6 e qual a 3 (o construtor do
+`cActiveAnimEvent` não foi achado); o evento do fim de **cada volta** de um
+overlay em laço (o `AnimUpdateDefault` manda uma chave a cada volta; aqui só
+no fim); o `NumLoops` de um overlay que segura a pose (aqui 1); o tempo do
+evento que o `RunTree` recebe (o 5º argumento) não é usado; o erro de uma
+árvore de overlay é descartado (no jogo vai para a tree sim do objeto).

@@ -61,10 +61,13 @@ run tub      "" N001_Lot68 Angela 2500 --pie Tub --pie-select 0
 # Standing at the counter (a drink at the sink) and at the coffee maker.
 run sink     "" N001_Lot11 Alexander 1200 --pie Counter --pie-select 0
 run coffee   "" N001_Lot68 Angela 1500 --pie "Coffee Machine" --pie-select 0
-# Chess at the dining chairs (N001_Lot11, Don by himself after the party):
+# Chess at the dining chairs (N001_Lot11, Don practising on the board):
 # the pieces' reaches are the board's seated ones (its Reach Animations),
 # not the standing "a2o-table-get" that stood him up through the chair.
-SEATS_SIM=49 run chess "" N001_Lot11 Don 8960
+# (Was 8960 ticks of autonomy until he chose it; round n23's event tree
+# parameters changed that path, which met an unrelated clipping: a joke
+# told next to a loveseat, TODO.)
+SEATS_SIM=49 run chess "" N001_Lot11 Don 2400 --pie Chessboard --pie-select 0
 # Pool: dive in, swim, climb out by the ladder.
 run pool     "1500:here:9,14,1" N001_Lot68 Daniel 3000 --pie Pool --pie-select 0
 [ $fail = 0 ] && echo "seat battery: ok"

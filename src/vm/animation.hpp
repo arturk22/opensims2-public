@@ -178,6 +178,9 @@ struct Overlay {
     bool forever = false;
     float played = 0, perTick = 0, length = 0; // animation ticks (ms at speed 1)
     bool blendOutSent = false;
+    // The request's loop count (cChoreoRequest::NumLoops, its event tree's
+    // parameter 3): temp 1 with flag 0x20 (-1: until stopped), else 1.
+    int16_t requestLoops = 1;
     bool flipped = false; // played mirrored (Animate Object/Overlay's flip: a chair pulled out to the Sim's side)
     int16_t ikObject = 0; // the object its IK targets of type 2 name bones of (0: none)
     float headingOffset = 0; // the request's heading offset, radians (headingOfDirections)
@@ -210,7 +213,14 @@ struct AnimationState {
     // has played (animation ticks: ms at speed 1).
     std::vector<std::pair<int, int16_t>> pendingEvents;
     uint16_t eventTree = 0;
-    int16_t eventObject = 0; // the event tree's parameter 1 (animation.cpp)
+    int16_t eventObject = 0; // the IK object (byte 9 / u16 10): the request's TargetID
+    // The stack object of the frame that ran it (the request's
+    // StackObjectID, try_animate_sim BV 0x69d634): its event tree's stack
+    // object and parameter 1.
+    int16_t eventStackObject = 0;
+    float lengthTicks = 0;     // the animation's length (animation ticks)
+    bool noBlendOut = false;   // byte 2 flag 0x40: 9997 comes at the end
+    bool blendOutSent = false; // 9997 sent
     float headingOffset = 0;  // the request's heading offset, radians (byte 8 bit 0x04: temp 4)
     float playedTicks = 0, ticksPerVmTick = 0;
     float speed = 1; // Animate Sim's speed (byte 3 / 32, or temp 2)
@@ -254,6 +264,7 @@ struct AnimationState {
         uint16_t eventTree = 0;
         std::vector<std::pair<int, int16_t>> pending;
         float played = 0, perTick = 0, length = 0;
+        int16_t requestLoops = 1; // the request's loop count (-1: until stopped)
     };
     std::vector<OverlayEvents> overlayEvents;
 
@@ -277,7 +288,7 @@ struct ResumedAnimation {
     float speed = 1, weight = 1, heading = 0;
     bool mirrored = false;
     int level = 0;
-    int16_t target = 0; // the event tree's parameter 1
+    int16_t target = 0; // the IK object (the request's TargetID)
 };
 class VM;
 struct Thread;

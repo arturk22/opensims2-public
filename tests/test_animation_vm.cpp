@@ -199,7 +199,8 @@ static void testAnimateSim() {
     Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 3, 0x00, 0x09})});
     ev.argCount = 5;
     code.add(kGroup, 0x1005, ev);
-    code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0x05, 0x10, 0x80})}));
+    // No blend out (byte 2 flag 0x40): the engine's 9997 comes at the end.
+    code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0x40, 0x20, 0x05, 0x10, 0x80})}));
     t = vm.start(s.id, 0x1006);
     vm.run(t);
     check(s.attributes[0] == 0, "no event before its time");
@@ -208,7 +209,37 @@ static void testAnimateSim() {
     check(s.attributes[0] == 7, "the first event at 250 ms");
     while (t.status == Thread::Status::Running && turns < 200)
         vm.run(t), ++turns;
-    check(t.status == Thread::Status::Finished && s.attributes[0] == 12, "every event has run when it ends");
+    check(t.status == Thread::Status::Finished && s.attributes[0] == 12 + 9997 + 9998 + 9999,
+          "every event has run when it ends, then the engine's 9997, 9998 and 9999 (cActiveAnimEvent)");
+
+    // The event tree's parameters (cCustomEventHandler2::HandleEvents, BV
+    // 0x780ad4): the event, the request's stack object, the portion played
+    // in percent, the loop count, whether it was aborted; it runs on the
+    // Sim with its temps put back afterwards.
+    {
+        Object& held = vm.createObject(kGroup);
+        s.attributes.assign(5, 0);
+        Behavior ps = tree({instr(0x02, go(1), E, {1, 0, 1, 0, 0, 5, 0x00, 0x09}),
+                            instr(0x02, go(2), E, {2, 0, 2, 0, 0, 5, 0x00, 0x09}),
+                            instr(0x02, go(3), E, {3, 0, 3, 0, 0, 5, 0x00, 0x09}),
+                            instr(0x02, go(4), E, {4, 0, 4, 0, 0, 5, 0x00, 0x09}),
+                            instr(0x02, T, E, {0, 0, 99, 0, 0, 5, 0x08, 0x07})}); // temp 0 := 99
+        ps.argCount = 5;
+        code.add(kGroup, 0x1009, ps);
+        code.add(kGroup, 0x100A, tree({instr(0x6A, T, E, {2, 0, 0x40, 0x20, 0x09, 0x10, 0x80})}));
+        t = vm.start(s.id, 0x100A, {}, held.id);
+        t.temps[0] = 5;
+        int n = 0;
+        while (t.status == Thread::Status::Running && s.attributes[1] == 0 && n < 50)
+            vm.run(t), ++n;
+        check(s.attributes[1] == held.id && s.attributes[2] >= 50 && s.attributes[2] < 60 && s.attributes[3] == 1 &&
+                  s.attributes[4] == 0,
+              "parameters 1-4: the stack object, the portion in percent, one loop, not aborted");
+        check(t.temps[0] == 5, "the event tree's temps are put back");
+        while (t.status == Thread::Status::Running && n < 100)
+            vm.run(t), ++n;
+        check(s.attributes[2] == 100, "100% at the end");
+    }
 
     // Overlays do not block; Animate Stop clears them.
     Object& thing = vm.createObject(kGroup);
@@ -268,10 +299,14 @@ static void testOverlayLifetime() {
     vm.animations.add("a-idle-test", 1.0f);
     vm.animations.add("a-gesture-test", 1.0f);
     Object& s = sim(vm, 1.5f, 1.5f);
-    s.attributes.assign(2, 0);
-    // The event tree: attribute 0 := parameter 0, attribute 1 += parameter 0.
+    s.attributes.assign(4, 0);
+    // The event tree: attribute 0 := parameter 0, attribute 1 += parameter 0,
+    // attribute 2 := parameter 4 (aborted), attribute 3 := parameter 1 (the
+    // request's stack object).
     Behavior ev = tree({instr(0x02, Target{Kind::Instruction, 1}, E, {0, 0, 0, 0, 0, 5, 0x00, 0x09}),
-                        instr(0x02, T, E, {1, 0, 0, 0, 0, 3, 0x00, 0x09})});
+                        instr(0x02, Target{Kind::Instruction, 2}, E, {1, 0, 0, 0, 0, 3, 0x00, 0x09}),
+                        instr(0x02, Target{Kind::Instruction, 3}, E, {2, 0, 4, 0, 0, 5, 0x00, 0x09}),
+                        instr(0x02, T, E, {3, 0, 1, 0, 0, 5, 0x00, 0x09})});
     ev.argCount = 5;
     code.add(kGroup, 0x1005, ev);
     // Animate Overlay entry 3 (or 4) of the global list on the stack object, event tree 0x1005.
@@ -294,6 +329,7 @@ static void testOverlayLifetime() {
     check(s.animation.overlays.empty() && s.attributes[0] == animevent::End, "it ends after its length, with 9999");
     check(s.attributes[1] == int16_t(animevent::BlendOut + animevent::ActionEnd + animevent::End),
           "9997, then 9998 and 9999 at its end (cCustomEventHandler2: key types 7, 6, 3)");
+    check(s.attributes[2] == 0 && s.attributes[3] == s.id, "not aborted; parameter 1 is the request's stack object");
     for (int i = 0; i < 3; ++i) {
         t = vm.start(s.id, 0x1007, {}, s.id);
         vm.run(t);
@@ -329,7 +365,7 @@ static void testOverlayLifetime() {
     vm.run(t);
     check(s.animation.overlays.size() == 1 && s.animation.overlays[0].oeType == oetype::Gesture,
           "Animate Stop mode 5 stops the idles");
-    check(s.attributes[0] == animevent::Stopped, "their event trees get -1");
+    check(s.attributes[0] == animevent::Stopped && s.attributes[2] == 1, "their event trees get -1, aborted");
 
     // An overlay from the Sim-to-Sim list takes the ages' prefix, as Animate
     // Sim's ("soc-playRedHands-playee-loopOw" is "a2a-soc-..." in the data).
@@ -626,7 +662,7 @@ static void testResumeAnimateSim() {
         Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 3, 0x00, 0x09})});
         ev.argCount = 5;
         code.add(kGroup, 0x1005, ev);
-        code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0x05, 0x10, 0x80})}));
+        code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0x40, 0x20, 0x05, 0x10, 0x80})}));
         Object& s = sim(vm, 1.5f, 1.5f);
         s.attributes.assign(1, 0);
         return s;
@@ -672,7 +708,7 @@ static void testResumeAnimateSim() {
     // The reload: the same stack, waiting on that Animate Sim.
     Thread tb = b.start(sb.id, 0x1006);
     tb.stack.back().primitiveState = int32_t(q.id);
-    sb.attributes[0] = 7;
+    sb.attributes[0] = sa.attributes[0];
     ResumedAnimation r;
     r.id = q.id, r.name = q.name, r.played = q.played, r.speed = q.speed, r.level = int(q.priority);
     check(resumeAnimateSim(b, tb, r), "the reload goes on from the request");
@@ -683,7 +719,8 @@ static void testResumeAnimateSim() {
         a.run(ta), b.run(tb), ++ticks;
         check(sa.attributes[0] == sb.attributes[0], "the events come at the same ticks");
     }
-    check(ta.status == Thread::Status::Finished && tb.status == Thread::Status::Finished && sb.attributes[0] == 12,
+    check(ta.status == Thread::Status::Finished && tb.status == Thread::Status::Finished &&
+              sb.attributes[0] == 12 + 9997 + 9998 + 9999,
           "both end on the same tick, every event run once");
     r.id ^= 1;
     Thread tc = b.start(sb.id, 0x1006);

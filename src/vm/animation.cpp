@@ -23,6 +23,8 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace os2::vm {
 
@@ -499,40 +501,84 @@ float animationSpeed(Context& c) {
 // read. True when the animation ends; the game's error for an empty name;
 // an animation that does not exist ends at once (counted in
 // AnimationLibrary::missing).
-// Runs the event tree for the tree events the animation has reached
-// (all of them once it ends): at once, in my thread, with the event number
-// as parameter 0 (inferred from "Events - Get - Bag Snack": it branches on
-// parameter 0 = 100, 101, 201, the "event=" numbers of
-// a2o-snackBag-get's events, which put the bag in the hand and take it
-// away). Parameter 1 is the Animate Sim's IK object (owner u8 at 9, data
-// u16 at 10; the binary's animation request keeps it as its target), read
-// when the animation starts (inferred: "Events - Bake" snaps the dish into
-// parameter 1, the stove that is the IK object; "Events - Mix - Load" stops
-// the spoiling of parameter 1; with 0 both fail on object 0). The tree
-// resolves against the running code, as a call would.
+// An animation request's event tree, as the game's event handler runs it
+// (nTSSG::cCustomEventHandler2::HandleEvents, Mac BV 0x780ad4,
+// docs/anim-mac.md §10): on the animated object, with the code of the
+// request's tree (its ObjectScopeGUID) and the request's stack object, at
+// once (cTSObject::RunTree -> RunOneTickTree), with the object's temps put
+// back afterwards (RunTree's last bool: a tree's temps do not leak into the
+// thread that is running), and five parameters: the event (the ANIM's
+// "event=N", or the engine's 9997 blending out, 9998 end of a play, 9999
+// end, -1 stopped), the request's stack object, how much of the animation
+// has played in percent (int(PortionCompleted x 100)), the request's loop
+// count (NumLoops) and whether it was aborted (IsAborted).
+// OS2_DEBUG_ANIM_EVENTS=1 lists them.
+bool runEventTree(VM& vm, ObjectId me, ObjectId codeOwner, ObjectId stackObject, uint16_t tree,
+                  const std::array<int16_t, kTempCount>& temps, int16_t event, float portion, int16_t loops,
+                  bool aborted) {
+    const int16_t params[5] = {event, int16_t(stackObject), int16_t(int(portion * 100.0f)), loops,
+                               int16_t(aborted ? 1 : 0)};
+    if (std::getenv("OS2_DEBUG_ANIM_EVENTS"))
+        std::fprintf(stderr, "anim event: object %d tree 0x%04X code %d stack object %d params %d %d %d %d %d\n", me,
+                     tree, codeOwner, stackObject, params[0], params[1], params[2], params[3], params[4]);
+    auto copy = temps;
+    return runOneTickTree(vm, copy, me, codeOwner, stackObject, tree, params);
+}
+
+// The temps of `id`'s Main thread (the object's temps in the game), zero
+// without one.
+std::array<int16_t, kTempCount> objectTemps(const VM& vm, ObjectId id) {
+    const auto t = vm.threads.find(id);
+    return t == vm.threads.end() ? std::array<int16_t, kTempCount>{} : t->second.temps;
+}
+
+// Runs the event tree for the tree events the animation has reached (all
+// of them once it ends) and the engine's: 9997 when its blend out starts
+// (kBlendTicks before its end, at the end with "no blend out"), 9998 and
+// 9999 at its end (cActiveAnimEvent::AnimUpdateDefault, BV 0xd38bec, makes
+// those keys for every request; the Animate Sim's trees handle them too:
+// "Event - Get", "Event - Clean", "Event Tree - Read Stop", ... s2pkg
+// event-tree-sweep). In my thread (I am the animated object); a tree that
+// fails fails the Animate Sim.
 void runAnimationEvents(Context& c, AnimationState& a, bool all) {
-    while (!a.pendingEvents.empty() && (all || a.pendingEvents.front().first <= a.playedTicks)) {
+    const float length = std::max(a.lengthTicks, 1.0f);
+    const float fadeAt = a.noBlendOut ? a.lengthTicks : a.lengthTicks - kBlendTicks;
+    auto fire = [&](int16_t event, float portion) {
+        if (a.eventTree)
+            runEventTree(c.vm, c.thread.me, c.frame.codeOwner, a.eventStackObject, a.eventTree, c.thread.temps, event,
+                         std::clamp(portion, 0.0f, 1.0f), 1, false);
+    };
+    for (;;) {
+        const bool tree = !a.pendingEvents.empty() && (all || a.pendingEvents.front().first <= a.playedTicks);
+        const bool fade = !a.blendOutSent && (all || a.playedTicks >= fadeAt);
+        if (fade && (!tree || float(a.pendingEvents.front().first) > fadeAt)) {
+            a.blendOutSent = true;
+            fire(animevent::BlendOut, a.playedTicks / length);
+            continue;
+        }
+        if (!tree)
+            break;
         const int16_t event = a.pendingEvents.front().second;
         a.pendingEvents.erase(a.pendingEvents.begin());
-        if (!a.eventTree)
-            continue;
-        const int16_t params[5] = {event, a.eventObject, 0, 0, 0};
-        runOneTickTree(c.vm, c.thread.temps, c.thread.me, c.frame.codeOwner, c.frame.stackObject, a.eventTree, params);
+        fire(event, a.playedTicks / length);
+    }
+    if (all) {
+        fire(animevent::ActionEnd, 1.0f);
+        fire(animevent::End, 1.0f);
     }
 }
 
-// Runs an overlay's event tree for `event`, in the context of the thread
-// that started it, as a one-tick tree with the event as parameter 0
-// (inferred: the binary calls it from the animation's event callback). A
-// tree that fails does not stop the caller (inferred).
-void runOverlayEvent(VM& vm, const Overlay& o, int16_t event) {
+// Runs an overlay's event tree for `event` (runEventTree).
+void runOverlayEvent(VM& vm, const Overlay& o, int16_t event, bool aborted) {
     if (!o.eventTree || !vm.object(o.me) || !vm.object(o.codeOwner))
         return;
-    std::array<int16_t, kTempCount> temps{};
-    const int16_t params[5] = {event, 0, 0, 0, 0};
+    const float portion = o.length > 0 ? std::fmod(o.played, o.length) / o.length : 0.0f;
     try {
-        runOneTickTree(vm, temps, o.me, o.codeOwner, o.stackObject, o.eventTree, params);
+        runEventTree(vm, o.me, o.codeOwner, o.stackObject, o.eventTree, objectTemps(vm, o.me), event, portion,
+                     o.requestLoops, aborted);
     } catch (const VMError&) {
+        // the error goes to the animated object's tree sim in the game
+        // (cTSTreeSim::RunOneTickTree); here it is dropped (inferred)
     }
 }
 
@@ -573,6 +619,10 @@ Exit animateSim(Context& c) {
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     a.pendingEvents = library(c.vm).treeEvents(name);
     a.eventTree = le16(&o[4]);
+    a.eventStackObject = c.frame.stackObject;
+    a.lengthTicks = seconds ? *seconds * 1000.0f : 0.0f;
+    a.noBlendOut = (o[2] & 0x40) != 0;
+    a.blendOutSent = false;
     a.headingOffset = (o[8] & 0x04) ? animlevel::headingOfDirections(c.thread.temps[4]) : 0.0f;
     a.eventObject = 0;
     try {
@@ -677,6 +727,7 @@ Exit animateOverlay(Context& c) {
     const float length = library(c.vm).seconds(ov->name).value_or(0) * 1000.0f;
     const int loops = o[2] & 0x20 ? c.thread.temps[1] : 1;
     ov->loops = length > 0 && loops > 0 ? loops : 0;
+    ov->requestLoops = int16_t(loops);
     ov->length = length;
     ov->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
     ov->pending = library(c.vm).treeEvents(ov->name);
@@ -752,6 +803,7 @@ Exit animateObject(Context& c) {
         ev.pending = library(c.vm).treeEvents(name);
         ev.length = library(c.vm).seconds(name).value_or(0) * 1000.0f;
         ev.perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
+        ev.requestLoops = (o[2] & 0x20) ? c.thread.temps[1] : int16_t(1);
         list.push_back(std::move(ev));
     }
     return Exit::True;
@@ -846,7 +898,7 @@ Exit animateStop(Context& c) {
     if (a.stoppedFades.size() > 32)
         a.stoppedFades.erase(a.stoppedFades.begin(), a.stoppedFades.end() - 32);
     for (const Overlay& x : stopped)
-        runOverlayEvent(c.vm, x, animevent::Stopped);
+        runOverlayEvent(c.vm, x, animevent::Stopped, true);
     return Exit::True;
 }
 
@@ -1104,6 +1156,10 @@ bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r) {
     a.eventTree = le16(&f.behavior->instructions[f.pc].operands[4]);
     a.headingOffset = r.heading;
     a.eventObject = r.target;
+    a.eventStackObject = f.stackObject;
+    a.lengthTicks = *seconds * 1000.0f;
+    a.noBlendOut = (f.behavior->instructions[f.pc].operands[2] & 0x40) != 0;
+    a.blendOutSent = r.played >= (a.noBlendOut ? a.lengthTicks : a.lengthTicks - kBlendTicks);
     a.playedTicks = r.played;
     a.requestId = r.id;
     return true;
@@ -1123,6 +1179,7 @@ void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r) {
     o.length = library(vm).seconds(r.name).value_or(0) * 1000.0f;
     o.loops = o.length > 0 && r.loops > 0 ? r.loops : 0;
     o.forever = r.loops == -1;
+    o.requestLoops = r.loops != 0 ? int16_t(r.loops) : int16_t(1);
     o.perTick = float(1000.0 / vm.clock.ticksPerSecond) * (r.speed > 0 ? r.speed : 1.0f);
     o.played = r.played;
     // The events of the loop it is in not reached yet (tickOverlayEvents;
@@ -1221,6 +1278,8 @@ void tickOverlayEvents(VM& vm) {
         int16_t me, codeOwner, stackObject;
         uint16_t tree;
         int16_t event;
+        float portion; // of the animation played (0-1)
+        int16_t loops; // the request's loop count
     };
     std::vector<Fire> fires;
     for (Object* po : vm.objectTable()) {
@@ -1243,8 +1302,10 @@ void tickOverlayEvents(VM& vm) {
             const float total = it->length * float(it->loops);
             const bool ended = it->played >= total;
             const float inPlay = std::fmod(it->played, it->length);
+            const float portion = ended ? 1.0f : inPlay / it->length;
             while (!it->pending.empty() && (ended || it->pending.front().first <= inPlay)) {
-                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second,
+                                 portion, it->requestLoops});
                 it->pending.erase(it->pending.begin());
             }
             // A loop that wraps gets its events again.
@@ -1252,11 +1313,14 @@ void tickOverlayEvents(VM& vm) {
                 it->pending = library(vm).treeEvents(it->name);
             if (!it->blendOutSent && it->played >= total - kBlendTicks) {
                 it->blendOutSent = true;
-                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut, portion,
+                                 it->requestLoops});
             }
             if (ended) {
-                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::ActionEnd});
-                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::ActionEnd, 1.0f,
+                                 it->requestLoops});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End, 1.0f,
+                                 it->requestLoops});
                 // An object keeps the bones where it ends (a door's leaf
                 // open, until its close animation), as for Animate Stop.
                 if (!po->person) {
@@ -1276,7 +1340,8 @@ void tickOverlayEvents(VM& vm) {
             it->played += it->perTick;
             const bool ended = it->played >= it->length;
             while (!it->pending.empty() && (ended || it->pending.front().first <= it->played)) {
-                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second,
+                                 ended || it->length <= 0 ? 1.0f : it->played / it->length, it->requestLoops});
                 it->pending.erase(it->pending.begin());
             }
             // At its end the event tree also gets event 9999 ("Event Tree -
@@ -1306,19 +1371,20 @@ void tickOverlayEvents(VM& vm) {
                         }
                 }
             if (ended)
-                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, 9999});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End, 1.0f,
+                                 it->requestLoops});
             it = ended ? list.erase(it) : it + 1;
         }
     }
     for (const Fire& f : fires) {
         if (!f.tree || !vm.object(f.me) || !vm.object(f.codeOwner))
             continue;
-        std::array<int16_t, kTempCount> temps{};
-        const int16_t params[5] = {f.event, 0, 0, 0, 0};
         try {
-            runOneTickTree(vm, temps, f.me, f.codeOwner, f.stackObject, f.tree, params);
+            runEventTree(vm, f.me, f.codeOwner, f.stackObject, f.tree, objectTemps(vm, f.me), f.event, f.portion,
+                         f.loops, false);
         } catch (const VMError&) {
-            // an event tree that fails does not stop the others (inferred)
+            // the error goes to the animated object's tree sim in the game
+            // (cTSTreeSim::RunOneTickTree); here it is dropped (inferred)
         }
     }
 }
