@@ -267,6 +267,18 @@ LightMapGlobals LightMapGlobals::from(const LightingConfig& config) {
     return g;
 }
 
+float LotLightMap::sunKept(float x, float y, float z, float zone) const {
+    constexpr float k = float(LotLightMapLayout::kTexelsPerTile);
+    if (sunTops.empty() || sunTopsWidth == 0)
+        return 1;
+    const long w = long(sunTopsWidth), h = long(sunTops.size() / sunTopsWidth);
+    const float tx = x * k, ty = y * k;
+    if (tx <= 0 || ty <= 0 || tx >= float(w - 1) || ty >= float(h - 1))
+        return 1;
+    const float d = sunTops[size_t(long(ty) * w + long(tx))] - z;
+    return d <= 0 ? 1.0f : std::max(0.0f, 1.0f - d * zone);
+}
+
 // The height map's shadow tops for a sun direction `L` (towards the sun),
 // as cHeightMapShadow builds them (Mac BV: FillFromWalls 0xd76f40,
 // FindHeightMapShadows 0xd76e68 with its column and row passes 0xd76254,
@@ -745,6 +757,8 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
     std::vector<float> shadowTop;
     if (sunShadows)
         shadowTop = sunShadowTops(layout, {sun->d[0], sun->d[1], sun->d[2]});
+    if (!shadowTop.empty())
+        result.sunTops = shadowTop, result.sunTopsWidth = pw;
     auto shadowDepth = [&](float x, float y, float z) {
         if (shadowTop.empty())
             return 0.0f;

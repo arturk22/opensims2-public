@@ -872,6 +872,13 @@ end
                   std::fabs(tops[10 * 32 + 16]) < 1e-3f,
               "height-map shadow tops behind a wall");
         check(sunShadowTops(walled, {0, 0, 1})[10 * 32 + 7] == -1000.0f, "no height-map shadow with the sun overhead");
+        // LM_sunHM (cLightingManager vtable 0x80): 1 - d x zone under the
+        // shadow's top, 1 in the light and off the map.
+        LotLightMap hm;
+        hm.sunTops = tops, hm.sunTopsWidth = 32;
+        check(std::fabs(hm.sunKept(15.5f / 8, 10.5f / 8, 2.5f, 1) - 0.5f) < 1e-5f && hm.sunKept(15.5f / 8, 10.5f / 8, 0, 1) == 0 &&
+                  hm.sunKept(15.5f / 8, 10.5f / 8, 3.5f, 1) == 1 && hm.sunKept(-1, 1, 0, 1) == 1,
+              "LM_sunHM: the sun x max(0, 1 - d x zone) under the height map's shadow");
         // An outdoor wall face towards the sun (+X, at x = 1) with a 3-high
         // block a tile east of it: its foot is in the block's shadow, its top not.
         LotLightMapLayout faced = shaded;

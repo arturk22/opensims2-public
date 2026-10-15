@@ -202,6 +202,14 @@ struct LotLightMap {
         std::array<float, 3> planePoint{}, planeNormal{};
     };
     std::vector<PortalLight> portalLights;
+    // The sun's height-map shadow tops over the ground texels (sunShadowTops,
+    // rows of `sunTopsWidth`; empty without sun shadows), and LM_sunHM's
+    // factor for an object at (x, y, z) (cLightingManager vtable 0x80, Mac BV
+    // 0x6ff4a8; docs/lighting-mac.md 11.6): 1 off the map or in the light,
+    // else max(0, 1 - d x zone), d = the shadow's top there less z.
+    std::vector<float> sunTops;
+    uint32_t sunTopsWidth = 0;
+    float sunKept(float x, float y, float z, float zone) const;
 };
 
 // The sun's height-map shadow tops over the lot's ground texels (rows of

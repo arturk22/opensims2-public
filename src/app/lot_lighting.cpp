@@ -616,12 +616,65 @@ void LotLighting::update(double seconds) {
         sets.push_back(std::move(s));
         return int(sets.size() - 1);
     };
+    // LM_sunHM (docs/lighting-mac.md 11.6): with height-map shadows the
+    // game's sun is a cHeightMapShadowLight whose radiance for each drawn
+    // part is the sun's x max(0, 1 - d x hmSunLightTransitionZone), d = the
+    // height map's shadow top over the part's box centre less its height
+    // (Mac BV 0xd80dac -> 0x6ff4a8); the windows and doors ("Portals" group)
+    // at their origin, the Sims at the box's top + 0.1 (the flag 0x17 case;
+    // inferred that it is the Sims'). Here per instance: a copy of the
+    // outdoor set with the sun scaled, by 1/32 steps.
+    const float sunZone = global("", "hmSunLightTransitionZone", 1.0f);
+    std::array<int, 2> sunLight{-1, -1}; // the sun's index in sets 0 and 1
+    for (const auto& l : state.lights)
+        if (lower(l.name) == "sun") {
+            const simd_float3 d = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
+            if (simd_length(d) > 0)
+                for (int k = 0; k < 2; ++k)
+                    for (size_t i = 0; i < sets[size_t(k)].lights.size(); ++i)
+                        if (sunLight[size_t(k)] < 0 && simd_distance(sets[size_t(k)].lights[i].direction, simd_normalize(d)) < 1e-4f)
+                            sunLight[size_t(k)] = int(i);
+        }
+    const bool sunHM = graphicsOptions().heightMapShadows && shownTo_ && !shownTo_->sunTops.empty();
+    std::map<std::pair<int, int>, int> sunSets; // (outdoor set, 32 x factor) -> set
+    auto sunShaded = [&](int set, int instance, bool sim, const std::optional<Vec3>& origin) {
+        if (!sunHM || set < 0 || set > 1 || sunLight[size_t(set)] < 0 || instance < 0)
+            return set;
+        simd_float3 p;
+        if (origin) {
+            p = f3(*origin);
+        } else {
+            const auto box = renderer_.instanceBounds(instance);
+            if (!box)
+                return set;
+            p = (box->first + box->second) * 0.5f;
+            if (sim)
+                p.z = box->second.z + 0.1f;
+        }
+        const int q = int(std::lround(shownTo_->sunKept(p.x, p.y, p.z, sunZone) * 32));
+        if (q >= 32)
+            return set;
+        if (auto it = sunSets.find({set, q}); it != sunSets.end())
+            return it->second;
+        if (sets.size() + 1 > Renderer::kMaxLightSets)
+            return set;
+        Renderer::LightSet shaded = sets[size_t(set)];
+        shaded.lights[size_t(sunLight[size_t(set)])].color *= float(q) / 32;
+        sets.push_back(std::move(shaded));
+        return sunSets[{set, q}] = int(sets.size() - 1);
+    };
     objects_.forEachDrawn([&](int16_t id, int instance, SimActor* actor) {
         const vm::Object* o = m.object(id);
         if (!o)
             return;
-        const int set = withExtras(id, roomSet(o->position.level, roomOf(*o)));
-        renderer_.setInstanceLightSet(actor ? renderer_.instanceOf(actor->model) : instance, set);
+        const int target = actor ? renderer_.instanceOf(actor->model) : instance;
+        std::optional<Vec3> origin;
+        if (const std::string objd = o->definition ? lower(o->definition->fileName) : std::string();
+            objd.starts_with("window") || objd.starts_with("door"))
+            if (const auto at = objects_.placement(id))
+                origin = at->t;
+        const int set = withExtras(id, sunShaded(roomSet(o->position.level, roomOf(*o)), target, actor != nullptr, origin));
+        renderer_.setInstanceLightSet(target, set);
     });
     // The Sims' shadows (nTSSG::cShadow style 1, docs/lighting-mac.md 9):
     // inside, straight down; outside, along the state's sun (where its
@@ -635,8 +688,8 @@ void LotLighting::update(double seconds) {
         if (!o || !actor)
             continue;
         const int16_t room = roomOf(*o);
-        const int set = withExtras(id, roomSet(o->position.level, room) + 1);
         const int instance = renderer_.instanceOf(actor->model);
+        const int set = withExtras(id, sunShaded(roomSet(o->position.level, room) + 1, instance, true, std::nullopt));
         renderer_.setInstanceLightSet(instance, set);
         if (!graphicsOptions().simShadows || instance < 0 || !o->position.inWorld())
             continue;
