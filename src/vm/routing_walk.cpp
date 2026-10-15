@@ -674,10 +674,11 @@ Step advance(Context& c, Object& me, RouteFail& why) {
 // toddler's states), as DoFailedOrSucceeded runs it (BV 0x577ea0;
 // TriggerPostRouteTree BV 0x577cf4) after an arrival or a failure of a base
 // route (not a route inside another's callback tree), on the walker's
-// thread with the parameters 0 the goal's object (a chair goal's chair; 0
-// for a standing goal) and 1 the route result; DoWaitingForPostRouteTree:
+// thread with the parameters 0 the current goal's chair (its +0x10: the
+// chair of a sitting goal, docs/seat-mac.md §A; 0 for a standing goal or
+// without a goal) and 1 the route result; DoWaitingForPostRouteTree:
 // its false after an arrival fails the route with 12 "post-route failed".
-bool startPostRoute(Context& c, int stage, int16_t result) {
+bool startPostRoute(Context& c, int stage, int16_t result, ObjectId chair = 0) {
     Object& me = c.me();
     if (!me.person)
         return false;
@@ -687,7 +688,7 @@ bool startPostRoute(Context& c, int stage, int16_t result) {
     const uint16_t tree = c.vm.functionTree(me, 0x26);
     if (!tree)
         return false;
-    const std::array<int16_t, 4> params{0, result, 0, 0};
+    const std::array<int16_t, 4> params{int16_t(chair), result, 0, 0};
     c.frame.postRoute = uint8_t(stage);
     callRouteTree(c, me.id, tree, me.id, params);
     return true;
@@ -771,12 +772,12 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     }
     if (me.route && me.route->depth == depth && me.route->tree == c.frame.behavior && me.route->node == c.frame.pc) {
         RouteFail why = RouteFail::Success;
-        const ObjectId blocker = me.route->blocker;
+        const ObjectId blocker = me.route->blocker, chair = me.route->chair;
         switch (advance(c, me, why)) {
         case Step::Walking: return Exit::Yield;
         case Step::Call: return Exit::Call;
         case Step::Arrived:
-            if (startPostRoute(c, 1, 0))
+            if (startPostRoute(c, 1, 0, chair))
                 return Exit::Call;
             if (me.person)
                 me.person->data[62] = 0;
@@ -799,6 +800,7 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         r.goals.push_back({goals.points[i][0], goals.points[i][1], goals.goals[i].cost});
     r.facings = goals.facings;
     r.multi = goals.multi;
+    r.chairs = goals.chairs;
     r.level = goals.level;
     r.ignore = {me.id};
     if (goals.onTarget)
@@ -809,6 +811,22 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     RouteFail why = RouteFail::Success;
     if (!planRoute(c.vm, me, r, why))
         return failRoute(c, why, 0, failureTrees);
+    // Already in the chair of one of the sitting goals (InitRoute, BV
+    // 0x5737cc, after FindPath: IsPersonSittingOnChairGoal, BV 0x471984,
+    // makes that goal the current one): the route arrives at once, without
+    // the pre-route tree (which would stand the Sim up) or a walk; the
+    // post-route tree gets the chair. A Sim on the sofa doing "Watch TV"
+    // again stays seated.
+    if (const ObjectId in = me.data[objdata::ContainerId]; in && me.person)
+        for (size_t i = 0; i < r.chairs.size(); ++i)
+            if (r.chairs[i] == in) {
+                if (i < r.multi.size())
+                    me.person->data[38] = r.multi[i];
+                if (startPostRoute(c, 1, 0, in))
+                    return Exit::Call;
+                me.person->data[62] = 0;
+                return Exit::True;
+            }
     // A way was found: the walker's pre-route tree first (OBJf entry 0x25,
     // the person's "Function - Pre Route": it stands a seated Sim up through
     // its chair's stand function, stops the idles and decides whether to
@@ -840,13 +858,14 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     }
     if (me.data[objdata::ContainerId] != 0)
         leaveSlot(me);
+    const ObjectId chair = r.chair;
     me.route = std::move(r);
     RouteFail later = RouteFail::Success;
     switch (advance(c, me, later)) {
     case Step::Walking: return Exit::Yield;
     case Step::Call: return Exit::Call;
     case Step::Arrived:
-        if (startPostRoute(c, 1, 0))
+        if (startPostRoute(c, 1, 0, chair))
             return Exit::Call;
         if (me.person)
             me.person->data[62] = 0;

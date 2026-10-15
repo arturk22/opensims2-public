@@ -337,7 +337,8 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
         }
     }
     if (s.person)
-        std::printf("route result (person data 62): %d, facing %d\n", s.person->data[62], s.data[vm::objdata::Direction]);
+        std::printf("route result (person data 62): %d, facing %d, in %d slot %d\n", s.person->data[62],
+                    s.data[vm::objdata::Direction], s.data[vm::objdata::ContainerId], s.data[vm::objdata::SlotNumber]);
     if (std::getenv("OS2_TRACE_ROUTE"))
         for (const auto& [name, n] : machine.animations.missing)
             std::printf("missing animation %s x%zu\n", name.c_str(), n);

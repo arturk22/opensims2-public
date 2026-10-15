@@ -339,6 +339,18 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         return -1;
     };
     const TilePos centre = tileOf(target);
+    // The slot's weights (BV 0x478d2c, the slot's vtable 0xD8): sitting x 10
+    // and the larger of standing and ground x 10 (10 when neither is set).
+    const int sitWeight = std::max(slot.sitting, 0) * 10;
+    int standWeight = std::max(std::max(slot.standing, slot.ground), 0) * 10;
+    if (sitWeight == 0 && standWeight == 0)
+        standWeight = 10;
+    // A bone slot's goals sit in the object itself (their +0x10, the chair)
+    // when it weighs sitting over standing and the object is a chair
+    // (GetPossibleSlotsFromModelRoutingSlot, BV 0x475b98; IsChair: the OBJf
+    // "sit" entry, 26, has a tree): the high chair's slot (sitting 1,
+    // standing 0); not the toilets' (1 and 1).
+    const ObjectId boneChair = sitWeight > standWeight && functionTree(target, 26) ? target.id : 0;
     // A candidate goal: with `evaluate`, EvalTileForGoal's verdict and penalties.
     auto add = [&](float px, float py, float cost) {
         if (evaluate && world) {
@@ -385,6 +397,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                     out.facings.push_back((boneDir + b.facing) % 8);
                     out.multi.push_back(b.index);
                 }
+                out.chairs.assign(out.goals.size(), boneChair);
                 return out;
             }
         }
@@ -474,6 +487,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                         addFacing(qx, qy, 1 + r, (boneDir + b.facing) % 8, b.index);
                     }
             }
+        out.chairs.assign(out.goals.size(), boneChair);
         return out;
     }
     if (!world)
@@ -494,8 +508,9 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     // * |lateral| (a tie-break) + 10 per routing cost of its floor above 1.
     // Not done: the router's own radius added to the distances (vtable 0xB4
     // of the router: its "slot displacement", 0 for the base game's Sims),
-    // the +25 for a direction off the object's walls and +20 for the Sim's room (world queries not decoded), and the
-    // sitting goals (ScanConeForSittingGoals) of slots with a sitting weight.
+    // and the +25 for a direction off the object's walls and +20 for the
+    // Sim's room (world queries not decoded). With a sitting weight the
+    // chairs in the cone give sitting goals too (scanSitting below).
     const float minD = slot.minDistance, optimal = slot.optimalDistance;
     const float maxD = std::min(slot.maxDistance, 32.0f);
     if (minD < 0 || maxD < 0 || maxD < minD || optimal < minD || maxD < optimal)
@@ -511,85 +526,229 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
     const float ex = float(ox * std::cos(yaw) - oy * std::sin(yaw));
     const float ey = float(ox * std::sin(yaw) + oy * std::cos(yaw));
-    int candidates = 0, accepted = 0;
-    struct Tile {
-        float cost;
-        size_t index;
-        float lateral;
-    };
-    std::map<std::pair<int, int>, Tile> tiles; // without `evaluate`: the best point of each tile
-    // Slot flag 0x2000 "random scoring" (the slot's vtable 0x78; FreeSO's
-    // SLOTFlags.RandomScoring): when the scan has more candidates than the
-    // 100 it may look at, each is taken with a chance of 100 in the total
-    // (BV 0x4778b4: a random number below the total, at most 100 - the count
-    // so far at the start), and a goal's score gets a random 20 x [0, 1) - 10
-    // (the standing callback; here its cost, lower is better: + 10 - 20 x).
-    const bool randomScoring = slot.flags & 0x2000;
-    int total = 0;
-    if (randomScoring)
+    // The standing goals (BV 0x478518: the scan with the standing callback,
+    // then standing weight x 10 added to each score; here taken off the
+    // cost). Limits: 100 candidates and 48 accepted, 16 more each for the
+    // second of two scans.
+    auto scanStanding = [&](int maxCandidates, int maxAccepted) {
+        int candidates = 0, accepted = 0;
+        struct Tile {
+            float cost;
+            size_t index;
+            float lateral;
+        };
+        std::map<std::pair<int, int>, Tile> tiles; // without `evaluate`: the best point of each tile
+        // Slot flag 0x2000 "random scoring" (the slot's vtable 0x78; FreeSO's
+        // SLOTFlags.RandomScoring): when the scan has more candidates than the
+        // 100 it may look at, each is taken with a chance of 100 in the total
+        // (BV 0x4778b4: a random number below the total, at most 100 - the count
+        // so far at the start), and a goal's score gets a random 20 x [0, 1) - 10
+        // (the standing callback; here its cost, lower is better: + 10 - 20 x).
+        const bool randomScoring = slot.flags & 0x2000;
+        int total = 0;
+        if (randomScoring)
+            for (int i = 0; i <= rows; ++i)
+                for (const int sign : {-1, 1}) {
+                    const float r = optimal + float(sign * i) * res;
+                    if ((i == 0 && sign == 1) || r < minD || r > maxD)
+                        continue;
+                    total += (int(std::ceil((r * spread) / res)) - int(std::floor(-(r * spread) / res)) + 1) *
+                             int(entries.size());
+                }
         for (int i = 0; i <= rows; ++i)
             for (const int sign : {-1, 1}) {
-                const float r = optimal + float(sign * i) * res;
-                if ((i == 0 && sign == 1) || r < minD || r > maxD)
+                if (i == 0 && sign == 1)
                     continue;
-                total += (int(std::ceil((r * spread) / res)) - int(std::floor(-(r * spread) / res)) + 1) *
-                         int(entries.size());
-            }
-    for (int i = 0; i <= rows; ++i)
-        for (const int sign : {-1, 1}) {
-            if (i == 0 && sign == 1)
-                continue;
-            const float r = optimal + float(sign * i) * res;
-            if (r < minD || r > maxD)
-                continue;
-            const int lo = int(std::floor(-(r * spread) / res)), hi = int(std::ceil((r * spread) / res));
-            for (int j = lo; j <= hi; ++j) {
-                const float lateral = float(j) * res;
-                for (const int d : entries) {
-                    if (candidates >= 100 || accepted >= 48)
-                        goto done;
-                    if (total > 100 && std::uniform_int_distribution<int>(0, total - 1)(random) > 100)
-                        continue;
-                    ++candidates;
-                    const auto [sx, sy] = directionStep(d);
-                    const float n = std::hypot(float(sx), float(sy));
-                    const float fx = float(sx) / n, fy = float(sy) / n; // forward
-                    const float px = cx + ex + fx * r - fy * lateral, py = cy + ey + fy * r + fx * lateral;
-                    float cost = std::fabs(std::hypot(r, lateral) - optimal) * 16 * weight +
-                                 0.001f * weight * std::fabs(lateral);
-                    if (randomScoring)
-                        cost += 10 - 20 * std::uniform_real_distribution<float>(0, 1)(random);
-                    if (!evaluate) {
-                        const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
-                        if (!world->contains(t) || (t.x == centre.x && t.y == centre.y))
+                const float r = optimal + float(sign * i) * res;
+                if (r < minD || r > maxD)
+                    continue;
+                const int lo = int(std::floor(-(r * spread) / res)), hi = int(std::ceil((r * spread) / res));
+                for (int j = lo; j <= hi; ++j) {
+                    const float lateral = float(j) * res;
+                    for (const int d : entries) {
+                        if (candidates >= maxCandidates || accepted >= maxAccepted)
+                            return;
+                        if (total > 100 && std::uniform_int_distribution<int>(0, total - 1)(random) > 100)
                             continue;
-                        if (!ignoreRooms && world->room(t) != world->room(centre))
-                            continue;
-                        if (!world->lineOfSight(centre, t))
-                            continue;
-                        // The tile's best point: the cheapest, then the nearest the row's middle.
-                        auto it = tiles.find({t.x, t.y});
-                        if (it != tiles.end()) {
-                            if (cost < it->second.cost ||
-                                (cost == it->second.cost && std::fabs(lateral) < it->second.lateral)) {
-                                const size_t k = it->second.index;
-                                it->second = {cost, k, std::fabs(lateral)};
-                                out.goals[k].cost = cost;
-                                out.points[k] = {px, py};
-                                out.facings[k] = facingAt(px, py);
+                        ++candidates;
+                        const auto [sx, sy] = directionStep(d);
+                        const float n = std::hypot(float(sx), float(sy));
+                        const float fx = float(sx) / n, fy = float(sy) / n; // forward
+                        const float px = cx + ex + fx * r - fy * lateral, py = cy + ey + fy * r + fx * lateral;
+                        float cost = std::fabs(std::hypot(r, lateral) - optimal) * 16 * weight +
+                                     0.001f * weight * std::fabs(lateral) - float(standWeight);
+                        if (randomScoring)
+                            cost += 10 - 20 * std::uniform_real_distribution<float>(0, 1)(random);
+                        if (!evaluate) {
+                            const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
+                            if (!world->contains(t) || (t.x == centre.x && t.y == centre.y))
+                                continue;
+                            if (!ignoreRooms && world->room(t) != world->room(centre))
+                                continue;
+                            if (!world->lineOfSight(centre, t))
+                                continue;
+                            // The tile's best point: the cheapest, then the nearest the row's middle.
+                            auto it = tiles.find({t.x, t.y});
+                            if (it != tiles.end()) {
+                                if (cost < it->second.cost ||
+                                    (cost == it->second.cost && std::fabs(lateral) < it->second.lateral)) {
+                                    const size_t k = it->second.index;
+                                    it->second = {cost, k, std::fabs(lateral)};
+                                    out.goals[k].cost = cost;
+                                    out.points[k] = {px, py};
+                                    out.facings[k] = facingAt(px, py);
+                                }
+                                continue;
                             }
-                            continue;
+                            tiles[{t.x, t.y}] = {cost, out.goals.size(), std::fabs(lateral)};
                         }
-                        tiles[{t.x, t.y}] = {cost, out.goals.size(), std::fabs(lateral)};
+                        const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
+                        const float floorCost = world->contains(t) ? world->cost(t) : 1;
+                        if (add(px, py, cost + (floorCost > 1 ? (floorCost - 1) * 10 : 0)))
+                            ++accepted;
                     }
-                    const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
-                    const float floorCost = world->contains(t) ? world->cost(t) : 1;
-                    if (add(px, py, cost + (floorCost > 1 ? (floorCost - 1) * 10 : 0)))
-                        ++accepted;
                 }
             }
+    };
+    // The sitting goals (ScanConeForSittingGoals, BV 0x4788cc; docs/seat-mac.md
+    // §A): the same cone, whole tiles (resolution 1) and a tile wider each
+    // side (+0x44 = 1: the distances one tile further each way, each row's
+    // half width d x tan 22.5 degrees + 1); every object on a tile of it
+    // (ScanConeForChairRoutingSlotsCB, BV 0x4776fc) that is a chair (OBJf
+    // "sit", 26, has a tree) facing back along the cone's direction (its
+    // direction = the cone's + 4), not for sale (od 106), with its
+    // interactions on (AreInteractionsDisabled: od 87 < 1, od 82 bit 2 off)
+    // and nobody but the router in its slot 0, gives the goals of its first
+    // bone routing slot with more than one bone and no containment flag
+    // (GetPossibleSittingSlotsFromModel, BV 0x4763e4; only for a chair with
+    // a "stand" tree, OBJf 27), each sitting in it. A goal's score: 100 less
+    // EvalTileForGoal's penalties from the chair's point and from the
+    // target's, + 25 (the scan passes no direction mask), + sitting weight
+    // x 10, - |d - preferred| x 16 x gradient - 0.01 x gradient x |lateral|
+    // (d and lateral from the cone's origin); here the cost, 100 less that.
+    // The binary does not count these against the candidate limits. A chair
+    // another Sim sits in: the route fails "destination occupied" (7) when
+    // no goal is left. Ours: a chair met again (a second point of the cone
+    // on its tile) is not taken twice (the binary adds the same goals again).
+    auto scanSitting = [&] {
+        const float wide = 1;
+        const float sMin = std::max(minD - wide, 0.0f), sMax = maxD + wide;
+        const int sRows = int(std::ceil(std::max(sMax - optimal, optimal - sMin)));
+        std::set<ObjectId> seen;
+        bool occupied = false;
+        for (int i = 0; i <= sRows; ++i)
+            for (const int sign : {-1, 1}) {
+                if (i == 0 && sign == 1)
+                    continue;
+                const float r = optimal + float(sign * i);
+                if (r < sMin || r > sMax)
+                    continue;
+                const float half = r * spread + wide;
+                const int lo = int(std::floor(-half)), hi = int(std::ceil(half));
+                for (int j = lo; j <= hi; ++j) {
+                    const float lateral = float(j);
+                    for (const int d : entries) {
+                        const auto [sx, sy] = directionStep(d);
+                        const float n = std::hypot(float(sx), float(sy));
+                        const float fx = float(sx) / n, fy = float(sy) / n;
+                        const float px = cx + ex + fx * r - fy * lateral, py = cy + ey + fy * r + fx * lateral;
+                        const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
+                        for (const ObjectId id : objectsOnTile(t)) {
+                            const Object* chair = object(id);
+                            if (!chair || chair->person || seen.count(id))
+                                continue;
+                            if (std::getenv("OS2_DEBUG_SIT_GOALS")) // the objects the sitting cone meets
+                                std::fprintf(stderr, "sit cone of %d (dir %d): %d %s at (%.1f, %.1f) dir %d, sit %u stand %u\n", target.id, d, id,
+                                             chair->definition ? chair->definition->fileName.c_str() : "?", chair->position.x,
+                                             chair->position.y, chair->data[objdata::Direction], functionTree(*chair, 26),
+                                             functionTree(*chair, 27));
+                            if (!functionTree(*chair, 26) || ((chair->data[objdata::Direction] % 8) + 8) % 8 != (d + 4) % 8)
+                                continue;
+                            if (chair->data[106] != 0 || chair->data[87] >= 1 || (chair->data[82] & 0x04))
+                                continue;
+                            seen.insert(id);
+                            if (const ObjectId in = containedIn(id, 0); in && in != router) {
+                                occupied = true;
+                                continue;
+                            }
+                            if (!functionTree(*chair, 27))
+                                continue;
+                            const Slots::Slot* seat = nullptr;
+                            for (const Slots::Slot* s : routingSlots(slotTable(*this, *chair)))
+                                if ((s->unknown10 & 0x20000) && !(s->flags & 0x200000) && slotBones(*s, *chair).size() > 1) {
+                                    seat = s;
+                                    break;
+                                }
+                            if (!seat)
+                                continue;
+                            // The chair's model: the lead's for a part of a multi-tile one.
+                            float lx = chair->position.x, ly = chair->position.y;
+                            int ldir = ((chair->data[objdata::Direction] % 8) + 8) % 8;
+                            if (const ObjectId lead = multiTileGroup(*chair); lead != chair->id)
+                                if (const Object* l = object(lead); l && l->position.inWorld())
+                                    lx = l->position.x, ly = l->position.y, ldir = ((l->data[objdata::Direction] % 8) + 8) % 8;
+                            const double cyaw = (90.0 - 45.0 * ldir) * M_PI / 180.0;
+                            for (const SlotBone& b : slotBones(*seat, *chair)) {
+                                const float gx = lx + float(b.x * std::cos(cyaw) - b.y * std::sin(cyaw));
+                                const float gy = ly + float(b.x * std::sin(cyaw) + b.y * std::cos(cyaw));
+                                float penalty = 0;
+                                if (evaluate && world) {
+                                    float p1 = 0, p2 = 0;
+                                    const int c1 = evalGoal(*this, *world, *chair, tileOf(*chair), gx, gy, out.level,
+                                                            ignoreRooms, router, p1);
+                                    const int c2 = c1 == 7 ? evalGoal(*this, *world, target, centre, gx, gy, out.level,
+                                                                      ignoreRooms, router, p2)
+                                                           : c1;
+                                    if (c2 != 7) {
+                                        if (const int16_t why = refusedResult(c2))
+                                            out.refused = why;
+                                        continue;
+                                    }
+                                    penalty = p1 + p2;
+                                }
+                                // d and lateral from the cone's origin, along and across its direction.
+                                const float vx = gx - (cx + ex), vy = gy - (cy + ey);
+                                const float along = vx * fx + vy * fy, across = -vx * fy + vy * fx;
+                                float cost = penalty - 25 - float(sitWeight);
+                                if (weight > 0)
+                                    cost += std::fabs(std::hypot(along, across) - optimal) * 16 * weight +
+                                            0.01f * weight * std::fabs(across);
+                                out.goals.push_back({int(std::floor(gx)), int(std::floor(gy)), cost});
+                                out.points.push_back({gx, gy});
+                                out.facings.push_back((ldir + b.facing) % 8);
+                                out.multi.resize(out.goals.size() - 1, 0);
+                                out.multi.push_back(b.index);
+                                out.chairs.resize(out.goals.size() - 1, 0);
+                                out.chairs.push_back(id);
+                            }
+                        }
+                    }
+                }
+            }
+        if (occupied && out.goals.empty() && !out.refused)
+            out.refused = int16_t(RouteFail::DestinationOccupied);
+    };
+    // Both weights: the heavier scan first (sitting when it weighs at least
+    // as much), with the limits; one weight: that scan alone (BV 0x4797b8).
+    if (!world)
+        return out;
+    if (standWeight > 0 && sitWeight > 0) {
+        if (sitWeight >= standWeight) {
+            scanSitting();
+            scanStanding(116, 64);
+        } else {
+            scanStanding(100, 48);
+            scanSitting();
         }
-done:
+    } else if (standWeight > 0) {
+        scanStanding(100, 48);
+    } else {
+        scanSitting();
+    }
+    if (!out.chairs.empty())
+        out.chairs.resize(out.goals.size(), 0);
+    if (!out.multi.empty())
+        out.multi.resize(out.goals.size(), 0);
     return out;
 }
 

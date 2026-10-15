@@ -578,6 +578,8 @@ struct Object {
         std::vector<std::array<float, 3>> goals;
         std::vector<int> facings;
         std::vector<int16_t> multi; // the goals' multi slot indices (person data 38), when any
+        std::vector<ObjectId> chairs; // the goals' chairs (sitting goals), when any
+        ObjectId chair = 0;           // the planned goal's chair: the post-route tree's parameter 0
         std::vector<ObjectId> ignore;
         int blockedTicks = 0, replans = 0;
         // Where the Sim in the way stood at the last try (routing_walk.cpp).
@@ -937,6 +939,9 @@ public:
         std::vector<int> facings;
         bool onTarget = false; // the goal is on the target's own tile (its parts do not block it)
         std::vector<int16_t> multi; // each goal's "multi slot index" (its bone in a bone slot), when any
+        // Each goal's chair (cTSRouteGoal +0x10): the chair a sitting goal
+        // sits in, 0 for a standing goal (docs/seat-mac.md §A).
+        std::vector<ObjectId> chairs;
         // With `evaluate`: the route result of the last candidate turned down
         // (EvalTileForGoal, routing.cpp), for when none is left; 0 if none was.
         int16_t refused = 0;

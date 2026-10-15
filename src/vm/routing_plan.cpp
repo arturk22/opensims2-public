@@ -614,6 +614,8 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     // In" reads it as the seat, the dining chairs as the side to sit from).
     if (me.person && path.goal < r.multi.size())
         me.person->data[38] = r.multi[path.goal];
+    // The goal's chair, for the post-route tree (a sitting goal; 0 standing).
+    r.chair = path.goal < r.chairs.size() ? r.chairs[path.goal] : 0;
     shapeWalk(vm, me, r, me.route.has_value() && !me.route->waiting && me.route->climb.ticksLeft == 0);
     return true;
 }
