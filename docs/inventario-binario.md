@@ -402,6 +402,10 @@ no jogo base.
 | 25 | **Cercas**: `cFenceGeometryNode`, `cFenceManager`, o +0,75 por tipo de piso | 3.12 cercas | lote |
 | 26 | **Salvar, resto**: salvar do bairro (`cTSSaveNeighborhoodController`), `cTSPersistSystem` | 3.9 controladores, persist | salvar |
 | 27 | **UI de jogo**: `ApplySavedUIState` (caso Construir), diálogos (27 marcadores), famílias e despejo se a 12 não fizer | 3.13 fluxo, diálogos; 3.10 famílias | UI |
+| 28 | **Desempenho das rotas e dos testes** (pedido do usuário, passa na frente): cachear a árvore do planejador (quadtree e tabelas de soma 512×512) entre planos, com um jeito barato de saber que os obstáculos não mudaram; índice para `containedIn`/`followContainers` (setter em toda escrita de `ContainerId`/posição). Regra do `docs/performance.md`: simulação bit a bit igual e capturas idênticas; medir antes/depois com `lot-run` dos 69 lotes e `autonomy` (ciclos e instruções) | `docs/performance.md` "What is left" | rotas (só depois do reforço `n18b-rotas` entrar) |
+| 29 | **`s2pkg` com 100.000 nós por rota** (pedido do usuário, passa na frente; débito 3.1): os comandos `lot-run`, `pie`, `route`... usam 20.000 nós por turno e podem dar "sem rota" onde o jogo e o app (100.000, do binário) acham; um valor só, do binário, para todos | `docs/ideias/DEBITOS-TECNICOS.md` 3.1 | ferramentas |
+
+Ordem: as linhas 28 e 29 passam na frente das 24–27 (pedido do usuário, 2026-10-15): a 29 na próxima vaga; a 28 quando a área "rotas" ficar livre.
 
 Limites: algumas linhas dependem de valores que só existem com o jogo
 rodando (UV da parede da piscina, flags do pincel de terreno); nesses
