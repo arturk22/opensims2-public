@@ -84,11 +84,11 @@ palavra.
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% (não recontado na n12) | 5,5 / 7 = **79%** | 41 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
-| Desenho | 211 (31) | 129 / 2.309 = 5,6% (não recontado na n13) | 5 / 10 = **50%** | 54 / 36 |
+| Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13 nem na n16) | 5,5 / 10 = **55%** | 55 / 40 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **82,5 / 110 = 75%** | **518 em src** |
+| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **83 / 110 = 75,5%** | **519 em src** |
 
-"Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
+"Estudadas" = classes com pelo menos um método nomeado. Os 520 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
 próprias: a cobertura é das 34 funções que a issue 001 manda ler.
 
@@ -307,7 +307,7 @@ Código: `src/render/*`, `src/formats/lot_model.*`, `lot_lightmap.*`,
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
 | Materiais e shaders (caminho DX8 dos `.matShad`) | `render/shaders.metal`, `renderer.cpp` | inferido | Muito lido; faltam a fórmula do normal map, o passe de recorte e o CelShaded. |
-| Luz e light maps: `cLightingManager` (88, 25), `cLightMapManager`, `cDiffusion*` | `formats/lot_lightmap.*`, `app/lot_lighting.*` | inferido | Lista longa de inferidos no `TODO.md` M4 (sala de fora, portais, paredes sem grade). |
+| Luz e light maps: `cLightingManager` (88, 31), `cLightMapManager`, `cDiffusionManager`, `cFloorColorGrid` (29, 17), `cWallDiffusionManager` (29, 13), `cDiffusionWall` (24, 10) | `formats/lot_lightmap.*`, `lot_diffusion.*`, `app/lot_lighting.*` | fiel | Rodada n16 (`lighting-mac.md` §10): grade de piso (paredes que bloqueiam a luz, portas inclusive, fontes por sala e por andar aberto, varreduras, cópia pela guarda 4×4), paredes com amostras próprias (retas, luz das fontes, piso trazido, propagação, cantos escuros, células 8×24), cômodos sem luz, fontes só com `cDiffusionLightExtension`, irradiância pelos `Lookup*Diffusion`. Inferidos: os portais (lista não lida: lado, sala, parede), a altura da luz, as retas montadas das faces. |
 | Sombras: `nTSSG::cShadow` (32, 7), height map do sol | `formats/lot_lightmap.cpp`, `render/` | inferido | Rodada n06: os planos GUOB dos objetos lidos (`UpdateGUOBs`, `EnableGUOB`) e conferidos no lote; falta recalcular os de parede ao mover objetos e o "LM_sunHM". |
 | Paredes e pisos: `cWallGeometryNode`, `cFloorGeometryNode` (32, 0), `cFloorManager` (31, 0) | `formats/lot_model.cpp` | inferido | UV dos pisos e do topo das paredes são chutes. |
 | Telhados: `nTSSG::c…Roof`, `nTSWorld::c…RoofType`, classes `c{Even,Odd}Triangle{First,Second}…` | `formats/lot_roof_game.*`, `lot_roof.cpp` | fiel | Rodada n13 (`roof-fence-water-mac.md` §1.4–1.5): os tipos 1–6 como o jogo (grades, `ConnectHeightField`, triângulo escondido sob outro telhado, telhado com telhado nos vértices, célula do atlas por classe, faixas); inferidos: a inclinação global (0,5) e a ordem dos getters das texturas das faixas; sem portar: o `IsTriangleCenterSupportedByOtherRoof` do anel da mansarda; diagonais e pagodes ainda no OpenTS2. |
@@ -390,7 +390,7 @@ no jogo base.
 | 13 | **Telhados do jogo**: triangulação, células do atlas e telhado com telhado (portar o `lot_roof.cpp` para as funções do `cWorldRoof` mapeadas no `TODO.md`) + pré-teste 0x7F do `cTSUserToolRoof` (beiral sobre janelas) — **feita** (n13): tipos 1–6 pelo caminho do jogo (`formats/lot_roof_game.*`, `roof-fence-water-mac.md` §1.5) e o pré-teste com a caixa do beiral (245 de 275 telhados aceitos; os 30 restantes o jogo também recusa) | 3.12 telhados, 3.5 telhados | telhado |
 | 14 | **Locomoção**: `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle`, encadeamento das fases e o primeiro pé da parada — **feita** (n14): relógio das fases e entrega na saída do pedido (a rota acaba 233 ms antes do fim da parada), trocas por `BlendDistance` com cosseno, pé da parada pelo `0x178`, rotas curtas, parada ao bloquear (`anim-mac.md` §8) | 3.3 locomoção | animação |
 | 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 | 3.12 efeitos | efeitos |
-| 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) | 3.12 luz | luz |
+| 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) — **feita** (n16): a grade de piso e as paredes do `cDiffusionManager` lidas inteiras e feitas (`formats/lot_diffusion.*`), cômodos sem luz, fontes só com extensão de difusão, irradiância dos cômodos e o `L` dos portais pelos `Lookup*Diffusion` (`lighting-mac.md` §10); os portais seguem inferidos | 3.12 luz | luz |
 | 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) | 3.8 curvas, desejos | motivos |
 | 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
 | 19 | **Paredes e pisos**: `cFloorGeometryNode`, `cFloorManager`, `cWallGeometryNode`, `cSimplifiedWall` (UV dos pisos e do topo) | 3.12 paredes e pisos, 3.6 geometria | lote |

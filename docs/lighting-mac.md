@@ -260,6 +260,8 @@ depois faz o mesmo nas paredes.
 
 ### 5.1 A grade do piso
 
+(Rodada n16: lida inteira e corrigida no §10.4.)
+
 Amostras em **meio tile** (grade `2·largura × 2·altura` do lote); cada
 amostra tem duas metades (os dois triângulos de um tile cortado na
 diagonal, `+0x00` e `+0x24`), cada uma com cor RGB, ID da sala (`+0x20`),
@@ -312,6 +314,8 @@ por canal:  se (viz − cor) > k·cor:  cor = viz / (1 + k) + 0,01   (FUN_00ee7c
    viram os texels do tile por interpolação; metade diagonal à parte.
 
 ### 5.2 Paredes
+
+(Rodada n16: lida inteira no §10.5, que substitui este parágrafo.)
 
 `cWallDiffusionManager` (BV `0xee6000..0xef5000`, sem nomes): mesmos
 parâmetros com prefixo de parede (`insideWallAmbient`, `outsideWallAmbient`,
@@ -592,53 +596,41 @@ tipo 3:
   de texels do lado (só a parte de cima recebe a luz direta; inferido: muro
   baixo/meia parede).
 
-## 7. O que o código atual faz diferente (branch `r6-lighting`: `src/formats/lot_lightmap.cpp`, `src/app/lot_lighting.cpp`)
+## 7. O que o código atual faz diferente (`src/formats/lot_diffusion.cpp`, `lot_lightmap.cpp`, `src/app/lot_lighting.cpp`)
+
+Rodada n16: a difusão de piso e de parede, os cômodos sem luz, as fontes
+e a irradiância dos cômodos seguem o binário (§10). Diferenças que
+sobram:
 
 | tema | jogo | `src/` hoje |
 |---|---|---|
-| terreno e pisos fora | difusão de fora (0,25 + lâmpadas de fora com `outsideObjects` *diffusion*) menos o ambiente de fora, **mais** `E(n)·terrainStrength·0,5` (sun, sky, fill1, fill2), com o sol tirado na sombra do height map (§5.3) | igual; `n` = gradiente das elevações no térreo sem piso, (0,0,1) nos pisos; a sombra do sol das paredes, telhados e pisos de cima (rodada 15; sem objetos; alfa 255); luz de fora acima de um andar sem piso cai para o de baixo (inferido) |
-| quem é "fora" | sala 0 do mundo (§5.3) | sala 0 ou sala em que metade dos quartos de tile não tem piso (inferido: os pátios do `3ARY`) |
-| portais | por sentido: de fora para um cômodo `sol·max(0, sol·fora) + skylight + L` (+ spill 0,5·L), de um cômodo `L`; modificadores pelo outro lado (§5.4) | igual; a parede do portal é a amostra vizinha mais próxima que a luz não atravessa, `L` = light map do lado de onde vem depois da difusão das lâmpadas; sem a supressão entre janelas nem as práticas das janelas |
-| irradiância do cômodo | piso e paredes × cor do material dessaturada por `roomSaturation` (§4.1) | igual: cor média da textura (`stdMatBaseTextureName`) do piso de cada quarto de tile e do papel de cada face |
+| terreno e pisos fora | difusão de fora menos o ambiente de fora, **mais** `E(n)·terrainStrength·0,5`, com o sol tirado na sombra do height map (§5.3) | igual; a luz fria puxada para o cinza no chão (escolha visual, rodada 12) |
+| quem é "fora" | sala 0 do mundo (§5.3) | sala 0 do mapa de luz (3ARY `0x0B`); lote sem esse mapa: sala em que metade dos quartos não tem piso (inferido) |
+| portais | lista de portais de cada sala (não lida), luz da parede pelo `LookupWallDiffusion` (§10.6) | um portal por luz de janela/porta, para o lado para onde a luz aponta, na parede que bloqueia a luz mais perto; `L` = a amostra da parede do lado de onde a luz vem, das lâmpadas; janela sobre andar sem piso semeia o piso de baixo (inferidos); sem a supressão entre janelas, sem `doorOrArchDirectMultiplier` (padrão não lido) e sem as práticas das janelas |
 | lâmpadas nos objetos | luz prática direta (`insideObjects`/`outsideObjects` *practical*) além da luz do cômodo (inferido) | `LightSet::points`: até 12 por sala (as mais fortes), `I/(1 + C·d²)` até o alcance de §6, por pixel |
 | hora → estado | `UpdateLightingState` a cada hora (§2) | pelo relógio da VM, também durante os ticks das capturas `--run-vm` |
-| difusão, `I[k]`, Delta, `unlitRoomColor` | §4–§5 | segue o doc |
+| difusão, `I[k]`, Delta, `unlitRoomColor` | §4, §6.1, §10 | segue o binário; a luz das paredes que o jogo junta por quarto de tile, aqui por meia amostra (`GatherFloorLighting`) |
 
 ## 8. O que falta
 
-- ~~O `thresholdLightsByArea` (a string existe; o uso não foi achado).~~
-  Rodada 16: o parser (`FUN_007175b8`) o guarda no `+0x190` do
-  gerenciador; nenhuma função do gerenciador (BV `0x6f0000..0x720000`) nem
-  da difusão (`0xd70000..0xd90000`, `0xee0000..0xef6000`) lê esse campo, e
-  o `Lighting.txt` não o define: sem efeito (inferido: pode ser lido por
-  outro caminho, não achado).
-- Rodada 16, `AddDirectFloorLighting` relido (`0x708ebc`): pede ao mundo
-  (`+0x30`, vtable `0x130`) **os tiles da sala 0** (cada um com nível em
-  `+8` e quadrante em `+0xc`); um tile inteiro (`0x0f`) no nível 0 sem piso
-  (vtable `0xd4` do mundo) usa as normais do terreno interpoladas
-  (`0x704274`); com piso, ou noutro nível, a luz constante de uma normal
-  para cima (`0x700368`); meio tile `0x703de8`. Com sombras, as variantes
-  `0x705068`/`0x702fd8`. Ou seja, os tiles de fora em andares de cima
-  recebem a luz direta do estado com a normal para cima, se o mundo os põe
-  na sala 0. Quem monta a lista da sala 0 (e se os pátios do `3ARY` 0x09
-  com ID próprio entram nela) é o gerenciador de salas, não lido; o app usa
-  a sala 0 do mapa de luz (`3ARY` 0x0B), que já põe pátios e bordas na sala
-  0 nos lotes do jogo.
-- A propagação nas paredes e a escrita dos texels de parede; a cópia
-  exata das amostras do piso para os texels (interpolação).
-- Os valores padrão da `cDiffusionLightExtension` (quando o modelo e os
-  `lightAttribOverride` não dão um campo) e o leitor dela no CRES.
-- A supressão entre janelas (`FindPortalSuppression`) e a "LM_PortalSpill".
-- Como as salas de pátio do `3ARY` viram a sala 0 (§5.3; rodada 16: a
-  luz direta pede ao mundo a lista de tiles da sala 0, abaixo; o mapa
-  0x0B do `3ARY` já traz os pátios na sala 0).
-- Luzes práticas: confirmar no binário que `modifiers insideObjects`
-  multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
-- O height map de sombra (rodada 16: montagem, varredura e paredes de fora
-  lidas e feitas, §5.3): falta onde o `hmLotShadowStrength` (1,5, no
-  `+0x4c` do `cHeightMapShadow`) entra, a textura por vértice da
-  "LM_sunHM" nos objetos (`FUN_00706920`) e quem chama o
-  `AddBlobToHeightMap`.
+- O `thresholdLightsByArea`: o parser o guarda no `+0x190` do gerenciador e
+  nada o lê (rodada 16 antiga); o `Lighting.txt` não o define: sem efeito.
+- A lista de portais de cada sala (`cRoomLightingDesc +0x7C`): quem a
+  monta, com que sala de origem e de destino, a fonte de difusão de cada
+  portal (`+0x60` do `cPortalLight`) e o lado da parede que o
+  `LookupWallDiffusion` lê; a supressão entre janelas
+  (`FindPortalSuppression`) e o padrão de `doorOrArchDirectMultiplier`.
+- Quem aplica os `lightAttribOverride` e cria a `cDiffusionLightExtension`
+  (a tabela `+0x378` do gerenciador, por propriedade).
+- Os grafos de parede 3, 8, 10, 11 do `SetupWalls` (aqui: todas as faces
+  com papel, cercas inclusive) e o `DoDiffusionPassOptimized` (o caminho
+  incremental, `DAT_02c1bed4`; o `Lighting.txt` não liga
+  `incrementalUpdates`).
+- Luzes práticas: confirmar que `modifiers insideObjects` multiplica a
+  intensidade e o `FalloffRate` (`UpdateObjectLighting`).
+- O height map de sombra: onde o `hmLotShadowStrength` (1,5) entra, a
+  textura por vértice da "LM_sunHM" nos objetos (`FUN_00706920`) e quem
+  chama o `AddBlobToHeightMap`.
 - A direção de sombra do gerenciador de luz (vtable `0x78`, §9) e se a cor
   da vtable `0x7c` é o `+0x28c` de `0x705f70`.
 
@@ -1030,3 +1022,45 @@ faces com papel, cercas inclusive); se o jogo usa o `DoDiffusionPass` ou o
 `DoDiffusionPassOptimized` (os dois estão na vtable); o sinal da
 convenção de rumo (os cantos escuros usam a virada à direita, com a sala à
 direita, tomada como a do canto de dentro do cômodo).
+
+### 10.6 Irradiância dos cômodos e portais, conferidos
+
+`GatherFloorLighting` (BV `0x714258`, disassembly): para cada sala de
+dentro, os tiles da sala (vtable `0x130` do mundo) e cada quarto com piso
+(material pela vtable `0x9c`); `c` = `LookupFloorDiffusion` no quarto
+(vtable `0x5c` do gerenciador de difusão, BV `0xee88c4`: **2 × a amostra**
+mais perto, menos o ambiente de fora se a metade é de fora); `I[4] +=
+0,25·c ⊙ Mix(branco, cor do piso, roomSaturation)` e `I[5] += 0,25·c ·
+roomCeilingStrength`, pesos +1. `GatherWallLighting` (BV `0x713ca0`): cada
+lado de parede de uma sala de dentro com papel, `c = 0,5 ·
+LookupWallDiffusion` (vtable `0x60`: a amostra da coluna 1, linha 3 do
+segmento, menos o ambiente de fora numa parede de fora), rateado pela
+normal. `FindPortalLightValues` (BV `0x70a884`, conferido): o `L` é esse
+mesmo `LookupWallDiffusion` na posição do portal (`+0x18`), sem a luz
+direta do estado.
+
+### 10.7 No código (rodada n16)
+
+`src/formats/lot_diffusion.{hpp,cpp}`: `FloorColorGrid` (montagem, fontes,
+propagação, cópia pela guarda) e a difusão das paredes (`diffuseWalls`:
+segmentos, retas, elos de andar, luz direta das fontes, piso trazido do
+light map, propagação, moldura, cantos escuros, células 8 × 24, e o
+`LookupWallDiffusion` de cada face). `computeLotLightMap`
+(`lot_lightmap.cpp`) roda as lâmpadas, monta os portais com a luz das
+paredes das lâmpadas, roda tudo de novo com os portais, soma a luz direta
+do estado (pisos da sala 0 e paredes de fora), junta a irradiância dos
+cômodos e aplica os cômodos sem luz (§10.2). `LotLighting::modelLights`
+só faz fonte de difusão de uma luz com `diffusionSource*` (§10.3), com os
+padrões da extensão. Os testes estão em `tests/test_formats.cpp`
+(`testLotLightMap`).
+
+Inferidos que ficam: os portais (§7); a altura em que uma luz está (o
+andar cujo piso fica abaixo dela; o nível do objeto na VM nem sempre
+bate); as retas de parede montadas das faces (junção = outra parede no
+ponto pelo lado da frente; o jogo anda o laço do lado); a virada dos
+cantos escuros (à direita, com a sala à direita); a altura das paredes que
+não têm 3 tiles (as 6 linhas a partir do pé; o jogo não escreve células de
+outro tamanho).
+
+Capturas (antes e depois, dia e noite, dentro e fora; N001_Lot11,
+N002_Lot31, N003_Lot52): `docs/screenshots/n16-luz-*.jpg`.
