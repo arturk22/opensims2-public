@@ -1505,3 +1505,111 @@ correções, só a confirmação de que o `cTSWinProcLotInfoDialog` existe.)
   começa em y = 72) e a "aba" de baixo à direita (`0x0002`, 417,287) são do
   próprio script; o app desenha igual. Se a imagem do jogo tem alfa (casa
   recortada) não foi conferido (**inferido**: a foto JPEG `0x35CA0000`).
+
+## 20. Rodada n12: mapa alfa, variantes, `nhoodLightMap` e desbotamento (binário)
+
+Ghidra MCP, BV 1.10 (`sims2_bv.ppc`), só leitura. Fecha os itens do §9
+"Aberto" sobre o terreno e os imposters.
+
+### 20.1 Os pesos e o mapa alfa (`cTSNHoodTerrain`)
+
+- **`AddLandTypeAtVertex`** (BV `0x4d0d20`): o peso guardado é
+  `u16 = (uint)(w·255 + 1)`. Cada vértice tem 3 pares (pintura `u8` em +0,
+  peso `u16` em +2) preenchidos em ordem (pintura 0 = vazio): mesma pintura
+  → fica o maior peso; vazio → entra ali; cheio → o primeiro de menor peso
+  (comparação estrita) é trocado se o novo for maior.
+- **`NormalizePaintWeights`** (BV `0x4d3478`): por vértice, Σ dos `u16` e
+  cada um vira `⌊u16·250 / Σ⌋`; o byte baixo (que é o valor, ≤ 250) vai para
+  o mapa de 8 bits da pintura (`SetPaintValue` BV `0x4d33e4`). Pinturas
+  que não estão no vértice ficam 0.
+- **Normais** (o que o `DecideSurfaceCover` e o light map leem, `+0x5c`):
+  `FUN_004d1e00` (o `BuildTerrainNormals` do `baserom.sym`) faz duas normais
+  por tile, normalizadas, com a diagonal (0,0)–(1,1) do `GetTerrainHeight`:
+  de cima `D × A` e de baixo `B × D`, com `A = (0, 10, h01 − h00)`,
+  `D = (10, 10, h11 − h00)`, `B = (10, 0, h10 − h00)`. A normal do vértice é
+  a soma normalizada das 6 faces que o tocam (as duas do tile (x, y), a de
+  baixo do (x−1, y), as duas do (x−1, y−1), a de cima do (x, y−1)); soma
+  nula → (1, 1, 1) normalizado. O código usava diferenças centrais.
+- **Textura alfa** (`nTSSG::cNHoodTerrain::InitTerrainSize` BV `0x6d93fc`,
+  `CreateAlphaTextureForPaint` `0x6db584`, `InitPaintDisplay` `0x6dad4c`):
+  uma textura de 8 bits por pintura, lado = a potência de 2 acima do número
+  de tiles (256 para 128 tiles), 1 mip; o `UpdateTopMipSurface` (BV
+  `0x6dc1c8`) copia o mapa 129×129 no canto. A UV do estágio 0 é o índice do
+  vértice (`+0xa0`: (i, j)) × `alphaMapScaleU/V` = 1/256, com `clamp` e o
+  filtro padrão (linear). A amostra no vértice i cai na borda entre os
+  texels i−1 e i: **o texel i fica no meio do tile**, em (10i + 5, 10j + 5).
+- **Mistura**: canvas preto, depois cada pintura `srcAlpha + one` (soma), o
+  que dá `Σ alfa_i · textura_i` (Σ alfa ≈ 250/255). Depois a luz multiplica.
+
+### 20.2 As variantes (`InitPaintVariants` BV `0x6d8d50`, `AddToPaintSurf` `0x6da3b8`)
+
+- Grade de `kTextureVariantGridSize` tiles (o `ReadIniFile` do
+  `nTSSG::cNHoodTerrain`, BV `0x6d85c8`: inteiro de
+  `[NHoodTerrainRenderTunables] TextureVariantGridSize`, **4** sem a chave;
+  o ini base diz 13). Células = ⌈128/13⌉ × ⌈128/13⌉ = 10×10.
+- Um byte por célula, sorteado **uma vez por carga**: gerador `FUN_00171674`
+  (LCG `s = s·0x41c64e6d + 0x3039`, valor = `(n · bits 16..47 do produto de
+  64 bits) >> 32`) com `n = 256`; semente `FUN_00171508(-1)` =
+  `time(0) ^ (clock() << 16 | clock())`. **A disposição das variantes muda
+  a cada vez que o bairro abre.**
+- Cada triângulo do tile (x, y) vai, para cada pintura presente nos vértices
+  de `[x−1, x+2] × [y−1, y+2]` (`GetPaintsInArea` BV `0x4d2b44`), para o
+  subconjunto `"%d_%s"` (bloco de 8×8 tiles, material) da variante
+  `byte(célula ⌊x/grade⌋, ⌊y/grade⌋) mod nVariantes` da pintura. Todas as
+  pinturas do tile usam o mesmo byte. O mapa alfa é um só por pintura (as
+  variantes trocam só a textura, por tile).
+
+### 20.3 O `nhoodLightMap` (`cLightingManager::CreateNeighborhoodLightMap` BV `0x706920`)
+
+Chamado no modo de luz 2 (bairro: `FUN_007167d0`/`FUN_00715fe0`, depois do
+`AddOutdoorLights`).
+
+- Terreno: o `nTSSG::cNHoodTerrain` (`GetPosition`/`GetNormal`, BV
+  `0x6d6aac`/`0x6d6a08`: as posições e as normais do §20.1). Lado do mapa =
+  a potência de 2 ≥ vértices − 2 (**128**); o texel (x, y) é o vértice (x, y),
+  x, y < 128 (o último vértice fica de fora). A UV do `NHoodTerrainLighting`
+  é (i, j)/128 (`ffTextureMatrix -scalev (128, 128) -invert`): o texel x
+  também fica no meio do tile. Duas texturas: a primeira é a registrada como
+  `nhoodLightMap`; a segunda (com os blobs) não achei quem usa.
+- **Altura da sombra** (`cHeightMapShadow`, `SetDimensions(W, H, 10, −1000)`
+  BV `0xd76548`, `FindHeightMapShadows` `0xd76e68`): alturas dos vértices,
+  com os blobs (abaixo) somados; o sol é o `sun` do estado (`+0x20`,
+  normalizado pelo parser). Sem sol (z ≤ 0 ou |x|, |y| < 0,001) a sombra é
+  limpa. Senão uma frente percorre a grade a partir do lado do sol: se
+  |sol.x| ≥ |sol.y| por colunas (`FUN_00d76254`), senão por linhas
+  (`FUN_00d76b74`, o caso do bairro, sol (1,75, −2, 1,5)). Por linha (no
+  caso das linhas; colunas trocam x e y): `frente[c] = max(frente[c],
+  h[c])`, `sombra[c] = frente[c]`, `frente[c] += 10·sol.z/sol.y` (negado
+  quando se anda para −y; a frente começa em −1000); depois a frente desliza
+  meio a meio para o lado: `k = −sol.x/sol.y` (com o mesmo sinal),
+  `frente[c] += k·(frente[c+1] − frente[c])` de 0 a W−2 se k > 0, ou
+  `frente[c] += (−k)·(frente[c−1] − frente[c])` de W−1 a 1.
+- **Blobs** (`AddBlobToHeightMap`, BV `0x7010d4`, slot `0x54` do
+  `cLightingManager`): só as árvores. `SetupFloraLighting` (BV `0x785020`)
+  pega o retângulo gravado da flora, encolhe as metades para 0,7 em volta
+  do centro (inteiros por truncamento) e, se ficou com 10 ou mais de largura
+  ou profundidade, chama com a altura do modelo
+  (`GetOccupantHeight` BV `0xb1ca30` → `ComputeModelHeight` `0xb1c3dc`: o
+  z máx − z mín da caixa do modelo; o catálogo não tem "height"). No mapa:
+  vértices de `⌊(x0 − 0,05)/10⌋` a `⌈(x1 + 0,05)/10⌉ − 1` (idem y) sobem
+  para `max(atual, h_terreno + altura · 0,09)` (`hmBlobWidthModifier` 0,05 e
+  `hmBlobHeightModifier` 0,09 do `Lighting.txt`; o leitor é o `FUN_007175b8`).
+- **Texel**: n = a normal do vértice; se a sombra passa a altura do terreno
+  (d = sombra − h > 0), `n = normalize(n + d·0,47·(−sol.x, −sol.y, sol.z))`
+  (`FUN_01809070`; 0,47 = `hmNHoodShadowStrength`). Cor = o texel
+  `(⌊(n.x/2 + 0,5)·L⌋ & (L−1), ⌊(n.y/2 + 0,5)·A⌋ & (A−1))` da imagem
+  `lightMap` do estado (sem filtro, com volta), × a cor `+0xd8` do estado
+  (o `-strength`/`-tint` do comando `lightMap`, BV `0x1ba7864`; sem eles no
+  `Lighting.txt`, a cor padrão: **inferido** branca, está em BSS), e cada
+  canal `= min(255, round(256·c))` (truque `+ 49152,0`), alfa 255. Não há
+  gradiente de água no mapa: abaixo de `waterHeight − 0,5` o passe de luz
+  é recortado pela textura `blackWhite` (o terreno submerso é do material
+  da água; o app continua pondo o gradiente ali, **inferido**).
+
+### 20.4 Desbotamento dos imposters (`UpdateImposterFading` BV `0x76aa40`)
+
+Confirmado: sai logo com `+0x6d` ligado. O `ConstructLotImposters` (BV
+`0x76d340`, os vizinhos vistos de dentro de um lote, sem o lote atual)
+desliga `+0x6d`; a vista do bairro o liga. Só a saia do lote desbota: alfa
+`(d / neighborhoodPropFadeDistance)²` (`+0x78`). O app não desenha a saia,
+então não há o que desbotar.
