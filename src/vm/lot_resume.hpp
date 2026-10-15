@@ -9,10 +9,9 @@
 namespace os2::vm {
 
 // Starting a lot's objects the way the game loads a saved lot, instead of
-// running every Init: the editor's description of the OBJf entry points
-// (STR# 0xF5) says Init runs when an object is placed or reset, and "load"
-// whenever an instance is loaded from a save file, only if its "object
-// version" (object data 58) differs from its definition's (OBJD label 49).
+// running every Init: Init runs when an object is made or reset, and
+// "load" (OBJf entry 2) on every object loaded from a save file
+// (cTSObject::PostLoad, docs/primitives-mac.md §4i).
 
 // The simulator's saved globals (SIMI) and the clock they hold (hour,
 // minute, second, day, month, year).
@@ -26,8 +25,8 @@ void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved);
 // object data, person data and motives, object arrays, temporary token,
 // timers), rebuilds its Main thread from the saved tree stack (frame by
 // frame: tree, node, parameters, locals, stack object, code owner = the
-// object it runs on, and the 8 saved temps) and runs the load entry point
-// of objects whose version changed. Objects without a usable stack start
+// object it runs on, and the 8 saved temps) and runs every object's load
+// entry point, containers first. Objects without a usable stack start
 // their Main afresh. The instruction a frame was at runs again; the
 // primitives' saved state is not restored. The Sims' saved interaction
 // queues are (what of them LotObjects finds), with the frame of the

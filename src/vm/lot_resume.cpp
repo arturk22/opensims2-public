@@ -1,6 +1,7 @@
 // Starting a lot's objects from their saved state (lot_resume.hpp).
 
 #include "lot_resume.hpp"
+#include "rooms.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -22,8 +23,6 @@ namespace {
 
 // OBJD field "object version" (label 49 of STR# 0xCC) and object data 58
 // "object version" (STR# 0x8D).
-constexpr size_t kDefinitionObjectVersion = 0x40 + 2 * 49;
-constexpr int16_t kObjectDataObjectVersion = 58;
 constexpr size_t kLoadFunction = 2;
 
 int16_t motiveValue(float v) { return int16_t(std::lround(std::clamp(v, -100.0f, 100.0f))); }
@@ -470,19 +469,35 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
                         out.animations += resumeAnimateSim(vm, t->second, r);
                         break;
                     }
-    // The load entry point runs only when the object's version differs from
-    // its definition's (the editor's description of OBJf entry 2).
+    // cEdithObjectModule::PostLoad (BV 0x52d590) calls cTSObject::PostLoad
+    // (BV 0xb0b1e0) on every loaded object, containers before what they
+    // hold: RunTree(2, no stack object, four zero parameters), the "load"
+    // entry, whatever the object's version (docs/primitives-mac.md §4i; the
+    // editor's text, "only if its version differs", is not what the game
+    // does). Its FinishEditing then tells the room (OnRoomChanged); the
+    // saved room is kept (the binary recomputes it from the place, which our
+    // tile rooms only approximate).
+    std::vector<std::pair<int, ObjectId>> order;
     for (ObjectId id : ids) {
-        Object* o = vm.object(id);
-        if (!o || !o->definition || !states.count(id))
+        const Object* o = vm.object(id);
+        if (!o || !states.count(id))
             continue;
-        if (uint16_t(o->data[kObjectDataObjectVersion]) == o->definition->field(kDefinitionObjectVersion))
+        int depth = 0;
+        for (const Object* c = o; c && c->data[objdata::ContainerId] && c->data[objdata::ContainerId] != c->id && depth < 8; ++depth)
+            c = vm.object(c->data[objdata::ContainerId]);
+        order.push_back({depth, id});
+    }
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [depth, id] : order) {
+        if (!vm.object(id))
             continue;
-        if (auto t = vm.runFunction(id, kLoadFunction)) {
+        constexpr std::array<int16_t, 4> kNoParams{};
+        if (auto t = vm.runFunction(id, kLoadFunction, 1000, kNoParams)) {
             ++out.loads;
             if (t->status == Thread::Status::Failed)
                 out.failedLoads.push_back(std::move(*t));
         }
+        finishMove(vm, id);
     }
     return out;
 }
