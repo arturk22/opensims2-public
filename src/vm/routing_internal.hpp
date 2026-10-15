@@ -29,6 +29,9 @@ constexpr int kHorizonSteps = 10;    // 10.02 steps
 
 // routing.cpp: either one's "allow intersection" tree lets the two overlap.
 bool intersectionAllowed(VM& vm, const Object& a, const Object& b);
+// How far a point is from the nearest wall edge around it (EvalTileForGoal's
+// 0.3 circle, TrySnap's wall test).
+float nearestWallEdge(const World& w, float px, float py, int level);
 
 // routing_plan.cpp
 // The lot's path planner (made again when the world changed).

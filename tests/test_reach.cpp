@@ -383,15 +383,22 @@ static void testFindBestAndSnap() {
     Object& bench = fx.vm.instantiate(kGroup, 0x84);
     bench.position = {5.5f, 5.5f, 1};
     bench.data[objdata::Direction] = 2; // faces +Y
-    fx.code.add(kGroup, 0x1002, tree({instr(0x2E, T, F, {0, 0, 3, 0, 0x10})}));
+    fx.code.add(kGroup, 0x1002, tree({instr(0x2E, T, F, {0, 0, 2, 0, 0x10})}));
     t = fx.run(0x1002, bench.id);
     Object& sim = *fx.vm.object(fx.sim);
     check(t.result && sim.position.x == 2.5f, "0x10 tests only");
+    // The slot has no bone and no offset: TrySnap goes to one point, the
+    // slot's own offset (its distances are the route's, not the Snap's),
+    // here the bench itself: taken (docs/routing-mac.md §9.1).
     fx.code.add(kGroup, 0x1003, tree({instr(0x2E, T, F, {0, 0, 3, 0, 0x02})}));
     sim.data[objdata::Direction] = 3;
     t = fx.run(0x1003, bench.id);
-    // A slot without "snap to direction" (0x1000) leaves the Sim's own
+    check(t.status == Thread::Status::Finished && !t.result && sim.data[52] == 0x0E,
+          "a slot without a bone snaps to its offset only (the bench's own point: taken)");
+    // "In front" (mode 2): the tile ahead of it; the Sim keeps its own
     // direction (TrySnap; docs/seat-mac.md §H).
+    fx.code.add(kGroup, 0x1004, tree({instr(0x2E, T, F, {0, 0, 2, 0, 0x02})}));
+    t = fx.run(0x1004, bench.id);
     check(t.result && sim.position.x == 5.5f && sim.position.y == 6.5f && sim.data[objdata::Direction] == 3,
           "snapped in front of it, keeping its direction");
 }

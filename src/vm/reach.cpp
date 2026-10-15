@@ -13,6 +13,7 @@
 #include "animation.hpp"
 #include "errors.hpp"
 #include "kill.hpp"
+#include "routing_internal.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/anim.hpp"
@@ -707,6 +708,23 @@ Exit reachPut(Context& c) {
 // the object, the object's tile do not count), with the slot's facing. The
 // Sims 2's SLOTs have no snap target slot (-1 everywhere): sitting is a Snap
 // followed by a Snap Into.
+// Whether a wall of the point's own tile comes within `r` of it (TrySnap's
+// wall test, FUN_008a6c84, BV: the tile's four edges by their distance
+// from the point, the diagonals by the distance to their line; a wall with
+// a door counts only by its ends there, and here doors open their edge, so
+// they do not count: inferred).
+bool wallWithin(const World& w, float px, float py, int level, float r) {
+    const TilePos t{int(std::floor(px)), int(std::floor(py)), level};
+    if (!w.contains(t))
+        return false;
+    const float fx = px - float(t.x), fy = py - float(t.y);
+    if ((w.wallBetween(t, 0, -1) && fy < r) || (w.wallBetween(t, -1, 0) && fx < r) ||
+        (w.wallBetween(t, 0, 1) && 1 - fy < r) || (w.wallBetween(t, 1, 0) && 1 - fx < r))
+        return true;
+    const int d = w.diagonalSides(t);
+    return ((d & 0x10) && std::fabs(fy - (1 - fx)) / float(M_SQRT2) < r) || ((d & 0x20) && std::fabs(fy - fx) / float(M_SQRT2) < r);
+}
+
 Exit snap(Context& c) {
     const auto& o = c.instruction.operands;
     const uint16_t index = le16(&o[0]), where = le16(&o[2]);
@@ -716,11 +734,14 @@ Exit snap(Context& c) {
         throw gameError(err::NoStackObject, "Snap");
     Object& target = c.stackObject();
     constexpr int16_t kPrimitiveResult = 52;
-    auto fail = [&](int placementError = 0x0C) {
+    // (1: a person in the way was asked to move, flag 0x02; the binary asks
+    // it, MoveOutOfWay, and writes 1 when it accepts: here nobody is asked,
+    // inferred as before. An object in the way: the error + 2.)
+    auto fail = [&](int placementError = 0x0C, bool person = true) {
         if (std::getenv("OS2_SNAP_FAILS")) // why snaps fail, for looking into
             std::fprintf(stderr, "t%llu snap of %d to %d at (%.2f, %.2f, %d) (mode %u slot %u flags %X) failed: %d\n", (unsigned long long)c.vm.ticks,
                          me.id, c.frame.stackObject, target.position.x, target.position.y, target.position.level, where, index, flags, placementError);
-        me.data[kPrimitiveResult] = int16_t(placementError == 0x0C && (flags & 0x02) ? 1 : placementError + 2);
+        me.data[kPrimitiveResult] = int16_t(placementError == 0x0C && person && (flags & 0x02) ? 1 : placementError + 2);
         return Exit::False;
     };
     if (where > 4)
@@ -754,46 +775,116 @@ Exit snap(Context& c) {
     }
     if (!target.position.inWorld())
         return fail();
-    const VM::RouteGoals goals = c.vm.routingGoals(slot, target);
-    // The target's own footprint does not count: a snap to its slot puts me
-    // against it or on it (standing up from a chair to the place beside it,
-    // which here falls on the chair's tile or across a wall for want of the
-    // model's footprint; inferred).
-    std::vector<ObjectId> ignore{me.id, target.id};
-    // Nor what its "allow intersection" tree lets me into (the toilet's
-    // privacy marker in front of it, for its user getting up).
-    for (const auto& g : goals.goals)
-        for (const ObjectId id : c.vm.objectsOnTile({g.x, g.y, goals.level}))
-            if (const Object* o = c.vm.object(id); o && VM::blocksRouting(*o) && objectsMayIntersect(c.vm, *o, me))
-                ignore.push_back(id);
-    size_t best = goals.goals.size();
-    for (size_t i = 0; i < goals.goals.size(); ++i) {
-        const TilePos t{goals.goals[i].x, goals.goals[i].y, goals.level};
-        // The Sim's footprint at the goal against the objects' (TrySnap's
-        // TSObjectCanSetPosition); OS2_TILE_FOOTPRINTS=1: the goal's tile.
-        static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
-        const bool free = !c.vm.world || (wholeTiles ? c.vm.tileFree(t, ignore)
-                                                     : c.vm.pointFree(goals.points[i][0], goals.points[i][1], goals.level, ignore));
-        if (free && (best == goals.goals.size() || goals.goals[i].cost < goals.goals[best].cost))
-            best = i;
+    // The place (TrySnap, BV 0xe43624; docs/routing-mac.md §9.1): one point,
+    // the target's position plus TotalRoutingSlotOffsetFromContainer turned
+    // by the target's direction: a bone slot's first bone (the model's, as
+    // the bone goals have it), else the slot's own offset; "in front" (mode
+    // 2) the tile ahead of the target. No scan, no ring around the bones.
+    // The router's radius (+0x210, the slot displacement) is 0 for the base
+    // game's Sims. OS2_SNAP_SCAN=1: the cheapest free goal of the slot's
+    // scan, as before round n18 (to compare).
+    static const bool scan = std::getenv("OS2_SNAP_SCAN") != nullptr;
+    float px = target.position.x, py = target.position.y;
+    int level = target.position.level, facing = -1;
+    const int objDir = ((target.data[objdata::Direction] % 8) + 8) % 8;
+    VM::RouteGoals goals;
+    if (scan || (slot.unknown10 & 0x20000) || (slot.flags & 0x1000))
+        goals = c.vm.routingGoals(slot, target);
+    if (where == 2) {
+        const auto step = directionStep(objDir);
+        px += float(step[0]), py += float(step[1]);
+    } else if (!scan && !(slot.unknown10 & 0x20000)) {
+        if ((slot.flags & 0x1000) && !goals.goals.empty()) {
+            px = goals.points[0][0], py = goals.points[0][1], facing = goals.facings[0];
+        } else {
+            const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
+            px += float(slot.offset[0] * std::cos(yaw) - slot.offset[1] * std::sin(yaw));
+            py += float(slot.offset[0] * std::sin(yaw) + slot.offset[1] * std::cos(yaw));
+        }
+    } else if (!scan) {
+        // The first bone: the bone goals come in the slot's order, the
+        // first one first (no bone on the model: the target's point).
+        if (!goals.goals.empty() && !goals.multi.empty())
+            px = goals.points[0][0], py = goals.points[0][1], facing = goals.facings[0], level = goals.level;
     }
-    if (best == goals.goals.size() && std::getenv("OS2_SNAP_FAILS"))
+    // The target's own footprint does not count (inferred, as before: the
+    // binary's test has no exceptions), nor what its "allow intersection"
+    // tree lets me into (the toilet's privacy marker in front of it, for
+    // its user getting up).
+    static const bool targetFree = std::getenv("OS2_SNAP_TARGET_FREE") != nullptr;
+    std::vector<ObjectId> ignore{me.id};
+    if (scan || targetFree)
+        ignore.push_back(target.id);
+    auto ignoreAround = [&](float x, float y) {
+        const TilePos t{int(std::floor(x)), int(std::floor(y)), level};
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (const ObjectId id : c.vm.objectsOnTile({t.x + dx, t.y + dy, level}))
+                    if (const Object* o = c.vm.object(id); o && VM::blocksRouting(*o) && objectsMayIntersect(c.vm, *o, me))
+                        ignore.push_back(id);
+    };
+    static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
+    if (scan) {
         for (size_t i = 0; i < goals.goals.size(); ++i)
-            std::fprintf(stderr, "  goal %zu at (%.2f, %.2f, %d) %s, target dir %d\n", i, goals.points[i][0], goals.points[i][1], goals.level,
-                         c.vm.world && c.vm.world->contains(TilePos{goals.goals[i].x, goals.goals[i].y, goals.level}) ? "on the lot" : "off the lot",
-                         target.data[objdata::Direction]);
-    if (best == goals.goals.size() && std::getenv("OS2_SNAP_FAILS"))
-        for (size_t i = 0; i < goals.goals.size(); ++i)
-            for (const auto& [id, x] : c.vm.eachObject())
-                if (id != me.id && id != target.id && VM::blocksRouting(x) &&
-                    VM::tileOf(x) == TilePos{goals.goals[i].x, goals.goals[i].y, goals.level})
-                    std::fprintf(stderr, "  goal (%d, %d, %d) taken by %d %s\n", goals.goals[i].x, goals.goals[i].y, goals.level, id,
-                                 x.definition ? x.definition->fileName.c_str() : "?");
-    if (best == goals.goals.size()) {
-        bool onLot = goals.goals.empty() || !c.vm.world;
-        for (const auto& g : goals.goals)
-            onLot = onLot || c.vm.world->contains(TilePos{g.x, g.y, goals.level});
-        return fail(onLot ? 0x0C : 2);
+            ignoreAround(goals.points[i][0], goals.points[i][1]);
+        size_t best = goals.goals.size();
+        for (size_t i = 0; i < goals.goals.size(); ++i) {
+            const TilePos t{goals.goals[i].x, goals.goals[i].y, goals.level};
+            const bool free = !c.vm.world || (wholeTiles ? c.vm.tileFree(t, ignore)
+                                                         : c.vm.pointFree(goals.points[i][0], goals.points[i][1], goals.level, ignore));
+            if (free && (best == goals.goals.size() || goals.goals[i].cost < goals.goals[best].cost))
+                best = i;
+        }
+        if (best == goals.goals.size()) {
+            bool onLot = goals.goals.empty() || !c.vm.world;
+            for (const auto& g : goals.goals)
+                onLot = onLot || c.vm.world->contains(TilePos{g.x, g.y, goals.level});
+            return fail(onLot ? 0x0C : 2);
+        }
+        px = goals.points[best][0], py = goals.points[best][1], facing = goals.facings[best], level = goals.level;
+    } else if (c.vm.world) {
+        if (std::getenv("OS2_SNAP_FAILS"))
+            std::fprintf(stderr, "t%llu snap of %d to %d: place (%.2f, %.2f, %d)%s, slot offset (%.2f, %.2f) flags %X/%X\n",
+                         (unsigned long long)c.vm.ticks, me.id, target.id, px, py, level,
+                         (slot.unknown10 & 0x20000) ? " (bone)" : "", slot.offset[0], slot.offset[1], slot.flags, slot.unknown10);
+        ignoreAround(px, py);
+        // The tests (TrySnap's own, BV 0xe43084), in order: a person (not
+        // with bit 0x04 of person data 68) within 0.3 of a wall: error 8;
+        // the slot minding rooms (no RS flag 0x800): off the lot, error 2,
+        // and another room than the one I stand in fails too (inferred: the
+        // partition manager's 0x13c as the room, the error as 2); the slot
+        // minding walls (no RS flag 0x80000), on my level: a wall between
+        // where I stand and the point (the tiles' line of sight here),
+        // error 8; then TSObjectCanSetPositionAndOrientation: objects'
+        // footprints and other Sims within 0.283 (error 0x0C).
+        const World& w = *c.vm.world;
+        const TilePos t{int(std::floor(px)), int(std::floor(py)), level};
+        const bool ghost = me.person && me.person->data.size() > 68 && (me.person->data[68] & 0x04);
+        if (me.person && !ghost && wallWithin(w, px, py, level, 0.3f))
+            return fail(8);
+        const bool mindRooms = where == 2 || !(slot.flags & 0x800);
+        if (mindRooms && !w.contains(t))
+            return fail(2);
+        const TilePos from = VM::tileOf(me);
+        if (mindRooms && me.position.inWorld() && from.level == level && w.contains(from) && w.room(from) != w.room(t))
+            return fail(2);
+        if ((where == 2 || !(slot.flags & 0x80000)) && me.position.inWorld() && from.level == level && !w.lineOfSight(from, t))
+            return fail(8);
+        if (!w.contains(t)) // the placement test's "location out of bounds"
+            return fail(2);
+        if (!(wholeTiles ? c.vm.tileFree(t, ignore) : c.vm.pointFree(px, py, level, ignore)))
+            return fail(0x0C, false);
+        if (me.person)
+            for (const ObjectId id : c.vm.people()) {
+                const Object* o = c.vm.object(id);
+                if (!o || id == me.id || !o->position.inWorld() || o->data[objdata::ContainerId] != 0 || o->position.level != level ||
+                    std::hypot(o->position.x - px, o->position.y - py) >= 0.283f)
+                    continue;
+                if ((me.data[objdata::Flags] & 0x14) || (o->data[objdata::Flags] & 0x14) ||
+                    routing_internal::intersectionAllowed(c.vm, *o, me))
+                    continue;
+                return fail(0x0C);
+            }
     }
     if (flags & 0x10)
         return Exit::True;
@@ -808,17 +899,17 @@ Exit snap(Context& c) {
         me.route->loco = Object::Route::Loco{};
     const Position from = me.position;
     const int fromDir = me.data[objdata::Direction];
-    me.position = {goals.points[best][0], goals.points[best][1], goals.level};
+    me.position = {px, py, level};
     // The direction: the slot's only when it "snaps to direction" (flag
     // 0x1000, the slot's vtable 0xE4: the target's direction turned by the
     // bone's or the slot's); otherwise the snapped object keeps its own
     // (TrySnap, BV 0xe43624; docs/seat-mac.md §H).
-    if (goals.facings[best] >= 0 && (slot.flags & 0x1000))
-        me.data[objdata::Direction] = int16_t(goals.facings[best]);
+    if (facing >= 0 && (slot.flags & 0x1000))
+        me.data[objdata::Direction] = int16_t(facing);
     if (std::getenv("OS2_DEBUG_SNAP"))
-        std::fprintf(stderr, "t%llu snap of %d to %d (mode %u slot %u flags %X): goal %zu of %zu at (%.2f, %.2f) dir %d -> %d\n",
-                     (unsigned long long)c.vm.ticks, me.id, target.id, where, index, flags, best, goals.goals.size(),
-                     me.position.x, me.position.y, fromDir, me.data[objdata::Direction]);
+        std::fprintf(stderr, "t%llu snap of %d to %d (mode %u slot %u flags %X) at (%.2f, %.2f) dir %d -> %d\n",
+                     (unsigned long long)c.vm.ticks, me.id, target.id, where, index, flags, me.position.x, me.position.y, fromDir,
+                     me.data[objdata::Direction]);
     // A multi-tile object moves whole: its other parts keep their places
     // around me, turned with me (the carpool's car snapping down the street
     // to its "slot_travel_drive" bone; inferred, as placement moves groups).

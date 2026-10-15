@@ -185,6 +185,29 @@ bool intersectionAllowed(VM& vm, const Object& a, const Object& b) {
     return allowsIntersection(vm, a, b.id) || allowsIntersection(vm, b, a.id);
 }
 
+// How far a point is from the nearest wall edge of its tile and the tiles
+// around (a diagonal wall: from its tile's centre); 1e9 with none.
+float nearestWallEdge(const World& w, float px, float py, int level) {
+    const TilePos t{int(std::floor(px)), int(std::floor(py)), level};
+    float nearest = 1e9f;
+    for (int x = t.x - 1; x <= t.x + 1; ++x)
+        for (int y = t.y - 1; y <= t.y + 1; ++y) {
+            const TilePos u{x, y, level};
+            if (!w.contains(u))
+                continue;
+            if (w.diagonalWall(u))
+                nearest = std::min(nearest, std::hypot(float(x) + 0.5f - px, float(y) + 0.5f - py));
+            auto segment = [&](float ax, float ay, float bx, float by) {
+                const float vx = bx - ax, vy = by - ay;
+                const float k = std::clamp(((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy), 0.0f, 1.0f);
+                nearest = std::min(nearest, std::hypot(ax + vx * k - px, ay + vy * k - py));
+            };
+            if (w.wallBetween(u, -1, 0)) segment(float(x), float(y), float(x), float(y + 1));
+            if (w.wallBetween(u, 0, -1)) segment(float(x), float(y), float(x + 1), float(y));
+        }
+    return nearest;
+}
+
 } // namespace routing_internal
 
 namespace {
@@ -215,23 +238,7 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
     }
     if (!(t.x == centre.x && t.y == centre.y) && !w.lineOfSight(centre, t))
         return 3;
-    // The nearest wall edge of the tiles around.
-    float nearest = 1e9f;
-    for (int x = t.x - 1; x <= t.x + 1; ++x)
-        for (int y = t.y - 1; y <= t.y + 1; ++y) {
-            const TilePos u{x, y, level};
-            if (!w.contains(u))
-                continue;
-            if (w.diagonalWall(u))
-                nearest = std::min(nearest, std::hypot(float(x) + 0.5f - px, float(y) + 0.5f - py));
-            auto segment = [&](float ax, float ay, float bx, float by) {
-                const float vx = bx - ax, vy = by - ay;
-                const float k = std::clamp(((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy), 0.0f, 1.0f);
-                nearest = std::min(nearest, std::hypot(ax + vx * k - px, ay + vy * k - py));
-            };
-            if (w.wallBetween(u, -1, 0)) segment(float(x), float(y), float(x), float(y + 1));
-            if (w.wallBetween(u, 0, -1)) segment(float(x), float(y), float(x + 1), float(y));
-        }
+    const float nearest = nearestWallEdge(w, px, py, level);
     if (nearest < 0.3f)
         return 4;
     if (nearest < 0.4f)
@@ -468,13 +475,14 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
             first = false;
             addFacing(px, py, 0, (boneDir + b.facing) % 8, b.index);
         }
-        // Ours, not the binary's: points half a tile and three quarters out
-        // around each bone's point, on the target's side of any wall, each
-        // costing its distance more (1.5, 1.75: a later tier than the point
-        // itself), for when the point cannot be reached (a chair pushed under
-        // a table, which here fills its whole tile for want of the model's
-        // footprint).
-        if (world)
+        // (Until round n18 a ring of points half a tile and three quarters
+        // out around each bone, ours, stood in for a bone point that could
+        // not be reached for want of the models' footprints; the binary has
+        // the bone points only: a Sim poured coffee from the counter's side,
+        // 0.75 off its "route_counter_std_0_N" bone, with its hand 0.13 short
+        // of the machine. OS2_BONE_RING=1 puts it back, to compare.)
+        static const bool ring = std::getenv("OS2_BONE_RING") != nullptr;
+        if (world && ring)
             for (const SlotBone& b : bones) {
                 const auto [px, py] = turnBone(b.x, b.y);
                 for (const float r : {0.5f, 0.75f})

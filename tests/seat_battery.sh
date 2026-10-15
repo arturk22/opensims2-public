@@ -37,9 +37,9 @@ run() {
 # Dining chair, normal: sit, then get up and walk off.
 run dining   "1300:here:21,22,2" N001_Lot68 Angela 1700 --pie "Chair - Dining" --pie-select 0
 # Breakfast: the bowl carried to the table, the leaveOut get-in with it, eating, putting it down.
-# (Angela only: late in the run another Sim may pour coffee from the
-# machine's side when its front is taken, the hand 0.13 short: TODO.md.)
-SEATS_SIM=11 run eat "" N001_Lot68 Angela 3000 --pie Fridge --pie-select 3
+# (Every Sim: the coffee poured from the counter's side, the hand 0.13
+# short, was a goal of our ring around the bones, gone in round n18.)
+run eat "" N001_Lot68 Angela 3000 --pie Fridge --pie-select 3
 # A child at the patio dining chair (N001_Lot11, Alexander): the seated
 # c2o-chairDining clips are made facing 180 degrees (their header heading)
 # and hold the legs by foot IK only; turned twice, the feet went behind the
