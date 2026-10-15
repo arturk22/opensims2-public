@@ -1335,8 +1335,20 @@ semi-global, entradas 0–2). `cTSCameraEffect::Start` (`0xf583b4`) troca o
 controlador de câmera pelo nome do bloco de câmera do efeito (`desc+0xAC`);
 o lugar e o giro vêm do osso (`HandleRequest` `0x7aa7e0`: requisição
 `0xBB661105` = posição, `0xCCB772E6` = rotação). Ou seja: o pareamento por
-nome do app é o do jogo. Fica inferido **qual passo** manda `EditSimFace`
-(a chamada é pela interface do editor, não achada).
+nome do app é o do jogo.
+
+**Qual passo usa a câmera do rosto.** `EnterSimCreation` (`0x1c66c8`) manda
+`EditSim` (6) → "CAS Event - Edit Sim - Begin" → câmera das roupas. Mandam
+`EditSimFace` (8; pela interface do editor, slot `0x38`) o `Activate` do
+bin de cabeças (`cTSUICASComponentBin`, `0x3d38b4`, só com `+0x270` = 0: o
+bin de Sims prontos não), o do `cTSUICASComponentGenetics` (`0x42a8e8`; é a
+classe `0x8C6C07DE` do `CB980E82`, cabelo e rosto) e o da maquiagem (classe
+`0x4C6C0899` do `CB980E85`, `0x447e98`); os `Deactivate` deles (`0x3d240c`,
+`0x42a664`, `0x447dc8`) mandam `DoneEditSimFace` (9) → "Edit Face - End",
+que chama "Edit Sim - Begin" (roupas de novo). "Process - CAS State" só
+troca para o rosto se o estado da câmera (atributo 11) ainda não é ele.
+Então: passos 2, 3 e 4 (cabeças, cabelo e rosto, maquiagem) = rosto; 1, 5 e
+6 = roupas, como o app já fazia (agora conferido).
 
 **Botões de zoom** (`cTSUISimEditor::DoMessage(cGZMessage&)` `0x1ca3f8`):
 apertar 0x2D486AC2 manda à câmera a mensagem `0x6D41F7AB`, soltar

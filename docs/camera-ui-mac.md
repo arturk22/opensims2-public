@@ -114,12 +114,14 @@ base entra nesses blocos (inferido: o `maxVersion()` é o `+0x54` do parser,
   `camera_clothes_<idade>`, `camera_family_0` do `CASPodiumArea`/
   `CASFamilyArea`; a frente da câmera é o **+Y local** do localizador, o
   `DAT_02c2fbf8` = (0, 1, 0), e o +Z o "para cima"; os localizadores do
-  pódio olham para o Sim com o +Y). Quem pareia spec e localizador não está
-  no binário nem nos scripts de UI: o app usa os nomes (família →
-  `CAS_Family` + `camera_family_0`; passos de cabelo, rosto e cosméticos →
-  `CAS_Face<idade>` + `camera_face_<idade>`; os outros → `CAS_Clothes<idade>`
-  + `camera_clothes_<idade>`; bebê como criança pequena, idoso como adulto;
-  inferido).
+  pódio olham para o Sim com o +Y). Quem pareia spec e localizador é o
+  SimAntics do objeto "CAS - Backdrop" (efeitos de câmera
+  `CASCam_<spec>_Effect` nos ossos `camera_*` do estúdio; `docs/cas-mac.md`,
+  rodada n21): família → `CAS_Family` + `camera_family_0`; passos de
+  cabeças, cabelo e rosto e maquiagem → `CAS_Face<idade>` +
+  `camera_face_<idade>`; os outros → `CAS_Clothes<idade>` +
+  `camera_clothes_<idade>`; bebê como criança pequena, idoso como adulto
+  (conferido na rodada n21).
 - `SetActive` (`0x7a9898`): com outra câmera CreateASim ativa antes, guarda
   dela o lugar, a rotação, o FOV, o zoom, o heading e a elevação atuais e a
   sua `interpolatespeedfrom` (`+0x304`), e começa a transição t = 0; sem
@@ -144,9 +146,9 @@ base entra nesses blocos (inferido: o `maxVersion()` é o `+0x54` do parser,
 
 No código: `CasCamera` (`render/cas_camera.*`) e `LotCamera::FirstPerson`;
 `CasMode::applyCasCamera` escolhe spec e localizador, troca com transição e
-corta nas capturas roteirizadas. Os botões de zoom do CAS dão 10 passos por
-clique (meio segundo segurado; inferido); a roda, entalhes ×
-`mousewheelsensitivity` (inferido). Sem o estúdio (`--cas-no-studio`) fica a
+corta nas capturas roteirizadas. Os botões de zoom do CAS dão zoom enquanto
+seguros (`keyboardzoomspeed` × 50 / Δt por atualização); a roda, entalhes ×
+`mousewheelsensitivity` (os dois lidos na rodada n21, `docs/cas-mac.md`). Sem o estúdio (`--cas-no-studio`) fica a
 órbita antiga. Captura: `docs/screenshots/r16-cas-camera.jpg`.
 
 **Lateralidade** (rodada 15): o mundo do jogo é destro com Z para cima,

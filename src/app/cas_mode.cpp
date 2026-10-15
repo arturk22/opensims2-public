@@ -154,11 +154,15 @@ float CasMode::simHeight() const {
 }
 
 bool CasMode::applyCasCamera(bool smooth) {
-    // The camera spec and studio locator for the view (inferred pairing by
-    // name, docs/camera-ui-mac.md 1.6): the family view CAS_Family at
-    // camera_family_0; the face steps (hair, face, cosmetics)
-    // CAS_Face<age> at camera_face_<age>; the others CAS_Clothes<age> at
-    // camera_clothes_<age> (babies as toddlers, elders as adults).
+    // The camera spec and studio locator for the view, as the CAS -
+    // Backdrop object's SimAntics sets them (camera effects
+    // CASCam_<spec>_Effect on the studio's camera bones; docs/cas-mac.md,
+    // round n21): the family view CAS_Family at camera_family_0; the steps
+    // whose panels send EditSimFace on activation (the head bin, hair and
+    // face, cosmetics) CAS_Face<age> at camera_face_<age>; the others
+    // CAS_Clothes<age> at camera_clothes_<age> (person data 58 at most the
+    // toddler's: toddler, so babies too; above the teen's: adult, so
+    // elders too).
     if (!studio_ || casSpecs_.empty())
         return false;
     std::string spec = "CAS_Family", mark = "camera_family_0";
