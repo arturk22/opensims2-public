@@ -5,6 +5,7 @@
 #include "vm/locomotion.hpp"
 #include "vm/lot.hpp"
 #include "vm/path_planner.hpp"
+#include "vm/routing_internal.hpp"
 #include "vm/vm.hpp"
 #include "vm/world.hpp"
 #include "formats/lot.hpp"
@@ -1585,6 +1586,53 @@ static void testRunnerStep() {
 // other: the binary's DoBlockedGoalStillAvailable sees the blocker blocked
 // by the walker and the walker steps aside itself (TryGetSelfOutOfWay), so
 // both get through at once instead of asking and waiting.
+// The predicted blocking (CollisionCheck) looks where the walker's frame
+// will really go: the cubic path it follows (GlobalLocationEstimate), which
+// cuts inside the route's corners. A Sim standing on the inside of a corner,
+// 0.29 or more off the straight legs but under 0.283 from the curve, is
+// predicted: the walker stops for it instead of stepping within 0.283 of it
+// unpredicted (the per-step test), which left two Sims 0.285 apart blocking
+// each other for good at N001_Lot11's stair top (round n18, OS2_SEED=2).
+static void testPredictionOnCurve() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(8, 6);
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& a = vm.instantiate(kGroup, 0x81);
+    Object& b = vm.instantiate(kGroup, 0x81);
+    a.position = {1.8f, 1.5f, 1};
+    Object::Route r;
+    std::vector<std::array<float, 2>> through;
+    auto add = [&](float x, float y) {
+        Object::Route::Point p;
+        p.x = x, p.y = y, p.level = 1;
+        r.points.push_back(p);
+        through.push_back({x, y});
+    };
+    add(2.0f, 1.5f); // east, then north round the corner at (2, 1.5)
+    add(2.0f, 3.0f);
+    a.route = r;
+    const LocoCurve curve(a.position.x, a.position.y, through);
+    auto curveDistance = [&](float px, float py) {
+        float d = 1e9f;
+        for (size_t j = 0; j < curve.segments(); ++j)
+            for (int k = 0; k <= 32; ++k) {
+                const auto q = curve.at(j, float(k) / 32);
+                d = std::min(d, std::hypot(q[0] - px, q[1] - py));
+            }
+        return d;
+    };
+    // On the corner's inner diagonal: off both legs by t.
+    float t = 0.29f;
+    for (; t < 0.40f; t += 0.005f)
+        if (curveDistance(2.0f - t, 1.5f + t) < 0.27f)
+            break;
+    b.position = {2.0f - t, 1.5f + t, 1};
+    check(t < 0.40f && t >= 0.29f, "prediction on the curve: a place off the legs by 0.29 or more and under 0.283 from the curve");
+    check(routing_internal::simAhead(vm, a, *a.route).id == b.id,
+          "the predicted blocking follows the frame's curve: the Sim inside the corner is seen");
+}
+
 static void testMutualBlock() {
     CodeLibrary code;
     VM vm(code);
@@ -1928,6 +1976,7 @@ int main() {
     testRouteResult();
     testBlockedBySim();
     testMutualBlock();
+    testPredictionOnCurve();
     testTurnInPlace();
     testLocoPhases();
     testRunnerStep();
