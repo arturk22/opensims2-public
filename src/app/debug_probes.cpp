@@ -188,6 +188,11 @@ void sampleDrawnPlaces(double scene) {
                 x.lfoot[i] = lf[i] - pm[i], x.rfoot[i] = rf[i] - pm[i];
             const int16_t c = o->data[os2::vm::objdata::ContainerId];
             x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor) && (c == 0 || c == s.id);
+            // The Grim Reaper floats: her walk ("a-female-walk-reaper") carries
+            // the feet along with the root (s2pkg anim-root: they hang still
+            // under the pelvis), so she is not a glide.
+            if (o->route && o->route->loco.animation.find("walk-reaper") != std::string::npos)
+                x.inWorld = false;
             for (const auto& e : detector.add(x)) {
                 std::string overlays;
                 for (const auto& ov : o->animation.overlays)

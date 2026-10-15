@@ -44,8 +44,12 @@ std::vector<std::string> SeatCheck::add(const Sample& s, const std::vector<Box>&
         t.restSince = -1;
     else if (t.restSince < 0)
         t.restSince = s.time;
-    if (s.container != t.container)
+    if (s.container != t.container) {
+        t.leftChair = s.container ? 0 : t.container;
         t.container = s.container, t.containedSince = s.time;
+    }
+    if (s.walking)
+        t.leftChair = 0;
     const bool settled = rest && s.time - t.restSince >= settle;
     // In a slot, at rest: the pelvis over the slot, in the slot's frame.
     {
@@ -93,7 +97,7 @@ std::vector<std::string> SeatCheck::add(const Sample& s, const std::vector<Box>&
             std::vector<std::pair<std::string, Vec3>> points = s.body;
             points.insert(points.begin(), {"pelvis", s.pelvis});
             for (const Box& b : near) {
-                if (b.id == s.container)
+                if (b.id == s.container || b.id == t.leftChair)
                     continue;
                 for (const auto& [name, p] : points)
                     if (inside(b, p, b.table ? 0.02f : shrink, slab)) {

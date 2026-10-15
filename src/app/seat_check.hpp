@@ -12,7 +12,11 @@
 //     getting in or out; goals on another Sim left out);
 //   - "table": a body point (pelvis, spine, knees) inside the top slab of a
 //     table or counter (passing through it), at rest;
-//   - "chair": a body point inside a chair or stool the Sim is not in, at rest;
+//   - "chair": a body point inside a chair or stool the Sim is not in, at rest
+//     (not the one it just got out of while it still stands where the
+//     get-out left it: "Chair - Animate - Get Out" snaps it to the chair's
+//     corner bone, route_chairdining_2_se, docs/primitives-mac.md, and an
+//     idle there can graze the chair's model box);
 //   - "carry": a carry pose with nothing in the hands;
 //   - "legs": sitting (not lying) in a slot at rest, a foot more than
 //     feetBehind behind the pelvis along the slot's forward (+Y): the legs
@@ -99,6 +103,7 @@ private:
         double restSince = -1;      // at rest (not transitional, not walking) since
         int16_t container = 0;
         double containedSince = -1;
+        int16_t leftChair = 0; // the seat it got out of, while it stands where that left it
         std::map<std::string, bool> on; // kind -> flagged now
     };
     void flag(Track& t, const Sample& s, const std::string& kind, bool on, float value, const std::string& detail,
