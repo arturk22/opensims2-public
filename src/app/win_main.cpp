@@ -31,6 +31,10 @@
 #include "app/tutorial.hpp"
 #include "app/user_data.hpp"
 #include "render/camera.hpp"
+#include "formats/camera_config.hpp"
+#include "app/camera_follow.hpp"
+#include "app/camera_input.hpp"
+#include "app/wall_view.hpp"
 #include "app/lot_lighting.hpp"
 #include "app/vm_objects.hpp"
 #include "app/pie_menu.hpp"
@@ -55,8 +59,11 @@
 
 #include <simd/simd.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -859,10 +866,25 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             std::fflush(stdout);
             return {};
         }
-        os2::LotViewOptions view;
-        view.walls = os2::LotViewOptions::Walls::Up;
-        view.roof = true;
-        view.level = os2::LotViewOptions::kAllLevels;
+        // The live camera of the game's camera configuration, held to the lot
+        // and on the selected Sim's floor (app/camera_follow.hpp); the lot is
+        // entered with the walls cut away and the levels above it hidden.
+        const auto cameraDefs = os2::loadCameraConfig(res / "UserData" / "Cameras" / "cameras.txt");
+        const os2::CameraDef* liveCamera = os2::findCamera(cameraDefs, "Live");
+        if (!liveCamera)
+            throw std::runtime_error("no \"Live\" camera in cameras.txt");
+        os2::LotCamera camera(*liveCamera);
+        camera.setViewport(1280, 720);
+        camera.snap();
+        os2::LotCameraFollow follow(camera, lot);
+        os2::CameraMouseInput cameraMouse;
+        os2::WallView wallView;
+        wallView.study(lot);
+        auto lookOf = [&] {
+            const simd_float3 d = camera.pivot() - camera.eye();
+            return std::array<float, 2>{d.x, d.y};
+        };
+        os2::LotViewOptions view = wallView.options(lookOf(), wallView.shownLevel(follow.level()));
         os2::LotLightMapLayout layout;
         os2::LotModelCache cache;
         const os2::ObjectModel house = os2::buildLotModel(lot, index, patterns, view, &layout, &cache);
@@ -882,9 +904,11 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         // again after Build mode changed the fences (extra instances hidden).
         std::map<std::string, int> fenceModels;
         std::vector<int> fenceInstances;
-        auto placeFences = [&] {
+        auto placeFences = [&](int level) {
             size_t used = 0;
             for (const auto& piece : os2::lotFencePieces(lot, patterns)) {
+                if (!os2::WallView::visible(lot, level, piece.transform[12], piece.transform[13], piece.transform[14]))
+                    continue;
                 auto it = fenceModels.find(piece.model);
                 if (it == fenceModels.end()) {
                     int id = -1;
@@ -913,19 +937,23 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 renderer.setInstanceTransform(fenceInstances[i], away);
             return used;
         };
-        std::printf("opensims2: %zu fence pieces\n", placeFences());
+        std::printf("opensims2: %zu fence pieces\n", placeFences(view.level));
 
         const os2::LightingConfig lighting = os2::loadLightingConfig(res / "Lights" / "Lighting.txt");
         // Redraws the lot after Build mode changed it: the model, the fences and the light map.
         int lotRebuilds = 0;
         std::unique_ptr<os2::LotLighting> lotLighting;
+        std::function<os2::LotViewOptions()> wantedView; // set once the live UI and the pie menu are up
         auto rebuildLot = [&] {
+            wallView.study(lot);
+            if (wantedView)
+                view = wantedView();
             cache.geometryChanged();
             layout = os2::LotLightMapLayout{};
             const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view, &layout, &cache);
             renderer.replaceObject(houseModel, model, index);
             renderer.setGroundClip(os2::lotSkirtBottom(lot));
-            placeFences();
+            placeFences(view.level);
             if (lotLighting)
                 lotLighting->setLightMapLayout(layout);
             else if (const auto* state = lighting.state("day"))
@@ -1498,23 +1526,98 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             effectSystem.reset();
         }
 
-        Camera camera;
         if (!sims.empty())
-            camera.pivot = simd_make_float3(sims.front().actor->position[0], sims.front().actor->position[1], 1.f);
+            camera.setPivot(simd_make_float3(sims.front().actor->position[0], sims.front().actor->position[1],
+                                             sims.front().actor->position[2]));
         else
-            camera.pivot = simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, 0);
-        camera.distance = 12.f;
+            camera.setPivot(simd_make_float3(float(lot.width) / 2, float(lot.height) / 2,
+                                             lot.elevation(follow.level(), int(lot.width / 2), int(lot.height / 2))));
+        camera.snap();
+        // Page Up / Page Down and the puck's floor buttons: in Buy mode the
+        // floor objects go on (the camera follows it), in Build mode the
+        // floor built on, else the floor the camera shows (a level shown
+        // with the one below, a foundation's top, is stepped over).
+        auto changeFloor = [&](int delta) {
+            if (buy && buy->active()) {
+                if (buy->changeLevel(delta))
+                    follow.setLevel(buy->level() - 1);
+            } else if (build && build->active()) {
+                if (build->level() - 1 + delta >= std::min(0, build->level() - 1) && follow.setLevel(build->level() - 1 + delta))
+                    build->setLevel(follow.level() + 1);
+            } else {
+                const int now = follow.level(), shown = wallView.shownLevel(now);
+                const int lowest = std::max(follow.lowestLevel(), std::min(0, now));
+                int to = delta > 0 ? std::min(std::max(now + delta, shown + 1), std::max(wallView.topLevel(), now)) : now + delta;
+                while (delta < 0 && to > lowest && wallView.shownLevel(to) == shown)
+                    --to;
+                follow.setLevel(std::max(to, std::min(lowest, now)));
+            }
+        };
+        // The level the camera shows, whose walls follow the wall mode: Build
+        // and Buy mode's level, else the camera's (the selected Sim's or the
+        // one Page Up/Down chose).
+        auto viewLevel = [&] {
+            if (build && build->active())
+                return wallView.shownLevel(build->level() - 1);
+            if (buy && buy->active())
+                return wallView.shownLevel(buy->level() - 1);
+            return wallView.shownLevel(follow.level());
+        };
+        // Whether an object hangs on a wall the lot model cut down: a cut wall
+        // of its level within 0.6 tiles, across its front (perpendicular to its +Y).
+        auto onCutWall = [&](const os2::Xform& at) {
+            const os2::Vec3 f = at.rotate({0, 1, 0});
+            for (const auto& c : cache.cut) {
+                const float floorZ = lot.elevationAt(int(c[4]), std::clamp(at.t[0], 0.0f, float(lot.width)),
+                                                     std::clamp(at.t[1], 0.0f, float(lot.height)));
+                if (at.t[2] < floorZ - 0.2f || at.t[2] > floorZ + 2.5f)
+                    continue;
+                float dx = c[2] - c[0], dy = c[3] - c[1];
+                const float len = std::hypot(dx, dy);
+                if (len < 1e-4f)
+                    continue;
+                dx /= len, dy /= len;
+                if (std::abs(dx * f[0] + dy * f[1]) > 0.3f)
+                    continue;
+                const float s = std::clamp((at.t[0] - c[0]) * dx + (at.t[1] - c[1]) * dy, 0.0f, len);
+                if (std::hypot(c[0] + dx * s - at.t[0], c[1] + dy * s - at.t[1]) <= 0.6f)
+                    return true;
+            }
+            return false;
+        };
+        // Windows, doors, curtains and what hangs on walls: hidden with the
+        // wall they are on when it is cut down; and nothing above the level shown.
+        std::map<int16_t, bool> wallHung;
+        for (const auto& b : pickBoxes)
+            if (bounds[b.key].first.z > 0.5f)
+                wallHung[int16_t(b.instance & 0xFFFF)] = true;
+        objectView.visible = [&](int16_t id, const os2::Xform& at) {
+            const int level = viewLevel();
+            if (!os2::WallView::visible(lot, level, at.t[0], at.t[1], at.t[2], wallView.lowestCut(level)))
+                return false;
+            auto it = wallHung.find(id);
+            if (it == wallHung.end()) {
+                const os2::vm::Object* o = simulation.machine().object(id);
+                std::string def = o && o->definition ? o->definition->fileName : "";
+                std::transform(def.begin(), def.end(), def.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                const bool hung = def.starts_with("window") || def.starts_with("door") || def.starts_with("curtain") ||
+                                  def.starts_with("blinds") || def.starts_with("drapes");
+                it = wallHung.emplace(id, hung).first;
+            }
+            return !it->second || !onCutWall(at);
+        };
         if (liveUi && liveUi->ok()) {
             liveUi->setCanvas(1280, 720);
             liveUi->playSound = [&](const std::string& name) { gameAudio.playUi(name); };
-            liveUi->onZoom = [&](int step) { camera.distance = std::clamp(camera.distance - float(step) * 2.f, 6.f, 80.f); };
-            liveUi->onRotate = [&](int step) { camera.yaw += float(step) * 0.4f; };
-            liveUi->onCentreSim = [&](os2::vm::ObjectId id) {
-                for (const auto& sim : sims)
-                    if (sim.id == id)
-                        camera.pivot = simd_make_float3(sim.actor->position[0], sim.actor->position[1], 1.f);
+            liveUi->onZoom = [&](int steps) { camera.zoomBy(steps); };
+            liveUi->onRotate = [&](int steps) { camera.rotateBy(steps); };
+            liveUi->onCentreSim = [&](os2::vm::ObjectId id) { follow.centre(simulation.machine(), id); };
+            liveUi->onFloor = changeFloor;
+            liveUi->onWallMode = [&](int mode) {
+                wallView.setMode(mode);
+                liveUi->setWallMode(wallView.mode());
             };
-            liveUi->onWallMode = [&](int mode) { liveUi->setWallMode(mode); };
+            liveUi->setWallMode(wallView.mode());
             try {
                 buy = std::make_unique<os2::BuyMode>(simulation, objectView, renderer, index, res);
                 buy->setCanvas(1280, 720);
@@ -1564,9 +1667,20 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: pie menu: %s\n", e.what());
         }
+        // Whether a Sim is in the lot's world: it, or what holds it (a carried
+        // baby, a passenger in a car), stands in it.
         auto simInTheWorld = [&](os2::vm::ObjectId id) {
-            const os2::vm::Object* o = simulation.machine().object(id);
-            return o && o->position.inWorld();
+            os2::vm::VM& m = simulation.machine();
+            const os2::vm::Object* o = m.object(id);
+            for (int depth = 0; o && depth < 8; ++depth) {
+                if (o->position.inWorld())
+                    return true;
+                const int16_t c = o->data[os2::vm::objdata::ContainerId];
+                if (!c || c == o->id)
+                    return false;
+                o = m.object(c);
+            }
+            return false;
         };
         // The small portrait: IMG 0x10, 0x08 or 0x02 by the Sim's age.
         auto simPortrait = [&](os2::vm::ObjectId id) -> std::optional<os2::RgbaImage> {
@@ -1584,10 +1698,16 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
             return std::nullopt;
         };
-        // Where the mouse ray meets a floor, from the top level down (every
-        // level is drawn here): a walkable or pool tile (Go Here), or any
-        // tile with a floor (the pick stops there). The point, the ray's
-        // parameter and the VM level.
+        // Whether the floor of `lotLevel` at `at` is drawn when the camera
+        // shows `top`: not, in a level shown with the one below, the parts a
+        // story over the ground, which the next floor up shows.
+        auto drawnFloor = [&](int top, int lotLevel, simd_float3 at) {
+            return lotLevel != top || wallView.lowestCut(top) >= top ||
+                   !os2::storyOverGround(lot, lotLevel, int(std::floor(at.x)), int(std::floor(at.y)));
+        };
+        // Where the mouse ray meets a floor, from the level the camera shows
+        // down: a walkable or pool tile (Go Here), or any tile with a floor
+        // (the pick stops there). The point, the ray's parameter and the VM level.
         struct GroundHit {
             simd_float2 at;
             float t;
@@ -1597,7 +1717,10 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (std::fabs(dir.z) < 1e-5f || !simulation.machine().world)
                 return std::nullopt;
             const os2::vm::World& w = *simulation.machine().world;
-            for (int lotLevel = layout.minLevel + layout.levels - 1; lotLevel >= layout.minLevel; --lotLevel) {
+            int top = viewLevel();
+            if (top == os2::LotViewOptions::kAllLevels)
+                top = layout.minLevel + layout.levels - 1;
+            for (int lotLevel = top; lotLevel >= layout.minLevel; --lotLevel) {
                 const int level = lotLevel + 1;
                 float z = simulation.floorHeight(level, float(w.width()) / 2, float(w.height()) / 2);
                 simd_float3 hit{};
@@ -1610,7 +1733,8 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     z = simulation.floorHeight(level, hit.x, hit.y);
                 }
                 const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
-                if (ok && w.contains(tile) && (walkable ? w.walkable(tile) || w.pool(tile) : w.hasFloor(tile)))
+                if (ok && w.contains(tile) && (walkable ? w.walkable(tile) || w.pool(tile) : w.hasFloor(tile)) &&
+                    drawnFloor(top, lotLevel, hit))
                     return GroundHit{simd_make_float2(hit.x, hit.y), t, level};
             }
             return std::nullopt;
@@ -1639,6 +1763,11 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 return m;
             });
             pie->drawn = [&](os2::vm::ObjectId id) { return objectView.shown(id); };
+            // The levels above the camera's are not drawn: their objects are not picked.
+            pie->pickable = [&](simd_float3 lo, simd_float3) {
+                const int level = viewLevel();
+                return os2::WallView::visible(lot, level, lo.x, lo.y, lo.z, wallView.lowestCut(level));
+            };
             // A floor stops the ray (a Sim under it is not picked).
             pie->floorHit = [&](simd_float3 eye, simd_float3 dir) -> std::optional<float> {
                 if (const auto g = groundUnderRay(eye, dir, false))
@@ -1664,6 +1793,84 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (build)
                 build->pickObject = [&](simd_float3 eye, simd_float3 dir) { return pie->pick(eye, dir); };
         }
+        // The view the camera asks for; in cutaway the walls between the
+        // camera and the selected Sim on the level shown come down too.
+        wantedView = [&] {
+            os2::LotViewOptions v = wallView.options(lookOf(), viewLevel());
+            if (v.walls == os2::LotViewOptions::Walls::Cutaway && pie && pie->sim() && v.level != os2::LotViewOptions::kAllLevels)
+                if (const os2::vm::Object* o = simulation.machine().object(pie->sim());
+                    o && o->position.inWorld() && o->position.level - 1 == v.level) {
+                    const simd_float3 e = camera.eye();
+                    v.simLine = std::array<float, 4>{e.x, e.y, o->position.x, o->position.y};
+                }
+            return v;
+        };
+        // Keeps the lot model drawn for the current view: rebuilt (the
+        // geometry; the cache keeps the materials and holes) when the wall
+        // mode, the roof, the level or the cutaway side of the walls changed.
+        int lotViews = 0;
+        auto updateLotView = [&] {
+            const os2::LotViewOptions want = wantedView();
+            if (!os2::WallView::sameCut(view, want)) {
+                os2::LotLightMapLayout fresh;
+                const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, want, &fresh, &cache);
+                renderer.replaceObject(houseModel, model, index);
+                if (want.level != view.level)
+                    placeFences(want.level);
+                if (fresh.walls.size() != layout.walls.size() || fresh.height != layout.height) {
+                    layout = std::move(fresh);
+                    if (lotLighting)
+                        lotLighting->setLightMapLayout(layout);
+                }
+                view = want;
+                ++lotViews;
+            }
+            if (liveUi)
+                liveUi->setWallMode(wallView.mode());
+        };
+        // Sims above the level shown, or out of the world: out of sight and not picked.
+        std::set<int16_t> simsHidden;
+        auto showSims = [&] {
+            simd_float4x4 away = matrix_identity_float4x4;
+            away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+            simsHidden.clear();
+            for (const auto& s : sims) {
+                // A carried Sim is shown where its carrier stands.
+                os2::Vec3 p = s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
+                                                             s.actor->transform->t[2]}
+                                                 : s.actor->position;
+                if (const os2::vm::Object* o = simulation.machine().object(s.id); o && o->person)
+                    if (const DrawnSim* by = drawnSim(o->data[os2::vm::objdata::ContainerId]))
+                        p = by->actor->position;
+                const bool shown = simInTheWorld(s.id) &&
+                                   os2::WallView::visible(lot, view.level, p[0], p[1], p[2], view.lowestCut);
+                renderer.setInstanceTransform(s.instance, shown ? matrix_identity_float4x4 : away);
+                if (!shown)
+                    simsHidden.insert(s.id);
+            }
+        };
+        // A right click on a Sim of the family, or the space bar for the next one, selects it.
+        auto selectFamilySim = [&](os2::vm::ObjectId id) {
+            if (!liveUi || !id || id == liveUi->sim())
+                return false;
+            const auto family = liveUi->family();
+            if (std::find(family.begin(), family.end(), id) == family.end() || !simInTheWorld(id))
+                return false;
+            std::printf("opensims2: select Sim %d\n", id);
+            if (liveUi->onSelectSim)
+                liveUi->onSelectSim(id);
+            liveUi->setSim(id);
+            return true;
+        };
+        auto selectNextFamilySim = [&] {
+            if (!liveUi)
+                return;
+            const auto family = liveUi->family();
+            if (family.size() < 2)
+                return;
+            auto it = std::find(family.begin(), family.end(), liveUi->sim());
+            selectFamilySim(it == family.end() || std::next(it) == family.end() ? family.front() : *std::next(it));
+        };
         // The Sims' boxes as posed now, and the objects the VM made after the
         // lot loaded (bills, dishes, things bought), picked where they are drawn.
         std::map<int16_t, std::string> madePickBoxes;
@@ -1672,7 +1879,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (!pie)
                 return;
             for (const auto& s : sims) {
-                if (!simInTheWorld(s.id)) {
+                if (!simInTheWorld(s.id) || simsHidden.count(s.id)) {
                     pie->setMovingBox(s.id, simd_make_float3(0, 0, 0), simd_make_float3(0, 0, 0));
                     continue;
                 }
@@ -1876,8 +2083,9 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         };
 
         // The mouse ray (world space) through a canvas point.
+        auto viewProj = [&] { return simd_mul(camera.projection(1280.f / 720.f), camera.view()); };
         auto rayAt = [&](simd_float2 p) {
-            const simd_float4x4 m = camera.viewProj(1280.f / 720.f);
+            const simd_float4x4 m = viewProj();
             const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / 1280.f - 1, 1 - 2 * p.y / 720.f, 0.5f, 1));
             return simd_normalize(simd_make_float3(q.x / q.w, q.y / q.w, q.z / q.w) - camera.eye());
         };
@@ -1885,6 +2093,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         // puck's modes, the options panel, Buy/Build's panels, the live panel,
         // then the world (Buy/Build's tools, else the pie menu of what the
         // mouse is on, else Go Here). `whole`: a scripted click (press and release).
+        bool rightOnWorld = false; // the last right press went to the lot (the camera drag)
         auto mouseDown = [&](simd_float2 p, bool right, bool whole, bool control, bool shift) {
             if (pie && pie->dialogOpen() && pie->click(p)) {
                 pollFlowDialog();
@@ -1905,8 +2114,12 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 return;
             if (liveUi && liveUi->press(p, right))
                 return;
-            if (right)
+            if (right) {
+                rightOnWorld = true;
+                if (pie && !(buy && buy->active()) && !(build && build->active()))
+                    selectFamilySim(pie->pick(camera.eye(), rayAt(p)));
                 return;
+            }
             const simd_float3 eye = camera.eye(), dir = rayAt(p);
             if (buy && buy->active()) {
                 if (whole)
@@ -2146,7 +2359,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
             for (const auto& s : sims) {
                 // Not over a Sim out of the world (at work, at school).
-                if (!pie || s.id != pie->sim() || vmPlumbob || !simInTheWorld(s.id))
+                if (!pie || s.id != pie->sim() || vmPlumbob || !simInTheWorld(s.id) || simsHidden.count(s.id))
                     continue;
                 float top = s.actor->position[2];
                 for (const auto& p : s.actor->posed.parts)
@@ -2172,9 +2385,13 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             adoptVmSims();
             std::printf("opensims2: waited to VM tick %llu\n", (unsigned long long)simulation.ticks());
         };
-        bool keys[4]{};
+        // Held keys: pan left, right, back, forward; zoom in, out; rotate left, right.
+        bool keys[8]{};
+        double lastFrame = -1;
         auto frame = [&] {
             const double now = seconds();
+            const double dt = lastFrame < 0 ? 1.0 / 60 : std::clamp(now - lastFrame, 0.0, 0.1);
+            lastFrame = now;
             if (liveUi)
                 liveUi->tick(now);
             const double scene = simulation.update(now);
@@ -2184,6 +2401,24 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 if (a)
                     a->update(scene);
             adoptVmSims();
+            {
+                // Shift: "Move ... Faster" (twice the speed).
+                const float fast = (SDL_GetModState() & SDL_KMOD_SHIFT) ? 2.0f : 1.0f;
+                cameraMouse.config().edgeScroll = app.settings.edgeScrolling;
+                const auto [mr, mf] = cameraMouse.panAxes(1280, 720);
+                const float right = std::clamp((float(keys[1]) - float(keys[0])) * fast + mr, -fast, fast);
+                const float forward = std::clamp((float(keys[3]) - float(keys[2])) * fast + mf, -fast, fast);
+                camera.pan(right, forward, dt);
+                // Right button: the anchor's offset x 0.25 as a move request, per 50 ms frame.
+                const auto [dragX, dragY] = cameraMouse.dragMove();
+                camera.movePixels(dragX * float(dt) * 20.0f, dragY * float(dt) * 20.0f);
+                camera.zoomHeld(int(keys[4]) - int(keys[5]), dt);
+                camera.rotateHeld(int(keys[7]) - int(keys[6]), dt);
+                if (pie)
+                    follow.follow(simulation.machine(), pie->sim());
+                camera.update(dt);
+                updateLotView();
+            }
             {
                 std::vector<os2::Vec3> feet;
                 for (const auto& s : sims)
@@ -2229,6 +2464,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     if (again.count(sim.actor.get()))
                         sim.actor->update(scene);
             }
+            showSims();
             choosePlumbob();
             objectView.update();
             updatePicks();
@@ -2243,22 +2479,13 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 renderer.updateObject(sim.actor->model, sim.actor->posed);
             placePlumbob(scene);
             os2::LotAudio::Listener listener;
-            listener.x = camera.pivot.x;
-            listener.y = camera.pivot.y;
-            listener.z = camera.pivot.z;
-            listener.rightX = std::sin(camera.yaw);
-            listener.rightY = -std::cos(camera.yaw);
-            listener.zoom = std::clamp((28.f - camera.distance) / 22.f, 0.f, 1.f);
+            {
+                const simd_float3 p = camera.pivot(), look = p - camera.eye();
+                listener.x = p.x, listener.y = p.y, listener.z = std::max(0.0f, p.z - 1);
+                listener.rightX = look.y, listener.rightY = -look.x; // forward x up
+                listener.zoom = std::clamp(camera.zoom() / 5.0f, 0.0f, 1.0f);
+            }
             lotAudio.update(&simulation.machine(), scene, listener);
-            const float speed = 12.f * (1.f / 60.f);
-            if (keys[0])
-                camera.pivot.x -= speed;
-            if (keys[1])
-                camera.pivot.x += speed;
-            if (keys[2])
-                camera.pivot.y -= speed;
-            if (keys[3])
-                camera.pivot.y += speed;
             std::vector<os2::GpuRenderer::ShadowCaster> casters;
             for (const auto& sim : sims) {
                 if (lotLighting)
@@ -2310,17 +2537,20 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 effectSystem->update(1.f / 60.f);
                 std::vector<os2::fx::ParticleQuad> quads;
                 effectSystem->collect(quads);
-                simd_float3 right, up;
-                camera.basis(right, up);
+                const simd_float4x4 v = camera.view();
+                const simd_float3 right = simd_make_float3(v.columns[0][0], v.columns[1][0], v.columns[2][0]);
+                const simd_float3 up = simd_make_float3(v.columns[0][1], v.columns[1][1], v.columns[2][1]);
                 renderer.setParticleQuads(quads, right, up, &index);
             }
             renderer.setEye(camera.eye());
-            return renderer.draw(camera.viewProj(1280.f / 720.f));
+            return renderer.draw(viewProj());
         };
 
         // A few ticks so the capture shows the VM's animation, not the rest pose.
         for (int i = 0; i < 30; ++i)
             frame();
+        camera.snap();
+        updateLotView();
         // A lot reached through the game flow runs the script's remaining
         // steps (--click, --right-click, --wait, --key escape; app/game_flow.hpp);
         // a step that leaves the lot leaves the rest to the next scene.
@@ -2347,13 +2577,15 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
             if (exit.next || !running)
                 return exit;
+            camera.snap();
             for (int i = 0; i < 5; ++i) {
                 headlessClock += 1.0 / 30;
                 frame();
             }
+            camera.snap();
             showLiveUi();
             renderer.setEye(camera.eye());
-            if (!renderer.capture(shot, camera.viewProj(1280.f / 720.f)))
+            if (!renderer.capture(shot, viewProj()))
                 exit.code = 1;
             else
                 std::printf("opensims2: wrote %s (%llu ticks, %zu Sims, %zu objects animated, %zu doors open)\n",
@@ -2371,19 +2603,20 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         }
         showLiveUi();
         renderer.setEye(camera.eye());
-        if (!renderer.capture(shot, camera.viewProj(1280.f / 720.f)))
+        if (!renderer.capture(shot, viewProj()))
             throw std::runtime_error("screenshot failed");
         const int censorOnFrame = renderer.censorCount();
-        const Camera homeCamera = camera;
+        const os2::LotCamera::Pose homePose = camera.pose();
         simd_float3 mirrorCenter, mirrorNormal;
         if (renderer.mirrorAnchor(mirrorCenter, mirrorNormal)) {
-            camera.pivot = mirrorCenter;
-            camera.yaw = std::atan2(mirrorNormal.y, mirrorNormal.x);
-            camera.pitch = 0.f;
-            camera.distance = 1.6f;
-            renderer.setEye(camera.eye());
+            Camera mirrorCamera; // level, 1.6 tiles in front of the glass
+            mirrorCamera.pivot = mirrorCenter;
+            mirrorCamera.yaw = std::atan2(mirrorNormal.y, mirrorNormal.x);
+            mirrorCamera.pitch = 0.f;
+            mirrorCamera.distance = 1.6f;
+            renderer.setEye(mirrorCamera.eye());
             const auto mirrorShot = shot.parent_path() / "frame_mirror.png";
-            if (renderer.capture(mirrorShot, camera.viewProj(1280.f / 720.f)))
+            if (renderer.capture(mirrorShot, mirrorCamera.viewProj(1280.f / 720.f)))
                 std::printf("opensims2: mirror at (%.2f, %.2f, %.2f) normal (%.2f, %.2f, %.2f) -> %s\n", mirrorCenter.x,
                             mirrorCenter.y, mirrorCenter.z, mirrorNormal.x, mirrorNormal.y, mirrorNormal.z,
                             mirrorShot.string().c_str());
@@ -2467,7 +2700,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         log << "save " << saveLine << "\n";
         std::string buyLine = "buy skipped";
         if (buy && buy->ok() && liveUi && liveUi->ok()) {
-            camera = homeCamera;
+            camera.setPose(homePose);
             bool buyClick = false;
             if (const auto rect = liveUi->controlRect(os2::LiveUi::kMainWindow, 0x67D97B2A)) {
                 const simd_float2 at{((*rect)[0] + (*rect)[2]) * 0.5f, ((*rect)[1] + (*rect)[3]) * 0.5f};
@@ -2484,13 +2717,13 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     if (entry.multiTile || entry.price <= 0 || entry.price > 400 || !buy->select(entry))
                         continue;
                     ++tried;
-                    const int cx = int(camera.pivot.x), cy = int(camera.pivot.y);
+                    const int cx = int(camera.pivot().x), cy = int(camera.pivot().y);
                     for (int r = 1; r < 10 && !bought; ++r)
                         for (int dx = -r; dx <= r && !bought; ++dx)
                             for (int dy = -r; dy <= r && !bought; ++dy)
                                 if ((std::abs(dx) == r || std::abs(dy) == r) && buy->placeAt(cx + dx, cy + dy, 2)) {
                                     bought = true;
-                                    camera.pivot = simd_make_float3(float(cx + dx) + 0.5f, float(cy + dy) + 0.5f, 0.5f);
+                                    camera.setPivot(simd_make_float3(float(cx + dx) + 0.5f, float(cy + dy) + 0.5f, camera.pivot().z));
                                 }
                     if (!bought)
                         buy->cancel();
@@ -2499,10 +2732,11 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                              std::to_string(simulation.machine().objects().size());
                 for (int i = 0; i < 5; ++i)
                     frame();
+                camera.snap();
                 showLiveUi();
                 renderer.setEye(camera.eye());
                 const auto buyShot = shot.parent_path() / "frame_buy.png";
-                renderer.capture(buyShot, camera.viewProj(1280.f / 720.f));
+                renderer.capture(buyShot, viewProj());
             }
             buyLine = std::string(buyClick ? "clicked" : "miss") + (buy->active() ? " active" : " inactive") + " panel " +
                       std::to_string(buyWindows) + " windows " + std::to_string(buyDrawn) + " drawn; catalog " +
@@ -2512,7 +2746,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         log << "buy " << buyLine << "\n";
         std::string buildLine = "build skipped";
         if (build && build->ok() && liveUi && liveUi->ok()) {
-            camera = homeCamera;
+            camera.setPose(homePose);
             bool buildClick = false;
             if (const auto rect = liveUi->controlRect(os2::LiveUi::kMainWindow, 0x77D97B28)) {
                 const simd_float2 at{((*rect)[0] + (*rect)[2]) * 0.5f, ((*rect)[1] + (*rect)[3]) * 0.5f};
@@ -2522,7 +2756,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (build->active()) {
                 const size_t wallsBefore = lot.walls.size();
                 const int rebuildsBefore = lotRebuilds;
-                const int cx = int(camera.pivot.x), cy = int(camera.pivot.y);
+                const int cx = int(camera.pivot().x), cy = int(camera.pivot().y);
                 std::string drawn;
                 for (int r = 2; r < 12 && drawn.empty(); ++r)
                     for (int dx = -r; dx <= r && drawn.empty(); dx += 2)
@@ -2537,8 +2771,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                             build->runSteps({"", "--room", area});
                             if (lotRebuilds > rebuildsBefore) {
                                 drawn = area;
-                                camera.pivot = simd_make_float3(float(x0) + 2.f, float(y0) + 2.f, 1.f);
-                                camera.distance = 16.f;
+                                camera.setPivot(simd_make_float3(float(x0) + 2.f, float(y0) + 2.f, camera.pivot().z));
                             }
                         }
                 roomLine = drawn.empty() ? "no room drawn"
@@ -2547,9 +2780,10 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                                                std::to_string(lotRebuilds - rebuildsBefore);
                 for (int i = 0; i < 5; ++i)
                     frame();
+                camera.snap();
                 showLiveUi();
                 renderer.setEye(camera.eye());
-                renderer.capture(shot.parent_path() / "frame_build.png", camera.viewProj(1280.f / 720.f));
+                renderer.capture(shot.parent_path() / "frame_build.png", viewProj());
             }
             buildLine = std::string(buildClick ? "clicked" : "miss") + (build->active() ? " active" : " inactive") +
                         " panel " + std::to_string(buildWindows) + " windows " + std::to_string(buildDrawn) +
@@ -2600,7 +2834,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             return {};
 
         SDL_StartTextInput(app.window);
-        bool leftDown = false;
+        bool leftDown = false, rotating = false;
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -2620,12 +2854,27 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
                     const bool down = event.type == SDL_EVENT_KEY_DOWN;
                     switch (event.key.scancode) {
-                    case SDL_SCANCODE_A: keys[0] = down; break;
-                    case SDL_SCANCODE_D: keys[1] = down; break;
-                    case SDL_SCANCODE_S: keys[2] = down; break;
-                    case SDL_SCANCODE_W: keys[3] = down; break;
-                    case SDL_SCANCODE_Q: if (down) camera.yaw -= 0.08f; break;
-                    case SDL_SCANCODE_E: if (down) camera.yaw += 0.08f; break;
+                    case SDL_SCANCODE_A: case SDL_SCANCODE_LEFT: keys[0] = down; break;
+                    case SDL_SCANCODE_D: case SDL_SCANCODE_RIGHT: keys[1] = down; break;
+                    case SDL_SCANCODE_S: case SDL_SCANCODE_DOWN: keys[2] = down; break;
+                    case SDL_SCANCODE_W: case SDL_SCANCODE_UP: keys[3] = down; break;
+                    case SDL_SCANCODE_EQUALS: keys[4] = down; break;
+                    case SDL_SCANCODE_MINUS: keys[5] = down; break;
+                    case SDL_SCANCODE_COMMA: case SDL_SCANCODE_Q: keys[6] = down; break;
+                    case SDL_SCANCODE_PERIOD: case SDL_SCANCODE_E: keys[7] = down; break;
+                    case SDL_SCANCODE_Z: case SDL_SCANCODE_KP_PLUS: if (down) camera.zoomBy(1); break;
+                    case SDL_SCANCODE_X: case SDL_SCANCODE_KP_MINUS: if (down) camera.zoomBy(-1); break;
+                    case SDL_SCANCODE_PAGEUP: if (down) changeFloor(1); break;
+                    case SDL_SCANCODE_PAGEDOWN: if (down) changeFloor(-1); break;
+                    // "Paredes ... - Origem/Fim": Home and End step through the wall modes.
+                    case SDL_SCANCODE_HOME: if (down) wallView.cycle(1); break;
+                    case SDL_SCANCODE_END: if (down) wallView.cycle(-1); break;
+                    case SDL_SCANCODE_SPACE: if (down) selectNextFamilySim(); break;
+                    case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
+                        if (down && pie)
+                            if (auto p = follow.simPoint(simulation.machine(), pie->sim()))
+                                camera.moveTo(*p);
+                        break;
                     case SDL_SCANCODE_ESCAPE:
                         if (down)
                             escape();
@@ -2634,20 +2883,50 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     }
                 }
                 if (event.type == SDL_EVENT_MOUSE_WHEEL)
-                    camera.distance = std::clamp(camera.distance - event.wheel.y * 1.5f, 6.f, 80.f);
-                if (event.type == SDL_EVENT_MOUSE_MOTION)
-                    mouseMoved(simd_make_float2(event.motion.x, event.motion.y), leftDown);
-                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                    (event.button.button == SDL_BUTTON_LEFT || event.button.button == SDL_BUTTON_RIGHT)) {
-                    const bool right = event.button.button == SDL_BUTTON_RIGHT;
-                    const SDL_Keymod mods = SDL_GetModState();
-                    leftDown = leftDown || !right;
-                    mouseDown(simd_make_float2(event.button.x, event.button.y), right, false, (mods & SDL_KMOD_CTRL) != 0,
-                              (mods & SDL_KMOD_SHIFT) != 0);
+                    camera.wheel(event.wheel.y);
+                if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE)
+                    cameraMouse.mouseAt(0, 0, false);
+                if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                    if (rotating) {
+                        camera.rotateRequest(event.motion.xrel, event.motion.yrel);
+                    } else {
+                        cameraMouse.mouseAt(event.motion.x, event.motion.y);
+                        mouseMoved(simd_make_float2(event.motion.x, event.motion.y), leftDown);
+                    }
                 }
-                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
-                    leftDown = false;
-                    mouseUp(simd_make_float2(event.button.x, event.button.y));
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                    const SDL_Keymod mods = SDL_GetModState();
+                    const bool control = (mods & SDL_KMOD_CTRL) != 0, alt = (mods & SDL_KMOD_ALT) != 0;
+                    const simd_float2 p = simd_make_float2(event.button.x, event.button.y);
+                    if (event.button.button == SDL_BUTTON_LEFT) {
+                        leftDown = true;
+                        mouseDown(p, false, false, control, (mods & SDL_KMOD_SHIFT) != 0);
+                    } else if (event.button.button == SDL_BUTTON_RIGHT) {
+                        rightOnWorld = false;
+                        mouseDown(p, true, false, control, (mods & SDL_KMOD_SHIFT) != 0);
+                        // Control (the game's "CTRL + botão DIREITO") or Alt: rotate and tilt; else drag the view.
+                        if (rightOnWorld) {
+                            rotating = os2::CameraMouseInput::rotatePress(os2::CameraMouseInput::Button::Right, control, alt);
+                            if (!rotating)
+                                cameraMouse.beginAnchor();
+                        }
+                    } else if (event.button.button == SDL_BUTTON_MIDDLE) {
+                        rotating = true;
+                    }
+                    // While rotating the cursor stays where it was clicked; the deltas keep coming.
+                    if (rotating)
+                        SDL_SetWindowRelativeMouseMode(app.window, true);
+                }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                    if (event.button.button == SDL_BUTTON_LEFT) {
+                        leftDown = false;
+                        mouseUp(simd_make_float2(event.button.x, event.button.y));
+                    } else if (event.button.button == SDL_BUTTON_RIGHT || event.button.button == SDL_BUTTON_MIDDLE) {
+                        cameraMouse.endAnchor();
+                        if (rotating)
+                            SDL_SetWindowRelativeMouseMode(app.window, false);
+                        rotating = false;
+                    }
                 }
             }
             pollFlowDialog();
