@@ -1048,14 +1048,30 @@ gira como um clique. O gancho de visibilidade (`app/lot_vm_setup.mm`) segue
 `HideWhenWallDown` + as exceções acima, no lugar da lista de prefixos de nome
 ("door", "window", "curtain"...). Inferidos: qual parede o objeto ocupa é a
 geometria de `onCutWall` (`app/lot_view.mm`: parede cortada a até 0,6 tile, de
-frente para o objeto), não os wall locators; objetos do lote erguidos do piso
-(a base do modelo a mais de 0,5) que pedem parede também somem, como antes
-(espelhos: as flags salvas não têm `0x400`, e flutuando sobre o toco
-pareciam quebrados); o `SwapDiagonalObject` do auto-giro não existe (só BV).
+frente para o objeto), não os wall locators; o `SwapDiagonalObject` do auto-giro não existe (só BV).
 Teste `tests/door_cut_wall.sh`; `docs/screenshots/
 i002-porta-parede-cortada-antes-depois.jpg` (antes: vermelho, "Deve estar
 contra a parede"; depois: porta fantasma verde virada para a parede,
 colocada, e com as paredes erguidas) e `i002-porta-paredes-erguidas.jpg`.
+
+**De onde vem o bit `0x400`** (rodada i002-rest, Ghidra MCP + dados): só das
+árvores do objeto. No binário, fora o `HideWhenWallDown` que o lê, o
+`cTSUserToolUndoableObject::SuppressHideWhenWallDownFlag` (BV `0x35d564`, sem
+nome no Ghidra) guarda o bit em `+0x8c` (`(od 8 >> 10) & 1`) e o apaga, e o
+`RestoreHideWhenWallDownFlag` o devolve: só esconde/repõe o que já havia.
+Nos BHAVs do jogo base, quem liga o bit (Expression "set flag" 11 no od 8 do
+próprio objeto): `PaintingGlobals` "Sub - Init for wall hanging" e "Function -
+User Place" (`0x7F446D21`), as luminárias de parede/teto (`0x7F60C397` "Init -
+Wall"/"Init - Ceiling", `0x7F18E0F0`, `0x7F48CA31`), as janelas (`0x7F3B9D51`
+"SG: Init", "SG: Init Diagonal"...), lareira, etc. Quem o **apaga**: o
+`MirrorGlobals` "Function - Init" (`0x7F84A9F4` árvore `0x2000`, nó 7: "clear
+flag" 11 no od 8) e os espelhos de chão (`0x7F5B99A2`, `0x7FC83200`). Então os
+espelhos de parede, o telefone de parede e o detector de fumaça (od 8 sem
+`0x400` nos lotes) **ficam à mostra** na parede cortada no jogo, e o app agora
+também (saiu a regra inferida "base do modelo acima de 0,5"; antes/depois em
+`docs/screenshots/i002-espelho-parede-cortada-antes-depois.jpg`, `N001_Lot82`,
+os dois espelhos Marroquinos sobre as pias e a banheira). Quadros e arandelas
+continuam sumindo (têm o bit).
 
 ### 7.7 Desfazer na construção
 

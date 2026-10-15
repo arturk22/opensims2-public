@@ -502,14 +502,11 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // (cTSUserToolUndoableObject clears the flag while held,
     // Suppress/RestoreHideWhenWallDownFlag, BV 0x35ceb0). Which wall an
     // object hangs on is onCutWall's geometry (inferred).
-    // Inferred (visual): a lot object lifted off the floor (its model's
-    // bottom 0.5 over it: mirrors, whose saved flags lack 0x400) that needs a
-    // wall goes with its cut wall too, as the shell did before; a mirror
-    // floating over a cut wall looked broken.
-    gWallHung.clear();
-    for (const auto& b : gPickBoxes)
-        if (b.lo.z > 0.5f)
-            gWallHung[int16_t(b.instance & 0xFFFF)] = true;
+    // Nothing else hides: the wall mirrors, the wall phone and the smoke
+    // alarm stay on a cut wall, as in the game (MirrorGlobals' "Function -
+    // Init", group 0x7F84A9F4 tree 0x2000, clears the 0x400 bit; paintings,
+    // wall lamps and ceiling lamps set it in theirs; docs/buy-build-mac.md
+    // §7.6.1).
     gObjectView->visible = [](int16_t id, const os2::Xform& at) {
         if (!gLotShape)
             return true;
@@ -528,7 +525,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                             o->definition->fileName.c_str(), unsigned(type), unsigned(uint16_t(o->data[os2::vm::objdata::Flags])),
                             unsigned(uint16_t(o->data[os2::vm::objdata::WallPlacementFlags])));
         }
-        if (type != os2::vm::kObjectTypeWindow && !(o->data[os2::vm::objdata::Flags] & 0x400) && !gWallHung.count(id))
+        if (type != os2::vm::kObjectTypeWindow && !(o->data[os2::vm::objdata::Flags] & 0x400))
             return true;
         // Attached to no wall: the walls an object hangs on come from its
         // wall placement flags (cTSObject vtable 0x274/0x284 from 0x25c, read
