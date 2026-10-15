@@ -176,8 +176,7 @@ int ensureTutorialControllers(VM& vm) {
             if (!o)
                 continue;
             o->position = Position{};
-            o->data[objdata::ContainerId] = 0;
-            o->data[objdata::SlotNumber] = -1;
+            vm.setContainer(*o, 0, -1);
             vm.initialize(o->id, before);
             ++created;
         } catch (const std::exception& err) {

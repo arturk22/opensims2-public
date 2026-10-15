@@ -118,8 +118,9 @@ void finishMove(VM& vm, ObjectId id) {
     std::vector<ObjectId> todo{id};
     for (size_t i = 0; i < todo.size() && i < 64; ++i) {
         onRoomChanged(vm, todo[i]);
-        for (const auto& [cid, c] : vm.eachObject())
-            if (c.data[objdata::ContainerId] == todo[i] && cid != todo[i])
+        // What is in it (the containment index holds every contained object, by ID).
+        for (const ObjectId cid : vm.containedObjects())
+            if (const Object* c = vm.object(cid); c && c->data[objdata::ContainerId] == todo[i] && cid != todo[i])
                 todo.push_back(cid);
     }
 }

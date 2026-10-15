@@ -271,6 +271,7 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             for (int16_t field : {objdata::Direction, objdata::ContainerId, objdata::SlotNumber, objdata::Room})
                 if (size_t(field) < s.data.size())
                     o.data[size_t(field)] = s.data[size_t(field)];
+            vm.noteContainer(o);
             // A part of a multi-tile object leads to its lead object
             // (cEdithMTObject::Read); the others lead themselves.
             if (s.kind == LotObjects::Kind::MultiTile && s.leadObject)

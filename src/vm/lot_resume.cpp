@@ -61,7 +61,7 @@ void restoreMotiveChanges(Object& o, const LotObjects::State& s) {
 // arrays than that are read and dropped). The game never makes fewer than 8
 // attributes, so a state without any is one we could not read: the object
 // keeps its own.
-void restoreState(Object& o, const LotObjects::State& s) {
+void restoreState(VM& vm, Object& o, const LotObjects::State& s) {
     if (!s.attributes.empty())
         o.attributes.assign(s.attributes.begin(), s.attributes.end());
     if (o.semiAttributes.size() < s.semiAttributes.size())
@@ -70,6 +70,7 @@ void restoreState(Object& o, const LotObjects::State& s) {
     for (size_t i = 0; i < s.data.size() && i < o.data.size(); ++i)
         o.data[i] = s.data[i];
     o.data[objdata::ObjectId] = o.id;
+    vm.noteContainer(o);
     if (o.person && s.personRead)
         for (size_t i = 0; i < s.personData.size() && i < o.person->data.size(); ++i)
             o.person->data[i] = s.personData[i];
@@ -308,7 +309,7 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
     // Restore every object first: the tree stacks name other objects.
     for (ObjectId id : ids)
         if (auto it = states.find(id); it != states.end()) {
-            restoreState(*vm.object(id), *it->second);
+            restoreState(vm, *vm.object(id), *it->second);
             restoreEffects(vm, *vm.object(id), *it->second);
             ++out.restored;
         }

@@ -12,6 +12,7 @@
 #include "vm/placement.hpp"
 #include "vm/interactions.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -1614,8 +1615,8 @@ static void testSlots() {
     Object& plate = fx.vm.createObject(kObjGroup);     // id 2, in slot 1 of 1
     Object& other = fx.vm.instantiate(kObjGroup, 0x80); // id 3, holds 1 in its slot 0
     check(c.data[objdata::SlotCount] == 2, "slot count from the SLOT's container slots");
-    plate.data[objdata::ContainerId] = c.id, plate.data[objdata::SlotNumber] = 1;
-    c.data[objdata::ContainerId] = other.id, c.data[objdata::SlotNumber] = 0;
+    fx.vm.setContainer(plate, c.id, 1);
+    fx.vm.setContainer(c, other.id, 0);
     check(fx.vm.containedIn(c.id, 1) == plate.id && fx.vm.containedIn(c.id, 0) == 0, "containment");
     enum : uint8_t { SSlot = 0x10, MySlot = 0x14, MySlotTemp = 0x30, SSlotTemp = 0x31 };
     fx.code.add(kObjGroup, 0x1000,
@@ -1627,6 +1628,22 @@ static void testSlots() {
     check(t.status == Thread::Status::Finished && t.temps[0] == plate.id && t.temps[1] == 0 &&
               t.temps[2] == plate.id && t.temps[3] == c.id && t.temps[4] == c.id,
           "slot data owners");
+    // A tree that writes the container (object data 2) puts the object in
+    // the containment index (VM::containedObjects): it is found in the slot.
+    Object& cup = fx.vm.createObject(kObjGroup); // id 4
+    fx.code.add(kObjGroup, 0x1005,
+                tree({expr(StackId, 0, Assign, Lit, cup.id, go(1), E), expr(0x04, 3, Assign, Lit, 0, go(2), E),
+                      expr(0x04, 2, Assign, Lit, c.id, T, E)}));
+    t = fx.run(0x1005);
+    fx.vm.followContainers();
+    check(t.status == Thread::Status::Finished && fx.vm.containedIn(c.id, 0) == cup.id &&
+              std::binary_search(fx.vm.containedObjects().begin(), fx.vm.containedObjects().end(), cup.id),
+          "a tree's write of the container goes into the containment index");
+    fx.vm.setContainer(cup, 0, -1);
+    fx.vm.followContainers();
+    check(fx.vm.containedIn(c.id, 0) == 0 && !std::binary_search(fx.vm.containedObjects().begin(),
+                                                                 fx.vm.containedObjects().end(), cup.id),
+          "out of its container, the object leaves the index at the next tick");
     fx.code.add(kObjGroup, 0x1001, tree({expr(MySlot, 0, Assign, Lit, 2, T, E)}));
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Failed && t.error.find("read-only") != std::string::npos, "slots are read-only");

@@ -145,8 +145,9 @@ std::vector<ObjectId> VM::objectsOnTileWithContents(TilePos t) const {
             return;
         out.push_back(id);
         std::vector<std::pair<int16_t, ObjectId>> inside;
-        for (const Object* o : byId_)
-            if (o && o->id != id && o->data[objdata::ContainerId] == id && !dyingObjects.contains(o->id))
+        for (const ObjectId in : contained_)
+            if (const Object* o = uint16_t(in) < byId_.size() ? byId_[uint16_t(in)] : nullptr;
+                o && o->id != id && o->data[objdata::ContainerId] == id && !dyingObjects.contains(o->id))
                 inside.emplace_back(o->data[objdata::SlotNumber], o->id);
         std::sort(inside.begin(), inside.end());
         for (const auto& [slot, x] : inside)

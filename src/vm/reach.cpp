@@ -471,9 +471,8 @@ std::vector<std::string> carryOverlays(VM& vm, const Object& sim, const std::str
 
 // cTSObject::PlaceInSlot (BV 0xafcc28): the container's position, room and
 // direction (docs/seat-mac.md §B).
-void putInSlot(Object& x, const Object& container, int slot) {
-    x.data[objdata::ContainerId] = container.id;
-    x.data[objdata::SlotNumber] = int16_t(slot);
+void putInSlot(VM& vm, Object& x, const Object& container, int slot) {
+    vm.setContainer(x, container.id, int16_t(slot));
     x.position = container.position;
     x.data[objdata::Room] = container.data[objdata::Room];
     x.data[objdata::Direction] = container.data[objdata::Direction];
@@ -535,7 +534,7 @@ Exit reachPut(Context& c) {
             Object* to = c.vm.object(r.target);
             if (r.mode == 0) {
                 if (x && x->data[objdata::ContainerId] != me.id) {
-                    putInSlot(*x, me, r.hand);
+                    putInSlot(c.vm, *x, me, r.hand);
                     me.carryOverlays = r.overlays;
                     // The grasp at level 3, the carry pose at 5 (try_new_reach).
                     for (size_t k = 0; k < r.overlays.size(); ++k) {
@@ -564,10 +563,9 @@ Exit reachPut(Context& c) {
                 me.carryOverlays.clear();
                 ++anim.overlaySerial;
                 if (r.mode == 1 && to) {
-                    putInSlot(*x, *to, r.slot);
+                    putInSlot(c.vm, *x, *to, r.slot);
                 } else {
-                    x->data[objdata::ContainerId] = 0;
-                    x->data[objdata::SlotNumber] = -1;
+                    c.vm.setContainer(*x, 0, -1);
                     x->position = {float(r.floor.x) + 0.5f, float(r.floor.y) + 0.5f, r.floor.level};
                     x->data[objdata::Direction] = me.data[objdata::Direction];
                     if (c.vm.world)
@@ -750,7 +748,7 @@ Exit snap(Context& c) {
         if (c.vm.containedIn(target.id, 0) && c.vm.containedIn(target.id, 0) != me.id)
             return fail();
         if (!(flags & 0x10))
-            putInSlot(me, target, 0);
+            putInSlot(c.vm, me, target, 0);
         return Exit::True;
     }
     Slots::Slot slot;
@@ -888,8 +886,7 @@ Exit snap(Context& c) {
     }
     if (flags & 0x10)
         return Exit::True;
-    me.data[objdata::ContainerId] = 0;
-    me.data[objdata::SlotNumber] = -1;
+    c.vm.setContainer(me, 0, -1);
     if (!(me.route && me.route->inPortal)) // a portal tree moves the walker
         me.route.reset();
     else // and the walk goes on from where it puts it: the locomotor's frame

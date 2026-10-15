@@ -795,8 +795,7 @@ Exit createObjectInstance(Context& c) {
         return Exit::False;
     }
     if (container) {
-        x->data[objdata::ContainerId] = container->id;
-        x->data[objdata::SlotNumber] = int16_t(slot);
+        c.vm.setContainer(*x, container->id, int16_t(slot));
         x->position = container->position;
         x->data[objdata::Room] = container->data[objdata::Room];
     } else if (at) {

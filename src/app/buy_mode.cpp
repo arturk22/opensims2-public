@@ -290,8 +290,7 @@ void BuyMode::preview(const vm::Placement& p) {
             continue;
         o->data[vm::objdata::Direction] = int16_t(p.direction);
         o->position = {float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
-        o->data[vm::objdata::ContainerId] = p.ok ? p.container : 0;
-        o->data[vm::objdata::SlotNumber] = int16_t(p.ok && p.container ? p.slot : -1);
+        vm_.setContainer(*o, p.ok ? p.container : vm::ObjectId(0), int16_t(p.ok && p.container ? p.slot : -1));
         if (p.ok && p.container)
             if (const vm::Object* c = vm_.object(p.container))
                 o->position = c->position;

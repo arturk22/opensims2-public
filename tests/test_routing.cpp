@@ -160,7 +160,7 @@ static void testSetToNextTiles() {
     Object& west = place(vm, 2, 3); // 4: direction 0 (-X)
     Object& diag = place(vm, 4, 4); // 5
     Object& held = place(vm, 3, 3); // 6: in a slot of b
-    held.data[objdata::ContainerId] = b.id;
+    vm.setContainer(held, b.id, held.data[objdata::SlotNumber]);
     place(vm, 6, 6); // 7: far away
     (void)east, (void)west, (void)diag;
     auto stn = [](uint8_t type, uint8_t local, Target t, Target f) {
@@ -438,7 +438,7 @@ static void testSnapAndPlace() {
 
     // Find Location For, normal: the cup next to the counter (whose tile is taken).
     code.add(kGroup, 0x1002, tree({instr(0x10, T, F, {0, 0, 0})}));
-    cup.data[objdata::ContainerId] = 0;
+    vm.setContainer(cup, 0, cup.data[objdata::SlotNumber]);
     t = vm.start(counter.id, 0x1002, {}, cup.id);
     vm.run(t);
     const TilePos at = VM::tileOf(cup);

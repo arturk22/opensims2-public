@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace os2::vm {
@@ -676,6 +677,8 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
 void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     if (int16_t* v = storage(*this, owner, data)) {
         *v = value;
+        if ((owner == 0x03 || owner == 0x04) && data == objdata::ContainerId) // my / the stack object's container
+            vm.noteContainer(owner == 0x03 ? me() : stackObject());
         return;
     }
     switch (owner) {
@@ -867,15 +870,48 @@ int16_t VM::neighborForGuid(uint32_t guid) {
 ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     if (container == 0 || slot < 0)
         return 0;
+    checkContained();
     // An object already on the kill queue (Remove Object Instance) is not in
     // the slot any more: "Chess - Reset Sim" removes what the Sim holds and
     // asks again until the hand is empty, all in one tick (it spun out the
     // instruction budget in N002_Lot10; inferred).
-    for (const Object* o : byId_) // by ID, as objects_ is
+    for (const ObjectId id : contained_) { // by ID, as objects_ is
+        const Object* o = uint16_t(id) < byId_.size() ? byId_[uint16_t(id)] : nullptr;
         if (o && o->data[objdata::ContainerId] == container && o->data[objdata::SlotNumber] == slot && o->id != container &&
             !dyingObjects.contains(o->id))
             return o->id;
+    }
     return 0;
+}
+
+void VM::addContained(ObjectId id) {
+    const size_t k = uint16_t(id);
+    if (k >= containedFlag_.size())
+        containedFlag_.resize(k + 1 + 64, 0);
+    containedFlag_[k] = 1;
+    contained_.insert(std::upper_bound(contained_.begin(), contained_.end(), id), id);
+}
+
+void VM::dropContained(ObjectId id) {
+    const size_t k = uint16_t(id);
+    if (k >= containedFlag_.size() || !containedFlag_[k])
+        return;
+    containedFlag_[k] = 0;
+    contained_.erase(std::lower_bound(contained_.begin(), contained_.end(), id));
+}
+
+void VM::checkContained() const {
+    static const bool check = std::getenv("OS2_CHECK_CONTAINED") != nullptr;
+    if (!check)
+        return;
+    for (const Object* o : byId_)
+        if (o && o->data[objdata::ContainerId] != 0 &&
+            !(uint16_t(o->id) < containedFlag_.size() && containedFlag_[uint16_t(o->id)] &&
+              std::binary_search(contained_.begin(), contained_.end(), o->id))) {
+            std::fprintf(stderr, "opensims2: object %d is in container %d but not in the containment index\n", o->id,
+                         o->data[objdata::ContainerId]);
+            std::abort();
+        }
 }
 
 uint16_t VM::functionTree(const Object& o, size_t function) {
@@ -1092,6 +1128,7 @@ void VM::resetObject(ObjectId id, Thread& t) {
         o->data.fill(0);
         for (int k : {1, 2, 3, 11, 19, 21, 24, 29, 41, 45, 46, 47, 55, 67, 79, 80, 81})
             o->data[size_t(k)] = old[size_t(k)];
+        noteContainer(*o);
         // GetDefaultNicenessMultiplier (vtable 0x578): OBJD field 45.
         o->data[7] = int16_t(definitionField(*o, 45));
         o->data[71] = 0;
@@ -1124,12 +1161,20 @@ void VM::resetObject(ObjectId id, Thread& t) {
 void VM::followContainers() {
     // Contained objects are where their container is (as the saved lots keep
     // them and Snap Into puts them): what a Sim carries goes along with it.
-    for (Object* po : byId_) { // by ID, as objects_ is
-        if (!po)
+    // By ID, as objects_ is; those out of their container leave the list.
+    checkContained();
+    size_t kept = 0;
+    for (size_t i = 0; i < contained_.size(); ++i) {
+        const ObjectId id = contained_[i];
+        Object* po = object(id);
+        if (!po || po->data[objdata::ContainerId] == 0) {
+            containedFlag_[uint16_t(id)] = 0;
             continue;
+        }
+        contained_[kept++] = id;
         Object& o = *po;
         const ObjectId in = o.data[objdata::ContainerId];
-        if (!in || in == o.id)
+        if (in == o.id)
             continue;
         const Object* top = object(in);
         if (!top)
@@ -1143,6 +1188,7 @@ void VM::followContainers() {
         o.position = top->position;
         o.data[objdata::Room] = top->data[objdata::Room];
     }
+    contained_.resize(kept);
 }
 
 // The family tree (cTSFamilyRelationshipArray, BV 0x544028/0x5442e8).

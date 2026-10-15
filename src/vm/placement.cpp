@@ -109,12 +109,10 @@ int slotPlacementError(VM& vm, const Object& x, const Object& container, int slo
 }
 
 void placeInSlot(VM& vm, Object& x, const Object& container, int slot) {
-    x.data[objdata::ContainerId] = container.id;
-    x.data[objdata::SlotNumber] = int16_t(slot);
+    vm.setContainer(x, container.id, int16_t(slot));
     x.position = container.position;
     x.data[objdata::Room] = container.data[objdata::Room];
     x.data[objdata::Direction] = container.data[objdata::Direction];
-    (void)vm;
 }
 
 namespace {
@@ -576,15 +574,13 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
         o->data[objdata::Direction] = int16_t(p.direction);
         o->position = part.at ? *part.at : Position{float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
         if (p.container) {
-            o->data[objdata::ContainerId] = p.container;
-            o->data[objdata::SlotNumber] = int16_t(p.slot);
+            vm.setContainer(*o, p.container, int16_t(p.slot));
             if (const Object* c = vm.object(p.container)) {
                 o->position = c->position;
                 o->data[objdata::Room] = c->data[objdata::Room];
             }
         } else {
-            o->data[objdata::ContainerId] = 0;
-            o->data[objdata::SlotNumber] = -1;
+            vm.setContainer(*o, 0, -1);
             // SetLocation: the room (definition 2) where it now stands.
             if (vm.world)
                 o->data[objdata::Room] = vm.world->room(VM::tileOf(*o));
@@ -614,8 +610,7 @@ void pickUp(VM& vm, ObjectId id) {
         if (!o)
             continue;
         o->position = Position{};
-        o->data[objdata::ContainerId] = 0;
-        o->data[objdata::SlotNumber] = -1;
+        vm.setContainer(*o, 0, -1);
         runEntry(vm, part, entry::Pickup);
     }
     vm.refreshObjectPortals();
@@ -631,8 +626,7 @@ ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance) {
     for (ObjectId part : groupOf(vm, leadId)) {
         Object* o = vm.object(part);
         o->position = Position{};
-        o->data[objdata::ContainerId] = 0;
-        o->data[objdata::SlotNumber] = -1;
+        vm.setContainer(*o, 0, -1);
     }
     // As cEdithObjectModule::MakeNewOutOfWorldObject (docs/primitives-mac.md
     // §4c): the Init of each part, then the current value = the OBJD's price.

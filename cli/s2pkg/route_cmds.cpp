@@ -118,8 +118,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
         int level = 1;
         if (std::sscanf(at, "%f,%f,%d", &x, &y, &level) >= 2) {
             s.position = {x, y, level};
-            s.data[vm::objdata::ContainerId] = 0;
-            s.data[vm::objdata::SlotNumber] = -1;
+            machine.setContainer(s, 0, -1);
             if (machine.world)
                 s.data[vm::objdata::Room] = machine.world->room(vm::VM::tileOf(s));
         }
@@ -296,8 +295,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
             vm::Object& o2 = *machine.object(also);
             if (n >= 5) {
                 o2.position = {x, y, level};
-                o2.data[vm::objdata::ContainerId] = 0;
-                o2.data[vm::objdata::SlotNumber] = -1;
+                machine.setContainer(o2, 0, -1);
                 o2.data[vm::objdata::Room] = machine.world->room(vm::VM::tileOf(o2));
             }
             o2.queue.clear();

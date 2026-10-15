@@ -214,8 +214,7 @@ static void testReachPut() {
     // An object the trees put in the hand, its carry pose started by Animate
     // Overlay (twice: two of a name): putting it down takes off every overlay
     // the put's grasp entry names (a coffee mug from the machine; live QA 15).
-    paper.data[objdata::ContainerId] = fx.sim;
-    paper.data[objdata::SlotNumber] = 0;
+    fx.vm.setContainer(paper, fx.sim, 0);
     sim.carryOverlays.clear();
     sim.animation.addOverlay("a2o-paper-carry");
     sim.animation.addOverlay("a2o-paper-carry");

@@ -1091,6 +1091,7 @@ public:
         objects_.erase(id);
         if (size_t(uint16_t(id)) < byId_.size())
             byId_[uint16_t(id)] = nullptr;
+        dropContained(id);
         ++tableGeneration_;
     }
     // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
@@ -1158,6 +1159,24 @@ public:
     // and -1, as in the lot's saved state. The object in that slot, or 0.
     // Data owners 0x10/0x14/0x30/0x31 read slots this way.
     ObjectId containedIn(ObjectId container, int16_t slot) const;
+    // Every write of object data 2 goes through setContainer, or is followed
+    // by noteContainer (a lot's saved data, SimAntics' writes), so that the
+    // objects in a container are known without a walk over all of them.
+    void setContainer(Object& o, ObjectId container, int16_t slot) {
+        o.data[objdata::ContainerId] = container;
+        o.data[objdata::SlotNumber] = slot;
+        noteContainer(o);
+    }
+    void noteContainer(const Object& o) {
+        const ObjectId c = o.data[objdata::ContainerId];
+        const size_t k = uint16_t(o.id);
+        if (c != 0 && (k >= containedFlag_.size() || !containedFlag_[k]))
+            addContained(o.id);
+    }
+    // The objects whose object data 2 may not be 0, in ID order: all those
+    // whose is not, and maybe some taken out of their container since
+    // (followContainers drops them).
+    const std::vector<ObjectId>& containedObjects() const { return contained_; }
 
     // --- Scheduler -----------------------------------------------------------
     // Each object has one thread of its own. Its Init (OBJf function 0) runs
@@ -1483,6 +1502,12 @@ private:
     // the only places that add or remove entries of objects_.
     std::vector<Object*> byId_;
     uint64_t tableGeneration_ = 0;
+    // containedObjects() and which IDs are in it.
+    std::vector<ObjectId> contained_;
+    std::vector<uint8_t> containedFlag_;
+    void addContained(ObjectId id);
+    void dropContained(ObjectId id);
+    void checkContained() const; // OS2_CHECK_CONTAINED=1: the list holds every contained object
     uint64_t objectSerial_ = 0;
     std::map<int64_t, ObjectId> objectList_; // Object::listOrder -> ID
     int64_t listFront_ = 0;                  // the next made object's listOrder is below this

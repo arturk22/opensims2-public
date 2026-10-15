@@ -143,9 +143,7 @@ void flushKillQueue(VM& vm) {
         // Sims in its slots are dropped where they are.
         for (const auto& [sid, s] : vm.eachObject())
             if (s.person && std::find(gone.begin(), gone.end(), s.data[objdata::ContainerId]) != gone.end()) {
-                Object& sim = *vm.object(sid);
-                sim.data[objdata::ContainerId] = 0;
-                sim.data[objdata::SlotNumber] = -1;
+                vm.setContainer(*vm.object(sid), 0, -1);
             }
         for (auto& [tid, t] : vm.threads)
             if (std::find(gone.begin(), gone.end(), tid) == gone.end() && t.status == Thread::Status::Running &&

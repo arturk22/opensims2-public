@@ -62,10 +62,7 @@ void moveTo(VM& vm, Object& o, float x, float y, int level) {
 
 namespace {
 
-void leaveSlot(Object& o) {
-    o.data[objdata::ContainerId] = 0;
-    o.data[objdata::SlotNumber] = -1;
-}
+void leaveSlot(VM& vm, Object& o) { vm.setContainer(o, 0, -1); }
 
 // Waits and limits of the blocked walker, from the Mac binary's
 // cTSRoutingObjectAggregate (docs/routing-mac.md §6): a stationary Sim in
@@ -319,7 +316,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         while (!r.points.empty() && r.points.front().viaPortal)
             r.points.erase(r.points.begin());
         if (me.data[objdata::ContainerId] != 0)
-            leaveSlot(me);
+            leaveSlot(c.vm, me);
         r.climb = {};
     }
     if (!r.points.empty() && r.points.front().portal) {
@@ -991,7 +988,7 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         }
     }
     if (me.data[objdata::ContainerId] != 0)
-        leaveSlot(me);
+        leaveSlot(c.vm, me);
     const ObjectId chair = r.chair;
     me.route = std::move(r);
     RouteFail later = RouteFail::Success;
@@ -1179,7 +1176,7 @@ bool tryPlace(VM& vm, Object& o, TilePos t, int direction = -1) {
         moveTo(vm, *p, p == &o || !o.position.inWorld() ? float(t.x) + 0.5f : x,
                p == &o || !o.position.inWorld() ? float(t.y) + 0.5f : y, t.level);
         if (p->data[objdata::ContainerId] != 0)
-            leaveSlot(*p);
+            leaveSlot(vm, *p);
         setDirection(*p, direction);
         p->route.reset();
     }
@@ -1203,7 +1200,7 @@ bool VM::placeNearFree(Object& o) {
         return true;
     };
     if (o.data[objdata::ContainerId] != 0)
-        leaveSlot(o);
+        leaveSlot(*this, o);
     // FUN_00af87c8 (docs/primitives-mac.md §4g, "O lugar livre do reset"): a
     // square spiral from the person's tile (the world's centre when off the
     // lot), kept within [1, side - 2], at most 8 x the longer side steps;
@@ -1311,7 +1308,7 @@ Exit findLocationFor(Context& c) {
         obj->position.x = obj->position.y = -1;
         obj->route.reset();
         if (obj->data[objdata::ContainerId] != 0)
-            leaveSlot(*obj);
+            leaveSlot(c.vm, *obj);
         obj->data[objdata::Room] = -1; // as every out-of-world object of a saved lot; "Get Out TEST" reads it
         return Exit::True;
     }
