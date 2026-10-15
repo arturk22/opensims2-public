@@ -164,13 +164,117 @@ it per lot (cleared on `refresh()`). Per mouse move over N001 lot 11, headless
 (`OS2_PERF=1 opensims2 --hood N001 --hover x,y ...`, which now also times one relayout per
 step): `mouseMoved` 5.5-6.5 ms -> 0.7 ms, relayout 5.5-6 ms -> 0.75 ms.
 
+## Round n28: the route planner kept between plans, object lists for the scans
+
+Baseline = main at 8fad03dd (after round n18b). The rule as above, checked after every
+commit: the full output of `lot-run` of the 69 lots (1800 ticks) and of
+`autonomy N001_Lot11 --ticks 43200` byte identical to the baseline's (stdout, and stderr
+but for `/usr/bin/time`'s lines); two more sensitive runs, also identical at every step: the
+same `lot-run` with `OS2_ROUTE_FAILS=1` (every failed route, with its tick) and
+`OS2_ROUTE_FAILS=1 autonomy N002_Lot3 --ticks 43200`; the two captures
+(`--lot N001_Lot11 --vm --ui live --run-vm 600`, `--lot N002_Lot3 --vm --run-vm 900`) `cmp`
+equal (two runs of the base build are equal to each other too); `ctest -j2` green. After
+the rebase onto fbdc6c6f (round n29's one node limit, which changes none of these outputs),
+onto e1392a26 (round n23's animation, which changes them all) and onto 3bff1964 (round n25's
+fences), the same runs and captures of the rebased branch and of a build of that main are
+identical too.
+
+The profile before (autonomy of N001_Lot11, `sample`): Set to Next 24 (`nextVisibleObject`)
+29%, because it called `objectsOnTile` on every tile of the Sim's view cone, each a walk over
+the 600 objects; the planner 9%, 87% of it building the two summed-area tables; `containedIn`
+2.4%; `objectsOnTile` from the walkers' per-step object test 2.2%.
+
+Each commit's binary, one after the other on the shared machine (instructions retired /
+cycles / user time; the load fell from 6.8 to 5.8 during the run, so the cycles favour the
+later rows a little; instructions do not depend on it):
+
+| Commit | `lot-run`, 69 lots x 1800 ticks | `autonomy N001_Lot11 --ticks 43200` |
+| --- | --- | --- |
+| Baseline (8fad03dd) | 98.0 G / 33.3 G / 16.2 s | 78.5 G / 29.3 G / 14.4 s |
+| Planner kept between plans | 97.2 G / 32.7 G / 15.8 s | 74.2 G / 27.2 G / 13.3 s |
+| Set to Next 24 in one walk | 90.7 G / 31.7 G / 15.0 s | 53.4 G / 20.0 G / 9.7 s |
+| Containment index | 88.1 G / 28.4 G / 13.2 s | 50.7 G / 17.5 G / 7.2 s |
+| Tiles round a point in one walk | 88.7 G / 26.6 G / 10.7 s | 49.5 G / 17.2 G / 7.0 s |
+| Timers and destinations listed | 87.2 G / 26.3 G / 10.5 s | 48.5 G / 17.1 G / 6.8 s |
+| Set to Next 1/4/18 from kept lists | 76.4 G / 24.2 G / 9.2 s | 42.1 G / 15.0 G / 5.8 s |
+
+The last against the baseline again, in the other order (the last first): `lot-run` 76.3 G /
+24.2 G against 97.8 G / 31.2 G; `autonomy N001_Lot11` 42.1 G / 14.9 G against 78.2 G / 26.1 G;
+`autonomy N002_Lot3 --ticks 43200` 45.9 G / 16.5 G against 76.8 G / 25.6 G (instructions /
+cycles). So about -46% instructions and -43% cycles for a day of a lot, -22% for the 69 lots
+(whose 1800 ticks weigh less against their loading). The `lot-run` instruction counts move
+by up to 1-2 G from one run to the next (the threads that read the package indexes).
+
+Three times the `N002_Lot3` capture differed from the base by 1 to 4 levels in 650-750 pixels
+of one small area, each time the first capture of a freshly built app (the last commit's and
+two rebased branches'); run again with the same build it was byte identical, as were three runs
+of the base build, so it is taken as the renderer's run-to-run noise that round 14 already saw.
+
+What was done, each a commit:
+
+- **The planner's grids and quadtree kept between plans.** `clearObstacles()` copied the
+  static grids (a byte and a float per 1/8-tile cell, 1.3 MB a level) at every plan, and the
+  quadtree's two summed-area tables (512x512 for a 64-tile lot) were rebuilt from the whole
+  grid at every new set of obstacles, which is almost every plan: the walking Sims' cost
+  rectangles move. Now the obstacle and cost calls are recorded as *stamps* (the cell
+  rectangle each writes, with its bits or cost) and the grids are synced when read: the stamps
+  that differ from the last plan's (a multiset difference past the common head and tail; mostly
+  a walking Sim's three rectangles) are put back to their static cells and every stamp over
+  them applied again. A cell is its static value OR'ed with the bits of, and maxed with the
+  costs of, the stamps over it, in any order, so it is the cell a rebuild from scratch makes.
+  The quadtree splits from a *pyramid* of blocked counts and cost sums per aligned square of
+  2^k cells, updated only over the changed rectangles. Its sums are those of the tables bit for
+  bit while every cost is 0 or in [0.5, 16]: every cell is then a multiple of 2^-24 and every
+  sum under 2^23, so neither the tables nor the pyramid round (floors are held in [0.5, 10],
+  the Sims' rectangles cost 5, 7.5 and 10); a planner with another cost goes to the tables as
+  before. The split, the quads' order (their ids are the A*'s tie order) and the 4-entry cache
+  of trees by exact call list are untouched. `test_routing` plans 120 rounds of moving Sims and
+  objects with a kept planner, a new one each round and one sent to the tables, and checks
+  that the cells and the plans are equal.
+- **Set to Next 24 in one walk.** The cone's tiles (up to a few hundred) are marked on a map
+  of their box and the objects walked once, by ID: one is in when it is in the world, not in a
+  slot, on a marked tile of my level, and passes the same tests (not me, not dying, not type 5,
+  my room, the line of sight to its tile). An object is on one tile, so the set is the one the
+  per-tile walks made, whatever order the tiles came in.
+- **Containment index.** Every write of object data 2 (container id) goes through
+  `VM::setContainer` (object data 2 and 3) or is followed by `VM::noteContainer`: placement,
+  pick up, Snap Into, Reach/Put, Find Location For, a walker leaving its slot, the kill queue's
+  sitters, buy mode's preview, the tutorial's controllers, `s2pkg route`, a lot's saved data
+  (`restoreState`, the placement fields in `lot.cpp`), the reset after an error, and SimAntics'
+  own writes (`Context::set` of owners 0x03/0x04, field 2). The VM keeps the IDs that may be in
+  a container, in ID order (a superset: one taken out stays until `followContainers` drops it
+  at the next tick; `removeObject` drops it at once). `containedIn`, `followContainers`,
+  `objectsOnTileWithContents` and `finishMove` walk that list instead of every object, in the
+  same order. `OS2_CHECK_CONTAINED=1` checks at each use that every contained object is listed
+  and aborts if not; the 69 lots, both autonomies and `ctest` ran clean with it.
+- **The tiles round a point in one walk** (`VM::objectsAround`): the walkers' per-step object
+  test (`footprintBlocker`, 3x3 tiles every step) and Set to Next 9 (the four sides) took
+  `objectsOnTile` per tile. The test runs an object's "allow intersection" tree on the way,
+  which could move something: once a tree has run (`VM::treeRuns`), the next tiles are taken
+  again as before.
+- **Timers and destinations listed.** `handleTimers` (every tick) walks the objects that may
+  have timers (every timer added is followed by `noteTimers`; those left without any leave the
+  list) and `flushDestinations` (every tick) the engine's destinations (`noteDestination` after
+  `syntheticSlot`/`managedDestination` are set, also when a saved thread state brings them
+  back), instead of every object; same order. `OS2_CHECK_CONTAINED=1` checks these lists too.
+- **Set to Next 1/4/18 from kept lists.** People and the objects of a GUID were found by a
+  walk over every object with a `std::function` test at every call (8.6% of an autonomy run
+  by then); they now come from `VM::people()` (kept for the tick and the objects there are)
+  and `VM::objectsOfGuid` (by GUID, in ID order, added to when `instantiatePart` sets an
+  object's definition, which never changes after, and taken from by `removeObject`), then
+  sorted by `appendOrder` as before. A GUID list rebuilt at each tick, or at each change of the
+  object table, cost more than the walks it saved (+1 G instructions).
+  `OS2_CHECK_CONTAINED=1` checks the GUID lists too.
+
 ## What is left (not done)
 
-- The scans of all objects per tick (`followContainers`, `tickOverlayEvents`,
-  `handleTimers`) and `containedIn` remain O(objects) per call; an index would need every
-  write to `data[ContainerId]`/`position` to go through a setter.
-- The quadtree of the planner is still rebuilt on every plan (summed-area tables of
-  512x512 cells for a 64-tile lot); caching it needs a cheap way to know the obstacles
-  did not change.
+- An index of the objects by tile (`objectsOnTile`, `tileFree`, the placement tests) needs
+  every write of `Object::position` through a setter: about 25 places in the VM and the app,
+  130 in the tests. The hot callers walk the objects once for all their tiles instead.
+- Per tick: `notifyRoomChanges` (object data 29 is written in many places) and
+  `tickOverlayEvents` (the animation code) still walk every object; `VM::tick` copies the
+  threads' IDs and looks each one up in the map again (about 5% of an autonomy run).
+- The other Set to Next types walk the object list with a `std::function` test until the
+  next match (all of it when there is none).
 - Load: the Sims' textures take 45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's (round 11: kept between scenes, see above).
   8% of the resource bytes read at load are the same resource read twice (4.9 of 64 MB).
