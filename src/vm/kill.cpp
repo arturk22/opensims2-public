@@ -152,6 +152,10 @@ void flushKillQueue(VM& vm) {
                 !unwind(vm, tid, t, gone))
                 if (const Object* p = vm.object(tid); p && personLosesTarget(vm, *p, gone))
                     vm.resetObject(tid, t);
+        // Its own table goes with it, and every object left drops the entry
+        // keyed by its ID (KillOutOfWorldObject, BV 0x532d08: RemoveEntry on
+        // each object's table; the key is raw, so an ownership entry whose
+        // neighbor ID equals the ID goes too). Neighbors' tables stay.
         for (auto it = vm.relationships.begin(); it != vm.relationships.end();) {
             const auto& [a, b] = it->first;
             const bool drop = (!a.neighbor && std::find(gone.begin(), gone.end(), a.id) != gone.end()) ||

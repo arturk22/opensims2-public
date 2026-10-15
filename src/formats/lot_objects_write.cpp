@@ -115,6 +115,15 @@ void writePerson(BinWriter& w, const LotObjects::State& s, uint32_t v) {
 
 } // namespace
 
+std::vector<uint8_t> LotObjects::relationshipTableBytes(const std::vector<uint32_t>& keys) {
+    BinWriter w;
+    w.i32(3);
+    w.u32(uint32_t(keys.size()));
+    for (uint32_t k : keys)
+        w.u32(k);
+    return std::move(w.bytes());
+}
+
 std::vector<uint8_t> LotObjects::writeState(const State& s, uint32_t v) {
     BinWriter w;
     w.raw(s.fileName);

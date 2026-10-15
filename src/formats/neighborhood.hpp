@@ -180,8 +180,10 @@ struct FamilyTies {
 
 // ---------------------------------------------------------------------------
 // SREL: what one Sim thinks of another (instance = from << 16 | to).
-// u32 (always 2), u32 count, then i32 values: count of them, sometimes
-// followed by stale ones (kept in `stale`). Labels in the character STR#
+// u32 version (always 2; cTSRelationshipEntry::ResourceRead, BV 0xac6be0,
+// reads no other: the entry stays empty), u32 count, then i32 values: count
+// of them, in 124 of the 18594 shipped SRELs followed by stale ones the game
+// ignores (kept in `stale`; docs/relationships-mac.md §2). Labels in the character STR#
 // 0x101 "Rel. Labels": 0 STR (daily), 1 UI flags, 2 LTR (lifetime), 3
 // familial relation. Flag bits in SimPE's naming: 0 crush, 1 love, 2 engaged,
 // 3 married, 4 friend, 5 best friend, 14 family, 15 known (confirmar o que
@@ -198,14 +200,27 @@ namespace relvar {
 constexpr size_t Daily = 0, Flags = 1, Lifetime = 2, Familial = 3;
 }
 const char* familialName(int32_t v); // "child", "parent", ..., "" for 0, "?" if unknown
+
+// The order cTSRelationshipTable walks (and writes) its keys: a gcc
+// hash_map with cTSRelationshipTable::GUIDHash (Mac BV 0x19aaef0, Thomas
+// Wang's 32-bit integer hash) over 53 buckets, growing to the next of gcc's
+// primes (97, 193, ...) when the count passes them; bucket by bucket, each
+// bucket newest first (an insert goes to the head; a resize moves each old
+// bucket's nodes, head first, to the heads of the new ones). `inserted` is
+// the keys in the order they were added (a table reads its keys in the
+// order it wrote them). docs/relationships-mac.md §1.
+uint32_t relationshipKeyHash(uint32_t key);
+std::vector<uint32_t> relationshipTableOrder(const std::vector<uint32_t>& inserted);
 struct Relationship {
     uint16_t from = 0, to = 0;
-    uint32_t unknown = 0;
+    uint32_t version = 2;
     std::vector<int32_t> values;
-    std::vector<int32_t> stale;
+    std::vector<int32_t> stale; // bytes after the values: the game ignores them
 
     static Relationship parse(std::span<const uint8_t> data, uint32_t instance);
-    std::vector<uint8_t> write() const; // u32, count, values, stale
+    // As cTSRelationshipEntry::ResourceWrite (BV 0xac68ec): u32 2, u32
+    // count, the values (`stale` is not written, as the game drops it).
+    std::vector<uint8_t> write() const;
     int32_t value(size_t i) const { return i < values.size() ? values[i] : 0; }
 };
 

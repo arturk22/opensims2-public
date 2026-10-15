@@ -131,6 +131,10 @@ static hood::Neighborhood makeHood() {
         hood::Relationship r;
         r.from = from, r.to = to, r.values = std::move(values);
         h.relationships.push_back(r);
+        // The neighbor's table (its SDSC) lists the key.
+        for (auto& n : h.neighbors)
+            if (n.id == from)
+                n.description.relations.push_back(to);
     };
     rel(1, 15, {90, 0xC033, 89, 9}); // known, family, friend, best friend, crush, love; spouse
     rel(1, 14, {60, 0x8010, 40, 0}); // known, friend

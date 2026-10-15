@@ -986,7 +986,9 @@ Exit runTreeByName(Context& c) {
 // without it the variable is "put into" the value), 0x08 (no editor text)
 // an object's own relationship table: "from" is an object (error 0x17 if it
 // does not exist) and "to" is used as is, a neighbor ID (the ownership
-// trees; the lots keep these in their SRELs, vm::loadLot). With 0x02 both are
+// trees) in the same table and key space as the object IDs below
+// (docs/relationships-mac.md §3; the lots keep these in their SRELs,
+// vm::loadLot). With 0x02 both are
 // neighbor IDs (a missing one: error 0x1C). With neither, both are objects
 // (error 0x17 if one is missing): two Sims are keyed by their neighbor IDs
 // (the same relationship 0x02 reaches), otherwise the table is the "from"
@@ -1046,7 +1048,7 @@ Exit relationship(Context& c) {
     } else if (flags & 0x08) {
         if (!c.vm.object(from))
             throw gameError(err::NoObject, "object " + std::to_string(from));
-        pair = {{false, from}, {true, to}};
+        pair = VM::objectRelationship(from, to); // "to" raw: the same table and keys as below
     } else {
         const Object* a = c.vm.object(from);
         const Object* b = c.vm.object(to);
@@ -1055,7 +1057,7 @@ Exit relationship(Context& c) {
         if (a->person && b->person)
             pair = {c.vm.relationshipKey(from), c.vm.relationshipKey(to)};
         else
-            pair = {{false, from}, {false, to}};
+            pair = VM::objectRelationship(from, to);
     }
     auto it = c.vm.relationships.find(pair);
     if (it == c.vm.relationships.end()) {

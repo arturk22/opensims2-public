@@ -131,14 +131,25 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
         ++out.neighbors;
     }
 
+    // Each neighbor's relationship table is the list its SDSC keeps (u32 3,
+    // count, the neighbor IDs: cTSRelationshipTable::Write, BV 0xac6f04):
+    // only the SRELs it lists count, and a listed one with no record (or not
+    // version 2) is an entry with no variables (docs/relationships-mac.md §1).
     std::erase_if(vm.relationships, [](const auto& r) { return r.first.first.neighbor && r.first.second.neighbor; });
-    for (const auto& r : h.relationships) {
-        auto& values = vm.relationships[{{true, int16_t(r.from)}, {true, int16_t(r.to)}}];
-        values.clear();
-        for (int32_t v : r.values) // flags (0xC000, ...) are stored as u32; the low 16 bits are the same
-            values.push_back(int16_t(v));
-        ++out.relationships;
-    }
+    std::map<std::pair<uint16_t, uint16_t>, const hood::Relationship*> srel;
+    for (const auto& r : h.relationships)
+        srel[{r.from, r.to}] = &r;
+    for (const auto& n : h.neighbors)
+        for (uint32_t to : n.description.relations) {
+            auto& values = vm.relationships[{{true, int16_t(n.id)}, {true, int16_t(to)}}];
+            values.clear();
+            if (auto it = srel.find({uint16_t(n.id), uint16_t(to)}); it != srel.end() && it->second->version == 2)
+                for (int32_t v : it->second->values) // flags (0xC000, ...) are stored as u32; the low 16 bits are the same
+                    values.push_back(int16_t(v));
+            if (values.size() > kMaxRelationshipVars)
+                values.resize(kMaxRelationshipVars);
+            ++out.relationships;
+        }
 
     vm.familyTree.clear();
     for (const auto& e : h.familyTree) {

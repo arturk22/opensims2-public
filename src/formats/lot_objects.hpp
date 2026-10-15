@@ -136,7 +136,17 @@ struct LotObjects {
         };
         uint32_t stackUnknown = 0;
         std::vector<Frame> stack;
+        // The object's relationship table (cTSRelationshipTable::Write/Read,
+        // Mac BV 0xac6f04/0xac7738, docs/relationships-mac.md §1): i32
+        // version (3), u32 count and the keys ("to": object IDs or, for
+        // ownership, neighbor IDs), whose values are the lot's SRELs
+        // (instance = id << 16 | key). Before version 0 (an old format) the
+        // entries are inline: per entry i32 present, then u32 key, i32 count
+        // and the values. Raw is written back as read.
         std::vector<uint8_t> relationshipTable; // raw
+        int32_t relationshipVersion = 0;
+        std::vector<uint32_t> relationshipKeys;
+        std::map<uint32_t, std::vector<int32_t>> relationshipInline; // version < 0
         // Slots (cTSObject::ReadSlots): the objects in each container slot
         // (0 = empty); raw keeps the encoding.
         std::vector<int16_t> slots;
@@ -285,14 +295,18 @@ struct LotObjects {
     std::vector<uint8_t> saveTypesHeader; // objt bytes before the records (name, tag, version, u32)
     std::map<int16_t, int16_t> saveTypeOf; // object ID -> save type
     std::vector<State> objects;            // the ObjM's objects, by ID
-    // The lot's SRELs (instance = from << 16 | to), named by object ID, with
-    // their values: what the lot's objects and Sims think of each other, and
-    // ownership (docs/data-findings.md §7: two values, "to" a neighbor ID).
+    // The lot's SRELs (instance = from << 16 | to): the entries of the
+    // objects' relationship tables (cTSRelationshipEntry, BV 0xac6be0: u32
+    // version, only 2 read, u32 count and the values; bytes after them are
+    // ignored). One counts only if the table of object `from` lists `to`.
     struct Relationship {
         int16_t from = 0, to = 0;
+        uint32_t version = 0;
         std::vector<int32_t> values;
     };
     std::vector<Relationship> relationships;
+    // The table bytes the game writes for these keys (version 3).
+    static std::vector<uint8_t> relationshipTableBytes(const std::vector<uint32_t>& keys);
     // Other records a save writes over the source's (same key) or adds:
     // scene graph objects, routing states, relationships (vm/lot_records.hpp).
     struct Record {

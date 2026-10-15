@@ -278,9 +278,11 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
                                                        : LotObjects::Kind::Object;
             s.person = s.kind == LotObjects::Kind::Person;
             s.data.assign(lotObjectDataCount(saved.version), 0);
-            // Empty parts as the game writes them: no relationships, the
-            // slots marker (-101) with no slots, no effects, no overrides.
-            s.relationshipTable = {0, 0, 0, 0};
+            // Empty parts as the game writes them: no relationships (table
+            // version 3; captureLotRecords lists its keys), the slots marker
+            // (-101) with no slots, no effects, no overrides.
+            s.relationshipTable = LotObjects::relationshipTableBytes({});
+            s.relationshipVersion = 3;
             s.slotsRaw = {0x9B, 0xFF, 0, 0};
             s.effectsRaw = {0, 0};
             if (saved.version > 0x94)
@@ -384,11 +386,6 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         for (const auto& x : v)
             s += (s.empty() ? "" : " ") + std::to_string(x);
         return s;
-    };
-    auto trimmed = [](std::vector<int16_t> v) {
-        while (!v.empty() && v.back() == 0)
-            v.pop_back();
-        return v;
     };
     for (const auto& [id, x] : a.objects()) {
         if (b.globalsMadeAtLoad.count(id))
@@ -587,13 +584,13 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         if (a.globals[i] != b.globals[i])
             diff("global " + std::to_string(i) + " " + std::to_string(a.globals[i]) + " vs " +
                  std::to_string(b.globals[i]));
-    // The lot's relationships (one side at least a lot object; Sim-to-Sim
-    // ones are the neighborhood's).
+    // The lot's relationships (the objects' tables; Sim-to-Sim ones are the
+    // neighborhood's), entries as long as they are.
     auto lotRelationships = [&](VM& m) {
         std::map<std::pair<VM::RelationshipKey, VM::RelationshipKey>, std::vector<int16_t>> r;
         for (const auto& [k, v] : m.relationships)
-            if (!(k.first.neighbor && k.second.neighbor) && !trimmed(v).empty())
-                r[k] = trimmed(v);
+            if (!k.first.neighbor)
+                r[k] = v;
         return r;
     };
     {

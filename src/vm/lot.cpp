@@ -366,35 +366,33 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
     // The objects' own portals (the pool ladder).
     vm.refreshObjectPortals();
 
-    // The lot's relationships, by object ID (docs/data-findings.md §7). Two
-    // values: ownership, from an object to a neighbor ID (Relationship's flag
-    // 0x08 reads variable 1 of these; their "to" are the owning family's
-    // neighbor IDs, not the lot's objects with those IDs: a phone handset and
-    // two controllers in N001_Lot11; inferred from the count). The rest name
-    // lot objects on both sides, keyed as the Relationship primitive keys
-    // them: by neighbor ID when both are Sims (those are left to the
-    // neighborhood's), else by object ID.
-    auto isSim = [&](int16_t id) {
-        const Object* o = vm.object(id);
-        return o && o->person;
-    };
-    auto key = [&](int16_t id) { return VM::RelationshipKey{false, id}; };
-    for (const auto& r : saved.relationships) {
-        std::pair<VM::RelationshipKey, VM::RelationshipKey> k;
-        if (r.values.size() == 2) {
-            k = {{false, r.from}, {true, r.to}};
-        } else {
-            if (isSim(r.from) && isSim(r.to))
-                continue;
-            k = {key(r.from), key(r.to)};
+    // The lot's relationships: each object's table (its XOBJ) lists its
+    // keys and the entries are the SRELs `id << 16 | key`, as
+    // cTSRelationshipTable reads them (docs/relationships-mac.md §1): an
+    // SREL no table lists is not read; a key without a readable SREL
+    // (missing, or not version 2) is an entry with no variables.
+    std::map<uint32_t, const LotObjects::Relationship*> srel;
+    for (const auto& r : saved.relationships)
+        srel[uint32_t(uint16_t(r.from)) << 16 | uint16_t(r.to)] = &r;
+    for (const auto& s : saved.objects) {
+        if (!vm.object(s.id))
+            continue;
+        for (uint32_t key : s.relationshipKeys) {
+            auto& values = vm.relationships[VM::objectRelationship(s.id, int16_t(key))];
+            values.clear();
+            if (s.relationshipVersion < 0) {
+                if (auto it = s.relationshipInline.find(key); it != s.relationshipInline.end())
+                    for (int32_t v : it->second)
+                        values.push_back(int16_t(v));
+            } else if (auto it = srel.find(uint32_t(uint16_t(s.id)) << 16 | uint16_t(key));
+                       it != srel.end() && it->second->version == 2) {
+                for (int32_t v : it->second->values)
+                    values.push_back(int16_t(v));
+            }
+            if (values.size() > kMaxRelationshipVars)
+                values.resize(kMaxRelationshipVars);
+            ++out.relationships;
         }
-        auto& values = vm.relationships[k];
-        values.clear();
-        for (int32_t v : r.values)
-            values.push_back(int16_t(v));
-        if (values.size() > kMaxRelationshipVars)
-            values.resize(kMaxRelationshipVars);
-        ++out.relationships;
     }
     return out;
 }

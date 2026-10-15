@@ -95,11 +95,9 @@ std::vector<uint8_t> FamilyRecord::write() const {
 
 std::vector<uint8_t> Relationship::write() const {
     BinWriter w;
-    w.u32(unknown);
+    w.u32(version);
     w.u32(uint32_t(values.size()));
     for (int32_t v : values)
-        w.i32(v);
-    for (int32_t v : stale)
         w.i32(v);
     return std::move(w.bytes());
 }

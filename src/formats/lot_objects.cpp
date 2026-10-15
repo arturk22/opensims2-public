@@ -330,18 +330,25 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
             f.behaviorSaveType = r.u16();
             s.stack.push_back(std::move(f));
         }
-        // Relationship table (OpenTS2's layout).
+        // Relationship table (cTSRelationshipTable::Read, BV 0xac7738).
         size_t from = r.pos();
-        const int32_t relFlag = r.i32();
-        if (relFlag < 0) {
+        s.relationshipVersion = r.i32();
+        if (s.relationshipVersion < 0) {
             for (auto n = r.i32(); n > 0; --n) {
                 if (!r.i32())
                     continue;
-                r.u32();
-                r.skip(4 * size_t(uint32_t(r.i32())));
+                const uint32_t key = r.u32();
+                s.relationshipKeys.push_back(key);
+                auto& values = s.relationshipInline[key];
+                for (auto k = r.i32(); k > 0; --k)
+                    values.push_back(r.i32());
             }
-        } else if (relFlag == 2 || relFlag == 3) {
-            r.skip(4 * size_t(uint32_t(r.i32())));
+        } else if (s.relationshipVersion == 2 || s.relationshipVersion == 3) {
+            const uint32_t n = r.u32();
+            if (n > r.remaining() / 4)
+                throw FormatError("relationship table of " + std::to_string(n) + " keys");
+            for (uint32_t i = 0; i < n; ++i)
+                s.relationshipKeys.push_back(r.u32());
         }
         s.relationshipTable = since(r, from);
         // cTSObject::ReadSlots.
@@ -663,7 +670,7 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
             continue;
         try {
             const auto rel = hood::Relationship::parse(pkg.read(e), e.tgi.instance);
-            lot.relationships.push_back({int16_t(rel.from), int16_t(rel.to), rel.values});
+            lot.relationships.push_back({int16_t(rel.from), int16_t(rel.to), rel.version, rel.values});
         } catch (const std::exception& ex) {
             lot.warnings.push_back("relationship " + hexString(e.tgi.instance) + ": " + ex.what());
         }

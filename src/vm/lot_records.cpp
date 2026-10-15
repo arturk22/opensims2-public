@@ -290,18 +290,6 @@ bool moved(const LotObjects::State& a, const LotObjects::State& b) {
            directionOf(a) != directionOf(b);
 }
 
-std::vector<uint8_t> writeRelationship(uint32_t unknown, const std::vector<int32_t>& values,
-                                       const std::vector<int32_t>& stale) {
-    BinWriter w;
-    w.u32(unknown);
-    w.u32(uint32_t(values.size()));
-    for (int32_t v : values)
-        w.i32(v);
-    for (int32_t v : stale)
-        w.i32(v);
-    return std::move(w.bytes());
-}
-
 // The object's scene graph record with its animation queue saying what
 // the VM plays (scene_anim.hpp), as the game's cAnimatable saves it: the
 // overlays (Animate Overlay's idles, faces, carry poses; Animate Object's)
@@ -641,114 +629,101 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             ++out.routing;
         }
 
-    // Relationships: the lot's SRELs become exactly the VM's relationships
-    // with a lot object on one side at least, keyed as loadLot keys them
-    // (two values: ownership, "to" a neighbor ID; otherwise object IDs on
-    // both sides, a Sim by its neighbor ID). Unchanged records stay as
-    // they are; records whose relationship the VM no longer has go.
-    using Key = std::pair<VM::RelationshipKey, VM::RelationshipKey>;
-    auto isSim = [&](int16_t id) {
-        const Object* o = vm.object(id);
-        return o && o->person;
-    };
-    auto trimmed = [](std::vector<int32_t> v) {
-        while (!v.empty() && v.back() == 0)
-            v.pop_back();
-        return v;
-    };
-    std::map<Key, std::vector<uint32_t>> instancesOf;
-    std::map<uint32_t, hood::Relationship> read;
-    for (const auto& [instance, e] : relationships) {
-        try {
-            auto rel = hood::Relationship::parse(source.read(*e), instance);
-            const auto from = int16_t(rel.from), to = int16_t(rel.to);
-            Key k;
-            if (rel.values.size() == 2) {
-                k = {{false, from}, {true, to}};
-            } else {
-                if (isSim(from) && isSim(to))
-                    continue; // the neighborhood's
-                k = {{false, from}, {false, to}};
-            }
-            instancesOf[k].push_back(instance);
-            read.emplace(instance, std::move(rel));
-        } catch (const std::exception& err) {
-            os2::logOnce("lot relationships", std::to_string(instance), err);
-        }
-    }
-    auto objectIdOf = [&](const VM::RelationshipKey& k) -> int16_t {
-        if (!k.neighbor)
-            return k.id;
-        const Object* sim = vm.neighborSim(k.id);
-        return sim ? int16_t(sim->id) : int16_t(0);
-    };
-    std::set<uint32_t> kept;
-    // First the relationships the lot had (their records), then new ones.
-    for (int pass = 0; pass < 2; ++pass)
-    for (const auto& [k, v16] : vm.relationships) {
-        if (k.first.neighbor && k.second.neighbor)
-            continue;
-        std::vector<int32_t> values(v16.begin(), v16.end());
-        if (trimmed(values).empty())
-            continue;
-        auto it = instancesOf.find(k);
-        if ((it != instancesOf.end()) != (pass == 0))
-            continue;
-        if (it != instancesOf.end()) {
-            for (uint32_t instance : it->second) {
-                kept.insert(instance);
-                const auto& rel = read.at(instance);
-                std::vector<int32_t> out32;
-                for (size_t i = 0; i < values.size(); ++i)
-                    out32.push_back(i < rel.values.size() && int16_t(rel.values[i]) == values[i] ? rel.values[i]
-                                                                                              : values[i]);
-                // The VM keeps at most 32 variables: the rest stay.
-                for (size_t i = out32.size(); i < rel.values.size() && values.size() >= kMaxRelationshipVars; ++i)
-                    out32.push_back(rel.values[i]);
-                // As many as were saved while only zeros differ; the count
-                // tells ownership (2) from the rest.
-                if (trimmed(out32) == trimmed(rel.values))
-                    continue;
-                const bool ownership = rel.values.size() == 2;
-                if (ownership)
-                    out32.resize(2, 0);
-                else if (out32.size() == 2)
-                    out32.push_back(0);
-                addRecord(hoodtype::SREL, relationships.at(instance)->tgi.group, instance,
-                          writeRelationship(rel.unknown, out32, rel.stale));
-                ++out.relationshipsChanged;
-            }
-            continue;
-        }
-        // Sim-to-Sim ones keyed by object (a Sim with no neighbor ID)
-        // would read back as the neighborhood's: not saved here.
-        if (!k.first.neighbor && !k.second.neighbor && isSim(k.first.id) && isSim(k.second.id))
-            continue;
-        const int16_t from = objectIdOf(k.first);
-        const bool ownership = k.second.neighbor;
-        const int16_t to = ownership ? k.second.id : objectIdOf(k.second);
-        if (from <= 0 || to <= 0)
-            continue;
-        if (ownership)
-            values.resize(2, 0);
-        else if (values.size() == 2)
-            values.push_back(0);
-        const uint32_t instance = uint32_t(uint16_t(from)) << 16 | uint16_t(to);
-        if (kept.count(instance)) {
-            out.warnings.push_back("relationship " + std::to_string(from) + " -> " + std::to_string(to) +
-                                   ": an object one and an ownership one share the record; one kept");
-            continue;
-        }
-        kept.insert(instance);
-        addRecord(hoodtype::SREL, 0xFFFFFFFF, instance, writeRelationship(2, values, {}));
-        ++out.relationshipsNew;
-    }
-    // (Records of only zeros mean what no record means: they stay.)
-    for (const auto& [instance, rel] : read)
-        if (!kept.count(instance) && !trimmed(rel.values).empty()) {
-            lot.deletedRecords.push_back({hoodtype::SREL, relationships.at(instance)->tgi.group, instance, {}});
+    // Relationships, as cTSRelationshipTable::Write (BV 0xac6f04) saves
+    // them (docs/relationships-mac.md §1-§2): each object's table lists the
+    // keys of its VM entries (raw as read while the keys are the same: the
+    // game would swap keys that share a hash bucket; else version 3 in the
+    // hash order of the keys it had, in their order, then the new ones),
+    // and each entry is the SREL `id << 16 | key` (u32 2, count, values).
+    // The game rewrites only the entries it loaded; here, those that differ
+    // from what was read (a changed or new entry, or every entry of an old
+    // inline table that is rewritten), so an unchanged entry keeps its
+    // record byte for byte. Values the VM cut to 16 bits keep their saved 32
+    // bits while the cut agrees. An entry the table lost (RemoveEntry) and
+    // the entries of an object that is gone lose their records (the latter
+    // inferred). Sim-to-Sim ones are the neighborhood's (hood_save.hpp).
+    std::map<uint32_t, const LotObjects::Relationship*> savedRel;
+    for (const auto& r : before.relationships)
+        savedRel[uint32_t(uint16_t(r.from)) << 16 | uint16_t(r.to)] = &r;
+    auto instanceOf = [](int16_t id, uint32_t key) { return uint32_t(uint16_t(id)) << 16 | (key & 0xFFFF); };
+    auto dropRecord = [&](uint32_t instance) {
+        if (auto e = relationships.find(instance); e != relationships.end()) {
+            lot.deletedRecords.push_back({hoodtype::SREL, e->second->tgi.group, instance, {}});
             ++out.relationshipsGone;
         }
+    };
+    std::set<int16_t> written;
+    for (auto& s : lot.objects) {
+        written.insert(s.id);
+        const LotObjects::State* was = before.state(s.id);
+        if (was && before.guidOf(s.id) != lot.guidOf(s.id))
+            was = nullptr;
+        std::map<uint32_t, const std::vector<int16_t>*> entries;
+        const VM::RelationshipKey me{false, s.id};
+        for (auto it = vm.relationships.lower_bound({me, VM::RelationshipKey{false, int16_t(-32768)}});
+             it != vm.relationships.end() && it->first.first == me; ++it)
+            entries[uint32_t(uint16_t(it->first.second.id))] = &it->second;
+        std::vector<uint32_t> keys;
+        if (was)
+            for (uint32_t k : was->relationshipKeys)
+                if (entries.count(k & 0xFFFF) && std::find(keys.begin(), keys.end(), k) == keys.end())
+                    keys.push_back(k);
+        for (const auto& [k, _] : entries)
+            if (std::none_of(keys.begin(), keys.end(), [&](uint32_t x) { return (x & 0xFFFF) == k; }))
+                keys.push_back(k);
+        const bool sameKeys = was && keys.size() == was->relationshipKeys.size() &&
+                              std::is_permutation(keys.begin(), keys.end(), was->relationshipKeys.begin());
+        const bool rewritten = !sameKeys;
+        if (sameKeys) {
+            s.relationshipTable = was->relationshipTable;
+            s.relationshipVersion = was->relationshipVersion;
+        } else {
+            keys = hood::relationshipTableOrder(keys);
+            s.relationshipTable = LotObjects::relationshipTableBytes(keys);
+            s.relationshipVersion = 3;
+        }
+        s.relationshipKeys = keys;
+        for (uint32_t key : keys) {
+            const auto& v16 = *entries.at(key & 0xFFFF);
+            const uint32_t instance = instanceOf(s.id, key);
+            // What was read for this entry (no record: no variables).
+            std::vector<int32_t> saved;
+            bool inlineEntry = false;
+            if (was && std::find(was->relationshipKeys.begin(), was->relationshipKeys.end(), key) !=
+                           was->relationshipKeys.end()) {
+                if (was->relationshipVersion < 0) {
+                    inlineEntry = true;
+                    if (auto it = was->relationshipInline.find(key); it != was->relationshipInline.end())
+                        saved = it->second;
+                } else if (auto it = savedRel.find(instance); it != savedRel.end() && it->second->version == 2) {
+                    saved = it->second->values;
+                }
+            }
+            std::vector<int32_t> values;
+            for (size_t i = 0; i < v16.size(); ++i)
+                values.push_back(i < saved.size() && int16_t(saved[i]) == v16[i] ? saved[i] : v16[i]);
+            // The VM keeps at most 32 variables: the rest stay.
+            for (size_t i = values.size(); i < saved.size() && v16.size() >= kMaxRelationshipVars; ++i)
+                values.push_back(saved[i]);
+            const bool known = was && std::find(was->relationshipKeys.begin(), was->relationshipKeys.end(), key) !=
+                                          was->relationshipKeys.end();
+            if (known && values == saved && !(inlineEntry && rewritten))
+                continue;
+            hood::Relationship r;
+            r.values = std::move(values);
+            const auto e = relationships.find(instance);
+            addRecord(hoodtype::SREL, e != relationships.end() ? e->second->tgi.group : 0xFFFFFFFF, instance, r.write());
+            ++(known ? out.relationshipsChanged : out.relationshipsNew);
+        }
+        if (was && was->relationshipVersion >= 0)
+            for (uint32_t k : was->relationshipKeys)
+                if (std::find(keys.begin(), keys.end(), k) == keys.end())
+                    dropRecord(instanceOf(s.id, k));
+    }
+    for (const auto& s : before.objects)
+        if (!written.count(s.id) && s.relationshipVersion >= 0)
+            for (uint32_t k : s.relationshipKeys)
+                dropRecord(instanceOf(s.id, k));
     return out;
 }
 

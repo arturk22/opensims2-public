@@ -238,7 +238,7 @@ static void testOwnership() {
                                       instr(0x1A, T, F, {1, 0x09, StackId, 0, 0, Lit, 7, 0, Temp, 3, 0})}));
     Thread t = fx.run(0x1001, fx.paper);
     check(t.status == Thread::Status::Finished && t.result && t.temps[3] == 15, "0x08: set and get ownership");
-    auto it = fx.vm.relationships.find({VM::RelationshipKey{false, fx.paper}, VM::RelationshipKey{true, 7}});
+    auto it = fx.vm.relationships.find(VM::objectRelationship(fx.paper, 7));
     check(it != fx.vm.relationships.end() && it->second.size() == 2 && it->second[1] == 15,
           "kept from the object ID to the neighbor ID");
     fx.code.add(kGroup, 0x1002, tree({instr(0x1A, T, F, {1, 0x09, StackId, 0, 0, Lit, 8, 0, Temp, 3, 0})}));

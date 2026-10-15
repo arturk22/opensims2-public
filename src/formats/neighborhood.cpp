@@ -109,6 +109,57 @@ const char* tieTypeName(TieType t) {
     return "?";
 }
 
+uint32_t relationshipKeyHash(uint32_t k) {
+    k += k << 12;
+    k ^= k >> 22;
+    k += k << 4;
+    k ^= k >> 9;
+    k += k << 10;
+    k ^= k >> 2;
+    k += k << 7;
+    k ^= k >> 12;
+    return k;
+}
+
+std::vector<uint32_t> relationshipTableOrder(const std::vector<uint32_t>& inserted) {
+    static constexpr uint32_t kPrimes[] = {53,       97,        193,       389,       769,       1543,     3079,
+                                           6151,     12289,     24593,     49157,     98317,     196613,   393241,
+                                           786433,   1572869,   3145739,   6291469,   12582917,  25165843, 50331653,
+                                           100663319, 201326611, 402653189, 805306457, 1610612741, 3221225473u,
+                                           4294967291u};
+    std::vector<std::vector<uint32_t>> buckets(kPrimes[0]); // each head first
+    size_t count = 0;
+    for (uint32_t key : inserted) {
+        bool present = false;
+        for (uint32_t k : buckets[relationshipKeyHash(key) % buckets.size()])
+            present = present || k == key;
+        if (present)
+            continue;
+        if (count + 1 > buckets.size()) { // resize(count + 1)
+            uint32_t n = kPrimes[0];
+            for (uint32_t p : kPrimes)
+                if (p >= count + 1) {
+                    n = p;
+                    break;
+                }
+            std::vector<std::vector<uint32_t>> grown(n);
+            for (auto& b : buckets)
+                for (uint32_t k : b) {
+                    auto& to = grown[relationshipKeyHash(k) % n];
+                    to.insert(to.begin(), k);
+                }
+            buckets = std::move(grown);
+        }
+        auto& b = buckets[relationshipKeyHash(key) % buckets.size()];
+        b.insert(b.begin(), key);
+        ++count;
+    }
+    std::vector<uint32_t> out;
+    for (const auto& b : buckets)
+        out.insert(out.end(), b.begin(), b.end());
+    return out;
+}
+
 const char* familialName(int32_t v) {
     static const char* const names[] = {"",            "child",        "parent",     "sibling", "grandchild",
                                         "grandparent", "nephew/niece", "uncle/aunt", "cousin",  "spouse"};
@@ -213,7 +264,7 @@ Relationship Relationship::parse(std::span<const uint8_t> data, uint32_t instanc
     Relationship rel;
     rel.from = uint16_t(instance >> 16);
     rel.to = uint16_t(instance);
-    rel.unknown = r.u32();
+    rel.version = r.u32();
     const uint32_t n = r.u32();
     if (r.remaining() % 4 || n > r.remaining() / 4)
         throw FormatError("SREL: " + std::to_string(n) + " values in " + std::to_string(r.remaining()) + " bytes");

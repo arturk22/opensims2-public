@@ -1650,8 +1650,8 @@ static void testAgeRayTraceOwners() {
     Object& other = fx.vm.instantiate(kObjGroup, 0x81); // id 2
     me.position = {2.5f, 2.5f, 1};
     other.position = {5.5f, 2.5f, 1};
-    fx.vm.relationships[{VM::RelationshipKey{false, 2}, VM::RelationshipKey{true, 7}}] = {0, 3};
-    fx.vm.relationships[{VM::RelationshipKey{false, 2}, VM::RelationshipKey{true, 9}}] = {0, 1};
+    fx.vm.relationships[VM::objectRelationship(2, 7)] = {0, 3};
+    fx.vm.relationships[VM::objectRelationship(2, 9)] = {0, 1};
     fx.code.add(kObjGroup, 0x1000,
                 tree({instr(0x75, go(1), E, {3}),
                       expr(StackId, 0, Assign, Lit, 2, go(2), E),

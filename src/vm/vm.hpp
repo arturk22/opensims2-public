@@ -1152,15 +1152,24 @@ public:
 
     std::array<int16_t, kGlobalCount> globals{};
 
-    // Relationship variables from one Sim or object to another. Sims are keyed
-    // by neighbor ID (person data), so both ways of naming them meet; other
-    // objects by object ID.
+    // Relationship variables, as the game's cTSRelationshipTable keeps them
+    // (docs/relationships-mac.md §1): each neighbor has a table, keyed by
+    // neighbor ID (Sim to Sim: {true, from} -> {true, to}); each object,
+    // Sims included, has another whose key is a raw number, an object ID or,
+    // for ownership (Relationship's flag 0x08), a neighbor ID, both in the
+    // same key space ({false, object} -> {false, key}: the second is never
+    // `neighbor` there). The vector is the entry, as long as the game's.
     struct RelationshipKey {
         bool neighbor = false;
         int16_t id = 0;
         auto operator<=>(const RelationshipKey&) const = default;
     };
-    std::map<std::pair<RelationshipKey, RelationshipKey>, std::vector<int16_t>> relationships;
+    using RelationshipPair = std::pair<RelationshipKey, RelationshipKey>;
+    // The entry `key` of object `from`'s own table.
+    static RelationshipPair objectRelationship(int16_t from, int16_t key) {
+        return {RelationshipKey{false, from}, RelationshipKey{false, key}};
+    }
+    std::map<RelationshipPair, std::vector<int16_t>> relationships;
     // Key of an object (its neighbor ID if it is a Sim that has one).
     RelationshipKey relationshipKey(ObjectId id);
 

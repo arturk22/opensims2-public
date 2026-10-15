@@ -104,12 +104,6 @@ std::vector<int32_t> keepWide(const std::vector<int16_t>& vm, const std::vector<
     return out;
 }
 
-std::vector<int32_t> trimmed(std::vector<int32_t> v) {
-    while (!v.empty() && v.back() == 0)
-        v.pop_back();
-    return v;
-}
-
 } // namespace
 
 const std::vector<size_t>& persistentPersonData() {
@@ -477,27 +471,26 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         const auto from = uint16_t(k.first.id), to = uint16_t(k.second.id);
         const uint32_t instance = uint32_t(from) << 16 | to;
         if (auto it = saved.find({from, to}); it != saved.end()) {
+            // The entry as the VM has it, as long as the game's (stale
+            // bytes after the values are dropped, as ResourceWrite does).
             const auto values = keepWide(v16, it->second->values);
-            if (trimmed(values) == trimmed(it->second->values))
+            if (values == it->second->values)
                 continue;
             hood::Relationship r = *it->second;
             r.values = values;
-            if (r.values.size() < it->second->values.size())
-                r.values.resize(it->second->values.size(), 0);
             replaced[{hoodtype::SREL, instance}] = r.write();
             ++res.relationshipsChanged;
             continue;
         }
+        // A new entry, even of zeros: the game's table has the key (it
+        // made the entry), so the SDSC lists it and the record is written.
         std::vector<int32_t> values(v16.begin(), v16.end());
-        if (trimmed(values).empty())
-            continue;
         const hood::Neighbor* a = h.neighbor(from);
         if (newIds.count(from) || newIds.count(to)) {
             if ((a || newIds.count(from)) && (h.neighbor(to) || newIds.count(to))) {
                 hood::Relationship r;
                 r.from = from;
                 r.to = to;
-                r.unknown = 2;
                 r.values = values;
                 added.push_back({Tgi{hoodtype::SREL, 0xFFFFFFFF, instance, 0}, r.write()});
                 auto& d = a ? description(*a) : born[from];
@@ -515,7 +508,6 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         hood::Relationship r;
         r.from = from;
         r.to = to;
-        r.unknown = 2;
         r.values = values;
         added.push_back({Tgi{hoodtype::SREL, 0xFFFFFFFF, instance, 0}, r.write()});
         auto& d = description(*a);
@@ -523,6 +515,13 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
             d.relations.push_back(to);
         ++res.relationshipsNew;
     }
+    // A table with new keys is written in its hash order: the keys it read,
+    // in the order read, then the new ones (relationshipTableOrder).
+    for (auto& [id, d] : descriptions)
+        if (const hood::Neighbor* n = h.neighbor(id); n && d.relations != n->description.relations)
+            d.relations = hood::relationshipTableOrder(d.relations);
+    for (auto& [id, d] : born)
+        d.relations = hood::relationshipTableOrder(d.relations);
     for (const auto& [id, d] : descriptions) {
         const hood::Neighbor* n = h.neighbor(id);
         if (n && (d.personData != n->description.personData || d.relations != n->description.relations)) {

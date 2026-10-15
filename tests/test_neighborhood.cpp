@@ -281,8 +281,10 @@ static void testWriters() {
     check(SimDescription::parse(d).write() == d, "SDSC writes back as read");
     const auto f = fami(11, 20000, {0xCAFE, 0xBEEF});
     check(FamilyRecord::parse(f).write() == f, "FAMI writes back as read");
-    const auto r = srel({10, 0xC000, -5, 9}, 2);
-    check(Relationship::parse(r, 0x00010002).write() == r, "SREL writes back as read, stale values too");
+    // cTSRelationshipEntry::ResourceWrite: version, count, values; the
+    // stale ones after them are not written.
+    check(Relationship::parse(srel({10, 0xC000, -5, 9}, 2), 0x00010002).write() == srel({10, 0xC000, -5, 9}),
+          "SREL writes back as the game does, without the stale values");
     FamilyRecord rec = FamilyRecord::parse(f);
     rec.funds = 12345;
     check(FamilyRecord::parse(rec.write()).funds == 12345, "FAMI funds written");

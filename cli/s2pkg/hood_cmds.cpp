@@ -199,7 +199,7 @@ int cmdHoodSweep(const char* dir) {
             unnamedFamilies += f.name.empty();
         }
         for (const auto& r : h.relationships) {
-            ++unknowns["SREL u32 @0"][r.unknown];
+            ++unknowns["SREL version"][r.version];
             ++unknowns["SREL count"][long(r.values.size())];
         }
         for (const auto& l : h.lots) {

@@ -237,7 +237,10 @@ float attenuationOf(const InteractionTable::Interaction& e) {
 //   (expansion packs; GetTemperatureBias needs an expansion flag): 1.
 float ownershipFactor(VM& vm, const Object& sim, ObjectId leader) {
     const auto& rels = vm.relationships;
-    auto it = rels.find({vm.relationshipKey(leader), vm.relationshipKey(sim.id)});
+    // GetOwnerShipBias (BV 0xac9ca8): the leader's table, keyed by the Sim's
+    // neighbor ID (docs/relationships-mac.md §3).
+    const int16_t neighbor = sim.person ? sim.person->data[persondata::NeighborId] : int16_t(0);
+    auto it = rels.find(VM::objectRelationship(leader, neighbor));
     if (kOwnershipBias == 0 || it == rels.end() || it->second.size() < 2)
         return 1.0f;
     return 1.0f + kOwnershipBias * float(it->second[1]);

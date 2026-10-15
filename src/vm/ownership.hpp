@@ -23,11 +23,14 @@ constexpr size_t kObjdOwnershipFlags = 0x72;
 void updateObjectOwnership(VM& vm, ObjectId sim, ObjectId object);
 
 // Set to Next 32 "Owner of Object (Object in Temp0, Threshold in Temp1)
-// returns Neighbor ID" (TrySetToNext, Mac BV): the next neighbor ID after
-// `after` (0 or less: from the first) whose ownership relationship with the
-// object has variable 1 >= `threshold` (compared unsigned); -1 when there is
-// none (the binary writes the table's end marker, -1, into the target and
-// returns false).
+// returns Neighbor ID" (TrySetToNext, Mac BV 0xe4a5e8): the next key after
+// `after` (0 or less: from the first) of the object's relationship table
+// (every key: the binary does not tell neighbor IDs from object IDs) whose
+// entry has more than one variable and variable 1 >= `threshold`
+// (compared unsigned); -1 when there is none (the binary writes the
+// table's end marker, -1, into the target and returns false). Keys in the
+// order the game's hash table walks them (GetFirstKey/GetNextKey,
+// hood::relationshipTableOrder); an `after` that is not a key ends it.
 int16_t nextObjectOwner(const VM& vm, ObjectId object, int16_t after, int16_t threshold);
 
 } // namespace os2::vm
