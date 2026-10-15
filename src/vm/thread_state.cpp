@@ -265,6 +265,7 @@ bool applyThreadState(VM& vm, Object& o, std::span<const uint8_t> bytes) {
                 slot.facing = r.i32();
                 o.syntheticSlot = slot;
             }
+            vm.noteDestination(o);
         }
         if (!fits)
             return false;

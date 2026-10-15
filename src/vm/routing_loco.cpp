@@ -358,6 +358,7 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
         slot.facing = -3;
         slot.offset = {(*spot)[1] - blocker.position.y, blocker.position.x - (*spot)[0], 0};
         d.syntheticSlot = slot;
+        vm.noteDestination(d);
     };
     place(*dest);
     vm.initialize(destId, existing);

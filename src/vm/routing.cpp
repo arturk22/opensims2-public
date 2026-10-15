@@ -145,7 +145,7 @@ std::vector<ObjectId> VM::objectsOnTileWithContents(TilePos t) const {
             return;
         out.push_back(id);
         std::vector<std::pair<int16_t, ObjectId>> inside;
-        for (const ObjectId in : contained_)
+        for (const ObjectId in : contained_.ids)
             if (const Object* o = uint16_t(in) < byId_.size() ? byId_[uint16_t(in)] : nullptr;
                 o && o->id != id && o->data[objdata::ContainerId] == id && !dyingObjects.contains(o->id))
                 inside.emplace_back(o->data[objdata::SlotNumber], o->id);
@@ -825,7 +825,9 @@ namespace os2::vm {
 // it runs is inferred (each routing step, and when a pie menu closes).
 void flushDestinations(VM& vm) {
     std::vector<ObjectId> done;
-    for (const Object* po : vm.objectTable()) { // by ID, as objects() is
+    vm.checkContained();
+    for (const ObjectId did : vm.destinationObjects()) { // by ID, as objects() is
+        const Object* po = vm.object(did);
         if (!po)
             continue;
         const Object& o = *po;
@@ -1353,6 +1355,7 @@ ObjectId createGoHereDestination(VM& vm, ObjectId simId, float x, float y, int l
         moveTo(vm, d, p->x, p->y, level);
         d.managedDestination = true;
         d.destinationHeld = true;
+        vm.noteDestination(d);
     };
     place(*dest);
     vm.initialize(id, existing);

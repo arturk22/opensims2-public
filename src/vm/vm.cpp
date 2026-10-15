@@ -875,7 +875,7 @@ ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     // the slot any more: "Chess - Reset Sim" removes what the Sim holds and
     // asks again until the hand is empty, all in one tick (it spun out the
     // instruction budget in N002_Lot10; inferred).
-    for (const ObjectId id : contained_) { // by ID, as objects_ is
+    for (const ObjectId id : contained_.ids) { // by ID, as objects_ is
         const Object* o = uint16_t(id) < byId_.size() ? byId_[uint16_t(id)] : nullptr;
         if (o && o->data[objdata::ContainerId] == container && o->data[objdata::SlotNumber] == slot && o->id != container &&
             !dyingObjects.contains(o->id))
@@ -884,20 +884,19 @@ ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     return 0;
 }
 
-void VM::addContained(ObjectId id) {
+void VM::IdList::add(ObjectId id) {
     const size_t k = uint16_t(id);
-    if (k >= containedFlag_.size())
-        containedFlag_.resize(k + 1 + 64, 0);
-    containedFlag_[k] = 1;
-    contained_.insert(std::upper_bound(contained_.begin(), contained_.end(), id), id);
+    if (k >= in.size())
+        in.resize(k + 1 + 64, 0);
+    in[k] = 1;
+    ids.insert(std::upper_bound(ids.begin(), ids.end(), id), id);
 }
 
-void VM::dropContained(ObjectId id) {
-    const size_t k = uint16_t(id);
-    if (k >= containedFlag_.size() || !containedFlag_[k])
+void VM::IdList::drop(ObjectId id) {
+    if (!has(id))
         return;
-    containedFlag_[k] = 0;
-    contained_.erase(std::lower_bound(contained_.begin(), contained_.end(), id));
+    in[uint16_t(id)] = 0;
+    ids.erase(std::lower_bound(ids.begin(), ids.end(), id));
 }
 
 void VM::checkContained() const {
@@ -906,10 +905,15 @@ void VM::checkContained() const {
         return;
     for (const Object* o : byId_)
         if (o && o->data[objdata::ContainerId] != 0 &&
-            !(uint16_t(o->id) < containedFlag_.size() && containedFlag_[uint16_t(o->id)] &&
-              std::binary_search(contained_.begin(), contained_.end(), o->id))) {
+            !(contained_.has(o->id) && std::binary_search(contained_.ids.begin(), contained_.ids.end(), o->id))) {
             std::fprintf(stderr, "opensims2: object %d is in container %d but not in the containment index\n", o->id,
                          o->data[objdata::ContainerId]);
+            std::abort();
+        }
+    for (const Object* o : byId_)
+        if (o && ((!o->timers.empty() && !timed_.has(o->id)) ||
+                  ((o->syntheticSlot || o->managedDestination) && !destinations_.has(o->id)))) {
+            std::fprintf(stderr, "opensims2: object %d has timers or is a destination but is not listed\n", o->id);
             std::abort();
         }
 }
@@ -1163,16 +1167,12 @@ void VM::followContainers() {
     // them and Snap Into puts them): what a Sim carries goes along with it.
     // By ID, as objects_ is; those out of their container leave the list.
     checkContained();
-    size_t kept = 0;
-    for (size_t i = 0; i < contained_.size(); ++i) {
-        const ObjectId id = contained_[i];
-        Object* po = object(id);
-        if (!po || po->data[objdata::ContainerId] == 0) {
-            containedFlag_[uint16_t(id)] = 0;
-            continue;
-        }
-        contained_[kept++] = id;
-        Object& o = *po;
+    contained_.filter([&](ObjectId id) {
+        const Object* o = object(id);
+        return o && o->data[objdata::ContainerId] != 0;
+    });
+    for (const ObjectId id : contained_.ids) {
+        Object& o = *object(id);
         const ObjectId in = o.data[objdata::ContainerId];
         if (in == o.id)
             continue;
@@ -1188,7 +1188,6 @@ void VM::followContainers() {
         o.position = top->position;
         o.data[objdata::Room] = top->data[objdata::Room];
     }
-    contained_.resize(kept);
 }
 
 // The family tree (cTSFamilyRelationshipArray, BV 0x544028/0x5442e8).

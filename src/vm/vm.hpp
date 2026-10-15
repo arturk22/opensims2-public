@@ -1097,7 +1097,9 @@ public:
         objects_.erase(id);
         if (size_t(uint16_t(id)) < byId_.size())
             byId_[uint16_t(id)] = nullptr;
-        dropContained(id);
+        contained_.drop(id);
+        timed_.drop(id);
+        destinations_.drop(id);
         ++tableGeneration_;
     }
     // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
@@ -1174,15 +1176,26 @@ public:
         noteContainer(o);
     }
     void noteContainer(const Object& o) {
-        const ObjectId c = o.data[objdata::ContainerId];
-        const size_t k = uint16_t(o.id);
-        if (c != 0 && (k >= containedFlag_.size() || !containedFlag_[k]))
-            addContained(o.id);
+        if (o.data[objdata::ContainerId] != 0 && !contained_.has(o.id))
+            contained_.add(o.id);
     }
     // The objects whose object data 2 may not be 0, in ID order: all those
     // whose is not, and maybe some taken out of their container since
     // (followContainers drops them).
-    const std::vector<ObjectId>& containedObjects() const { return contained_; }
+    const std::vector<ObjectId>& containedObjects() const { return contained_.ids; }
+    // Likewise the objects with timers (every timer added is followed by
+    // noteTimers; handleTimers drops those without any) and the engine's
+    // destinations (Object::syntheticSlot or managedDestination, set before
+    // noteDestination; they go with removeObject).
+    void noteTimers(const Object& o) {
+        if (!o.timers.empty() && !timed_.has(o.id))
+            timed_.add(o.id);
+    }
+    void noteDestination(const Object& o) {
+        if ((o.syntheticSlot || o.managedDestination) && !destinations_.has(o.id))
+            destinations_.add(o.id);
+    }
+    const std::vector<ObjectId>& destinationObjects() const { return destinations_.ids; }
 
     // --- Scheduler -----------------------------------------------------------
     // Each object has one thread of its own. Its Init (OBJf function 0) runs
@@ -1508,12 +1521,33 @@ private:
     // the only places that add or remove entries of objects_.
     std::vector<Object*> byId_;
     uint64_t tableGeneration_ = 0;
-    // containedObjects() and which IDs are in it.
-    std::vector<ObjectId> contained_;
-    std::vector<uint8_t> containedFlag_;
-    void addContained(ObjectId id);
-    void dropContained(ObjectId id);
-    void checkContained() const; // OS2_CHECK_CONTAINED=1: the list holds every contained object
+    // IDs in ID order, with a flag per ID: containedObjects(), the objects
+    // with timers, destinationObjects().
+    struct IdList {
+        std::vector<ObjectId> ids;
+        std::vector<uint8_t> in;
+        bool has(ObjectId id) const { return uint16_t(id) < in.size() && in[uint16_t(id)]; }
+        void add(ObjectId id);
+        void drop(ObjectId id);
+        // Keeps the IDs `keep` says yes to (in order), and their flags.
+        template <class F> void filter(F keep) {
+            size_t kept = 0;
+            for (const ObjectId id : ids)
+                if (keep(id))
+                    ids[kept++] = id;
+                else
+                    in[uint16_t(id)] = 0;
+            ids.resize(kept);
+        }
+    };
+    IdList contained_, timed_, destinations_;
+
+public:
+    // OS2_CHECK_CONTAINED=1: aborts unless the lists hold every object in a
+    // container, with timers, made as a destination.
+    void checkContained() const;
+
+private:
     uint64_t objectSerial_ = 0;
     std::map<int64_t, ObjectId> objectList_; // Object::listOrder -> ID
     int64_t listFront_ = 0;                  // the next made object's listOrder is below this

@@ -110,6 +110,7 @@ Exit onTimer(Context& c) {
     if (timers.size() >= kMaxTimersPerObject)
         throw VMError("On Timer: too many timers on object " + std::to_string(owner->id));
     timers.push_back(t);
+    c.vm.noteTimers(*owner);
     c.thread.temps[0] = t.id;
     return Exit::True;
 }
@@ -117,10 +118,14 @@ Exit onTimer(Context& c) {
 } // namespace
 
 void VM::handleTimers() {
-    std::vector<ObjectId> ids;
-    for (const Object* o : byId_) // by ID, as objects_ is
-        if (o && !o->timers.empty())
-            ids.push_back(o->id);
+    // The objects with timers, by ID as objects_ is (those left without any
+    // leave the list).
+    checkContained();
+    timed_.filter([&](ObjectId id) {
+        const Object* o = object(id);
+        return o && !o->timers.empty();
+    });
+    const std::vector<ObjectId> ids = timed_.ids;
     for (ObjectId id : ids) {
         Object* o = object(id);
         if (!o)

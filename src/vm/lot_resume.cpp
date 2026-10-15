@@ -108,6 +108,7 @@ void restoreState(VM& vm, Object& o, const LotObjects::State& s) {
         x.params = st.params;
         o.timers.push_back(x);
     }
+    vm.noteTimers(o);
 }
 
 // The saved interactions of a Sim (cTSPerson: the interaction in its slot
