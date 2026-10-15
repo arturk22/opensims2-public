@@ -34,7 +34,9 @@ grep "^  tick [0-9]*: $id \"N001_User00072 - Kaylynn\" at " "$log" | grep -qv " 
 doors="$out/doors.log"
 OS2_DEBUG_DOORS=2 OS2_DEBUG_VM=1 "$app" --data "$OS2_DATA" --lot N001_Lot11 --run-vm 3000 --frames 2 --screenshot "$out/doors.png" \
     -ApplePersistenceIgnoreState YES > "$doors" 2>&1
-opens=$(grep -c "starts o-door-open" "$doors")
+# An opening in the run's last 60 ticks (a Sim passing a door as it ends)
+# has had no time to close: left out of the count.
+opens=$(awk '/^tick [0-9]+ / { t = $2 + 0; if (t > last) last = t } /starts o-door-open/ { n++; at[n] = t } END { c = 0; for (i = 1; i <= n; i++) if (at[i] < last - 60) c++; print c }' "$doors")
 closes=$(grep -c "starts o-door-close" "$doors")
 [ "$opens" -gt 0 ] || { echo "FAIL: no door opened"; fail=1; }
 [ "$closes" -ge "$opens" ] || { echo "FAIL: $opens openings, $closes closings"; fail=1; }
