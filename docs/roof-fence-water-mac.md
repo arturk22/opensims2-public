@@ -133,23 +133,39 @@ triângulos, com a diagonal alternada pela paridade da posição **no lote**
 
 ### 1.4 O que o nosso código faz
 
-`src/formats/lot_roof.cpp` é o porte do OpenTS2 (faces inclinadas com
-tiles do atlas cortados onde as faces se cruzam). Comparado ao binário:
+Desde a rodada n13, os tipos 1–6 (os do jogo base, os únicos nos 63 lotes)
+seguem o caminho do jogo lido no §1.5, em `src/formats/lot_roof_game.*`:
+grade de alturas por meio tile de cada tipo, elevação pelos triângulos da
+grade, `IsOnPeak`/`IsOnDiagonal`, a triangulação do `ConnectHeightField`
+(dois triângulos por célula, diagonal pela paridade no lote), o triângulo
+escondido sob outro telhado e a escolha de quem perde nos vértices
+compartilhados, a célula do atlas de cada classe de triângulo, as UVs fixas
+do avesso, as normais fixas de cada tipo e as faixas da borda. O
+`heightAt` (paredes de sótão, height map do sol) usa a elevação do jogo
+sobre o retângulo das paredes, como o `FillFromRooves`. O porte do OpenTS2
+em `lot_roof.cpp` ficou só para os tipos diagonais e pagodes (nenhum nos
+lotes do jogo base; a interface do jogo base não os oferece).
 
-- **igual**: beiral de 0,5 tile, tile de meio tile, atlas 5×5 de 102/512,
-  inclinação por meio tile, altura do beiral e da linha da parede (a menos
-  de 0,005 com s = 0,5);
-- **corrigido nesta rodada**: espessura (0,0875 + 0,1625 = 0,25 em vez de
-  0,075 + 0,15), a altura com a regra `−0,42 + f(s)` (muda só para
-  inclinações ≠ 0,5), o +0,08 da meia água e o topo plano da mansarda em
-  `k` (os dois do §1.2);
-- **inferido, mantido**: a triangulação (o OpenTS2 corta cada tile em 4
-  triângulos com vértice no centro; o jogo usa 2 com a diagonal alternada),
-  a escolha da célula do atlas por tile (o jogo escolhe por triângulo com
-  as propriedades de vértice) e o encontro de telhados (o OpenTS2 corta
-  tiles face contra face; o jogo esconde o triângulo cujo centro fica
-  abaixo de outro telhado). Portar isso é trocar o `lot_roof.cpp` inteiro:
-  fica no `TODO.md`.
+Ainda inferido ou sem portar:
+- a inclinação global do `cWorldRoof` (`+0x40`, decide o "estrito" do teste
+  de esconder): tomada como 0,5, a de todos os telhados dos lotes;
+- o `IsTriangleCenterSupportedByOtherRoof` (`0xc660d0`), que esconde também
+  o anel de faixas em volta do topo da mansarda: não portado (só o teste de
+  estar abaixo de outro telhado);
+- a ordem dos getters `0xdc`/`0xe0` do produto (qual textura vai para
+  `RoofEdges` e `RoofTrim`) pela ordem dos membros;
+- os tipos diagonais e pagodes não entram no mundo do jogo: não escondem
+  nem são escondidos pelos outros (no jogo entram, com as próprias classes);
+- o nível subtraído do andar em `AddRoofIdToArray` (`vtable 0x140` do
+  mundo) tomado como 0 (os telhados dos andares L−1..L+2).
+
+Efeitos que vêm do binário e parecem estranhos (mantidos): o triângulo
+plano usa o índice 60 três vezes nas células pares e a base nas ímpares (o
+topo da mansarda sai xadrez quando a base é 4); a meia água tem sempre a
+normal 0 (−y) e a curta usa as normais genéricas (−y/+y) mesmo com as águas
+em x; a grade de quatro águas da meia de quatro águas tem pico pelo
+`GetMaxElevation` próprio (`min(min(W, H) − 1, max(W/2, H/2))`), que pode
+não existir na grade.
 
 ### 1.5 O caminho do jogo, lido inteiro (rodada n13)
 

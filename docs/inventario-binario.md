@@ -77,16 +77,16 @@ palavra.
 | Rotas | 27 (13) | 113 / 622 = 18,2% | 7 / 8 = **88%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 7,5 / 10 = **75%** | 10 / 8 |
-| Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 7,5 / 11 = **68%** | 63 / 50 |
+| Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 8 / 11 = **73%** | 63 / 50 |
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% | 5,5 / 6 = **92%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 4 / 5 = **80%** | 12 / 6 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% (não recontado na n12) | 5,5 / 7 = **79%** | 41 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
-| Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
+| Desenho | 211 (31) | 129 / 2.309 = 5,6% (não recontado na n13) | 5 / 10 = **50%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **81 / 109 = 74%** | **518 em src** |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **82,5 / 110 = 75%** | **518 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -196,7 +196,7 @@ Código: `src/vm/placement.*`, `build_edit*.{hpp,cpp}`, `rooms.*`,
 | Pisos e revestimentos: `cTSUserToolFloorPattern`, `cTSUserToolWallpaper` | `vm/build_edit.cpp` | fiel | |
 | Terreno, lagos, piscinas: `cTSUserToolTerrain*`, `cTSUserToolWater`, `cTSUserToolUndoablePool` | `vm/build_edit_ground.cpp` | inferido | Rodada n07: o teste de vértice `FUN_009e9550` lido (§7.23), mas as flags do pincel vêm de uma global que nada escreve: o pincel segue inferido; piscinas: `0x8A`/`0x81`/`0x86` do binário. |
 | Escadas modulares: `cTSUserToolModularStairs`, `FindEnd` | `vm/build_edit_stairs.cpp` | inferido | `FindEnd` fiel; o +0,75 de fundação e a "elevation" do degrau não. |
-| Telhados: `cTSUserToolRoof` (48, 8), `cAutoRoofData`, `nTSWorld::cWorldRoof` (47, 0) | `formats/lot_roof.cpp`, `vm/build_edit.cpp` | inferido | Retângulos do auto-telhado lidos; rodada n07: `IsRoofValid` (tamanho, cantos, objetos, piscina) lido e usado (§7.22), falta o pré-teste de telhado existente. |
+| Telhados: `cTSUserToolRoof` (48, 8), `cAutoRoofData`, `nTSWorld::cWorldRoof` (47, 10) | `formats/lot_roof*.cpp`, `vm/build_edit_walls.cpp` | fiel | Retângulos do auto-telhado lidos; rodada n07: `IsRoofValid` (tamanho, cantos, objetos, piscina) lido e usado (§7.22); rodada n13: o pré-teste (`IsAnyRoofAtLocation`, `DoesLocationHasClearanceHeight`) e a caixa com o beiral; 245 dos 275 telhados do jogo aceitos (os 30 têm janelas postas depois, que o jogo também recusaria). |
 | Portas e janelas: máscaras `_wallmask`, `HideWhenWallDown`, auto-giro | `formats/lot_model.cpp`, `vm/placement.cpp` | inferido | Objetos sem máscara usam um recorte retangular. |
 
 ### 3.6 Corte de paredes
@@ -310,7 +310,8 @@ Código: `src/render/*`, `src/formats/lot_model.*`, `lot_lightmap.*`,
 | Luz e light maps: `cLightingManager` (88, 25), `cLightMapManager`, `cDiffusion*` | `formats/lot_lightmap.*`, `app/lot_lighting.*` | inferido | Lista longa de inferidos no `TODO.md` M4 (sala de fora, portais, paredes sem grade). |
 | Sombras: `nTSSG::cShadow` (32, 7), height map do sol | `formats/lot_lightmap.cpp`, `render/` | inferido | Rodada n06: os planos GUOB dos objetos lidos (`UpdateGUOBs`, `EnableGUOB`) e conferidos no lote; falta recalcular os de parede ao mover objetos e o "LM_sunHM". |
 | Paredes e pisos: `cWallGeometryNode`, `cFloorGeometryNode` (32, 0), `cFloorManager` (31, 0) | `formats/lot_model.cpp` | inferido | UV dos pisos e do topo das paredes são chutes. |
-| Telhados e cercas: `cFenceGeometryNode` (57, 0), `cFenceManager` (41, 0), classes de telhado | `formats/lot_roof.cpp`, `lot_model.cpp` | inferido | Rodada n06 (`roof-fence-water-mac.md` §1–2): grade, alturas, camadas e triângulos do jogo lidos; espessura, beiral, meia água e mansarda corrigidos; a triangulação e o atlas ainda são do OpenTS2. Trilho e poste das cercas conferidos. |
+| Telhados: `nTSSG::c…Roof`, `nTSWorld::c…RoofType`, classes `c{Even,Odd}Triangle{First,Second}…` | `formats/lot_roof_game.*`, `lot_roof.cpp` | fiel | Rodada n13 (`roof-fence-water-mac.md` §1.4–1.5): os tipos 1–6 como o jogo (grades, `ConnectHeightField`, triângulo escondido sob outro telhado, telhado com telhado nos vértices, célula do atlas por classe, faixas); inferidos: a inclinação global (0,5) e a ordem dos getters das texturas das faixas; sem portar: o `IsTriangleCenterSupportedByOtherRoof` do anel da mansarda; diagonais e pagodes ainda no OpenTS2. |
+| Cercas: `cFenceGeometryNode` (57, 0), `cFenceManager` (41, 0) | `formats/lot_model.cpp` | inferido | Rodada n06 (`roof-fence-water-mac.md` §2): trilho e poste conferidos; falta o +0,75 nas pontas sobre piso "tipo 4". |
 | Água e piscina: `cWaterGeometryBuilder` (35, 0), `cPoolGeometryNode` | `formats/lot_water.*`, `lot_model.cpp` | inferido | Rodada n06 (§3): alfa por profundidade (`Terrain.ini`), só o reflexo, leito e praia pintados como o binário; piscina como o caminho DX8 do Mac (ondas, reflexo, camadas de fundo); falta a passada de bump e as cáusticas. |
 | Efeitos: `cTSEffectsManager` (55, 1), `cTSParticlesEffect`, `cTSMetaParticlesEffect` | `render/particle_system.*`, `app/lot_effects.*` | inferido | 7 marcadores no sistema de partículas. fix-plumbob: bit 1 das flags (`MaintainParticles`, a taxa é a contagem viva) e o material das partículas (`SetupTextureParticle`) lidos; falta a ordem dentro da camada 7. |
 | Objetos e Sims: `nTSSG::cObject` (140, 20), `nTSSG::cPerson` (50, 5), censura | `app/vm_objects.cpp`, `formats/sim_censor.*` | inferido | Objetos animados escolhidos pela malha de repouso. |
@@ -386,7 +387,7 @@ no jogo base.
 
 | # | Rodada | Linhas de §3 | Área |
 |---|---|---|---|
-| 13 | **Telhados do jogo**: triangulação, células do atlas e telhado com telhado (portar o `lot_roof.cpp` para as funções do `cWorldRoof` mapeadas no `TODO.md`) + pré-teste 0x7F do `cTSUserToolRoof` (beiral sobre janelas) | 3.12 telhados, 3.5 telhados | telhado |
+| 13 | **Telhados do jogo**: triangulação, células do atlas e telhado com telhado (portar o `lot_roof.cpp` para as funções do `cWorldRoof` mapeadas no `TODO.md`) + pré-teste 0x7F do `cTSUserToolRoof` (beiral sobre janelas) — **feita** (n13): tipos 1–6 pelo caminho do jogo (`formats/lot_roof_game.*`, `roof-fence-water-mac.md` §1.5) e o pré-teste com a caixa do beiral (245 de 275 telhados aceitos; os 30 restantes o jogo também recusa) | 3.12 telhados, 3.5 telhados | telhado |
 | 14 | **Locomoção**: `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle`, encadeamento das fases e o primeiro pé da parada | 3.3 locomoção | animação |
 | 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 | 3.12 efeitos | efeitos |
 | 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) | 3.12 luz | luz |
