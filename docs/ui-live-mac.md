@@ -53,6 +53,22 @@ laço: até n ticks ou 250 ms de tempo real neste quadro;
 **Diferença com o código atual**: `src/app/lot_vm.hpp` roda a VM a 30
 ticks/s ("um minuto do jogo por segundo"). O jogo roda a ≈23,8 ticks/s em
 velocidade normal; 30 ticks por minuto do jogo está certo.
+(Já resolvido: o app usa `LotSimulation::kTicksPerSecond` = 1000/42.)
+
+- **O backlog é só tempo**: `+0xc4` acumula Δ do relógio desde a última
+  chamada (`+0xc0` guarda a leitura anterior); o contador de ticks da
+  simulação não entra na conta. Um lote salvo volta com o seu contador e
+  continua no quadro seguinte. Bug "à noite todo mundo fica parado"
+  (fix-noite, 2026-10-15): desde `767ee8c8` o lote salvo devolve o contador
+  da VM (`vm/thread_state`, para os testes das rotas), mas
+  `LotSimulation::updateScene` ligava o relógio da cena (que começa em 0)
+  ao contador absoluto: a VM esperava a cena chegar lá. N001_Lot11 salvo
+  às 21:55 com 8789 ticks ficava 369 s (velocidade 1) sem um tick, todos
+  parados. Os saves da versão 3 do estado (rodada n14, `72762d26`) passaram
+  a ser lidos e o bug apareceu nos saves do usuário (a v0.2.0 ignorava o
+  registro v3 e começava do tick 1). Agora o relógio da cena começa no tick
+  salvo (`slip_` negativo) e a VM roda no ritmo do backlog na hora
+  (`docs/screenshots/fix-noite-antes-depois.jpg`; teste `saved_lot_night`).
 
 ### 1.3 Botões de velocidade (`cTSWinProcLivePanelBase`, BV `0xa516a4`/`0xa5191c`)
 
