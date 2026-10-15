@@ -157,6 +157,30 @@ static void testSimulation() {
     check(!sys.alive(h), "a stopped effect ends when its particles die");
 }
 
+// Flag bit 1 (MaintainParticles, BV 0xeb822c): the rate is the number kept
+// alive, not particles per second (the plumbob's glow: one per component).
+static void testMaintainedCount() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    lib.particles[0].flags |= 0x2;
+    lib.particles[0].alphaCurve = {1}; // every one drawn, the newborn too
+    lib.particles[0].sizeCurve = {1};
+    EffectSystem sys(lib, 7);
+    const int h = sys.start("Smoke", {});
+    bool exact = true;
+    for (int i = 0; i < 150; ++i) {
+        sys.update(1.0f / 30);
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        exact = exact && q.size() == 10;
+    }
+    check(exact, "a maintained component keeps exactly its rate's count alive");
+    sys.stop(h);
+    for (int i = 0; i < 90; ++i)
+        sys.update(1.0f / 30);
+    check(!sys.alive(h), "a stopped maintained effect ends");
+}
+
 // A hand-built library: "tank" holds a fish chain (swimming / feeding /
 // dead meta particles carrying "fishmodel" / "deadmodel"), "roach" a chain
 // of two steps that follow one another as their lives end.
@@ -283,6 +307,7 @@ int main() {
     try {
         testParse();
         testSimulation();
+        testMaintainedCount();
         testMetaParticles();
         testCurves();
     } catch (const std::exception& e) {

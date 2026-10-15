@@ -13,7 +13,8 @@ constexpr float kMaxPreRoll = 12.0f;  // pre-roll simulated on start (seconds)
 constexpr size_t kMaxParticles = 512; // per emitter
 
 // Particle flag bits (Particles::flags), see docs/effects-mac.md.
-constexpr uint64_t kLocalSpace = 0x3;     // bits 0/1: particles follow the effect
+constexpr uint64_t kLocalSpace = 0x3;     // bits 0/1: particles follow the effect (inferred)
+constexpr uint64_t kMaintain = 0x2;       // bit 1: the rate is the count kept alive (GenerateNewParticles BV 0xeb8c90)
 constexpr uint64_t kEllipsoid = 1u << 8;  // emit volume is an ellipsoid (OpenTS2)
 constexpr uint64_t kRandomWalk = 1u << 20; // set on every effect with a real random walk
 constexpr uint64_t kIcon = 1u << 24;      // balloon icon: the texture is replaced
@@ -299,7 +300,9 @@ void EffectSystem::stepEmitter(const Instance& inst, Emitter& e, float dt, bool 
         // times (0: forever); particles per second.
         const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
         const bool done = d.rateCurveCycles > 0 && active >= period * float(d.rateCurveCycles);
-        if (!done) {
+        if (d.flags & kMaintain) {
+            // Topped up after the physics below.
+        } else if (!done) {
             const float rate = sampleCurve(d.rateCurve, std::fmod(active, period) / period, 0) * e.emitScale;
             e.pending += rate * dt;
             // The first particle of a one-cycle burst comes out at once.
@@ -334,6 +337,15 @@ void EffectSystem::stepEmitter(const Instance& inst, Emitter& e, float dt, bool 
         }
     }
     std::erase_if(e.particles, [](const Particle& p) { return p.age >= p.life; });
+    // cTSParticlesEffect::MaintainParticles (BV 0xeb822c): flag bit 1 makes
+    // the rate curve's first value the number of particles kept alive, the
+    // dead replaced at once (one plumbob glow per component, one build-mode
+    // cursor post, 100 abduction stars).
+    if (emit && (d.flags & kMaintain) && active >= 0 && (e.stopAt < 0 || e.time < e.stopAt)) {
+        const size_t want = size_t(std::lround(std::max(sampleCurve(d.rateCurve, 0, 0), 0.0f)));
+        while (e.particles.size() < std::min(want, kMaxParticles))
+            spawn(inst, e);
+    }
 }
 
 void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth) {
