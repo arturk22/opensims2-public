@@ -266,12 +266,12 @@ Rect wallRect(const Roof& r) {
 
 } // namespace
 
-bool World::centerBelowOtherRoof(size_t me, float cx, float cy, bool lowerLayer, float* own) const {
+bool World::centerBelowOtherRoof(size_t me, float cx, float cy, bool lowerLayer, float* own, int atLevel) const {
     const Roof& m = roofs_[me];
     const bool strict = !lowerLayer && nearlyEqual(kWorldSlope, 0.5f);
     if (!m.contains(cx, cy))
         return false;
-    const int level = m.level;
+    const int level = atLevel == std::numeric_limits<int>::min() ? m.level : atLevel;
     const float e = sampledElevation(me, cx, cy, level), thr = e + 0.01f;
     for (size_t k : near(level)) {
         if (k == me)
@@ -483,7 +483,7 @@ struct Triangle {
         // The face crossed by the hip line: the diagonal vertex must be v,
         // then the shared vertices pick the cell (EF -y, EF +x, ES -x, ES +y,
         // OF +x, OF +y, OS -y, OS -x).
-        auto across = [&](int v, int a, int b, bool m, bool noDiagMirror, bool keepMirror = false) {
+        auto across = [&](int v, int a, int b, bool m, bool noDiagMirror) {
             if (v >= 0 && !D(v)) {
                 mirror = noDiagMirror;
                 return;
@@ -496,8 +496,6 @@ struct Triangle {
                         base = kTwo;
                 } else if (sibling == 1 && P(b)) {
                     base = kOne;
-                    if (keepMirror)
-                        return;
                 }
             }
             mirror = m;
@@ -744,9 +742,9 @@ struct TriangleBuilder {
             if (!specialMe) {
                 if (self <= minId)
                     return false;
-                return !world.centerBelowOtherRoof(other, cx, cy, false);
+                return !world.centerBelowOtherRoof(other, cx, cy, false, nullptr, m.level);
             }
-            return world.centerBelowOtherRoof(other, cx, cy, false) ? false : true;
+            return !world.centerBelowOtherRoof(other, cx, cy, false, nullptr, m.level);
         }
         if (!anySpecial || !specialMe)
             return false;

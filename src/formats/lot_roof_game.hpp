@@ -73,7 +73,10 @@ public:
     float clearanceTop(float x, float y, int level) const;
 
     // IsTriangleCenterLessThanAnyOtherRoofTriangleCenter (0xc63558).
-    bool centerBelowOtherRoof(size_t roof, float cx, float cy, bool lowerLayer, float* own = nullptr) const;
+    // `level` is the location's (the roof's own unless given: the
+    // roof-meets-roof test asks it of another roof at its own level).
+    bool centerBelowOtherRoof(size_t roof, float cx, float cy, bool lowerLayer, float* own = nullptr,
+                              int level = std::numeric_limits<int>::min()) const;
 
     // The four meshes nTSSG::c...Roof::FillMeshBuilderData builds for one roof.
     struct Meshes {
