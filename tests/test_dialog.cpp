@@ -622,6 +622,34 @@ static void testTokens() {
     check(it->second.iconNeighbor == 7, "tokens: $Neighbor gives the icon");
 }
 
+// cTSObjectDialog::SetParams (BV 0x1d2b20): with byte 8 0x0E (the career's
+// chance cards) the message is the string of temp 0 as it is (no + 1: only
+// the text notifications add one, in TryDialog), button 1 temp 1's, button
+// 2 temp 2's; button 3 the operand's.
+static void testChanceCardTemps() {
+    CodeLibrary code;
+    VM vm{code};
+    code.add(kObjGroup, 0x12D, strings({"one", "two", "three", "four", "five", "six"}));
+    // Temps 0..2 := 2, 3, 4 (temp scope 8, literal 7); a yes/no/cancel dialog
+    // reading message and buttons 1/2 from temps, button 3 string 6.
+    auto temp = [](uint8_t t, uint8_t value) { return instr(0x02, {t, 0, value, 0, 0, 5, 0x08, 0x07}); };
+    auto b = tree({temp(0, 2), temp(1, 3), temp(2, 4), instr(0x24, {6, 0, 0, 0, 0, 2, 0, 0x00, 0x0E, 0, 0, 0, 0, 0, 0})});
+    for (int k = 0; k < 3; ++k)
+        b.instructions[size_t(k)].onTrue = {Kind::Instruction, uint8_t(k + 1)};
+    code.add(kObjGroup, 0x1000, std::move(b));
+    Object& me = vm.createObject(kObjGroup);
+    Thread t = vm.start(me.id, 0x1000);
+    vm.run(t);
+    auto it = vm.dialogs.find(me.id);
+    check(it != vm.dialogs.end(), "chance card: a dialog");
+    if (it == vm.dialogs.end())
+        return;
+    const Dialog& d = it->second;
+    check(d.message == "two", "chance card: the message is temp 0's string, no + 1");
+    check(d.buttons.size() == 3 && d.buttons[0] == "three" && d.buttons[1] == "four" && d.buttons[2] == "six",
+          "chance card: buttons 1 and 2 from temps 1 and 2, button 3 from the operand");
+}
+
 int main() {
     lang::setPreferred(lang::EnglishUS);
     testFamilyBinEntries();
@@ -630,6 +658,7 @@ int main() {
     testFamilyMembershipSaved();
     testYesNoCancel();
     testTokens();
+    testChanceCardTemps();
     testNotification();
     testSpecialDialogs();
     testLightAndOutfit();

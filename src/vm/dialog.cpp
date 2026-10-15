@@ -1,17 +1,17 @@
 // Dialog (0x24): the dialogs the trees put up, their `$` tokens and the
 // answer going back to the tree (dialog.hpp).
 //
-// Operands (docs/primitives-mac.md §4 and §5, from the Mac binary; the
-// button bytes from the editor's disassembly and FreeSO's VMDialogOperand,
-// which has the same first bytes in The Sims 1):
+// Operands (docs/primitives-mac.md §4 and §5, from the Mac binary:
+// TryDialog, BV 0xe2bb64, and cTSObjectDialog::SetParams, BV 0x1d2b20):
 //   byte 0 button 3 ("cancel") string, byte 1 icon index, byte 3 button 1
 //   ("yes"), byte 4 button 2 ("no"), byte 5 type (STR# 0xD9), byte 6
-//   title, byte 7: bit 0 "return" and bit 7 "continue" (STR# 0xED dialog
-//   behavior; inferred from which dialogs set them: the text
-//   notifications have both), bits 1-3 icon type (STR# 0xF4), bits 4-6
-//   the temp the choice or the notification ID goes to; byte 8 flags:
-//   0x01 private strings, 0x40 global, else semi-global, 0x02 message
-//   index in temp 0, 0x10 title index in temp 3; byte 10 timeout; u16 13
+//   title, byte 7: bit 0 "return" (queued, true at once), bit 7
+//   "continue" (the game does not wait; button 1 is a close box,
+//   SetupDialog), bits 1-3 icon type (STR# 0xF4), bits 4-6 the temp the
+//   choice or the notification ID goes to; byte 8 flags: 0x40 the global
+//   strings, else the tree's own (TryDialog's reading of 0x01 is kept
+//   below), 0x02 message index in temp 0, 0x10 title index in temp 3,
+//   0x04/0x08/0x20 buttons 1/2/3 in temps 1/2/4; byte 10 timeout; u16 13
 //   message (node version 0: byte 2, as in The Sims 1). Strings come from
 //   STR# 0x12D of that scope, 1-based (0 = none).
 //
@@ -924,15 +924,26 @@ Exit dialog(Context& c) {
     // so a controller's private tree ("Age Transition" of Controller - Age,
     // run on the Sim by Run Tree by Name) finds its own strings and not
     // its OBJD's semi-global's (PhoneCallGlobals). 0x02 takes the message
-    // from temp 0 + 1.
+    // from temp 0: + 1 for the text notifications (TryDialog reads it
+    // itself), as it is for the dialogs cTSObjectDialog::SetParams (BV
+    // 0x1d2b20) reads, which also take button 1 from temp 1 with 0x04,
+    // button 2 from temp 2 with 0x08 and button 3 from temp 4 with 0x20 (the
+    // career's chance cards: "Sub - Chance Card - Dialog", byte 8 0x0E).
     const uint8_t flags = o[8];
     const int scope = flags & 0x40 ? 2 : 0;
     const Object* owner = vm.object(c.frame.codeOwner);
     if (!owner)
         owner = &me;
     const StringTable* strings = scopeStrings(vm, *owner, c.frame.group, scope, kDialogStrings);
-    const int messageIndex = flags & 0x02 ? c.thread.temps[0] + 1 : c.instruction.nodeVersion == 0 ? o[2] : le16(&o[13]);
+    const bool notification = type == dialogtype::TextNotification || type == dialogtype::ModifyTextNotification ||
+                              type == dialogtype::TnsBirthday;
+    const int messageIndex = flags & 0x02 ? c.thread.temps[0] + (notification ? 1 : 0)
+                             : c.instruction.nodeVersion == 0 ? o[2]
+                                                              : le16(&o[13]);
     const int titleIndex = flags & 0x10 ? c.thread.temps[3] : o[6];
+    const int button1 = flags & 0x04 ? c.thread.temps[1] : o[3];
+    const int button2 = flags & 0x08 ? c.thread.temps[2] : o[4];
+    const int button3 = flags & 0x20 ? c.thread.temps[4] : o[0];
 
     Dialog d;
     d.id = vm.nextDialogId++;
@@ -1015,9 +1026,9 @@ Exit dialog(Context& c) {
         // cTSObjectDialog::SetParams / SetupDialog (BV 0x1d2b20, 0x1d0da8):
         // button 1 (or a close box with "continue"), 2 and 3 by the type.
         switch (type) {
-        case dialogtype::YesNo: d.buttons = {button(o[3], 3), button(o[4], 4)}; break;
-        case dialogtype::YesNoCancel: d.buttons = {button(o[3], 3), button(o[4], 4), button(o[0], 2)}; break;
-        default: d.buttons = {button(o[3], 1)}; break;
+        case dialogtype::YesNo: d.buttons = {button(button1, 3), button(button2, 4)}; break;
+        case dialogtype::YesNoCancel: d.buttons = {button(button1, 3), button(button2, 4), button(button3, 2)}; break;
+        default: d.buttons = {button(button1, 1)}; break;
         }
         resolveIcon(c, d, strings, tokenIcon);
         break;

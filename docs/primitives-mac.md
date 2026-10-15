@@ -1058,8 +1058,13 @@ vêm do grupo da árvore (`frame→0x50→0x28`), do semi-global com o byte 8
 bit 0, do global `0x7FD46CD0` com o bit `0x40`; mensagem u16 13 (temp 0 com
 `0x02`), título byte 6 (temp 3 com `0x10`), botão 1 byte 3 (temp 1 com
 `0x04`), botão 2 byte 4 (temp 2 com `0x08`), botão 3 byte 0 (temp 4 com
-`0x20`). Botões sem string: STR# 0x8E 1/3/4/2 (OK, Sim, Não, Cancelar) por
-tipo. Os cinco textos passam pelo `ParseUIString` (abaixo) com o objeto que
+`0x20`). O índice de um temp vai como está (base 1, como o do operando):
+só as notificações (tipos 8, 10, 0x1C, que o `TryDialog` lê ele mesmo) somam
+1 ao temp 0. O app somava 1 em todos e não lia os botões dos temps; os
+temps de botão aparecem nas cartas de chance da carreira ("Sub - Chance
+Card - Dialog", tipo 2, byte 8 `0x0E`: mensagem e botões 1 e 2 dos temps 0–2)
+e no "Sub - Chance Card - Results" (tipo 0, mensagem do temp 0). Botões sem
+string: STR# 0x8E 1/3/4/2 (OK, Sim, Não, Cancelar) por tipo. Os cinco textos passam pelo `ParseUIString` (abaixo) com o objeto que
 roda a árvore; o objeto que um token devolve vira o ícone automático.
 
 *`SetupDialog`* (BV `0x1d0da8`): título, ícone, **botão 1**: com `+0x71`
