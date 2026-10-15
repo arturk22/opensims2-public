@@ -118,9 +118,19 @@ public:
     };
     void setCensorBoxes(const std::vector<CensorBox>& boxes);
     int censorCount() const;
-    // Effect particles (fx::EffectSystem::collect), camera-facing quads.
-    void setParticleQuads(const std::vector<fx::ParticleQuad>& quads, simd_float3 right, simd_float3 up, ResourceIndex* index);
+    // Effect particles (fx::EffectSystem::collect), drawn after the scene as
+    // render/particle_layer.hpp draws them: back to front, with the effect's
+    // alignment, blending (alpha, additive, modulate) and depth mode; a
+    // "<cres>_<shape>_shpe" texture draws that shape's mesh at the particle.
+    // Textures are TXTR "<name>_txtr" resources found through `index`.
+    void setParticles(const std::vector<fx::ParticleQuad>& quads, ResourceIndex* index);
+    // Registers an image under a particle texture name (balloon icons).
+    void setParticleImage(const std::string& name, const RgbaImage& image);
+    bool hasParticleImage(const std::string& name) const;
     size_t particleCount() const;
+    // The camera's view matrix: billboards face it (draw and the path
+    // capture use the last one set; the FrameView capture its own).
+    void setView(const simd_float4x4& view);
     // A real UI image, in window pixels from the top left.
     void setUiImage(const RgbaImage& image, float x, float y, float w, float h);
 

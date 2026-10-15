@@ -35,12 +35,14 @@
 #include "app/camera_follow.hpp"
 #include "app/camera_input.hpp"
 #include "app/wall_view.hpp"
+#include "app/lot_effects.hpp"
 #include "app/lot_lighting.hpp"
 #include "app/vm_objects.hpp"
 #include "app/pie_menu.hpp"
 #include "formats/dbpf.hpp"
 #include "vm/go_here.hpp"
 #include "vm/interactions.hpp"
+#include "vm/wants.hpp"
 #include "vm/world.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/character_write.hpp"
@@ -1468,16 +1470,39 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
         }
 
-        std::unique_ptr<os2::fx::EffectsLibrary> effectLibrary;
-        std::unique_ptr<os2::fx::EffectSystem> effectSystem;
+        // The lot's particle effects (app/lot_effects.hpp): what the VM starts,
+        // and --effect <name>[@<object id>[:<bone index>] | @x,y,z] (repeatable) by hand.
+        std::unique_ptr<os2::LotEffects> lotEffects;
         std::string effectName;
         try {
-            for (const auto& loc : index.ofType(os2::fx::kTypeEffects)) {
-                effectLibrary = std::make_unique<os2::fx::EffectsLibrary>(os2::fx::EffectsLibrary::parse(index.read(loc)));
-                break;
+            lotEffects = std::make_unique<os2::LotEffects>(renderer, index, res);
+            for (size_t i = 1; i + 1 < app.args.size(); ++i) {
+                if (app.args[i] != "--effect")
+                    continue;
+                std::string spec = app.args[i + 1], name = spec;
+                int16_t object = 0;
+                int slot = -1;
+                os2::fx::V3 at{};
+                if (auto a = spec.find('@'); a != std::string::npos) {
+                    name = spec.substr(0, a);
+                    const std::string where = spec.substr(a + 1);
+                    if (std::sscanf(where.c_str(), "%f,%f,%f", &at[0], &at[1], &at[2]) != 3) {
+                        object = int16_t(std::stoi(where));
+                        if (auto c = where.find(':'); c != std::string::npos)
+                            slot = std::stoi(where.substr(c + 1));
+                    }
+                }
+                if (lotEffects->addManual(name, object, at, slot))
+                    effectName = name;
+                else
+                    std::fprintf(stderr, "opensims2: --effect: no effect named %s\n", name.c_str());
             }
-            if (effectLibrary && !sims.empty() && diagnostics) {
-                effectSystem = std::make_unique<os2::fx::EffectSystem>(*effectLibrary);
+            // The diagnostic run starts one that shows particles over the first Sim.
+            if (effectName.empty() && !sims.empty() && diagnostics) {
+                const os2::fx::EffectsLibrary& library = lotEffects->library();
+                auto trial = std::make_unique<os2::fx::EffectSystem>(library);
+                auto* effectSystem = trial.get();
+                const auto* effectLibrary = &library;
                 os2::fx::Placement where;
                 where.position = {sims.front().actor->position[0], sims.front().actor->position[1],
                                   sims.front().actor->position[2] + 1.2f};
@@ -1517,13 +1542,24 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     std::vector<os2::fx::ParticleQuad> quads;
                     effectSystem->collect(quads);
                     std::printf("opensims2: effect %s, %zu particles\n", effectName.c_str(), quads.size());
+                    lotEffects->addManual(effectName, 0, where.position);
                 } else {
                     std::printf("opensims2: effects loaded, no particles from the first names\n");
                 }
             }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: effects: %s\n", e.what());
-            effectSystem.reset();
+            lotEffects.reset();
+        }
+        // The game's hidden PlumbBobs' glow goes with the app's plumbob.
+        std::set<int16_t> hiddenPlumbobs;
+        std::optional<os2::Xform> appPlumbobAt;
+        if (lotEffects) {
+            lotEffects->placementOverride = [&](int16_t id) -> std::optional<os2::Xform> {
+                if (appPlumbobAt && hiddenPlumbobs.count(id))
+                    return appPlumbobAt;
+                return std::nullopt;
+            };
         }
 
         if (!sims.empty())
@@ -1532,6 +1568,24 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         else
             camera.setPivot(simd_make_float3(float(lot.width) / 2, float(lot.height) / 2,
                                              lot.elevation(follow.level(), int(lot.width / 2), int(lot.height / 2))));
+        // --zoom <levels> / --orientation <steps> / --tilt <degrees> as on the
+        // Mac; --pivot <x,y[,z]>: look at that point instead (tiles).
+        if (auto z = app.argument("--zoom"))
+            camera.zoomBy(std::stoi(*z));
+        if (auto o = app.argument("--orientation"))
+            camera.rotateBy(std::stoi(*o));
+        if (auto t = app.argument("--tilt"))
+            camera.tilt(std::stof(*t));
+        if (auto p = app.argument("--pivot")) {
+            simd_float3 pivot = camera.pivot();
+            float px, py, pz;
+            const int n = std::sscanf(p->c_str(), "%f,%f,%f", &px, &py, &pz);
+            if (n >= 2)
+                pivot.x = px, pivot.y = py;
+            if (n == 3)
+                pivot.z = pz;
+            camera.setPivot(pivot);
+        }
         camera.snap();
         // Page Up / Page Down and the puck's floor buttons: in Buy mode the
         // floor objects go on (the camera follows it), in Build mode the
@@ -2219,6 +2273,41 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
             return std::nullopt;
         };
+        // Balloon icons the app draws: a Sim's portrait (0x10), a want's or fear's icon (0x2000).
+        if (lotEffects)
+            lotEffects->iconImage = [&](const os2::vm::ActiveEffect& e) -> std::optional<os2::RgbaImage> {
+                os2::vm::VM& m = simulation.machine();
+                if (e.iconSim) {
+                    // The variable holds the Sim's neighbor ID (the memories'
+                    // and socials' balloons), else its object ID.
+                    for (const auto& [id, o] : m.objects())
+                        if (o.person && os2::vm::neighborIdOf(o) == e.iconSim)
+                            if (auto p = simPortrait(id))
+                                return p;
+                    if (const os2::vm::Neighbor* n = m.neighbor(e.iconSim); n && n->guid)
+                        if (auto file = characterFileOf(n->guid))
+                            try {
+                                os2::DbpfPackage character(*file);
+                                for (const auto& x : character.entries())
+                                    if (x.tgi.type == os2::kTypeUiImage && x.tgi.instance < 0x100)
+                                        return os2::decodeUiImage(character.read(x));
+                            } catch (const std::exception&) {
+                            }
+                    return simPortrait(e.iconSim);
+                }
+                if (e.wantSim) {
+                    const os2::vm::Object* sim = m.object(e.wantSim);
+                    os2::vm::WantSystem* ws = os2::vm::wantSystem(m);
+                    const os2::vm::SimWants* w = sim && ws ? os2::vm::simWants(m, os2::vm::neighborIdOf(*sim)) : nullptr;
+                    const auto& list = w ? (e.wantFear ? w->fears : w->wants) : std::vector<os2::vm::WantPtr>{};
+                    if (e.wantSlot >= 0 && size_t(e.wantSlot) < list.size() && list[size_t(e.wantSlot)])
+                        if (const auto* d = ws->library->definition(list[size_t(e.wantSlot)]->data.guid))
+                            if (uint32_t icon = d->primaryIcon ? d->primaryIcon : d->secondaryIcon)
+                                if (auto bytes = index.read(os2::Tgi{os2::kTypeUiImage, os2::kUiImageGroup, icon, 0}))
+                                    return os2::decodeUiImage(*bytes);
+                }
+                return std::nullopt;
+            };
         std::set<int16_t> simsLookedAt; // person objects already adopted or given up on
         for (const auto& s : sims)
             simsLookedAt.insert(s.id);
@@ -2327,6 +2416,10 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     continue;
                 const bool over = objectView.hasModel(id) && objectView.outermostContainer(id) == pie->sim();
                 objectView.setHidden(id, !over || vmPlumbob);
+                if (!over || vmPlumbob)
+                    hiddenPlumbobs.insert(id);
+                else
+                    hiddenPlumbobs.erase(id);
                 if (over && !vmPlumbob)
                     vmPlumbob = true;
                 if (material.empty() || over) {
@@ -2353,6 +2446,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             plumbobMaterial = material;
         };
         auto placePlumbob = [&](double seconds) {
+            appPlumbobAt.reset();
             if (plumbob < 0)
                 return;
             simd_float4x4 at = matrix_identity_float4x4;
@@ -2368,6 +2462,8 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 const float angle = float(std::fmod(seconds / kPlumbobSpinSeconds, 1.0) * 2 * 3.14159265358979);
                 at = simd_matrix4x4(simd_quaternion(angle, simd_make_float3(0, 0, 1)));
                 at.columns[3] = simd_make_float4(s.actor->position[0], s.actor->position[1], top + kPlumbobGap - plumbobBottom, 1);
+                appPlumbobAt = os2::Xform{os2::quatFromEulerXYZ(0, 0, angle),
+                                          {s.actor->position[0], s.actor->position[1], top + kPlumbobGap - plumbobBottom}};
             }
             renderer.setInstanceTransform(plumbob, at);
         };
@@ -2478,6 +2574,23 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             for (auto& sim : sims)
                 renderer.updateObject(sim.actor->model, sim.actor->posed);
             placePlumbob(scene);
+            if (lotEffects) {
+                // The effect events of the animations playing (Sims, animated objects).
+                std::vector<const os2::SimActor*> animated;
+                for (const auto& s : sims)
+                    animated.push_back(s.actor.get());
+                for (const auto& [id, a] : objectActors)
+                    if (a)
+                        animated.push_back(a.get());
+                lotEffects->animationEffects(animated, scene);
+                lotEffects->update(scene, &simulation.machine(), &objectView, [&](int16_t id) -> const os2::SimActor* {
+                    const DrawnSim* s = drawnSim(id);
+                    return s ? s->actor.get() : nullptr;
+                });
+                std::vector<os2::fx::EffectSound> sounds; // fire, flies, sparks, ...
+                lotEffects->collectSounds(sounds);
+                lotAudio.effectSounds(sounds);
+            }
             os2::LotAudio::Listener listener;
             {
                 const simd_float3 p = camera.pivot(), look = p - camera.eye();
@@ -2533,16 +2646,8 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 censorLogged = true;
                 std::fprintf(stderr, "opensims2: censor boxes %zu\n", censor.size());
             }
-            if (effectSystem) {
-                effectSystem->update(1.f / 60.f);
-                std::vector<os2::fx::ParticleQuad> quads;
-                effectSystem->collect(quads);
-                const simd_float4x4 v = camera.view();
-                const simd_float3 right = simd_make_float3(v.columns[0][0], v.columns[1][0], v.columns[2][0]);
-                const simd_float3 up = simd_make_float3(v.columns[0][1], v.columns[1][1], v.columns[2][1]);
-                renderer.setParticleQuads(quads, right, up, &index);
-            }
             renderer.setEye(camera.eye());
+            renderer.setView(camera.view());
             return renderer.draw(viewProj());
         };
 
@@ -2585,6 +2690,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             camera.snap();
             showLiveUi();
             renderer.setEye(camera.eye());
+            renderer.setView(camera.view());
             if (!renderer.capture(shot, viewProj()))
                 exit.code = 1;
             else
@@ -2603,6 +2709,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         }
         showLiveUi();
         renderer.setEye(camera.eye());
+        renderer.setView(camera.view());
         if (!renderer.capture(shot, viewProj()))
             throw std::runtime_error("screenshot failed");
         const int censorOnFrame = renderer.censorCount();
@@ -2735,6 +2842,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 camera.snap();
                 showLiveUi();
                 renderer.setEye(camera.eye());
+                renderer.setView(camera.view());
                 const auto buyShot = shot.parent_path() / "frame_buy.png";
                 renderer.capture(buyShot, viewProj());
             }
@@ -2783,6 +2891,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 camera.snap();
                 showLiveUi();
                 renderer.setEye(camera.eye());
+                renderer.setView(camera.view());
                 renderer.capture(shot.parent_path() / "frame_build.png", viewProj());
             }
             buildLine = std::string(buildClick ? "clicked" : "miss") + (build->active() ? " active" : " inactive") +

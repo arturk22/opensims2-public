@@ -126,7 +126,10 @@ private:
     std::set<std::string> iconNames_;
     std::unique_ptr<fx::EffectsLibrary> library_;
     std::unique_ptr<fx::EffectSystem> system_;
-    std::unique_ptr<ParticleLayer> layer_;
+#ifndef _WIN32
+    std::unique_ptr<ParticleLayer> layer_; // Windows: the renderer draws the particles (GpuRenderer::setParticles)
+#endif
+    void setImage(const std::string& name, const RgbaImage& image);
     std::map<std::pair<int16_t, uint32_t>, Running> vm_; // (object, effect serial)
     std::vector<Manual> manual_;
     struct AnimEffect {

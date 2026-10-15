@@ -8,10 +8,13 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -139,8 +142,7 @@ struct GpuRenderer::Gpu {
     SDL_GPUGraphicsPipeline* ui = nullptr;
     SDL_GPUGraphicsPipeline* shadow = nullptr;
     SDL_GPUGraphicsPipeline* mirrorOverlay = nullptr;
-    SDL_GPUGraphicsPipeline* particleAlpha = nullptr;
-    SDL_GPUGraphicsPipeline* particleAdd = nullptr;
+    SDL_GPUGraphicsPipeline* particle[3][3]{}; // [alpha, additive, modulate][depth test, none, inverted]
     SDL_GPUSampler* sampler = nullptr;
     SDL_GPUSampler* clampSampler = nullptr;
     SDL_GPUSampler* pointSampler = nullptr;
@@ -244,13 +246,32 @@ struct GpuRenderer::Gpu {
     SDL_GPUBuffer* censorVertices = nullptr;
     int censorQuads = 0;
     unsigned censorPreparedW = 0, censorPreparedH = 0;
-    struct ParticleBatch {
-        SDL_GPUBuffer* vertices = nullptr;
-        uint32_t count = 0;
+    struct ParticleSprite {
+        fx::ParticleQuad q;
+        std::string texture;
+    };
+    std::vector<ParticleSprite> particles;
+    ResourceIndex* particleIndex = nullptr;
+    std::unordered_map<std::string, SDL_GPUTexture*> particleTextures; // by effect name (registered images too)
+    std::vector<SDL_GPUTexture*> particleImages;                       // the registered images (owned)
+    struct ParticleMesh {
+        std::vector<simd_float3> positions; // model space (z up), by triangle corner
+        std::vector<simd_float2> uvs;
         SDL_GPUTexture* texture = nullptr;
-        bool additive = false;
+        simd_float3 tint{1, 1, 1}; // the material's diffuse when untextured
+    };
+    std::unordered_map<std::string, std::unique_ptr<ParticleMesh>> particleMeshes;
+    simd_float4x4 view = matrix_identity_float4x4;
+    struct ParticleBatch {
+        SDL_GPUTexture* texture = nullptr;
+        int pipeline = 0, depth = 0;
+        uint32_t first = 0, count = 0;
     };
     std::vector<ParticleBatch> particleBatches;
+    SDL_GPUBuffer* particleVertices = nullptr;
+    SDL_GPUTexture* particleTexture(const std::string& name);
+    const ParticleMesh* particleMesh(const std::string& name);
+    void buildParticles(const simd_float4x4& view);
 
     SDL_GPUBuffer* uploadBuffer(const void* data, size_t bytes, SDL_GPUBufferUsageFlags usage);
     SDL_GPUTexture* uploadImage(const RgbaImage& image, bool clamp);
@@ -1119,19 +1140,20 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
         SDL_DrawGPUPrimitives(pass, uint32_t(censorQuads), 1, 0, 0);
     }
 
-    if (particleAlpha && particleAdd) {
+    if (particleVertices && !particleBatches.empty()) {
         float viewProjFloats[16];
         std::memcpy(viewProjFloats, mainVP, sizeof viewProjFloats);
+        SDL_GPUBufferBinding vertices{particleVertices, 0};
         for (const auto& batch : particleBatches) {
-            if (!batch.vertices || batch.count == 0)
+            SDL_GPUGraphicsPipeline* pipe = particle[batch.pipeline][batch.depth];
+            if (!pipe || batch.count == 0)
                 continue;
-            SDL_BindGPUGraphicsPipeline(pass, batch.additive ? particleAdd : particleAlpha);
+            SDL_BindGPUGraphicsPipeline(pass, pipe);
             SDL_PushGPUVertexUniformData(cmd, 0, viewProjFloats, sizeof viewProjFloats);
-            SDL_GPUTextureSamplerBinding binding{batch.texture ? batch.texture : white, sampler};
+            SDL_GPUTextureSamplerBinding binding{batch.texture ? batch.texture : white, clampSampler};
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-            SDL_GPUBufferBinding vertices{batch.vertices, 0};
             SDL_BindGPUVertexBuffers(pass, 0, &vertices, 1);
-            SDL_DrawGPUPrimitives(pass, batch.count, 1, 0, 0);
+            SDL_DrawGPUPrimitives(pass, batch.count, 1, batch.first, 0);
         }
     }
 
@@ -1152,8 +1174,8 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
 namespace {
 
 // `blend` is a StandardMaterial::Blend, with the Mac renderer's factors:
-// Alpha srcα + (1 − srcα), Additive srcα + one, AddNoSrcAlpha one + one,
-// Premultiplied one + (1 − srcα), Multiply dst·src + (1 − srcα).
+// Alpha srcÎ± + (1 âˆ’ srcÎ±), Additive srcÎ± + one, AddNoSrcAlpha one + one,
+// Premultiplied one + (1 âˆ’ srcÎ±), Multiply dstÂ·src + (1 âˆ’ srcÎ±).
 SDL_GPUGraphicsPipeline* makePipeline(SDL_GPUDevice* device, SDL_GPUTextureFormat format, SDL_GPUShader* vertex, SDL_GPUShader* fragment,
                                       int blend, bool twoSided, bool front = false, bool depth = true, bool blendDepthWrite = false) {
     SDL_GPUVertexBufferDescription buffer{};
@@ -1272,7 +1294,12 @@ GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, i
     gpu_->mirrorOverlay = makePipeline(gpu_->device, swap, vertex, fragment, false, true, false, false);
     SDL_GPUShader* particleVertex = loadShader(gpu_->device, shaderFolder / "particle.vert.dxil", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     SDL_GPUShader* particleFragment = loadShader(gpu_->device, shaderFolder / "particle.frag.dxil", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
-    auto makeParticles = [&](bool additive) {
+    SDL_GPUShader* particleModulate =
+        loadShader(gpu_->device, shaderFolder / "particle_modulate.frag.dxil", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
+    // Blending as ParticleLayer's: alpha, additive (source alpha + one),
+    // modulate (destination x source); the destination's alpha kept. Depth:
+    // tested, ignored, inverted (in front of nothing); never written.
+    auto makeParticles = [&](int blend, int depth) {
         SDL_GPUVertexBufferDescription buffer{};
         buffer.slot = 0;
         buffer.pitch = 36;
@@ -1284,15 +1311,17 @@ GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, i
         SDL_GPUColorTargetDescription color{};
         color.format = swap;
         color.blend_state.enable_blend = true;
-        color.blend_state.src_color_blendfactor = additive ? SDL_GPU_BLENDFACTOR_ONE : SDL_GPU_BLENDFACTOR_SRC_ALPHA;
-        color.blend_state.dst_color_blendfactor = additive ? SDL_GPU_BLENDFACTOR_ONE : SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        color.blend_state.src_color_blendfactor = blend == 2 ? SDL_GPU_BLENDFACTOR_DST_COLOR : SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        color.blend_state.dst_color_blendfactor = blend == 2   ? SDL_GPU_BLENDFACTOR_ZERO
+                                                  : blend == 1 ? SDL_GPU_BLENDFACTOR_ONE
+                                                               : SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
         color.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
-        color.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        color.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
         color.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         color.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
         SDL_GPUGraphicsPipelineCreateInfo info{};
         info.vertex_shader = particleVertex;
-        info.fragment_shader = particleFragment;
+        info.fragment_shader = blend == 2 ? particleModulate : particleFragment;
         info.vertex_input_state.vertex_buffer_descriptions = &buffer;
         info.vertex_input_state.num_vertex_buffers = 1;
         info.vertex_input_state.vertex_attributes = attributes;
@@ -1302,7 +1331,9 @@ GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, i
         info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
         info.depth_stencil_state.enable_depth_test = true;
         info.depth_stencil_state.enable_depth_write = false;
-        info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+        info.depth_stencil_state.compare_op = depth == 1   ? SDL_GPU_COMPAREOP_ALWAYS
+                                              : depth == 2 ? SDL_GPU_COMPAREOP_GREATER
+                                                           : SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
         info.target_info.color_target_descriptions = &color;
         info.target_info.num_color_targets = 1;
         info.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
@@ -1312,8 +1343,9 @@ GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, i
             throw sdlError("particle pipeline");
         return pipeline;
     };
-    gpu_->particleAlpha = makeParticles(false);
-    gpu_->particleAdd = makeParticles(true);
+    for (int blend = 0; blend < 3; ++blend)
+        for (int depth = 0; depth < 3; ++depth)
+            gpu_->particle[blend][depth] = makeParticles(blend, depth);
 
     SDL_GPUVertexBufferDescription uiBuffer{};
     uiBuffer.slot = 0;
@@ -1413,9 +1445,14 @@ GpuRenderer::~GpuRenderer() {
         SDL_ReleaseGPUTexture(gpu_->device, gpu_->censorDepth);
     if (gpu_->censorVertices)
         SDL_ReleaseGPUBuffer(gpu_->device, gpu_->censorVertices);
-    for (auto& batch : gpu_->particleBatches)
-        if (batch.vertices)
-            SDL_ReleaseGPUBuffer(gpu_->device, batch.vertices);
+    if (gpu_->particleVertices)
+        SDL_ReleaseGPUBuffer(gpu_->device, gpu_->particleVertices);
+    for (SDL_GPUTexture* texture : gpu_->particleImages)
+        SDL_ReleaseGPUTexture(gpu_->device, texture);
+    for (auto& blends : gpu_->particle)
+        for (SDL_GPUGraphicsPipeline* pipeline : blends)
+            if (pipeline)
+                SDL_ReleaseGPUGraphicsPipeline(gpu_->device, pipeline);
     if (gpu_->uiVertices)
         SDL_ReleaseGPUBuffer(gpu_->device, gpu_->uiVertices);
     if (gpu_->white)
@@ -1427,7 +1464,7 @@ GpuRenderer::~GpuRenderer() {
     if (gpu_->pointSampler)
         SDL_ReleaseGPUSampler(gpu_->device, gpu_->pointSampler);
     for (SDL_GPUGraphicsPipeline* pipeline : {gpu_->opaqueBack, gpu_->opaqueFront, gpu_->opaqueNone, gpu_->shadow, gpu_->mirrorOverlay,
-                                              gpu_->particleAlpha, gpu_->particleAdd, gpu_->ui})
+                                              gpu_->ui})
         if (pipeline)
             SDL_ReleaseGPUGraphicsPipeline(gpu_->device, pipeline);
     for (auto& modes : gpu_->blended)
@@ -1700,80 +1737,224 @@ bool GpuRenderer::mirrorAnchor(simd_float3& center, simd_float3& normal) const {
     return true;
 }
 
-void GpuRenderer::setParticleQuads(const std::vector<fx::ParticleQuad>& quads, simd_float3 right, simd_float3 up,
-                                   ResourceIndex* index) {
-    for (auto& batch : gpu_->particleBatches)
-        if (batch.vertices)
-            SDL_ReleaseGPUBuffer(gpu_->device, batch.vertices);
-    gpu_->particleBatches.clear();
+SDL_GPUTexture* GpuRenderer::Gpu::particleTexture(const std::string& name) {
+    if (name.empty())
+        return white;
+    if (auto it = particleTextures.find(name); it != particleTextures.end())
+        return it->second;
+    SDL_GPUTexture* texture = particleIndex ? textureNamed(name + "_txtr", *particleIndex) : white;
+    particleTextures[name] = texture;
+    return texture;
+}
+
+const GpuRenderer::Gpu::ParticleMesh* GpuRenderer::Gpu::particleMesh(const std::string& name) {
+    static constexpr std::string_view kShape = "_shpe";
+    if (name.size() <= kShape.size() || !particleIndex)
+        return nullptr;
+    std::string lower = name;
+    for (char& c : lower)
+        c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (!lower.ends_with(kShape))
+        return nullptr;
+    if (auto it = particleMeshes.find(name); it != particleMeshes.end())
+        return it->second.get();
+    std::unique_ptr<ParticleMesh> out;
+    // The CRES is the name up to one of its underscores, the longest that
+    // exists ("lightning_root_rot_shpe" -> "lightning").
+    const std::string stem = name.substr(0, name.size() - kShape.size());
+    for (size_t cut = stem.rfind('_'); cut != std::string::npos && cut > 0 && !out; cut = stem.rfind('_', cut - 1)) {
+        try {
+            const ObjectModel om = loadObjectModel(*particleIndex, stem.substr(0, cut));
+            auto m = std::make_unique<ParticleMesh>();
+            auto shapeOf = [](const ObjectModel::Part& p) {
+                std::string shape = p.shape;
+                for (char& c : shape)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                return shape;
+            };
+            bool named = false;
+            for (const auto& p : om.parts)
+                named = named || shapeOf(p) == lower;
+            for (const auto& p : om.parts) {
+                if (named && shapeOf(p) != lower)
+                    continue;
+                const auto& g = p.mesh;
+                for (uint32_t i : g.triangles) {
+                    if (i >= g.positions.size())
+                        continue;
+                    m->positions.push_back(simd_make_float3(g.positions[i][0], g.positions[i][1], g.positions[i][2]));
+                    m->uvs.push_back(i < g.uvs.size() ? simd_make_float2(g.uvs[i][0], g.uvs[i][1]) : simd_make_float2(0, 0));
+                }
+                if (!m->texture)
+                    if (auto mat = om.materials.find(p.material); mat != om.materials.end()) {
+                        const StandardMaterial sm = standardMaterial(mat->second);
+                        std::string tex = sm.baseTexture;
+                        if (tex.ends_with("_txtr"))
+                            tex.resize(tex.size() - 5);
+                        if (!tex.empty())
+                            m->texture = particleTexture(tex);
+                        else
+                            m->tint = simd_make_float3(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2]);
+                    }
+            }
+            if (!m->texture)
+                m->texture = white;
+            if (!m->positions.empty())
+                out = std::move(m);
+        } catch (const std::exception&) {
+        }
+    }
+    if (!out)
+        std::fprintf(stderr, "opensims2: effect shape %s: not found\n", name.c_str());
+    return (particleMeshes[name] = std::move(out)).get();
+}
+
+namespace {
+
+int particlePipeline(fx::DrawType d) {
+    switch (d) {
+    case fx::DrawType::Additive:
+    case fx::DrawType::AdditiveInvertDepth:
+    case fx::DrawType::AdditiveIgnoreDepth: return 1;
+    case fx::DrawType::Modulate: return 2;
+    default: return 0;
+    }
+}
+
+int particleDepth(fx::DrawType d) {
+    switch (d) {
+    case fx::DrawType::DecalIgnoreDepth:
+    case fx::DrawType::AdditiveIgnoreDepth: return 1;
+    case fx::DrawType::DecalInvertDepth:
+    case fx::DrawType::AdditiveInvertDepth: return 2;
+    default: return 0;
+    }
+}
+
+} // namespace
+
+void GpuRenderer::Gpu::buildParticles(const simd_float4x4& viewMatrix) {
+    if (particleVertices)
+        SDL_ReleaseGPUBuffer(device, particleVertices);
+    particleVertices = nullptr;
+    particleBatches.clear();
+    if (particles.empty())
+        return;
+    // Camera axes in world space: the view matrix's rows.
+    const simd_float3 right = simd_make_float3(viewMatrix.columns[0].x, viewMatrix.columns[1].x, viewMatrix.columns[2].x);
+    const simd_float3 up = simd_make_float3(viewMatrix.columns[0].y, viewMatrix.columns[1].y, viewMatrix.columns[2].y);
+    const simd_float3 back = simd_make_float3(viewMatrix.columns[0].z, viewMatrix.columns[1].z, viewMatrix.columns[2].z);
+    const simd_float4 eyeColumn = simd_inverse(viewMatrix).columns[3];
+    const simd_float3 eyeAt = simd_make_float3(eyeColumn.x, eyeColumn.y, eyeColumn.z);
+
+    // Back to front (by layer first), so blended particles composite.
+    std::vector<std::pair<float, const ParticleSprite*>> order;
+    order.reserve(particles.size());
+    for (const auto& s : particles) {
+        const auto& sp = s.q.sortPosition;
+        order.push_back({simd_length_squared(simd_make_float3(sp[0], sp[1], sp[2]) - eyeAt) - s.q.layer * 1e-3f, &s});
+    }
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) {
+        if (a.first != b.first)
+            return a.first > b.first;
+        return a.second->q.sortOrder < b.second->q.sortOrder;
+    });
+
     struct Corner {
         float position[3];
         float uv[2];
         float color[4];
     };
-    struct Group {
-        std::vector<Corner> vertices;
-        SDL_GPUTexture* texture = nullptr;
-        bool additive = false;
-    };
-    std::vector<Group> groups;
-    auto groupFor = [&](const fx::ParticleQuad& quad) -> Group& {
-        const bool additive = quad.draw == fx::DrawType::Additive || quad.draw == fx::DrawType::AdditiveInvertDepth ||
-                              quad.draw == fx::DrawType::AdditiveIgnoreDepth;
-        SDL_GPUTexture* texture = gpu_->white;
-        std::string name = quad.texture ? *quad.texture : std::string();
-        if (index && !name.empty()) {
-            if (!name.ends_with("_txtr"))
-                name += "_txtr";
-            texture = gpu_->textureNamed(name, *index);
+    std::vector<Corner> corners;
+    corners.reserve(order.size() * 6);
+    for (const auto& [d, sprite] : order) {
+        const fx::ParticleQuad& q = sprite->q;
+        const simd_float3 c = simd_make_float3(q.position[0], q.position[1], q.position[2]);
+        simd_float3 ax = right, ay = up;
+        if (q.alignment == 1) { // flat on the ground
+            ax = simd_make_float3(1, 0, 0), ay = simd_make_float3(0, 1, 0);
+        } else if (q.alignment == 6) { // vertical, turned about Z towards the camera
+            simd_float3 f = simd_make_float3(back.x, back.y, 0);
+            const float l = simd_length(f);
+            f = l > 1e-4f ? f / l : simd_make_float3(0, 1, 0);
+            ax = simd_make_float3(-f.y, f.x, 0), ay = simd_make_float3(0, 0, 1);
+        } else if (q.alignment == 2) { // along the velocity
+            const simd_float3 v = simd_make_float3(q.velocity[0], q.velocity[1], q.velocity[2]);
+            if (simd_length(v) > 1e-4f) {
+                ay = simd_normalize(v);
+                const simd_float3 x = simd_cross(ay, back);
+                if (simd_length(x) > 1e-4f)
+                    ax = simd_normalize(x);
+            }
         }
-        for (auto& group : groups)
-            if (group.additive == additive && group.texture == texture)
-                return group;
-        groups.push_back({});
-        groups.back().texture = texture;
-        groups.back().additive = additive;
-        return groups.back();
-    };
-    for (const auto& quad : quads) {
-        const float c = std::cos(quad.rotation), s = std::sin(quad.rotation);
-        simd_float3 across = (right * c + up * s) * (quad.width * 0.5f);
-        simd_float3 along = (up * c - right * s) * (quad.height * 0.5f);
-        const simd_float3 center{quad.position[0], quad.position[1], quad.position[2]};
-        const simd_float3 corner[4] = {center - across - along, center + across - along, center + across + along,
-                                       center - across + along};
-        const float uv[4][2] = {{quad.uv[0], quad.uv[1]}, {quad.uv[2], quad.uv[1]}, {quad.uv[2], quad.uv[3]}, {quad.uv[0], quad.uv[3]}};
-        Group& group = groupFor(quad);
-        for (int indexCorner : {0, 1, 2, 0, 2, 3}) {
-            Corner vertex{};
-            vertex.position[0] = corner[indexCorner].x;
-            vertex.position[1] = corner[indexCorner].y;
-            vertex.position[2] = corner[indexCorner].z;
-            vertex.uv[0] = uv[indexCorner][0];
-            vertex.uv[1] = uv[indexCorner][1];
-            for (int k = 0; k < 4; ++k)
-                vertex.color[k] = quad.color[size_t(k)];
-            group.vertices.push_back(vertex);
+        if (q.alignment != 2 && q.rotation != 0) {
+            const float cs = std::cos(q.rotation), sn = std::sin(q.rotation);
+            const simd_float3 rx = ax * cs + ay * sn, ry = ay * cs - ax * sn;
+            ax = rx, ay = ry;
         }
-    }
-    for (auto& group : groups) {
-        if (group.vertices.empty())
+        const simd_float3 hx = ax * (q.width * 0.5f), hy = ay * (q.height * 0.5f);
+        const ParticleMesh* shape = particleMesh(sprite->texture);
+        SDL_GPUTexture* texture = shape ? shape->texture : particleTexture(sprite->texture);
+        const int pipe = particlePipeline(q.draw), dep = particleDepth(q.draw);
+        if (particleBatches.empty() || particleBatches.back().texture != texture || particleBatches.back().pipeline != pipe ||
+            particleBatches.back().depth != dep)
+            particleBatches.push_back({texture, pipe, dep, uint32_t(corners.size()), 0});
+        if (shape) {
+            // The mesh at the particle: its size as the scale, its rotation
+            // about the vertical, the model's axes otherwise.
+            const float cs = std::cos(q.rotation), sn = std::sin(q.rotation), k = q.width;
+            for (size_t i = 0; i < shape->positions.size(); ++i) {
+                const simd_float3 m = shape->positions[i] * k;
+                const simd_float3 p = c + simd_make_float3(m.x * cs - m.y * sn, m.x * sn + m.y * cs, m.z);
+                corners.push_back({{p.x, p.y, p.z},
+                                   {shape->uvs[i].x, shape->uvs[i].y},
+                                   {q.color[0] * shape->tint.x, q.color[1] * shape->tint.y, q.color[2] * shape->tint.z, q.color[3]}});
+            }
+            particleBatches.back().count += uint32_t(shape->positions.size());
             continue;
-        Gpu::ParticleBatch batch;
-        batch.vertices = gpu_->uploadBuffer(group.vertices.data(), group.vertices.size() * sizeof(Corner), SDL_GPU_BUFFERUSAGE_VERTEX);
-        batch.count = uint32_t(group.vertices.size());
-        batch.texture = group.texture;
-        batch.additive = group.additive;
-        gpu_->particleBatches.push_back(batch);
+        }
+        auto corner = [&](simd_float3 p, float u, float v) {
+            corners.push_back({{p.x, p.y, p.z}, {u, v}, {q.color[0], q.color[1], q.color[2], q.color[3]}});
+        };
+        const auto& uv = q.uv;
+        corner(c - hx - hy, uv[0], uv[3]);
+        corner(c + hx - hy, uv[2], uv[3]);
+        corner(c + hx + hy, uv[2], uv[1]);
+        corner(c - hx - hy, uv[0], uv[3]);
+        corner(c + hx + hy, uv[2], uv[1]);
+        corner(c - hx + hy, uv[0], uv[1]);
+        particleBatches.back().count += 6;
+    }
+    if (!corners.empty())
+        particleVertices = uploadBuffer(corners.data(), corners.size() * sizeof(Corner), SDL_GPU_BUFFERUSAGE_VERTEX);
+}
+
+void GpuRenderer::setParticles(const std::vector<fx::ParticleQuad>& quads, ResourceIndex* index) {
+    gpu_->particleIndex = index;
+    gpu_->particles.clear();
+    gpu_->particles.reserve(quads.size());
+    for (const auto& q : quads)
+        gpu_->particles.push_back({q, q.texture ? *q.texture : std::string()});
+}
+
+void GpuRenderer::setParticleImage(const std::string& name, const RgbaImage& image) {
+    if (gpu_->particleTextures.count(name) || !image.width || !image.height)
+        return;
+    try {
+        SDL_GPUTexture* texture = gpu_->uploadImage(image, true);
+        gpu_->particleImages.push_back(texture);
+        gpu_->particleTextures[name] = texture;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: effect icon %s: %s\n", name.c_str(), e.what());
+        gpu_->particleTextures[name] = gpu_->white;
     }
 }
 
-size_t GpuRenderer::particleCount() const {
-    size_t count = 0;
-    for (const auto& batch : gpu_->particleBatches)
-        count += batch.count / 6;
-    return count;
-}
+bool GpuRenderer::hasParticleImage(const std::string& name) const { return gpu_->particleTextures.count(name) != 0; }
+
+size_t GpuRenderer::particleCount() const { return gpu_->particles.size(); }
+
+void GpuRenderer::setView(const simd_float4x4& view) { gpu_->view = view; }
 
 void GpuRenderer::setUiImage(const RgbaImage& image, float x, float y, float w, float h) {
     if (gpu_->uiTexture && gpu_->uiTexture != gpu_->white)
@@ -1803,6 +1984,7 @@ bool GpuRenderer::draw(const simd_float4x4& viewProj) {
         if (event.type == SDL_EVENT_QUIT)
             return false;
     gpu_->flushDynamic();
+    gpu_->buildParticles(gpu_->view);
     int pixelW = 0, pixelH = 0;
     SDL_GetWindowSizeInPixels(gpu_->window, &pixelW, &pixelH);
     gpu_->prepareCensor(viewProj, unsigned(std::max(pixelW, 0)), unsigned(std::max(pixelH, 0)));
@@ -1826,6 +2008,7 @@ bool GpuRenderer::capture(const std::filesystem::path& path, const simd_float4x4
     if (width <= 0 || height <= 0)
         return false;
     gpu_->flushDynamic();
+    gpu_->buildParticles(gpu_->view);
     gpu_->prepareCensor(viewProj, unsigned(width), unsigned(height));
     const SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(gpu_->device, gpu_->window);
     SDL_GPUTextureCreateInfo info{};
@@ -1922,6 +2105,7 @@ RgbaImage GpuRenderer::capture(uint32_t width, uint32_t height, const FrameView&
         return image;
     const simd_float4x4 viewProj = simd_mul(view.projection, view.view);
     gpu_->flushDynamic();
+    gpu_->buildParticles(view.view);
     gpu_->prepareCensor(viewProj, width, height);
     const SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(gpu_->device, gpu_->window);
     SDL_GPUTextureCreateInfo info{};
