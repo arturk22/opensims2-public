@@ -95,20 +95,28 @@ struct LotObjects {
         int16_t id = 0;
         Kind kind = Kind::Object;
         bool person = false; // kind == Person
-        // cTSObject::ReadHeader.
+        // cTSObject::ReadHeader/WriteHeader (BV 0xb13dd4/0xb07790; docs/
+        // save-mac.md §8): 4 f32 the game writes 0 and skips, the position,
+        // the level, a u16 it writes 1 and skips, the elevation, the
+        // multi-tile group and the step-over portal.
         std::array<uint8_t, 64> fileName{};
-        std::array<float, 4> headerFloats{};
         float x = -1, y = -1;
         int32_t level = 0;
-        uint16_t headerOne = 1;
         float elevation = 0;
         int32_t multiTileGroup = -1; // -1 for single-tile objects
-        int16_t header298 = 0;
-        float headerD6 = 0; // > 0xD6 (OpenTS2)
+        // The object of its step-over portal (+0x298, UpdateStepOverPortal);
+        // 0 for none.
+        int16_t stepOverPortal = 0;
+        float headerD6 = 0; // > 0xD6 (OpenTS2; not in the BV's reader)
         std::vector<int16_t> attributes, semiAttributes;
         std::array<int16_t, 8> temps{};
         std::vector<int16_t> data; // object data, numbered as in STR# 0x8D (as many as the version saves)
 
+        // The temporary token's fields 0-7 as data owner 0x27 sees them
+        // (cTSObject +0x1A0, InterpValue BV 0xb15f2c): inventory kind,
+        // inventory ID, counted, index, GUID low and high words, flags,
+        // property count. 4-7 are the game's raw copies of the token's, made
+        // when a Manage Inventory reads one.
         std::array<int16_t, 8> tempTokenFields{};
         struct Token {
             uint32_t guid = 0;
@@ -117,7 +125,9 @@ struct LotObjects {
             std::vector<int16_t> properties;
         } token;
         std::vector<std::vector<int16_t>> arrays; // object arrays
-        std::vector<int16_t> shortList;           // the u16 list at +0x194 (not understood)
+        // Each array's iterator index (+0x194: data owner 0x29 reads it, 0x2B
+        // the element at it; -1 in every array never walked).
+        std::vector<int16_t> arrayIterators;
         uint32_t extra8E = 0;                     // 0x8E-0x8F only
         int32_t ownership = 0;
         std::vector<std::string> materialSubstitutes;
@@ -134,7 +144,6 @@ struct LotObjects {
             int32_t primitiveState = 0;
             uint16_t behaviorSaveType = 0;
         };
-        uint32_t stackUnknown = 0;
         std::vector<Frame> stack;
         // The object's relationship table (cTSRelationshipTable::Write/Read,
         // Mac BV 0xac6f04/0xac7738, docs/relationships-mac.md §1): i32
@@ -173,9 +182,10 @@ struct LotObjects {
             std::array<int16_t, 8> params{};
         };
         std::vector<Timer> timers;
-        // cEdithMTObject::Read (XMTO): two triples of u32 (offsets of the part
-        // in the object? not decoded) and the lead object's ID.
-        std::array<uint32_t, 6> multiTile{};
+        // cEdithMTObject::Read (XMTO, BV 0xaf2b8c): the part's offset from
+        // the lead (x, y, level; SetOffset) and its normalized offset
+        // (SetNormalizedOffset), then the lead object's ID (AddToList).
+        std::array<int32_t, 3> offset{}, normalizedOffset{};
         int16_t leadObject = 0;
 
         // cTSPerson::Read (PERS): the animator (a 0xDEADBEEF tag and a

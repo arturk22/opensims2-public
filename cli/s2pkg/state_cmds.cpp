@@ -31,9 +31,9 @@ void printState(const LotObjects::State& s, bool hex) {
                 s.data.size() > 81 ? s.data[80] : 0,
                 s.data.size() > 81 ? s.data[81] : 0, s.tailError.empty() ? "" : "  tail error: ", s.tailError.c_str());
     if (s.kind == LotObjects::Kind::MultiTile)
-        std::printf("    multi-tile: lead %d, %u %u %u / %u %u %u; object data 19 = %d\n", s.leadObject, s.multiTile[0],
-                    s.multiTile[1], s.multiTile[2], s.multiTile[3], s.multiTile[4], s.multiTile[5],
-                    s.data.size() > 19 ? s.data[19] : 0);
+        std::printf("    multi-tile: lead %d, offset %d %d %d, normalized %d %d %d; object data 19 = %d\n", s.leadObject,
+                    s.offset[0], s.offset[1], s.offset[2], s.normalizedOffset[0], s.normalizedOffset[1],
+                    s.normalizedOffset[2], s.data.size() > 19 ? s.data[19] : 0);
     if (!s.token.guid && s.token.properties.empty() && s.arrays.empty() && s.stack.empty() && s.timers.empty() &&
         s.rest.empty())
         return;

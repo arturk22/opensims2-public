@@ -162,6 +162,33 @@ void capturePerson(VM& vm, const Object& o, LotObjects::State& s, bool known) {
         s.list5AC.push_back(toRecord(vm, o, o.subQueue[i], i < subBefore.size() ? &subBefore[i] : nullptr));
 }
 
+// A multi-tile part's offsets (cEdithMTObject::SetOffset /
+// SetNormalizedOffset, the XMTO's two triples; docs/save-mac.md §8). The
+// normalized one is the part's place in the model: the OBJD's sub index
+// (field 0x56; x the high byte, signed, y the low byte) and level offset
+// (field 0xB0). The offset is the part's tile and level from the lead's in
+// the world: the normalized offsets' difference turned by the lead's
+// direction. Both match all 9,562 XMTO of the game's lots.
+void multiTileOffsets(VM& vm, const Object& o, LotObjects::State& s) {
+    const Object* lead = vm.object(multiTileGroup(o));
+    if (!lead || !o.definition || !lead->definition)
+        return;
+    auto normalized = [](const ObjectDefinition& d) {
+        const uint16_t p = d.field(0x56);
+        return std::array<int32_t, 3>{int(int16_t(p)) >> 8, int(p & 0xFF), int(int16_t(d.field(0xB0)))};
+    };
+    s.normalizedOffset = normalized(*o.definition);
+    const auto l = normalized(*lead->definition);
+    const int x = s.normalizedOffset[0] - l[0], y = s.normalizedOffset[1] - l[1];
+    switch (((lead->data[objdata::Direction] % 8) + 8) % 8 & 6) {
+    case 0: s.offset = {x, y, 0}; break;
+    case 2: s.offset = {-y, x, 0}; break;
+    case 4: s.offset = {-x, -y, 0}; break;
+    default: s.offset = {y, -x, 0}; break;
+    }
+    s.offset[2] = s.normalizedOffset[2] - l[2];
+}
+
 void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects::State& s, bool known) {
     s.x = o.position.x;
     s.y = o.position.y;
@@ -295,8 +322,10 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
                                    "its position, attributes and object data are saved");
         }
         captureObject(vm, saved, o, s, known);
-        if (s.kind == LotObjects::Kind::MultiTile)
+        if (s.kind == LotObjects::Kind::MultiTile) {
             s.leadObject = int16_t(multiTileGroup(o));
+            multiTileOffsets(vm, o, s);
+        }
         lot.pairs.emplace_back(uint32_t(uint16_t(id)), saveType);
         lot.saveTypeOf[int16_t(id)] = saveType;
         lot.objects.push_back(std::move(s));

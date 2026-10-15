@@ -1536,8 +1536,8 @@ static void testSavedObjectState() {
         put32(mt, v);
     put16(mt, 355);
     const auto m = LotObjects::parseState(mt, 0xAD, LotObjects::Kind::MultiTile);
-    check(m.tailError.empty() && m.leadObject == 355 && int32_t(m.multiTile[0]) == -1 && m.multiTile[4] == 5,
-          "multi-tile part: offsets and lead");
+    check(m.tailError.empty() && m.leadObject == 355 && m.offset[0] == -1 && m.normalizedOffset[1] == 5,
+          "multi-tile part: offset, normalized offset and lead");
     check(LotObjects::writeState(m, 0xAD) == mt, "multi-tile part writes back");
 
     // PERS (0xAD): animator, 2 x 16 motives, 170 person data, u32, the

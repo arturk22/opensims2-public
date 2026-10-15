@@ -127,15 +127,16 @@ std::vector<uint8_t> LotObjects::relationshipTableBytes(const std::vector<uint32
 std::vector<uint8_t> LotObjects::writeState(const State& s, uint32_t v) {
     BinWriter w;
     w.raw(s.fileName);
-    for (float f : s.headerFloats)
-        w.f32(f);
+    // cTSObject::WriteHeader (BV 0xb07790).
+    for (int i = 0; i < 4; ++i)
+        w.f32(0);
     w.f32(s.y);
     w.f32(s.x);
     w.i32(s.level);
-    w.u16(s.headerOne);
+    w.u16(1);
     w.f32(s.elevation);
     w.i32(s.multiTileGroup);
-    w.i16(s.header298);
+    w.i16(s.stepOverPortal);
     if (v > 0xD6)
         w.f32(s.headerD6);
     w.i16(int16_t(s.attributes.size()));
@@ -162,8 +163,8 @@ std::vector<uint8_t> LotObjects::writeState(const State& s, uint32_t v) {
         w.i16(int16_t(a.size()));
         w.shorts(a);
     }
-    w.i16(int16_t(s.shortList.size()));
-    w.shorts(s.shortList);
+    w.i16(int16_t(s.arrayIterators.size()));
+    w.shorts(s.arrayIterators);
     if (v == 0x8E || v == 0x8F)
         w.u32(s.extra8E);
     if (v >= 0x8F)
@@ -173,7 +174,7 @@ std::vector<uint8_t> LotObjects::writeState(const State& s, uint32_t v) {
         w.str7(m);
     w.u16(s.persistentFlag);
     w.i32(int32_t(s.stack.size()));
-    w.u32(s.stackUnknown);
+    w.u32(0); // cTSTreeStack::Write (BV 0xe17e58)
     for (const auto& f : s.stack) {
         w.u16(f.objectId);
         w.u16(f.treeId);
@@ -228,8 +229,10 @@ std::vector<uint8_t> LotObjects::writeState(const State& s, uint32_t v) {
         }
     }
     if (s.kind == Kind::MultiTile) {
-        for (uint32_t x : s.multiTile)
-            w.u32(x);
+        for (int32_t x : s.offset)
+            w.i32(x);
+        for (int32_t x : s.normalizedOffset)
+            w.i32(x);
         w.i16(s.leadObject);
     } else if (s.kind == Kind::Person) {
         writePerson(w, s, v);

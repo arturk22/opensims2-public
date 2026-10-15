@@ -273,16 +273,17 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
     if (v < 0x94)
         throw FormatError("object state version " + hexString(v) + " not supported");
     fixedBytes(r, s.fileName);
-    // cTSObject::ReadHeader (>= 0x86).
-    for (auto& f : s.headerFloats)
-        f = r.f32();
+    // cTSObject::ReadHeader (>= 0x86): 4 f32 skipped, the position, the
+    // level, a u16 skipped.
+    for (int i = 0; i < 4; ++i)
+        r.f32();
     s.y = r.f32();
     s.x = r.f32();
     s.level = r.i32();
-    s.headerOne = r.u16();
+    r.u16();
     s.elevation = r.f32();
     s.multiTileGroup = r.i32();
-    s.header298 = r.i16();
+    s.stepOverPortal = r.i16();
     if (v > 0xD6)
         s.headerD6 = r.f32();
     s.attributes = shorts(r, uint16_t(r.i16()));
@@ -301,7 +302,7 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
         s.token.properties = shorts(r, r.u32());
         for (auto n = r.i16(); n > 0; --n)
             s.arrays.push_back(shorts(r, uint16_t(r.i16())));
-        s.shortList = shorts(r, uint16_t(r.i16()));
+        s.arrayIterators = shorts(r, uint16_t(r.i16()));
         if (v == 0x8E || v == 0x8F)
             s.extra8E = r.u32();
         if (v >= 0x8F)
@@ -313,7 +314,7 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
         const int32_t frames = r.i32();
         if (frames < 0 || frames > 1024)
             throw FormatError("tree stack of " + std::to_string(frames) + " frames");
-        s.stackUnknown = r.u32();
+        r.u32(); // written 0, skipped (cTSTreeStack::Write/Read)
         for (int32_t i = 0; i < frames; ++i) {
             State::Frame f;
             f.objectId = r.u16();
@@ -408,8 +409,10 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
             }
         }
         if (kind == Kind::MultiTile) {
-            for (auto& x : s.multiTile)
-                x = r.u32();
+            for (auto& x : s.offset)
+                x = r.i32();
+            for (auto& x : s.normalizedOffset)
+                x = r.i32();
             s.leadObject = r.i16();
         } else if (kind == Kind::Person) {
             parsePerson(r, v, s);
