@@ -15,6 +15,7 @@
 
 #include "app/head_shot.hpp"
 #include "app/ui_panel_util.hpp"
+#include "app/undo_order.hpp"
 #include "formats/build_catalog.hpp"
 #include "formats/catalog.hpp"
 #include "formats/lot.hpp"
@@ -60,7 +61,20 @@ public:
     bool ok() const { return ok_; }
     bool active() const { return active_; }
     void enter();
+    // Leaving keeps the history when `undoOrder` is set (the game's one undo
+    // manager goes on in Buy mode); without it leaving flushes it.
     void exit();
+    // The undo manager shared with Buy mode (app/undo_order.hpp); the host
+    // attaches this mode's hooks to it.
+    UndoOrder* undoOrder = nullptr;
+    // FlushCommandQueues: the history goes, and what was sold with walls or
+    // bought and undone dies (ResetSelf).
+    void flushHistory();
+    // ReleaseRedoList (another change, here or in Buy mode).
+    void dropRedo();
+    // This mode's own last change undone / redone (the undo manager's hooks).
+    bool undoOwn();
+    bool redoOwn();
 
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
@@ -200,6 +214,8 @@ private:
     size_t editorDepth_ = 0;
     // The editor's new changes join the history.
     void syncHistory();
+    // A change pushed: the redo lists released, the shared order told.
+    void recorded();
     std::unique_ptr<DesignTool> design_;
     struct Target {
         std::array<float, 4> rect;

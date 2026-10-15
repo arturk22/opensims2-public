@@ -1,5 +1,6 @@
 // Build mode on a synthetic lot: walls into the graphs, rooms from the
 // walls, floors, wall coverings, prices, undo and the VM's world.
+#include "app/undo_order.hpp"
 #include "formats/build_catalog.hpp"
 #include "formats/design_catalog.hpp"
 #include "formats/lot.hpp"
@@ -592,6 +593,34 @@ static void testRoundN20() {
           "a run that would level the point of another wall is refused whole (0x5B)");
 }
 
+// The game's one undo manager over Buy and Build mode (app/undo_order.hpp,
+// docs/buy-build-mac.md §7.24): the last change of either is undone first,
+// a new change in one releases the other's redo list, Live mode flushes.
+static void testUndoOrder() {
+    UndoOrder order;
+    std::vector<int> buy, build, buyRedo, buildRedo; // each mode's own lists
+    int flushed = 0;
+    auto hooks = [&](std::vector<int>& u, std::vector<int>& r) {
+        UndoOrder::Hooks h;
+        h.undo = [&] { return u.empty() ? false : (r.push_back(u.back()), u.pop_back(), true); };
+        h.redo = [&] { return r.empty() ? false : (u.push_back(r.back()), r.pop_back(), true); };
+        h.dropRedo = [&] { r.clear(); };
+        h.flush = [&] { u.clear(), r.clear(), ++flushed; };
+        return h;
+    };
+    order.attach(UndoOrder::Buy, hooks(buy, buyRedo));
+    order.attach(UndoOrder::Build, hooks(build, buildRedo));
+    buy.push_back(1), order.pushed(UndoOrder::Buy);     // a chair bought
+    build.push_back(2), order.pushed(UndoOrder::Build); // then a wall
+    check(order.undo() && build.empty() && buy.size() == 1, "undo takes the last change back, Build mode's wall");
+    check(order.undo() && buy.empty() && buyRedo == std::vector<int>{1}, "then Buy mode's chair, from Build mode");
+    check(order.redo() && buy == std::vector<int>{1} && buildRedo == std::vector<int>{2}, "redo in the same order");
+    buy.push_back(3), order.pushed(UndoOrder::Buy); // a new change releases both redo lists
+    check(buildRedo.empty() && !order.canRedo() && !order.redo(), "a new change in Buy mode drops Build mode's redo");
+    order.flush();
+    check(flushed == 2 && buy.empty() && build.empty() && !order.canUndo(), "Live mode flushes both");
+}
+
 static void testFenceArch() {
     Lot lot = flatLot();
     CodeLibrary code;
@@ -908,6 +937,7 @@ int main() {
     testEditableArea();
     testLockedTiles();
     testRoundN20();
+    testUndoOrder();
     testDesignCatalog();
     testWalkOver();
     testPool();

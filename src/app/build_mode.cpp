@@ -59,6 +59,7 @@ BuildMode::BuildMode(LotSimulation& simulation, VmObjectView& view, Renderer& re
       patterns_(BuildCatalog::load(index)), objects_(Catalog::load(index, true)) {
     objects_.setThumbnailPackage(resDir / "UserData/Thumbnails/ObjectThumbnails.package");
     editor_ = std::make_unique<vm::BuildEditor>(vm_, lot_, &patterns_);
+    editor_->onForget = [this](vm::ObjectId part) { view_.forget(part); };
     design_ = std::make_unique<DesignTool>(vm_, view_, index_, *res_, *fonts_);
     design_->say = [this](const std::string& m) { say(m); };
     design_->playSound = [this](const std::string& n) { sound(n); };
@@ -67,7 +68,7 @@ BuildMode::BuildMode(LotSimulation& simulation, VmObjectView& view, Renderer& re
         Entry e;
         e.kind = Entry::Kind::Design, e.id = c.id, e.cost = c.cost, e.before = c.before, e.after = c.after;
         undo_.push_back(std::move(e));
-        redo_.clear();
+        recorded();
         dirty_ = true;
     };
     auto load = [&](uint32_t id, UiScript& into) {
@@ -124,8 +125,28 @@ void BuildMode::exit() {
     cancel();
     stopBrushLoop();
     design_->cancel();
+    // The game empties its one undo manager on entering Live mode, not on
+    // leaving Build mode (docs/buy-build-mac.md §7.24): with the shared
+    // order the host flushes it then.
+    if (!undoOrder)
+        flushHistory();
+    vm_.globals[vm::global::Paused] = savedPaused_;
+    active_ = false;
+    tool_ = Tool::None;
+    update();
+    say("left");
+}
+
+void BuildMode::flushHistory() {
     editor_->resetHistory([this](vm::ObjectId part) { view_.forget(part); });
     // Objects whose purchase was undone die with the history (ResetSelf).
+    dropRedo();
+    undo_.clear();
+    editorDepth_ = 0;
+}
+
+void BuildMode::dropRedo() {
+    editor_->dropRedo();
     for (const Entry& e : redo_)
         if (e.kind == Entry::Kind::Object)
             if (const vm::Object* o = vm_.object(e.id); o && !o->position.inWorld()) {
@@ -133,13 +154,13 @@ void BuildMode::exit() {
                     view_.forget(part);
                 vm::deleteGroup(vm_, e.id);
             }
-    undo_.clear(), redo_.clear();
-    editorDepth_ = 0;
-    vm_.globals[vm::global::Paused] = savedPaused_;
-    active_ = false;
-    tool_ = Tool::None;
-    update();
-    say("left");
+    redo_.clear();
+}
+
+void BuildMode::recorded() {
+    dropRedo();
+    if (undoOrder)
+        undoOrder->pushed(UndoOrder::Build);
 }
 
 // --- Tools -------------------------------------------------------------------
@@ -381,7 +402,7 @@ bool BuildMode::placeObjectAt(int x, int y, int direction, bool autoRotate) {
         entry.cobject = c;
     }
     undo_.push_back(std::move(entry));
-    redo_.clear();
+    recorded();
     syncAfterObject();
     say("bought " + bought.name + " as object " + std::to_string(id) + " (" + bought.fileName + ") for " + money(bought.price) + "; funds " +
         money(vm::funds(vm_)));
@@ -412,15 +433,44 @@ void BuildMode::rotate(int steps) {
 
 void BuildMode::syncHistory() {
     const size_t depth = editor_->undoDepth();
-    if (depth > editorDepth_) {
-        for (size_t k = editorDepth_; k < depth; ++k)
-            undo_.push_back({});
-        redo_.clear();
+    for (size_t k = editorDepth_; k < depth; ++k) {
+        undo_.push_back({});
+        editorDepth_ = k + 1;
+        recorded();
     }
     editorDepth_ = depth;
 }
 
 bool BuildMode::undo() {
+    cancel();
+    design_->cancel();
+    syncHistory();
+    if (undoOrder) {
+        const bool ok = undoOrder->undo();
+        if (!ok) {
+            sound("ui_error");
+            say("nothing to undo");
+        }
+        return ok;
+    }
+    return undoOwn();
+}
+
+bool BuildMode::redo() {
+    cancel();
+    design_->cancel();
+    if (undoOrder) {
+        const bool ok = undoOrder->redo();
+        if (!ok) {
+            sound("ui_error");
+            say("nothing to redo");
+        }
+        return ok;
+    }
+    return redoOwn();
+}
+
+bool BuildMode::undoOwn() {
     cancel();
     design_->cancel();
     syncHistory();
@@ -460,7 +510,7 @@ bool BuildMode::undo() {
     return ok;
 }
 
-bool BuildMode::redo() {
+bool BuildMode::redoOwn() {
     cancel();
     design_->cancel();
     bool ok = false;

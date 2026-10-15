@@ -14,6 +14,7 @@
 // simulation is paused, as in the game.
 
 #include "app/ui_panel_util.hpp"
+#include "app/undo_order.hpp"
 #include "formats/catalog.hpp"
 #include "formats/ui_screen.hpp"
 #include "vm/placement.hpp"
@@ -54,11 +55,23 @@ public:
 
     bool ok() const { return ok_; }
     bool active() const { return active_; }
-    // Entering pauses the simulation; leaving drops what the hand holds,
-    // destroys what was sold (the undo history is reset, as ResetSelf) and
-    // restores the speed.
+    // Entering pauses the simulation; leaving drops what the hand holds and
+    // restores the speed. The history stays (the game's one undo manager
+    // goes on in Build mode) when `undoOrder` is set; without it leaving
+    // flushes it.
     void enter();
     void exit();
+    // The undo manager shared with Build mode (app/undo_order.hpp); the host
+    // attaches this mode's hooks to it.
+    UndoOrder* undoOrder = nullptr;
+    // ReleaseUndoList / ReleaseRedoList (FlushCommandQueues): what was sold
+    // and the purchases undone die now (ResetSelf).
+    void flushHistory();
+    // The redo list released (another change, here or in Build mode).
+    void dropRedo();
+    // This mode's own last change undone / redone (the undo manager's hooks).
+    bool undoOwn();
+    bool redoOwn();
 
     Catalog& catalog() { return catalog_; }
     // Picks a catalog item: its object is created now (Init run) and held.
@@ -229,6 +242,8 @@ private:
     vm::TilePos pressTile_{};
     int level_ = 1;
     std::vector<Op> undo_, redo_;
+    // A change pushed: the redo lists released, the shared order told.
+    void recorded();
     std::string message_;
 
     // Footprint tiles: models (green, red) and instances.

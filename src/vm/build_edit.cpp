@@ -224,6 +224,18 @@ void BuildEditor::commit(Geometry before, int cost, std::vector<Sold> sold, std:
     op.sold = std::move(sold);
     op.created = std::move(created);
     undo_.push_back(std::move(op));
+    dropRedo();
+}
+
+void BuildEditor::dropRedo() {
+    for (const Op& op : redo_)
+        for (const Sold& x : op.created)
+            if (const Object* o = vm_.object(x.id); o && !o->position.inWorld()) {
+                if (onForget)
+                    for (ObjectId part : groupOf(vm_, x.id))
+                        onForget(part);
+                deleteGroup(vm_, x.id);
+            }
     redo_.clear();
 }
 

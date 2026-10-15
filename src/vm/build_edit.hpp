@@ -326,10 +326,16 @@ public:
     bool canUndo() const { return !undo_.empty(); }
     size_t undoDepth() const { return undo_.size(); }
     bool canRedo() const { return !redo_.empty(); }
-    // Leaving Build mode: the history goes (cTSUserToolUndoManager reset),
-    // and what was sold with the walls dies (`forget` is told each part
-    // first).
+    // The history goes (FlushCommandQueues: the game's on entering Live
+    // mode), and what was sold with the walls dies (`forget` is told each
+    // part first).
     void resetHistory(const std::function<void(ObjectId)>& forget = {});
+    // ReleaseRedoList (a new change here, or in Buy mode): the redo list
+    // goes, and the objects its changes had put down die (the columns of an
+    // undone deck). `onForget` is told each part first (also when a new
+    // change of the editor's own releases the list).
+    void dropRedo();
+    std::function<void(ObjectId)> onForget;
 
     // Bumped by every change, for whoever draws the lot.
     uint32_t revision() const { return revision_; }

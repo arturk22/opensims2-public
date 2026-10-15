@@ -400,6 +400,11 @@ void releaseDayNight() {
         gLighting->forceState(argument(@"--lighting").value_or(""));
 }
 
+// The game's one undo manager over Buy and Build mode (app/undo_order.hpp,
+// docs/buy-build-mac.md §7.24): a change in either can be undone from the
+// other; entering Live mode empties it.
+static os2::UndoOrder gUndoOrder;
+
 // Build mode over the lot's VM: the puck's Build button (mode 2) or --mode
 // build; headless steps in BuildMode::runSteps (build_mode.cpp).
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
@@ -408,6 +413,13 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     gBuild = std::make_unique<os2::BuildMode>(*gSimulation, *gObjectView, renderer, index, gameDir() / "TSData/Res",
                                               *gLotShape);
     gBuild->onGeometryChanged = [&renderer, &index]() { rebuildLotModel(renderer, index); };
+    if (gBuy) {
+        gBuy->undoOrder = gBuild->undoOrder = &gUndoOrder;
+        gUndoOrder.attach(os2::UndoOrder::Buy, {[] { return gBuy->undoOwn(); }, [] { return gBuy->redoOwn(); },
+                                                [] { gBuy->dropRedo(); }, [] { gBuy->flushHistory(); }});
+        gUndoOrder.attach(os2::UndoOrder::Build, {[] { return gBuild->undoOwn(); }, [] { return gBuild->redoOwn(); },
+                                                  [] { gBuild->dropRedo(); }, [] { gBuild->flushHistory(); }});
+    }
     gBuild->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
     gBuild->onDayNight = [] { toggleDayNight(); };
     gBuild->onTopDown = [] { toggleTopDownView(); };
@@ -443,6 +455,8 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
             gBuild->exit();
             if (previous)
                 previous(mode);
+            if (mode == 0) // entering Live mode: FlushCommandQueues (BV 0x159ff64)
+                gUndoOrder.flush();
         };
     }
     if (startMode().value_or("") == "build") {

@@ -147,7 +147,7 @@ BuyMode::BuyMode(LotSimulation& simulation, VmObjectView& view, Renderer& render
         Op op;
         op.kind = Op::Kind::Design, op.id = c.id, op.cost = c.cost, op.before = c.before, op.after = c.after;
         undo_.push_back(std::move(op));
-        redo_.clear();
+        recorded();
         dirty_ = true;
     };
     // The footprint: the game's tile outlines (cTSUserToolObject::
@@ -204,19 +204,46 @@ void BuyMode::exit() {
     cancel();
     design_->cancel();
     tool_ = Tool::Hand;
-    // The history is reset: what was sold dies now (ResetSelf).
-    for (const Op& op : undo_)
-        if (op.kind == Op::Kind::Deleted && vm_.object(op.id)) {
-            for (vm::ObjectId part : vm::groupOf(vm_, op.id))
-                view_.forget(part);
-            vm::deleteGroup(vm_, op.id);
-        }
-    undo_.clear(), redo_.clear();
+    // The game empties its one undo manager on entering Live mode, not on
+    // leaving Buy mode (docs/buy-build-mac.md §7.24): with the shared order
+    // the host flushes it then.
+    if (!undoOrder)
+        flushHistory();
     vm_.globals[vm::global::Paused] = savedPaused_;
     active_ = false;
     selected_ = nullptr;
     update();
     say("left");
+}
+
+void BuyMode::flushHistory() {
+    // What was sold, and the purchases undone, die now (ResetSelf).
+    auto die = [&](vm::ObjectId id) {
+        if (const vm::Object* o = vm_.object(id); o && !o->position.inWorld()) {
+            for (vm::ObjectId part : vm::groupOf(vm_, id))
+                view_.forget(part);
+            vm::deleteGroup(vm_, id);
+        }
+    };
+    for (const Op& op : undo_)
+        if (op.kind == Op::Kind::Deleted)
+            die(op.id);
+    for (const Op& op : redo_)
+        if (op.kind == Op::Kind::Created)
+            die(op.id);
+    undo_.clear(), redo_.clear();
+}
+
+void BuyMode::dropRedo() {
+    // ReleaseRedoList: a purchase undone dies (its undoable is "deleted").
+    for (const Op& op : redo_)
+        if (op.kind == Op::Kind::Created)
+            if (const vm::Object* o = vm_.object(op.id); o && !o->position.inWorld()) {
+                for (vm::ObjectId part : vm::groupOf(vm_, op.id))
+                    view_.forget(part);
+                vm::deleteGroup(vm_, op.id);
+            }
+    redo_.clear();
 }
 
 // --- The object tool --------------------------------------------------------
@@ -416,7 +443,7 @@ bool BuyMode::placeAt(int x, int y, int direction) {
             std::to_string(x) + ", " + std::to_string(y) + ") facing " + std::to_string(p.direction) + " for " +
             money(price) + "; funds " + money(vm::funds(vm_)));
         held_ = 0;
-        redo_.clear();
+        recorded();
         // "Keep Buying" (OBJD field 96): another one is held at once.
         if (selected_ && vm_.object(id) && vm_.object(id)->definition &&
             vm_.object(id)->definition->field(objd::KeepBuying)) {
@@ -430,7 +457,7 @@ bool BuyMode::placeAt(int x, int y, int direction) {
         vm::runUserPlacement(vm_, id);
         undo_.push_back({Op::Kind::Moved, id, heldFrom_, 0});
         sound(dropSound(id));
-        redo_.clear();
+        recorded();
         held_ = 0;
         say("moved object " + std::to_string(id));
     }
@@ -755,13 +782,29 @@ bool BuyMode::deleteHeld() {
     const int value = vm::sell(vm_, id);
     sound("ui_object_sell");
     undo_.push_back({Op::Kind::Deleted, id, heldFrom_, -value});
-    redo_.clear();
+    recorded();
     held_ = 0;
     say("sold object " + std::to_string(id) + " for " + money(value) + "; funds " + money(vm::funds(vm_)));
     return true;
 }
 
+void BuyMode::recorded() {
+    dropRedo();
+    if (undoOrder)
+        undoOrder->pushed(UndoOrder::Buy);
+}
+
 bool BuyMode::undo() {
+    cancel();
+    return undoOrder ? undoOrder->undo() : undoOwn();
+}
+
+bool BuyMode::redo() {
+    cancel();
+    return undoOrder ? undoOrder->redo() : redoOwn();
+}
+
+bool BuyMode::undoOwn() {
     cancel();
     if (undo_.empty())
         return false;
@@ -794,7 +837,7 @@ bool BuyMode::undo() {
     return true;
 }
 
-bool BuyMode::redo() {
+bool BuyMode::redoOwn() {
     cancel();
     if (redo_.empty())
         return false;
