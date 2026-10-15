@@ -133,9 +133,9 @@ struct GpuRenderer::Gpu {
     SDL_GPUGraphicsPipeline* opaqueBack = nullptr;
     SDL_GPUGraphicsPipeline* opaqueFront = nullptr;
     SDL_GPUGraphicsPipeline* opaqueNone = nullptr;
-    SDL_GPUGraphicsPipeline* blendBack = nullptr;
-    SDL_GPUGraphicsPipeline* blendFront = nullptr;
-    SDL_GPUGraphicsPipeline* blendNone = nullptr;
+    // By StandardMaterial::Blend (1..5) and cull: back, front (reflected), none.
+    static constexpr int kBlendModes = 6;
+    SDL_GPUGraphicsPipeline* blended[kBlendModes][3][2]{}; // [blend][cull][depth write]
     SDL_GPUGraphicsPipeline* ui = nullptr;
     SDL_GPUGraphicsPipeline* shadow = nullptr;
     SDL_GPUGraphicsPipeline* mirrorOverlay = nullptr;
@@ -150,6 +150,7 @@ struct GpuRenderer::Gpu {
     float lightMapMix = 0;
     simd_float3 environment{1, 1, 1};
     SDL_FColor clearColor{0.55f, 0.72f, 0.86f, 1.f};
+    bool ownsWindow = true;
     bool overlays = true; // the UI image (off for offscreen captures)
     SDL_GPUTexture* depth = nullptr;
     SDL_GPUTexture* shadowAtlas = nullptr;
@@ -186,6 +187,10 @@ struct GpuRenderer::Gpu {
         float specular[4]{};
         float emissive[4]{};
         bool blend = false;
+        int blendMode = 0; // StandardMaterial::Blend
+        int layer = 0;     // draw order (StandardMaterial::layer)
+        int alphaOrder = 0;
+        bool depthWrite = true; // blended parts: StandardMaterial::depthWrite
         bool twoSided = false;
         bool mirror = false;
         float center[3]{};
@@ -253,7 +258,7 @@ struct GpuRenderer::Gpu {
     void fillPart(Part& part, const ObjectModel::Part& source, const ObjectModel& model, ResourceIndex& index, bool dynamic);
     void flushDynamic();
     void uploadPartVertices(Part& part);
-    SDL_GPUGraphicsPipeline* pipeline(bool blend, bool twoSided, bool front = false) const;
+    SDL_GPUGraphicsPipeline* pipeline(int blend, bool twoSided, bool front = false, bool depthWrite = false) const;
     bool render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, unsigned width, unsigned height, const simd_float4x4& viewProj);
     void renderShadows(SDL_GPUCommandBuffer* cmd);
     void ensureDepth(unsigned width, unsigned height);
@@ -383,6 +388,10 @@ void GpuRenderer::Gpu::fillPart(Part& part, const ObjectModel::Part& source, con
             part.flags |= kVertexColor;
         part.alphaRef = sm.alphaRef;
         part.blend = sm.blend != StandardMaterial::Blend::None;
+        part.blendMode = int(sm.blend);
+        part.depthWrite = sm.depthWrite;
+        part.layer = sm.layer;
+        part.alphaOrder = sm.alphaOrder;
         part.twoSided = sm.cull == StandardMaterial::Cull::None;
         const float specSum = sm.specular[0] + sm.specular[1] + sm.specular[2];
         part.specular[0] = sm.specular[0];
@@ -517,12 +526,11 @@ void GpuRenderer::Gpu::uploadPartVertices(Part& part) {
     part.dirty = false;
 }
 
-SDL_GPUGraphicsPipeline* GpuRenderer::Gpu::pipeline(bool blend, bool twoSided, bool front) const {
-    if (front && !twoSided)
-        return blend ? blendFront : opaqueFront;
-    if (blend)
-        return twoSided ? blendNone : blendBack;
-    return twoSided ? opaqueNone : opaqueBack;
+SDL_GPUGraphicsPipeline* GpuRenderer::Gpu::pipeline(int blend, bool twoSided, bool front, bool depthWrite) const {
+    const int cull = twoSided ? 2 : front ? 1 : 0;
+    if (blend > 0 && blend < kBlendModes)
+        return blended[blend][cull][depthWrite ? 1 : 0];
+    return cull == 2 ? opaqueNone : cull == 1 ? opaqueFront : opaqueBack;
 }
 
 void GpuRenderer::Gpu::ensureDepth(unsigned width, unsigned height) {
@@ -887,74 +895,105 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
     mirrorInFrame = chosen != nullptr;
 
     auto drawScene = [&](SDL_GPURenderPass* pass, const float* vp, const float* passEye, bool reflected, SDL_GPUTexture* reflectionTex) {
-        auto drawList = [&](bool blended) {
-            for (const auto& instance : instances) {
-                if (instance.model < 0 || size_t(instance.model) >= models.size())
-                    continue;
-                for (const auto& part : models[size_t(instance.model)].parts) {
-                    if (part.blend != blended || part.indexCount == 0)
-                        continue;
-                    if (reflected && part.mirror)
-                        continue;
-                    DrawUniforms u{};
-                    std::memcpy(u.viewProj, vp, sizeof u.viewProj);
-                    std::memcpy(u.model, instance.transform, sizeof u.model);
-                    std::memcpy(u.color, part.color, sizeof u.color);
-                    u.uv0[0] = 1;
-                    u.uv1[1] = 1;
-                    std::memcpy(u.maskU, part.maskU, sizeof u.maskU);
-                    std::memcpy(u.maskV, part.maskV, sizeof u.maskV);
-                    u.flags = part.flags;
-                    if (!reflected && &part == chosen) {
-                        u.flags |= kMirror;
-                        // The glass sits on the wall. A few centimetres toward the
-                        // eye keeps the quad in front of the wallpaper.
-                        u.model[12] += chosenNormal[0] * 0.05f;
-                        u.model[13] += chosenNormal[1] * 0.05f;
-                        u.model[14] += chosenNormal[2] * 0.05f;
-                    }
-                    u.alphaRef = part.alphaRef;
-                    u.lightGain = 2.f;
-                    u.groundClip = groundClip;
-                    FragmentUniforms fragment{};
-                    fragment.draw = u;
-                    std::memcpy(fragment.eye, passEye, sizeof fragment.eye);
-                    std::memcpy(fragment.specular, part.specular, sizeof fragment.specular);
-                    std::memcpy(fragment.emissive, part.emissive, sizeof fragment.emissive);
-                    const GpuLightSet& lights = lightSetOf(instance.lightSet);
-                    std::memcpy(fragment.ambient, lights.ambient, sizeof fragment.ambient);
-                    fragment.lightMapMix[0] = lightMapNext ? std::clamp(lightMapMix, 0.f, 1.f) : 0.f;
-                    fragment.shadowCount = float(shadowCount);
-                    fragment.viewportX = float(width);
-                    fragment.viewportY = float(height);
-                    fragment.clipOn = reflected ? 1.f : 0.f;
-                    if (reflected)
-                        std::memcpy(fragment.clipPlane, plane, sizeof fragment.clipPlane);
-                    SDL_BindGPUGraphicsPipeline(pass, (!reflected && &part == chosen && mirrorOverlay) ? mirrorOverlay
-                                                                                                 : pipeline(part.blend, part.twoSided, reflected));
-                    SDL_PushGPUVertexUniformData(cmd, 0, &u, sizeof u);
-                    SDL_PushGPUFragmentUniformData(cmd, 0, &fragment, sizeof fragment);
-                    SDL_PushGPUFragmentUniformData(cmd, 1, lights.lights, sizeof lights.lights);
-                    SDL_PushGPUFragmentUniformData(cmd, 2, shadowRecords, sizeof shadowRecords);
-                    SDL_GPUTextureSamplerBinding bindings[6] = {
-                        {part.texture ? part.texture : white, sampler},
-                        {lightMap ? lightMap : white, sampler},
-                        {part.mask ? part.mask : white, clampSampler},
-                        {shadowCount && shadowAtlas ? shadowAtlas : white, clampSampler},
-                        {reflectionTex ? reflectionTex : white, clampSampler},
-                        {lightMapNext ? lightMapNext : white, sampler},
-                    };
-                    SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
-                    SDL_GPUBufferBinding vertices{part.vertices, 0};
-                    SDL_BindGPUVertexBuffers(pass, 0, &vertices, 1);
-                    SDL_GPUBufferBinding indices{part.indices, 0};
-                    SDL_BindGPUIndexBuffer(pass, &indices, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-                    SDL_DrawGPUIndexedPrimitives(pass, part.indexCount, 1, 0, 0, 0);
-                }
-            }
+        // Draw order (as the Mac renderer): by material layer, opaque parts first in
+        // submission order, blended ones back to front by their centre's distance
+        // from the eye (a hairdo's layers by the instance's origin, then alpha order).
+        struct Item {
+            int layer;
+            bool blended;
+            float distance;
+            int alphaOrder;
+            const Instance* instance;
+            const Part* part;
         };
-        drawList(false);
-        drawList(true);
+        std::vector<Item> items;
+        for (const auto& instance : instances) {
+            if (instance.model < 0 || size_t(instance.model) >= models.size())
+                continue;
+            const float* m = instance.transform;
+            for (const auto& part : models[size_t(instance.model)].parts) {
+                if (part.indexCount == 0 || (reflected && part.mirror))
+                    continue;
+                float distance = 0;
+                if (part.blend) {
+                    const float* c = part.center;
+                    float at[3] = {m[12], m[13], m[14]};
+                    if (!part.alphaOrder)
+                        for (int k = 0; k < 3; ++k)
+                            at[k] = m[k] * c[0] + m[4 + k] * c[1] + m[8 + k] * c[2] + m[12 + k];
+                    for (int k = 0; k < 3; ++k)
+                        distance += (at[k] - passEye[k]) * (at[k] - passEye[k]);
+                }
+                items.push_back({part.layer, part.blend, distance, part.alphaOrder, &instance, &part});
+            }
+        }
+        std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+            if (a.layer != b.layer)
+                return a.layer < b.layer;
+            if (a.blended != b.blended)
+                return !a.blended;
+            if (a.blended && a.distance != b.distance)
+                return a.distance > b.distance;
+            return a.blended && a.alphaOrder < b.alphaOrder;
+        });
+        for (const Item& item : items) {
+            const Instance& instance = *item.instance;
+            const Part& part = *item.part;
+            DrawUniforms u{};
+            std::memcpy(u.viewProj, vp, sizeof u.viewProj);
+            std::memcpy(u.model, instance.transform, sizeof u.model);
+            std::memcpy(u.color, part.color, sizeof u.color);
+            u.uv0[0] = 1;
+            u.uv1[1] = 1;
+            std::memcpy(u.maskU, part.maskU, sizeof u.maskU);
+            std::memcpy(u.maskV, part.maskV, sizeof u.maskV);
+            u.flags = part.flags;
+            if (!reflected && &part == chosen) {
+                u.flags |= kMirror;
+                // The glass sits on the wall. A few centimetres toward the
+                // eye keeps the quad in front of the wallpaper.
+                u.model[12] += chosenNormal[0] * 0.05f;
+                u.model[13] += chosenNormal[1] * 0.05f;
+                u.model[14] += chosenNormal[2] * 0.05f;
+            }
+            u.alphaRef = part.alphaRef;
+            u.lightGain = 2.f;
+            u.groundClip = groundClip;
+            FragmentUniforms fragment{};
+            fragment.draw = u;
+            std::memcpy(fragment.eye, passEye, sizeof fragment.eye);
+            std::memcpy(fragment.specular, part.specular, sizeof fragment.specular);
+            std::memcpy(fragment.emissive, part.emissive, sizeof fragment.emissive);
+            const GpuLightSet& lights = lightSetOf(instance.lightSet);
+            std::memcpy(fragment.ambient, lights.ambient, sizeof fragment.ambient);
+            fragment.lightMapMix[0] = lightMapNext ? std::clamp(lightMapMix, 0.f, 1.f) : 0.f;
+            fragment.shadowCount = float(shadowCount);
+            fragment.viewportX = float(width);
+            fragment.viewportY = float(height);
+            fragment.clipOn = reflected ? 1.f : 0.f;
+            if (reflected)
+                std::memcpy(fragment.clipPlane, plane, sizeof fragment.clipPlane);
+            SDL_BindGPUGraphicsPipeline(pass, (!reflected && &part == chosen && mirrorOverlay) ? mirrorOverlay
+                                                                                         : pipeline(part.blendMode, part.twoSided, reflected, part.depthWrite));
+            SDL_PushGPUVertexUniformData(cmd, 0, &u, sizeof u);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &fragment, sizeof fragment);
+            SDL_PushGPUFragmentUniformData(cmd, 1, lights.lights, sizeof lights.lights);
+            SDL_PushGPUFragmentUniformData(cmd, 2, shadowRecords, sizeof shadowRecords);
+            SDL_GPUTextureSamplerBinding bindings[6] = {
+                {part.texture ? part.texture : white, sampler},
+                {lightMap ? lightMap : white, sampler},
+                {part.mask ? part.mask : white, clampSampler},
+                {shadowCount && shadowAtlas ? shadowAtlas : white, clampSampler},
+                {reflectionTex ? reflectionTex : white, clampSampler},
+                {lightMapNext ? lightMapNext : white, sampler},
+            };
+            SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
+            SDL_GPUBufferBinding vertices{part.vertices, 0};
+            SDL_BindGPUVertexBuffers(pass, 0, &vertices, 1);
+            SDL_GPUBufferBinding indices{part.indices, 0};
+            SDL_BindGPUIndexBuffer(pass, &indices, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+            SDL_DrawGPUIndexedPrimitives(pass, part.indexCount, 1, 0, 0, 0);
+        }
     };
 
     if (chosen) {
@@ -1112,8 +1151,11 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
 
 namespace {
 
+// `blend` is a StandardMaterial::Blend, with the Mac renderer's factors:
+// Alpha srcα + (1 − srcα), Additive srcα + one, AddNoSrcAlpha one + one,
+// Premultiplied one + (1 − srcα), Multiply dst·src + (1 − srcα).
 SDL_GPUGraphicsPipeline* makePipeline(SDL_GPUDevice* device, SDL_GPUTextureFormat format, SDL_GPUShader* vertex, SDL_GPUShader* fragment,
-                                      bool blend, bool twoSided, bool front = false, bool depth = true) {
+                                      int blend, bool twoSided, bool front = false, bool depth = true, bool blendDepthWrite = false) {
     SDL_GPUVertexBufferDescription buffer{};
     buffer.slot = 0;
     buffer.pitch = sizeof(Vertex);
@@ -1126,13 +1168,23 @@ SDL_GPUGraphicsPipeline* makePipeline(SDL_GPUDevice* device, SDL_GPUTextureForma
     attributes[4] = {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT, 40};
     SDL_GPUColorTargetDescription color{};
     color.format = format;
-    if (blend) {
+    using Blend = os2::StandardMaterial::Blend;
+    const Blend mode = Blend(blend);
+    if (mode != Blend::None) {
+        const SDL_GPUBlendFactor src = mode == Blend::AddNoSrcAlpha || mode == Blend::Premultiplied ? SDL_GPU_BLENDFACTOR_ONE
+                                       : mode == Blend::Multiply                                   ? SDL_GPU_BLENDFACTOR_DST_COLOR
+                                                                                                   : SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        const SDL_GPUBlendFactor dst = mode == Blend::Alpha || mode == Blend::Premultiplied || mode == Blend::Multiply
+                                           ? SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA
+                                           : SDL_GPU_BLENDFACTOR_ONE;
         color.blend_state.enable_blend = true;
-        color.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
-        color.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        color.blend_state.src_color_blendfactor = src;
+        color.blend_state.dst_color_blendfactor = dst;
         color.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
-        color.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
-        color.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        color.blend_state.src_alpha_blendfactor = mode == Blend::Alpha ? SDL_GPU_BLENDFACTOR_ONE
+                                                  : mode == Blend::Multiply ? SDL_GPU_BLENDFACTOR_ZERO
+                                                                            : src;
+        color.blend_state.dst_alpha_blendfactor = dst;
         color.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
     }
     SDL_GPUGraphicsPipelineCreateInfo info{};
@@ -1147,7 +1199,7 @@ SDL_GPUGraphicsPipeline* makePipeline(SDL_GPUDevice* device, SDL_GPUTextureForma
     info.rasterizer_state.cull_mode = twoSided ? SDL_GPU_CULLMODE_NONE : front ? SDL_GPU_CULLMODE_FRONT : SDL_GPU_CULLMODE_BACK;
     info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
     info.depth_stencil_state.enable_depth_test = depth;
-    info.depth_stencil_state.enable_depth_write = depth && !blend;
+    info.depth_stencil_state.enable_depth_write = depth && (mode == Blend::None || blendDepthWrite);
     info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
     info.target_info.color_target_descriptions = &color;
     info.target_info.num_color_targets = 1;
@@ -1187,10 +1239,12 @@ SDL_GPUShader* loadShader(SDL_GPUDevice* device, const std::filesystem::path& fi
 
 } // namespace
 
-GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, int height) : gpu_(new Gpu) {
-    if (!SDL_Init(SDL_INIT_VIDEO))
+GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, int height, SDL_Window* window)
+    : gpu_(new Gpu) {
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
         throw sdlError("SDL_Init");
-    gpu_->window = SDL_CreateWindow("opensims2", width, height, SDL_WINDOW_RESIZABLE);
+    gpu_->ownsWindow = window == nullptr;
+    gpu_->window = window ? window : SDL_CreateWindow("opensims2", width, height, SDL_WINDOW_RESIZABLE);
     if (!gpu_->window)
         throw sdlError("window");
     gpu_->device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_DXIL, false, nullptr);
@@ -1207,9 +1261,13 @@ GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, i
     gpu_->opaqueBack = makePipeline(gpu_->device, swap, vertex, fragment, false, false);
     gpu_->opaqueFront = makePipeline(gpu_->device, swap, vertex, fragment, false, false, true);
     gpu_->opaqueNone = makePipeline(gpu_->device, swap, vertex, fragment, false, true);
-    gpu_->blendBack = makePipeline(gpu_->device, swap, vertex, fragment, true, false);
-    gpu_->blendFront = makePipeline(gpu_->device, swap, vertex, fragment, true, false, true);
-    gpu_->blendNone = makePipeline(gpu_->device, swap, vertex, fragment, true, true);
+    for (int mode = 1; mode < Gpu::kBlendModes; ++mode) {
+        for (int write = 0; write < 2; ++write) {
+            gpu_->blended[mode][0][write] = makePipeline(gpu_->device, swap, vertex, fragment, mode, false, false, true, write);
+            gpu_->blended[mode][1][write] = makePipeline(gpu_->device, swap, vertex, fragment, mode, false, true, true, write);
+            gpu_->blended[mode][2][write] = makePipeline(gpu_->device, swap, vertex, fragment, mode, true, false, true, write);
+        }
+    }
     gpu_->shadow = makePipeline(gpu_->device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, vertex, fragment, false, true);
     gpu_->mirrorOverlay = makePipeline(gpu_->device, swap, vertex, fragment, false, true, false, false);
     SDL_GPUShader* particleVertex = loadShader(gpu_->device, shaderFolder / "particle.vert.dxil", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
@@ -1368,18 +1426,23 @@ GpuRenderer::~GpuRenderer() {
         SDL_ReleaseGPUSampler(gpu_->device, gpu_->clampSampler);
     if (gpu_->pointSampler)
         SDL_ReleaseGPUSampler(gpu_->device, gpu_->pointSampler);
-    for (SDL_GPUGraphicsPipeline* pipeline : {gpu_->opaqueBack, gpu_->opaqueFront, gpu_->opaqueNone, gpu_->blendBack, gpu_->blendFront,
-                                              gpu_->blendNone, gpu_->shadow, gpu_->mirrorOverlay, gpu_->particleAlpha, gpu_->particleAdd, gpu_->ui})
+    for (SDL_GPUGraphicsPipeline* pipeline : {gpu_->opaqueBack, gpu_->opaqueFront, gpu_->opaqueNone, gpu_->shadow, gpu_->mirrorOverlay,
+                                              gpu_->particleAlpha, gpu_->particleAdd, gpu_->ui})
         if (pipeline)
             SDL_ReleaseGPUGraphicsPipeline(gpu_->device, pipeline);
+    for (auto& modes : gpu_->blended)
+        for (auto& culls : modes)
+            for (SDL_GPUGraphicsPipeline* pipeline : culls)
+                if (pipeline)
+                    SDL_ReleaseGPUGraphicsPipeline(gpu_->device, pipeline);
     if (gpu_->device && gpu_->window)
         SDL_ReleaseWindowFromGPUDevice(gpu_->device, gpu_->window);
     if (gpu_->device)
         SDL_DestroyGPUDevice(gpu_->device);
-    if (gpu_->window)
+    if (gpu_->window && gpu_->ownsWindow)
         SDL_DestroyWindow(gpu_->window);
     delete gpu_;
-    SDL_Quit();
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
 int GpuRenderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic) {
@@ -1817,9 +1880,12 @@ bool GpuRenderer::capture(const std::filesystem::path& path, const simd_float4x4
     image.width = uint32_t(width);
     image.height = uint32_t(height);
     image.pixels.assign(pixels, pixels + size_t(width) * size_t(height) * 4);
-    if (format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM) {
-        for (size_t i = 0; i + 3 < image.pixels.size(); i += 4)
+    // The window is opaque: blended passes leave the target's alpha below 1
+    // (multiply writes 0), which the screen ignores.
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        if (format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
             std::swap(image.pixels[i], image.pixels[i + 2]);
+        image.pixels[i + 3] = 255;
     }
     SDL_UnmapGPUTransferBuffer(gpu_->device, transfer);
     SDL_ReleaseGPUTransferBuffer(gpu_->device, transfer);
@@ -2011,9 +2077,12 @@ bool GpuRenderer::captureMovie(const std::filesystem::path& path, const RgbaImag
     image.width = uint32_t(width);
     image.height = uint32_t(height);
     image.pixels.assign(pixels, pixels + size_t(width) * size_t(height) * 4);
-    if (format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM) {
-        for (size_t i = 0; i + 3 < image.pixels.size(); i += 4)
+    // The window is opaque: blended passes leave the target's alpha below 1
+    // (multiply writes 0), which the screen ignores.
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        if (format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
             std::swap(image.pixels[i], image.pixels[i + 2]);
+        image.pixels[i + 3] = 255;
     }
     SDL_UnmapGPUTransferBuffer(gpu_->device, transfer);
     SDL_ReleaseGPUTransferBuffer(gpu_->device, transfer);

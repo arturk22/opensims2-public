@@ -5,9 +5,18 @@
 #include "formats/font.hpp"
 #include "formats/resindex.hpp"
 #include "formats/ui_resources.hpp"
+#ifndef _WIN32
 #include "render/ui_layer.hpp"
+#endif
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <CoreGraphics/CoreGraphics.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -100,6 +109,19 @@ const UiElement* defaultPick(const std::vector<const UiElement*>& btns) {
 // window's lists (the panel keeps the valid ones: OptionsPanel::validMode).
 std::vector<OptionsPanel::DisplayMode> mainDisplayModes(OptionsPanel::DisplayMode& current) {
     std::vector<OptionsPanel::DisplayMode> out;
+#ifdef _WIN32
+    DEVMODEW mode{};
+    mode.dmSize = sizeof mode;
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode))
+        current = {int(mode.dmPelsWidth), int(mode.dmPelsHeight), int(mode.dmDisplayFrequency)};
+    for (DWORD i = 0; EnumDisplaySettingsW(nullptr, i, &mode); ++i) {
+        const OptionsPanel::DisplayMode m{int(mode.dmPelsWidth), int(mode.dmPelsHeight), int(mode.dmDisplayFrequency)};
+        if (std::none_of(out.begin(), out.end(), [&](const OptionsPanel::DisplayMode& o) {
+                return o.width == m.width && o.height == m.height && o.refresh == m.refresh;
+            }))
+            out.push_back(m); // the modes repeat per colour depth
+    }
+#else
     const CGDirectDisplayID display = CGMainDisplayID();
     if (CGDisplayModeRef m = CGDisplayCopyDisplayMode(display)) {
         current = {int(CGDisplayModeGetWidth(m)), int(CGDisplayModeGetHeight(m)), int(std::lround(CGDisplayModeGetRefreshRate(m)))};
@@ -122,6 +144,7 @@ std::vector<OptionsPanel::DisplayMode> mainDisplayModes(OptionsPanel::DisplayMod
         }
         CFRelease(all);
     }
+#endif
     if (current.width > 0 && std::none_of(out.begin(), out.end(), [&](const OptionsPanel::DisplayMode& m) {
             return m.width == current.width && m.height == current.height && m.refresh == current.refresh;
         }))
@@ -609,11 +632,14 @@ UiScreen OptionsPanel::screen(int width, int height) {
     return out;
 }
 
+#ifndef _WIN32
 void OptionsPanel::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
 }
+#endif
 
+#ifndef _WIN32
 void OptionsPanel::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || !ok_ || window_ == 0)
         return;
@@ -628,5 +654,6 @@ void OptionsPanel::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 } // namespace os2

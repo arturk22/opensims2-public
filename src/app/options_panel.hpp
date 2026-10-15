@@ -114,8 +114,10 @@ public:
     void closeWindow(); // also when the options panel closes
 
     UiScreen screen(int width, int height);
+#ifndef _WIN32
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+#endif
 
 private:
     enum class Target { Slider, Mute, EdgeOff, EdgeOn, Window, Radio, ListRow, ListScroll };
@@ -153,7 +155,9 @@ private:
     std::vector<Hit> hits_;
     int canvasW_ = 1280, canvasH_ = 720, laidW_ = 0, laidH_ = 0;
     bool dirty_ = true, uploaded_ = false; // uploaded_: the current layer holds the last screen()
+#ifndef _WIN32
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
+#endif
     size_t layer_ = 0;
 };
 

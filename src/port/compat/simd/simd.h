@@ -25,6 +25,21 @@ struct simd_float2 {
     simd_float2(float x_, float y_) : x(x_), y(y_) {}
     float& operator[](int i) { return (&x)[i]; }
     float operator[](int i) const { return (&x)[i]; }
+    simd_float2& operator+=(simd_float2 o) {
+        x += o.x;
+        y += o.y;
+        return *this;
+    }
+    simd_float2& operator-=(simd_float2 o) {
+        x -= o.x;
+        y -= o.y;
+        return *this;
+    }
+    simd_float2& operator*=(float s) {
+        x *= s;
+        y *= s;
+        return *this;
+    }
 };
 
 // Overlays the first two floats of a float3/float4 so `.xy` reads and writes
@@ -154,6 +169,7 @@ inline const simd_float4x4 matrix_identity_float4x4{simd_float4(1, 0, 0, 0), sim
 
 inline simd_float2 simd_make_float2(float x, float y) { return {x, y}; }
 inline simd_float3 simd_make_float3(float x, float y, float z) { return {x, y, z}; }
+inline simd_float3 simd_make_float3(simd_float2 v, float z) { return {v.x, v.y, z}; }
 inline simd_float4 simd_make_float4(float x, float y, float z, float w) { return {x, y, z, w}; }
 inline simd_float4 simd_make_float4(simd_float3 v, float w) { return {v.x, v.y, v.z, w}; }
 inline simd_float4 simd_make_float4(simd_float2 v, float z, float w) { return {v.x, v.y, z, w}; }

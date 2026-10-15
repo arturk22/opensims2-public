@@ -24,9 +24,21 @@
 #include "app/build_mode.hpp"
 #include "app/buy_mode.hpp"
 #include "app/cas_mode.hpp"
+#include "app/game_flow.hpp"
+#include "app/head_shot.hpp"
+#include "app/hood_mode.hpp"
+#include "app/main_menu.hpp"
+#include "app/tutorial.hpp"
+#include "app/user_data.hpp"
 #include "render/camera.hpp"
 #include "app/lot_lighting.hpp"
 #include "app/vm_objects.hpp"
+#include "app/pie_menu.hpp"
+#include "formats/dbpf.hpp"
+#include "vm/go_here.hpp"
+#include "vm/interactions.hpp"
+#include "vm/world.hpp"
+#include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/particle_system.hpp"
 #include "formats/ui_script.hpp"
@@ -224,12 +236,22 @@ std::filesystem::path exeDir() {
     return std::filesystem::path(modulePath).parent_path();
 }
 
-// The macOS virtual key codes CasMode reads (Backspace, Return, Z, Y, comma, period).
+// The macOS virtual key codes the shared modes read (CasMode, HoodMode, the bins' text boxes).
 unsigned short macKeyCode(SDL_Scancode code) {
     switch (code) {
     case SDL_SCANCODE_BACKSPACE: return 51;
+    case SDL_SCANCODE_DELETE: return 117;
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: return 36;
+    case SDL_SCANCODE_TAB: return 48;
+    case SDL_SCANCODE_ESCAPE: return 53;
+    case SDL_SCANCODE_LEFT: return 123;
+    case SDL_SCANCODE_RIGHT: return 124;
+    case SDL_SCANCODE_DOWN: return 125;
+    case SDL_SCANCODE_UP: return 126;
+    case SDL_SCANCODE_HOME: return 115;
+    case SDL_SCANCODE_END: return 119;
     case SDL_SCANCODE_Z: return 6;
+    case SDL_SCANCODE_X: return 7;
     case SDL_SCANCODE_Y: return 16;
     case SDL_SCANCODE_COMMA: return 43;
     case SDL_SCANCODE_PERIOD: return 47;
@@ -237,28 +259,62 @@ unsigned short macKeyCode(SDL_Scancode code) {
     }
 }
 
+// What the app shares across scenes (the Mac host's globals): the game's data,
+// the user's folder and options, and the one window every scene draws into.
+struct App {
+    std::filesystem::path res, gameDir, exe;
+    std::vector<std::string> args; // args[0] is the executable; the scene flags of the running scene
+    std::optional<std::filesystem::path> shot;
+    std::unique_ptr<os2::ResourceIndex> index;
+    std::unique_ptr<os2::UserData> user;
+    os2::GameSettings settings;
+    SDL_Window* window = nullptr;
+    std::optional<uint32_t> createdFamily;     // CAS -> the neighborhood that opened it
+    std::optional<os2::LotCamera::Pose> hoodPose; // the neighborhood's camera across a reload
+
+    os2::ResourceIndex& resources() {
+        if (!index) {
+            std::printf("opensims2: indexing %s\n", res.string().c_str());
+            std::fflush(stdout);
+            index = std::make_unique<os2::ResourceIndex>(res);
+        }
+        return *index;
+    }
+    std::optional<std::string> argument(std::string_view flag) const { return os2::argValue(args, std::string(flag)); }
+    // --hood: a folder as given, else the user's copy of the shipped neighborhood (made on first use).
+    std::filesystem::path hoodFolder(const std::string& query) const {
+        std::error_code ec;
+        if (std::filesystem::is_directory(query, ec))
+            return query;
+        return user->neighborhood(query);
+    }
+};
+
+// Where a scene goes when it ends: the next scene (none: quit), and how many
+// scripted steps it used (the next scene gets the rest).
+struct SceneExit {
+    std::optional<os2::Scene> next;
+    size_t stepsUsed = 0;
+    int code = 0;
+};
+
 // --cas: Create-a-Sim (app/cas_mode.hpp), as the Mac host's prepareCas/finishCas.
-// Families are written under --cas-out (default: cas-families next to the exe,
-// so the game's own neighborhoods are left alone).
-int runCas(const std::filesystem::path& res, std::vector<std::string> args, const std::optional<std::filesystem::path>& shot) {
-    auto argument = [&](std::string_view name) -> std::optional<std::string> {
-        for (size_t i = 0; i + 1 < args.size(); ++i)
-            if (args[i] == name)
-                return args[i + 1];
-        return std::nullopt;
-    };
-    const std::filesystem::path exe = exeDir();
+// Without a neighborhood families are written under --cas-out (default:
+// cas-families next to the exe, so the game's own folders are left alone).
+SceneExit runCas(App& app, const os2::Scene& scene) {
+    std::vector<std::string> args = app.args;
+    auto argument = [&](std::string_view flag) { return os2::argValue(args, std::string(flag)); };
+    const std::filesystem::path& res = app.res;
+    const std::optional<std::filesystem::path>& shot = app.shot;
     if (!argument("--cas-out")) {
         args.push_back("--cas-out");
-        args.push_back((exe / "cas-families").string());
+        args.push_back((app.exe / "cas-families").string());
     }
     uint32_t w = 1280, h = 720;
     if (auto size = argument("--cas-size"))
         std::sscanf(size->c_str(), "%ux%u", &w, &h);
-    std::printf("opensims2: indexing %s\n", res.string().c_str());
-    std::fflush(stdout);
-    os2::ResourceIndex index(res);
-    os2::Renderer renderer(exe / "shaders", w, h);
+    os2::ResourceIndex& index = app.resources();
+    os2::Renderer renderer(app.exe / "shaders", int(w), int(h), app.window);
     std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
     const os2::LightingConfig lighting = os2::loadLightingConfig(res / "Lights" / "Lighting.txt");
     if (const auto* state = lighting.state(argument("--lighting").value_or("CAS"))) {
@@ -272,12 +328,29 @@ int runCas(const std::filesystem::path& res, std::vector<std::string> args, cons
         }
     }
     os2::GameAudio gameAudio(res, {});
-    const std::filesystem::path gameDir = res.parent_path().parent_path();
-    os2::CasMode cas(renderer, index, gameDir, args);
+    os2::CasMode cas(renderer, index, app.gameDir, args);
     bool running = true;
+    SceneExit exit;
+    // Opened from a neighborhood: Accept saves the family there and goes back
+    // with it selected; Exit goes back without one.
+    auto back = [&] {
+        running = false;
+        if (scene.returnHood.empty())
+            return;
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::Neighborhood;
+        next.hood = scene.returnHood;
+        exit.next = next;
+    };
     cas.playSound = [&](const std::string& name) { gameAudio.playUi(name); };
-    cas.onExit = [&] { running = false; };
-    cas.onFamilySaved = [](uint32_t family) { std::printf("opensims2: cas: family %u saved\n", family); };
+    cas.onExit = back;
+    cas.onFamilySaved = [&](uint32_t family) {
+        std::printf("opensims2: cas: family %u saved\n", family);
+        if (!scene.returnHood.empty()) {
+            app.createdFamily = family;
+            back();
+        }
+    };
     std::unique_ptr<os2::LotCamera> camera = cas.makeCamera();
     cas.setCamera(camera.get());
     const simd_float4 background = simd_make_float4(0.33f, 0.36f, 0.45f, 1.f);
@@ -296,6 +369,8 @@ int runCas(const std::filesystem::path& res, std::vector<std::string> args, cons
     cas.runScripted(args);
 
     if (shot) {
+        if (exit.next)
+            return exit; // the steps went back to the neighborhood: the next scene takes the shot
         camera->snap();
         cas.update(0.5);
         camera->snap();
@@ -305,14 +380,15 @@ int runCas(const std::filesystem::path& res, std::vector<std::string> args, cons
             log << line << "\n";
         }
         // The scene alone through the offscreen path portraits use, then the window with the UI.
-        const os2::RgbaImage scene = renderer.capture(w, h, os2::FrameView{camera->view(), camera->projection(float(w) / float(h))}, background);
-        log << "offscreen " << scene.width << "x" << scene.height << "\n";
+        const os2::RgbaImage alone = renderer.capture(w, h, os2::FrameView{camera->view(), camera->projection(float(w) / float(h))}, background);
+        log << "offscreen " << alone.width << "x" << alone.height << "\n";
         showUi();
         renderer.setEye(camera->eye());
         if (!renderer.capture(*shot, viewProj()))
-            return 1;
-        std::printf("opensims2: wrote %s\n", shot->string().c_str());
-        return 0;
+            exit.code = 1;
+        else
+            std::printf("opensims2: wrote %s\n", shot->string().c_str());
+        return exit;
     }
 
     SDL_StartTextInput(renderer.window());
@@ -362,40 +438,387 @@ int runCas(const std::filesystem::path& res, std::vector<std::string> args, cons
         if (!renderer.draw(viewProj()))
             running = false;
     }
-    return 0;
+    SDL_StopTextInput(renderer.window());
+    return exit;
+}
+
+// The puck's F-key accelerators and the camera keys of the neighborhood view.
+constexpr unsigned short kMacF1 = 122, kMacF2 = 120, kMacF3 = 99, kMacF4 = 118, kMacF5 = 96;
+
+unsigned short macFunctionKey(SDL_Scancode code) {
+    switch (code) {
+    case SDL_SCANCODE_F1: return kMacF1;
+    case SDL_SCANCODE_F2: return kMacF2;
+    case SDL_SCANCODE_F3: return kMacF3;
+    case SDL_SCANCODE_F4: return kMacF4;
+    case SDL_SCANCODE_F5: return kMacF5;
+    default: return 0;
+    }
+}
+
+// --hood <N001|folder>: the neighborhood view (app/hood_mode.hpp), as the Mac
+// host's prepareHood/finishHood. With --screenshot the steps (--click x,y) run
+// first; a step that leaves the scene hands the shot to the next one.
+SceneExit runHood(App& app, const os2::Scene& scene) {
+    const uint32_t w = 1280, h = 720;
+    os2::ResourceIndex& index = app.resources();
+    const std::filesystem::path folder = app.hoodFolder(scene.hood);
+    os2::Renderer renderer(app.exe / "shaders", int(w), int(h), app.window);
+    std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+    os2::HoodMode hood(renderer, index, app.gameDir, folder.string(), app.args);
+    for (const auto& line : hood.view().report())
+        std::printf("opensims2: %s\n", line.c_str());
+
+    SceneExit exit;
+    bool running = true;
+    std::unique_ptr<os2::LotCamera> camera = hood.makeCamera();
+    auto leave = [&](const os2::Scene& next) {
+        exit.next = next;
+        running = false;
+    };
+    // Entering a lot, Create-a-Sim and the main menu switch scenes in place (app/game_flow.hpp).
+    hood.onEnterLot = [&](const os2::HoodLot& lot) {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::Lot;
+        next.hood = scene.hood;
+        next.lot = lot.id;
+        leave(next);
+    };
+    hood.onCreateFamily = [&](const std::filesystem::path& hoodFolder) {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::Cas;
+        next.hood = hoodFolder.string();
+        next.returnHood = scene.hood;
+        leave(next);
+    };
+    // A lot placed, moved or binned: the view built again, seen from where the camera was.
+    hood.onReload = [&] {
+        app.hoodPose = camera->pose();
+        leave(scene);
+    };
+    hood.onQuit = [&] { running = false; };
+    hood.onMainMenu = [&] {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::MainMenu;
+        next.fromNeighborhood = true;
+        next.returnHood = scene.hood;
+        leave(next);
+    };
+    if (auto z = app.argument("--zoom"))
+        camera->zoomBy(std::stoi(*z));
+    if (auto o = app.argument("--orientation"))
+        camera->rotateBy(std::stoi(*o));
+    camera->snap();
+    if (app.hoodPose) {
+        camera->setPose(*app.hoodPose);
+        app.hoodPose.reset();
+    }
+
+    os2::GameAudio gameAudio(app.res, {});
+    hood.ui().playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+    // Head shots for the characters whose files have none (app/head_shot.hpp).
+    std::vector<os2::SimPart> parts;
+    hood.ui().renderHead = [&](const std::filesystem::path& file) {
+        if (parts.empty())
+            parts = os2::loadSimParts(index);
+        return os2::renderHeadShot(renderer, index, parts, file, 128, app.res);
+    };
+    // The Decorations catalog's pictures: effects have UI images, the rest are rendered.
+    hood.ui().renderDecorThumb = [&](const os2::hood::DecorProduct& p) -> std::optional<os2::RgbaImage> {
+        const int model = hood.view().decorationModel(p);
+        if (model < 0)
+            return std::nullopt;
+        return os2::renderModelThumbnail(renderer, model, hood.view().decorationBounds(p), 94);
+    };
+    hood.ui().setForceRenderHeads(app.argument("--hood-render-heads").has_value());
+    // The Options panel's option windows (audio, game, graphics, camera, credits).
+    hood.ui().options().setSettings(app.settings);
+    hood.ui().options().onChanged = [&](const os2::GameSettings& s) {
+        app.settings = s;
+        s.save(*app.user);
+        app.settings.applyGraphics();
+        hood.view().refreshLightMap();
+    };
+    hood.ui().options().playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+    renderer.setClearColor(simd_make_float4(0.42f, 0.55f, 0.72f, 1.f));
+    SDL_SetWindowTitle(app.window, ("opensims2 - " + hood.view().displayName()).c_str());
+    if (app.createdFamily) {
+        hood.familyCreated(*app.createdFamily);
+        app.createdFamily.reset();
+    }
+    camera->setViewport(float(w), float(h));
+    auto viewProj = [&] { return simd_mul(camera->projection(float(w) / float(h)), camera->view()); };
+    int uiWindows = 0, uiDrawn = 0;
+    auto showUi = [&] {
+        const os2::UiScreen screen = hood.ui().overlay(int(w), int(h));
+        uiWindows = int(screen.windows), uiDrawn = int(screen.drawn);
+        renderer.setUiImage(os2::composeUi(screen, {0, 0, 0, 0}), 0, 0, float(w), float(h));
+    };
+    std::fflush(stdout);
+
+    if (app.shot) {
+        hood.scriptedView(*camera, float(w), float(h));
+        camera->snap();
+        // Where the lots are on the 1280x720 canvas, for click steps.
+        const simd_float4x4 m = viewProj();
+        for (const auto& lot : hood.view().lots()) {
+            const simd_float3 c = hood.view().lotCentre(lot);
+            const simd_float4 q = simd_mul(m, simd_make_float4(c, 1));
+            const float x = (q.x / q.w + 1) / 2 * float(w), y = (1 - q.y / q.w) / 2 * float(h);
+            if (q.w > 0 && x >= 0 && x < float(w) && y >= 0 && y < float(h))
+                std::printf("opensims2: lot %u \"%s\" at (%.0f, %.0f)\n", lot.id, lot.name.c_str(), x, y);
+        }
+        const auto steps = os2::flowSteps(app.args);
+        for (size_t k = 0; k < steps.size() && running; ++k) {
+            exit.stepsUsed = k + 1;
+            if (steps[k].kind == os2::FlowStep::Kind::Click) {
+                hood.mouseDown(*camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+                hood.mouseUp(*camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+            }
+        }
+        if (exit.next)
+            return exit;
+        showUi();
+        std::printf("opensims2: neighborhood UI %d windows, %d drawn\n", uiWindows, uiDrawn);
+        renderer.setEye(camera->eye());
+        if (!renderer.capture(*app.shot, viewProj()))
+            exit.code = 1;
+        else
+            std::printf("opensims2: wrote %s\n", app.shot->string().c_str());
+        return exit;
+    }
+
+    SDL_StartTextInput(app.window);
+    bool dragging = false;
+    bool keys[4] = {}; // left, right, back, forward
+    auto last = std::chrono::steady_clock::now();
+    while (running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            const bool control = (SDL_GetModState() & SDL_KMOD_CTRL) != 0;
+            const bool typing = hood.ui().bins().textEntry() || hood.ui().storyEditing();
+            switch (event.type) {
+            case SDL_EVENT_QUIT: running = false; break;
+            case SDL_EVENT_TEXT_INPUT:
+                if (typing)
+                    hood.typeKey(0xFFFF, event.text.text);
+                break;
+            case SDL_EVENT_KEY_DOWN: {
+                const SDL_Scancode code = event.key.scancode;
+                if (typing) { // the place-lot dialog and the story take the keys
+                    if (macKeyCode(code) != 0xFFFF)
+                        hood.typeKey(macKeyCode(code), "");
+                    break;
+                }
+                if (const unsigned short f = macFunctionKey(code)) {
+                    if (f == kMacF4)
+                        hood.ui().toggleStory();
+                    else
+                        hood.ui().togglePanel(f == kMacF1   ? os2::HoodBins::Panel::Families
+                                              : f == kMacF2 ? os2::HoodBins::Panel::Lots
+                                              : f == kMacF3 ? os2::HoodBins::Panel::Decorations
+                                                            : os2::HoodBins::Panel::Options);
+                    break;
+                }
+                if (control && (code == SDL_SCANCODE_Z || code == SDL_SCANCODE_Y) &&
+                    hood.ui().bins().panel() == os2::HoodBins::Panel::Decorations) {
+                    hood.undoDecoration(code == SDL_SCANCODE_Y);
+                    break;
+                }
+                if (hood.placingLot() && (code == SDL_SCANCODE_COMMA || code == SDL_SCANCODE_PERIOD)) {
+                    hood.turnLot(code == SDL_SCANCODE_PERIOD ? 1 : -1);
+                    break;
+                }
+                switch (code) {
+                case SDL_SCANCODE_ESCAPE: hood.escape(); break;
+                case SDL_SCANCODE_Z: case SDL_SCANCODE_KP_PLUS: camera->zoomBy(1); break;
+                case SDL_SCANCODE_X: case SDL_SCANCODE_KP_MINUS: camera->zoomBy(-1); break;
+                case SDL_SCANCODE_COMMA: case SDL_SCANCODE_Q: camera->rotateBy(-1); break;
+                case SDL_SCANCODE_PERIOD: case SDL_SCANCODE_E: camera->rotateBy(1); break;
+                case SDL_SCANCODE_A: case SDL_SCANCODE_LEFT: keys[0] = true; break;
+                case SDL_SCANCODE_D: case SDL_SCANCODE_RIGHT: keys[1] = true; break;
+                case SDL_SCANCODE_S: case SDL_SCANCODE_DOWN: keys[2] = true; break;
+                case SDL_SCANCODE_W: case SDL_SCANCODE_UP: keys[3] = true; break;
+                default: break;
+                }
+                break;
+            }
+            case SDL_EVENT_KEY_UP:
+                switch (event.key.scancode) {
+                case SDL_SCANCODE_A: case SDL_SCANCODE_LEFT: keys[0] = false; break;
+                case SDL_SCANCODE_D: case SDL_SCANCODE_RIGHT: keys[1] = false; break;
+                case SDL_SCANCODE_S: case SDL_SCANCODE_DOWN: keys[2] = false; break;
+                case SDL_SCANCODE_W: case SDL_SCANCODE_UP: keys[3] = false; break;
+                default: break;
+                }
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    dragging = true;
+                    hood.mouseDown(*camera, simd_make_float2(event.button.x, event.button.y), float(w), float(h));
+                }
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                if (dragging)
+                    hood.mouseDragged(*camera, simd_make_float2(event.motion.x, event.motion.y), float(w), float(h));
+                else
+                    hood.mouseMoved(*camera, simd_make_float2(event.motion.x, event.motion.y), float(w), float(h));
+                if (event.motion.state & SDL_BUTTON_RMASK)
+                    camera->rotateRequest(event.motion.xrel, event.motion.yrel);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    dragging = false;
+                    hood.mouseUp(*camera, simd_make_float2(event.button.x, event.button.y), float(w), float(h));
+                }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL: camera->wheel(event.wheel.y); break;
+            default: break;
+            }
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const double dt = std::chrono::duration<double>(now - last).count();
+        last = now;
+        const float right = float(keys[1]) - float(keys[0]), forward = float(keys[3]) - float(keys[2]);
+        if (right != 0 || forward != 0)
+            camera->pan(right, forward, dt);
+        camera->update(dt);
+        showUi();
+        renderer.setEye(camera->eye());
+        if (!renderer.draw(viewProj()))
+            running = false;
+    }
+    SDL_StopTextInput(app.window);
+    return exit;
+}
+
+// --menu (or no scene flag): the main menu, which chooses the neighborhood
+// (app/main_menu.hpp), as the Mac host's prepareMainMenu/finishMainMenu.
+SceneExit runMenu(App& app, const os2::Scene& scene) {
+    const uint32_t w = 1280, h = 720;
+    os2::ResourceIndex& index = app.resources();
+    os2::Renderer renderer(app.exe / "shaders", int(w), int(h), app.window);
+    std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+    std::vector<std::filesystem::path> dirs;
+    for (const auto& prefix : app.user->shipped())
+        if (prefix != "Tutorial")
+            dirs.push_back(app.user->neighborhoodForReading(prefix));
+    os2::MainMenu menu(index, app.res, os2::readMainMenuHoods(dirs), scene.fromNeighborhood);
+    menu.setEpisodes(os2::loadTutorialEpisodes(
+        app.res, app.user->hasCopy("Tutorial") ? app.user->neighborhoodsDir() / "Tutorial" : std::filesystem::path()));
+    os2::GameAudio gameAudio(app.res, {});
+    menu.setSoundPlayer([&](const std::string& name) { gameAudio.playUi(name); });
+    renderer.setClearColor(simd_make_float4(0, 0, 0, 1));
+    SDL_SetWindowTitle(app.window, "opensims2");
+    menu.setCanvas(int(w), int(h));
+    for (size_t i = 0; i < dirs.size(); ++i) {
+        const auto r = menu.thumbnailRect(int(i));
+        std::printf("opensims2: main menu: %s at (%.0f, %.0f)-(%.0f, %.0f)\n", dirs[i].filename().string().c_str(), r[0], r[1],
+                    r[2], r[3]);
+    }
+    if (!menu.ok())
+        std::fprintf(stderr, "opensims2: main menu: scripts missing\n");
+
+    SceneExit exit;
+    bool running = true;
+    auto press = [&](simd_float2 p) {
+        menu.setCanvas(int(w), int(h));
+        os2::Scene next;
+        switch (menu.press(p)) {
+        case os2::MainMenu::Action::Tutorial:
+            // PlayEpisode: a fresh Tutorial neighborhood (ResetTutorialNeighborhood) and straight into the episode's lot.
+            if (const os2::TutorialEpisode* ep = menu.chosenEpisode()) {
+                std::printf("opensims2: main menu: tutorial %d \"%s\": %s lot %u\n", ep->number, ep->title.c_str(),
+                            ep->neighborhood.c_str(), ep->lot);
+                try {
+                    os2::resetTutorialNeighborhood(app.user->shippedNeighborhoodsDir() / ep->neighborhood,
+                                                   app.user->neighborhoodsDir() / ep->neighborhood);
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "opensims2: tutorial: %s\n", e.what());
+                }
+                next.kind = os2::Scene::Kind::Lot;
+                next.hood = ep->neighborhood;
+                next.lot = ep->lot;
+                exit.next = next, running = false;
+            }
+            break;
+        case os2::MainMenu::Action::Play:
+            std::printf("opensims2: main menu: play %s\n", menu.chosen().c_str());
+            next.kind = os2::Scene::Kind::Neighborhood;
+            next.hood = menu.chosen();
+            exit.next = next, running = false;
+            break;
+        case os2::MainMenu::Action::Close:
+            next.kind = os2::Scene::Kind::Neighborhood;
+            next.hood = scene.returnHood;
+            exit.next = next, running = false;
+            break;
+        case os2::MainMenu::Action::Quit:
+            std::printf("opensims2: main menu: quit\n");
+            running = false;
+            break;
+        default: break;
+        }
+        std::fflush(stdout);
+    };
+    auto showUi = [&] {
+        renderer.setUiImage(os2::composeUi(menu.screen(int(w), int(h)), {0, 0, 0, 0}), 0, 0, float(w), float(h));
+    };
+    // The menu draws only its UI: the 3D pass sees nothing.
+    simd_float4x4 viewProj = matrix_identity_float4x4;
+
+    if (app.shot) {
+        if (auto sel = app.argument("--menu-select"))
+            menu.preview(std::stoi(*sel));
+        if (auto ep = app.argument("--menu-learn"))
+            menu.openLearn(std::stoi(*ep));
+        const auto steps = os2::flowSteps(app.args);
+        for (size_t k = 0; k < steps.size() && running; ++k) {
+            exit.stepsUsed = k + 1;
+            if (steps[k].kind == os2::FlowStep::Kind::Click)
+                press(simd_make_float2(steps[k].x, steps[k].y));
+        }
+        if (exit.next || !running)
+            return exit;
+        showUi();
+        if (!renderer.capture(*app.shot, viewProj))
+            exit.code = 1;
+        else
+            std::printf("opensims2: wrote %s\n", app.shot->string().c_str());
+        return exit;
+    }
+
+    while (running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            switch (event.type) {
+            case SDL_EVENT_QUIT: running = false; break;
+            case SDL_EVENT_MOUSE_MOTION: menu.hover(simd_make_float2(event.motion.x, event.motion.y)); break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (event.button.button == SDL_BUTTON_LEFT)
+                    press(simd_make_float2(event.button.x, event.button.y));
+                break;
+            default: break;
+            }
+        }
+        showUi();
+        if (!renderer.draw(viewProj))
+            running = false;
+    }
+    return exit;
 }
 
 } // namespace
 
-int main(int argc, char** argv) {
-    SetUnhandledExceptionFilter(crashFilter);
+// A lot: its terrain, walls, objects and Sims driven by the VM, with the live
+// UI and the Buy and Build modes. `scene` names its neighborhood when the game
+// flow opened it (Esc goes back there).
+SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scene& scene) {
     try {
-        if (argc < 3) {
-            std::fprintf(stderr, "usage: opensims2_win <TSData/Res> <lot.package | --cas> [--screenshot file.png]\n");
-            return 2;
-        }
-        const std::filesystem::path res = argv[1];
-        if (std::string(argv[2]) == "--cas") {
-            std::vector<std::string> args(argv + 2, argv + argc);
-            std::optional<std::filesystem::path> casShot;
-            for (size_t i = 0; i + 1 < args.size(); ++i)
-                if (args[i] == "--screenshot")
-                    casShot = args[i + 1];
-            return runCas(res, args, casShot);
-        }
-        const std::filesystem::path lotFile = argv[2];
-        std::filesystem::path shot = "frame.png";
-        bool exitAfterShot = false;
-        for (int i = 3; i < argc; ++i) {
-            if (std::string(argv[i]) == "--screenshot" && i + 1 < argc) {
-                shot = argv[++i];
-                exitAfterShot = true;
-            }
-        }
-
-        std::printf("opensims2: indexing %s\n", res.string().c_str());
-        std::fflush(stdout);
-        os2::ResourceIndex index(res);
+        const std::filesystem::path& res = app.res;
+        const std::filesystem::path shot = app.shot.value_or("frame.png");
+        const bool exitAfterShot = app.shot.has_value();
+        os2::ResourceIndex& index = app.resources();
         os2::DbpfPackage package(lotFile);
         os2::Lot lot = os2::Lot::load(package);
         os2::vm::dropLeftoverCObjects(lot, package, index);
@@ -425,7 +848,7 @@ int main(int argc, char** argv) {
                 simulation.update(i * 0.042);
             std::printf("opensims2: ticks %llu\n", (unsigned long long)simulation.ticks());
             std::fflush(stdout);
-            return 0;
+            return {};
         }
         os2::LotViewOptions view;
         view.walls = os2::LotViewOptions::Walls::Up;
@@ -437,12 +860,10 @@ int main(int argc, char** argv) {
         for (const auto& warning : house.warnings)
             std::fprintf(stderr, "opensims2: %s\n", warning.c_str());
 
-        wchar_t modulePath[MAX_PATH];
-        GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
         std::printf("opensims2: house has %zu parts, uploading\n", house.parts.size());
         std::fflush(stdout);
-        const auto exe = std::filesystem::path(modulePath).parent_path();
-        os2::Renderer renderer(exe / "shaders", 1280, 720);
+        os2::Renderer renderer(app.exe / "shaders", 1280, 720, app.window);
+        SDL_SetWindowTitle(app.window, ("opensims2 - " + lotFile.stem().string()).c_str());
         std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
         renderer.setGroundClip(os2::lotSkirtBottom(lot));
         const int houseModel = renderer.addObject(house, index);
@@ -531,6 +952,15 @@ int main(int argc, char** argv) {
         std::map<std::string, os2::Tgi> definitions;
         std::map<std::string, int> models;
         std::map<std::string, os2::Skeleton> skeletons;
+        std::map<std::string, std::pair<simd_float3, simd_float3>> bounds;      // model space, by model key
+        std::map<std::string, std::shared_ptr<const os2::PickMesh>> pickMeshes; // by model key
+        struct PickBoxSpec {
+            bool contained;
+            uint32_t instance;
+            std::string key;
+            simd_float4x4 at;
+        };
+        std::vector<PickBoxSpec> pickBoxes;
         struct PlacedObject {
             std::string cres;
             std::map<std::string, std::string> materials;
@@ -554,27 +984,33 @@ int main(int argc, char** argv) {
                     const os2::ObjectModel model = os2::loadObjectModel(index, cresOf(index, object, definitions), object.materials);
                     skeletons[key] = model.skeleton;
                     models[key] = renderer.addObject(model, index);
+                    bounds[key] = os2::modelBounds(model);
+                    pickMeshes[key] = os2::makePickMesh(model, &index);
                 } catch (const std::exception& e) {
                     std::fprintf(stderr, "opensims2: %s: %s\n", object.model.c_str(), e.what());
                     models[key] = -1;
                 }
             }
             int model = models[key];
+            std::string drawnKey = key;
             std::vector<os2::Xform> savedPose;
             if (!object.nodes.empty() && skeletons.count(key)) {
                 if (auto pose = os2::savedPose(skeletons[key], object.nodes)) {
                     const std::string posedKey = key + "@posed";
                     if (!models.count(posedKey)) {
                         try {
-                            models[posedKey] = renderer.addObject(
-                                os2::posedModel(os2::loadObjectModel(index, cresOf(index, object, definitions), object.materials), *pose),
-                                index);
+                            const os2::ObjectModel posed =
+                                os2::posedModel(os2::loadObjectModel(index, cresOf(index, object, definitions), object.materials), *pose);
+                            models[posedKey] = renderer.addObject(posed, index);
+                            bounds[posedKey] = os2::modelBounds(posed);
+                            pickMeshes[posedKey] = os2::makePickMesh(posed, &index);
                         } catch (...) {
                             models[posedKey] = -1;
                         }
                     }
                     if (models[posedKey] >= 0) {
                         model = models[posedKey];
+                        drawnKey = posedKey;
                         savedPose = std::move(*pose);
                     }
                 }
@@ -587,6 +1023,7 @@ int main(int argc, char** argv) {
             else
                 ++objects;
             const int instance = renderer.addInstance(model, at);
+            pickBoxes.push_back({contained, object.instance, drawnKey, at});
             // Stale cObjects share IDs with live ones: the first (or one in the
             // world) keeps the ID; app/vm_objects.cpp checks it against the VM.
             const int16_t id = int16_t(object.instance & 0xFFFF);
@@ -610,6 +1047,7 @@ int main(int argc, char** argv) {
             int model = -1;
             int16_t id = 0;
             int instance = -1;
+            std::filesystem::path file; // the character file
         };
         std::vector<DrawnSim> sims;
         os2::LotObjects saved = os2::LotObjects::load(package);
@@ -639,7 +1077,7 @@ int main(int argc, char** argv) {
                 simulation.attach(*actor, int16_t(object.instance & 0xFFFF), character, idle);
                 std::printf("opensims2: Sim %s at (%.2f, %.2f, %.2f), %zu parts, idle %s\n", stem.c_str(), object.position[0],
                             object.position[1], object.position[2], actor->skin.model.parts.size(), idle.c_str());
-                sims.push_back({std::move(actor), model, int16_t(object.instance & 0xFFFF), instance});
+                sims.push_back({std::move(actor), model, int16_t(object.instance & 0xFFFF), instance, file});
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: Sim %s: %s\n", object.definition.c_str(), e.what());
             }
@@ -679,11 +1117,14 @@ int main(int argc, char** argv) {
         std::printf("opensims2: audio device %s\n", gameAudio.hasDevice() ? "on" : "off");
         std::fflush(stdout);
 
+        // The lot given on its own (not from a neighborhood) is the port's test
+        // bed: a movie frame and a particle effect are checked on it.
+        const bool diagnostics = scene.hood.empty();
         std::string movieLabel;
         int movieW = 0, movieH = 0;
         long movieFrame = -1;
         try {
-            const std::filesystem::path moviePath = os2::findMovie(res, "ealogo_audio");
+            const std::filesystem::path moviePath = diagnostics ? os2::findMovie(res, "ealogo_audio") : std::filesystem::path();
             if (!moviePath.empty()) {
                 os2::Movie movie = os2::Movie::load(moviePath);
                 os2::MovieDecoder decoder(movie);
@@ -716,7 +1157,7 @@ int main(int argc, char** argv) {
                         std::printf("opensims2: movie sound %u Hz %u ch %.2fs\n", pcm->sampleRate, pcm->channels, pcm->seconds());
                     }
                 }
-            } else {
+            } else if (diagnostics) {
                 std::fprintf(stderr, "opensims2: ealogo_audio.movie not found\n");
             }
         } catch (const std::exception& e) {
@@ -726,11 +1167,14 @@ int main(int argc, char** argv) {
         std::unique_ptr<os2::LiveUi> liveUi;
         std::unique_ptr<os2::BuyMode> buy;
         std::unique_ptr<os2::BuildMode> build;
+        std::unique_ptr<os2::PieMenuHost> pie;
         int liveWindows = 0, liveDrawn = 0, buyWindows = 0, buyDrawn = 0, buildWindows = 0, buildDrawn = 0;
         auto showLiveUi = [&] {
             if (!liveUi || !liveUi->ok())
                 return false;
-            if (!sims.empty())
+            if (pie && pie->sim())
+                liveUi->setSim(pie->sim());
+            else if (!sims.empty())
                 liveUi->setSim(sims.front().id);
             os2::UiScreen screen = liveUi->screen(1280, 720);
             liveWindows = int(screen.windows);
@@ -750,6 +1194,12 @@ int main(int argc, char** argv) {
                 buildWindows = int(buildScreen.windows);
                 buildDrawn = int(buildScreen.drawn);
                 screen.quads.insert(screen.quads.end(), buildScreen.quads.begin(), buildScreen.quads.end());
+            }
+            // The pie menu and the dialogs over everything.
+            os2::UiScreen pieScreen;
+            if (pie) {
+                pieScreen = pie->screen(1280, 720);
+                screen.quads.insert(screen.quads.end(), pieScreen.quads.begin(), pieScreen.quads.end());
             }
             renderer.setUiImage(os2::composeUi(screen, {0, 0, 0, 0}), 0, 0, 1280, 720);
             return true;
@@ -783,7 +1233,7 @@ int main(int argc, char** argv) {
                 effectLibrary = std::make_unique<os2::fx::EffectsLibrary>(os2::fx::EffectsLibrary::parse(index.read(loc)));
                 break;
             }
-            if (effectLibrary && !sims.empty()) {
+            if (effectLibrary && !sims.empty() && diagnostics) {
                 effectSystem = std::make_unique<os2::fx::EffectSystem>(*effectLibrary);
                 os2::fx::Placement where;
                 where.position = {sims.front().actor->position[0], sims.front().actor->position[1],
@@ -890,9 +1340,438 @@ int main(int argc, char** argv) {
                 }
             };
         }
+        SceneExit exit;
+        bool running = true;
+
+        // Pie menus over the lot's VM (app/pie_menu.hpp), picked as the Mac host picks.
+        try {
+            pie = std::make_unique<os2::PieMenuHost>(simulation.machine(), res / "UI" / "Fonts");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: pie menu: %s\n", e.what());
+        }
+        auto simInTheWorld = [&](os2::vm::ObjectId id) {
+            const os2::vm::Object* o = simulation.machine().object(id);
+            return o && o->position.inWorld();
+        };
+        // The small portrait: IMG 0x10, 0x08 or 0x02 by the Sim's age.
+        auto simPortrait = [&](os2::vm::ObjectId id) -> std::optional<os2::RgbaImage> {
+            for (const auto& s : sims) {
+                if (s.id != id)
+                    continue;
+                try {
+                    os2::DbpfPackage character(s.file);
+                    for (const auto& e : character.entries())
+                        if (e.tgi.type == os2::kTypeUiImage && e.tgi.instance < 0x100)
+                            return os2::decodeUiImage(character.read(e));
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "opensims2: portrait: %s\n", e.what());
+                }
+            }
+            return std::nullopt;
+        };
+        // Where the mouse ray meets a floor, from the top level down (every
+        // level is drawn here): a walkable or pool tile (Go Here), or any
+        // tile with a floor (the pick stops there). The point, the ray's
+        // parameter and the VM level.
+        struct GroundHit {
+            simd_float2 at;
+            float t;
+            int level;
+        };
+        auto groundUnderRay = [&](simd_float3 eye, simd_float3 dir, bool walkable) -> std::optional<GroundHit> {
+            if (std::fabs(dir.z) < 1e-5f || !simulation.machine().world)
+                return std::nullopt;
+            const os2::vm::World& w = *simulation.machine().world;
+            for (int lotLevel = layout.minLevel + layout.levels - 1; lotLevel >= layout.minLevel; --lotLevel) {
+                const int level = lotLevel + 1;
+                float z = simulation.floorHeight(level, float(w.width()) / 2, float(w.height()) / 2);
+                simd_float3 hit{};
+                float t = 0;
+                bool ok = true;
+                for (int i = 0; i < 3 && ok; ++i) {
+                    t = (z - eye.z) / dir.z;
+                    ok = t > 0;
+                    hit = eye + dir * t;
+                    z = simulation.floorHeight(level, hit.x, hit.y);
+                }
+                const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
+                if (ok && w.contains(tile) && (walkable ? w.walkable(tile) || w.pool(tile) : w.hasFloor(tile)))
+                    return GroundHit{simd_make_float2(hit.x, hit.y), t, level};
+            }
+            return std::nullopt;
+        };
+        if (pie) {
+            pie->setCanvas(1280, 720);
+            // A go-here destination goes when its menu closes, unless an interaction on it was queued.
+            pie->onClose = [&](os2::vm::ObjectId id) { os2::vm::releaseDestination(pie->vm(), id); };
+            pie->simAway = [&](os2::vm::ObjectId sim) { return !simInTheWorld(sim); };
+            for (const auto& b : pickBoxes) {
+                const auto& [lo, hi] = bounds[b.key];
+                if (b.contained)
+                    pie->addFollowingPickBox(b.instance, lo, hi, pickMeshes[b.key]);
+                else
+                    pie->addPickBox(b.instance, lo, hi, b.at, pickMeshes[b.key]);
+            }
+            // Objects in slots are picked where the VM view draws them.
+            pie->setPlacementSource([&](os2::vm::ObjectId id) -> std::optional<simd_float4x4> {
+                if (!objectView.hasModel(id))
+                    return std::nullopt;
+                const auto x = objectView.placement(id);
+                if (!x)
+                    return std::nullopt;
+                simd_float4x4 m = simd_matrix4x4(simd_quaternion(x->q.x, x->q.y, x->q.z, x->q.w));
+                m.columns[3] = simd_make_float4(x->t[0], x->t[1], x->t[2], 1);
+                return m;
+            });
+            pie->drawn = [&](os2::vm::ObjectId id) { return objectView.shown(id); };
+            // A floor stops the ray (a Sim under it is not picked).
+            pie->floorHit = [&](simd_float3 eye, simd_float3 dir) -> std::optional<float> {
+                if (const auto g = groundUnderRay(eye, dir, false))
+                    return g->t;
+                return std::nullopt;
+            };
+            os2::UiResources ui(index, res);
+            if (auto script = ui.script(0x090617B7))
+                pie->setStyle(os2::PieMenuStyle::fromConstants(os2::uiConstants(*script)));
+            if (auto p = simPortrait(pie->sim()))
+                pie->setPortrait(std::move(*p));
+            pie->setResources(index, res); // the dialog window's scripts
+            pie->setSoundPlayer([&](const std::string& name) { gameAudio.playUi(name); });
+            pie->setShowQueue(!(liveUi && liveUi->ok())); // the live panel draws the queue
+            if (liveUi)
+                liveUi->onSelectSim = [&](os2::vm::ObjectId id) {
+                    pie->setSim(id);
+                    if (auto p = simPortrait(id))
+                        pie->setPortrait(std::move(*p));
+                };
+            if (buy)
+                buy->pickObject = [&](simd_float3 eye, simd_float3 dir) { return pie->pick(eye, dir); };
+            if (build)
+                build->pickObject = [&](simd_float3 eye, simd_float3 dir) { return pie->pick(eye, dir); };
+        }
+        // The Sims' boxes as posed now, and the objects the VM made after the
+        // lot loaded (bills, dishes, things bought), picked where they are drawn.
+        std::map<int16_t, std::string> madePickBoxes;
+        std::map<std::string, std::shared_ptr<const os2::PickMesh>> madeMeshes; // by CRES (null: none)
+        auto updatePicks = [&] {
+            if (!pie)
+                return;
+            for (const auto& s : sims) {
+                if (!simInTheWorld(s.id)) {
+                    pie->setMovingBox(s.id, simd_make_float3(0, 0, 0), simd_make_float3(0, 0, 0));
+                    continue;
+                }
+                simd_float3 lo = simd_make_float3(1e9f, 1e9f, 1e9f), hi = simd_make_float3(-1e9f, -1e9f, -1e9f);
+                for (const auto& b : s.actor->bones) {
+                    lo = simd_min(lo, simd_make_float3(b.t[0], b.t[1], b.t[2]));
+                    hi = simd_max(hi, simd_make_float3(b.t[0], b.t[1], b.t[2]));
+                }
+                const auto& p = s.actor->position;
+                if (s.actor->bones.empty()) // not posed yet: a standing adult's box
+                    lo = simd_make_float3(p[0] - 0.15f, p[1] - 0.15f, p[2]), hi = simd_make_float3(p[0] + 0.15f, p[1] + 0.15f, p[2] + 1.7f);
+                lo = lo - simd_make_float3(0.15f, 0.15f, 0.05f);
+                hi = hi + simd_make_float3(0.15f, 0.15f, 0.15f);
+                const bool posed = !s.actor->bones.empty() && !s.actor->posed.parts.empty();
+                pie->setMovingBox(s.id, lo, hi, posed ? &s.actor->posed : nullptr);
+            }
+            std::set<int16_t> drawnNow;
+            objectView.forEachDrawn([&](int16_t id, int, os2::SimActor*) { drawnNow.insert(id); });
+            for (auto it = madePickBoxes.begin(); it != madePickBoxes.end();) {
+                if (drawnNow.count(it->first) && objectView.cresOf(it->first) == it->second) {
+                    ++it;
+                    continue;
+                }
+                pie->removePickBox(it->first);
+                it = madePickBoxes.erase(it);
+            }
+            for (const int16_t id : drawnNow) {
+                if (madePickBoxes.count(id) || pie->hasPickBox(id))
+                    continue;
+                const std::string cres = objectView.cresOf(id);
+                if (cres.empty())
+                    continue;
+                auto m = madeMeshes.find(cres);
+                if (m == madeMeshes.end()) {
+                    std::shared_ptr<const os2::PickMesh> mesh;
+                    try {
+                        mesh = os2::makePickMesh(os2::loadObjectModel(index, cres, {}), &index);
+                    } catch (const std::exception&) {
+                    }
+                    m = madeMeshes.emplace(cres, std::move(mesh)).first;
+                }
+                if (!m->second || m->second->corners.empty())
+                    continue;
+                pie->addFollowingPickBox(id, m->second->lo, m->second->hi, m->second);
+                if (pie->hasPickBox(id))
+                    madePickBoxes[id] = cres;
+            }
+        };
+        // A click on the ground: the selected Sim's menu on a go-here destination there (vm/go_here.hpp).
+        auto openGoHere = [&](simd_float3 eye, simd_float3 dir, simd_float2 at) {
+            if (!pie || !pie->sim())
+                return false;
+            const auto g = groundUnderRay(eye, dir, true);
+            if (!g)
+                return false;
+            os2::vm::VM& m = pie->vm();
+            const os2::vm::ObjectId dest = os2::vm::createGoHereDestination(m, pie->sim(), g->at.x, g->at.y, g->level);
+            if (!dest)
+                return false;
+            if (!pie->open(dest, at)) {
+                os2::vm::releaseDestination(m, dest);
+                return false;
+            }
+            std::printf("opensims2: go here: destination %d at (%.2f, %.2f, %d)\n", dest, g->at.x, g->at.y, g->level);
+            return true;
+        };
+        // A click that picked object `id`: its menu; a rug's merges a go-here
+        // destination at the floor under the mouse (vm::objectClick).
+        auto openClicked = [&](os2::vm::ObjectId id, simd_float3 eye, simd_float3 dir, simd_float2 at) {
+            if (!pie || !pie->sim())
+                return;
+            os2::vm::VM& m = pie->vm();
+            if (os2::vm::isGoHereRug(m, id)) {
+                std::optional<os2::vm::Position> ground;
+                if (const auto g = groundUnderRay(eye, dir, true))
+                    ground = os2::vm::Position{g->at.x, g->at.y, g->level};
+                bool has = false;
+                for (const auto& e : os2::vm::pieMenu(m, pie->sim(), id))
+                    has = has || (e.available() && !e.debug);
+                const auto menu = os2::vm::objectClick(m, pie->sim(), id, ground, has);
+                if (menu.object && pie->open(menu.object, at, menu.destination))
+                    return;
+                for (const os2::vm::ObjectId d : {menu.object, menu.destination})
+                    if (d && d != id)
+                        os2::vm::releaseDestination(m, d);
+                return;
+            }
+            if (!pie->open(id, at))
+                std::printf("opensims2: object %d: no interactions available\n", id);
+        };
+
+        // The "Salvar?" questions (UIText STR# 0x99: 3/4 leaving for the
+        // neighborhood, 5/6 quitting with 24-26 as buttons; Sim/Não/Cancelar
+        // from STR# 0x8E), put up as a dialog of no object that the pie menu draws.
+        static constexpr os2::vm::ObjectId kFlowDialog = -2;
+        enum class FlowDialog { None, Leave, Quit };
+        FlowDialog flowDialog = FlowDialog::None;
+        std::unique_ptr<os2::UiResources> texts;
+        auto uiText = [&](uint32_t instance, uint32_t line, const char* fallback) -> std::string {
+            try {
+                if (!texts)
+                    texts = std::make_unique<os2::UiResources>(index, res);
+                if (auto t = texts->string(os2::UiStringRef{0x7fa7dc7c, instance, line}); t && !t->empty())
+                    return *t;
+            } catch (const std::exception&) {
+            }
+            return fallback;
+        };
+        auto openFlowDialog = [&](FlowDialog kind) {
+            if (simulation.machine().dialogs.count(kFlowDialog))
+                return;
+            os2::vm::Dialog d;
+            d.me = kFlowDialog;
+            d.blocking = true;
+            d.icon = 1;
+            if (kind == FlowDialog::Leave) {
+                d.title = uiText(0x99, 3, "Save?");
+                d.message = uiText(0x99, 4, "Do you want to save your game before exiting to the Neighborhood?");
+                d.buttons = {uiText(0x8E, 2, "Yes"), uiText(0x8E, 3, "No"), uiText(0x8E, 1, "Cancel")};
+            } else {
+                d.title = uiText(0x99, 5, "Quit?");
+                d.message = uiText(0x99, 6, "Do you want to save before quitting?");
+                d.buttons = {uiText(0x99, 24, "Save & Quit"), uiText(0x99, 25, "Quit without Saving"),
+                             uiText(0x99, 26, "Don't Quit")};
+            }
+            simulation.machine().dialogs[kFlowDialog] = std::move(d);
+            flowDialog = kind;
+            std::printf("opensims2: dialog \"%s\" open\n", simulation.machine().dialogs[kFlowDialog].title.c_str());
+        };
+        // Saves the lot and its neighborhood to the user's folder (app/game_save.hpp).
+        auto saveGameNow = [&] {
+            // What the buy or build tool holds is not on the lot.
+            if (buy && buy->held())
+                buy->cancel();
+            if (build && build->active())
+                build->cancel();
+            const auto began = std::chrono::steady_clock::now();
+            const os2::GameSaveResult r =
+                os2::saveGame(simulation.machine(), lotFile, res.parent_path().parent_path(), os2::sessionCharactersDir());
+            for (const auto& l : r.lines)
+                std::printf("opensims2: save: %s\n", l.c_str());
+            if (r.ok)
+                std::printf("opensims2: saved %s (%.2f s)\n", lotFile.string().c_str(),
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count());
+            else
+                std::fprintf(stderr, "opensims2: save failed: %s\n", r.error.c_str());
+            return r.ok;
+        };
+        // Acts on the answer to the open "Salvar?" dialog, if it has one.
+        auto pollFlowDialog = [&] {
+            if (flowDialog == FlowDialog::None)
+                return;
+            auto& dialogs = simulation.machine().dialogs;
+            auto it = dialogs.find(kFlowDialog);
+            if (it == dialogs.end()) {
+                flowDialog = FlowDialog::None;
+                return;
+            }
+            const int answer = it->second.answer;
+            if (answer < 0)
+                return;
+            dialogs.erase(it);
+            const FlowDialog kind = flowDialog;
+            flowDialog = FlowDialog::None;
+            if (answer == 2)
+                return; // cancel: stay
+            if (answer == 0 && !saveGameNow())
+                return; // the save failed: stay on the lot
+            if (kind == FlowDialog::Leave) {
+                os2::Scene back;
+                back.kind = os2::Scene::Kind::Neighborhood;
+                back.hood = scene.hood;
+                exit.next = back;
+            }
+            running = false;
+        };
+        // Leaving the lot as the game does (ExitLotBegin): asks whether to save first.
+        auto leaveLot = [&] {
+            if (!scene.hood.empty())
+                openFlowDialog(FlowDialog::Leave);
+        };
+        if (liveUi) {
+            liveUi->setCanLeave(!scene.hood.empty());
+            liveUi->onNeighborhood = leaveLot;
+            liveUi->onQuit = [&] { openFlowDialog(FlowDialog::Quit); };
+            liveUi->onSave = [&] { saveGameNow(); };
+        }
+        // Esc: the open pie menu first, else back to the neighborhood (the lot
+        // given on its own just closes).
+        auto escape = [&] {
+            if (pie && pie->isOpen()) {
+                pie->close();
+                return;
+            }
+            if (pie && pie->dialogOpen())
+                return;
+            if (scene.hood.empty())
+                running = false;
+            else
+                leaveLot();
+        };
+
+        // The mouse ray (world space) through a canvas point.
+        auto rayAt = [&](simd_float2 p) {
+            const simd_float4x4 m = camera.viewProj(1280.f / 720.f);
+            const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / 1280.f - 1, 1 - 2 * p.y / 720.f, 0.5f, 1));
+            return simd_normalize(simd_make_float3(q.x / q.w, q.y / q.w, q.z / q.w) - camera.eye());
+        };
+        // A press, in the Mac host's order: the dialog, the open pie menu, the
+        // puck's modes, the options panel, Buy/Build's panels, the live panel,
+        // then the world (Buy/Build's tools, else the pie menu of what the
+        // mouse is on, else Go Here). `whole`: a scripted click (press and release).
+        auto mouseDown = [&](simd_float2 p, bool right, bool whole, bool control, bool shift) {
+            if (pie && pie->dialogOpen() && pie->click(p)) {
+                pollFlowDialog();
+                return;
+            }
+            if (pie && pie->isOpen() && pie->press(p))
+                return;
+            if (liveUi && !right) {
+                if (liveUi->overModeButton(p) && liveUi->press(p))
+                    return;
+                if (liveUi->optionsOpen() && liveUi->press(p))
+                    return;
+            }
+            const bool optionsOver = liveUi && liveUi->optionsOpen();
+            if (!right && !optionsOver && buy && buy->active() && buy->press(p))
+                return;
+            if (!right && !optionsOver && build && build->active() && build->press(p))
+                return;
+            if (liveUi && liveUi->press(p, right))
+                return;
+            if (right)
+                return;
+            const simd_float3 eye = camera.eye(), dir = rayAt(p);
+            if (buy && buy->active()) {
+                if (whole)
+                    buy->click(eye, dir, p);
+                else
+                    buy->mouseDown(eye, dir, p);
+                return;
+            }
+            if (build && build->active()) {
+                build->mouseDown(eye, dir, control, shift);
+                if (whole)
+                    build->mouseUp(eye, dir);
+                return;
+            }
+            if (!pie)
+                return;
+            updatePicks();
+            const os2::vm::ObjectId id = pie->pick(eye, dir);
+            const os2::vm::Object* o = pie->vm().object(id);
+            std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", p.x, p.y, id,
+                        o && o->definition ? o->definition->fileName.c_str() : "nothing");
+            if (id)
+                openClicked(id, eye, dir, p);
+            else
+                openGoHere(eye, dir, p);
+            for (size_t e = 0; e < pie->entries().size(); ++e)
+                std::printf("opensims2: pie [%zu] %s\n", e, pie->entries()[e].name.c_str());
+        };
+        auto mouseUp = [&](simd_float2 p) {
+            if (pie && pie->isOpen()) {
+                pie->release(p);
+                return;
+            }
+            if (build && build->active())
+                build->mouseUp(camera.eye(), rayAt(p));
+            if (buy && buy->active())
+                buy->mouseUp();
+        };
+        auto mouseMoved = [&](simd_float2 p, bool dragging) {
+            if (pie)
+                pie->hover(p);
+            if (liveUi && !dragging)
+                liveUi->hover(p);
+            if (buy && buy->active()) {
+                if (dragging) {
+                    buy->mouseDrag(camera.eye(), rayAt(p));
+                } else {
+                    buy->hover(p);
+                    buy->pointAt(camera.eye(), rayAt(p));
+                }
+            }
+            if (build && build->active()) {
+                if (dragging) {
+                    build->mouseDrag(camera.eye(), rayAt(p));
+                } else {
+                    build->hover(p);
+                    build->pointAt(camera.eye(), rayAt(p));
+                }
+            }
+        };
+
         const auto start = std::chrono::steady_clock::now();
+        double headlessClock = -1; // the clock of scripted runs (--wait), else real time
         auto seconds = [&] {
+            if (headlessClock >= 0)
+                return headlessClock;
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        };
+        // Runs the lot's VM `ticks` ticks headless (a --wait step).
+        auto runTicks = [&](long ticks) {
+            const uint64_t target = simulation.ticks() + uint64_t(std::max(0L, ticks));
+            for (long guard = 0; simulation.ticks() < target && guard < ticks * 40 + 100; ++guard) {
+                headlessClock += 1.0 / 30;
+                const double sceneTime = simulation.update(headlessClock);
+                if (lotLighting && simulation.ticks() % 30 == 0)
+                    lotLighting->update(sceneTime);
+                if (liveUi)
+                    liveUi->tick(headlessClock);
+            }
+            std::printf("opensims2: waited to VM tick %llu\n", (unsigned long long)simulation.ticks());
         };
         bool keys[4]{};
         auto frame = [&] {
@@ -905,6 +1784,7 @@ int main(int argc, char** argv) {
                 renderer.updateObject(sim.model, sim.actor->posed);
             }
             objectView.update();
+            updatePicks();
             if (lotLighting)
                 lotLighting->update(scene);
             os2::LotAudio::Listener listener;
@@ -986,6 +1866,44 @@ int main(int argc, char** argv) {
         // A few ticks so the capture shows the VM's animation, not the rest pose.
         for (int i = 0; i < 30; ++i)
             frame();
+        // A lot reached through the game flow runs the script's remaining
+        // steps (--click, --right-click, --wait, --key escape; app/game_flow.hpp);
+        // a step that leaves the lot leaves the rest to the next scene.
+        if (exitAfterShot && !diagnostics) {
+            headlessClock = seconds();
+            const auto steps = os2::flowSteps(app.args);
+            for (size_t k = 0; k < steps.size() && running; ++k) {
+                exit.stepsUsed = k + 1;
+                const os2::FlowStep& st = steps[k];
+                if (st.kind == os2::FlowStep::Kind::Wait) {
+                    runTicks(st.ticks);
+                } else if (st.kind == os2::FlowStep::Kind::Click || st.kind == os2::FlowStep::Kind::RightClick) {
+                    const simd_float2 p = simd_make_float2(st.x, st.y);
+                    const bool right = st.kind == os2::FlowStep::Kind::RightClick;
+                    showLiveUi(); // the panels laid out as the last frame left them
+                    mouseDown(p, right, true, false, false);
+                    if (!right)
+                        mouseUp(p);
+                } else if (st.kind == os2::FlowStep::Kind::Key && st.text == "escape") {
+                    escape();
+                }
+                pollFlowDialog();
+                std::fflush(stdout);
+            }
+            if (exit.next || !running)
+                return exit;
+            for (int i = 0; i < 5; ++i) {
+                headlessClock += 1.0 / 30;
+                frame();
+            }
+            showLiveUi();
+            renderer.setEye(camera.eye());
+            if (!renderer.capture(shot, camera.viewProj(1280.f / 720.f)))
+                exit.code = 1;
+            else
+                std::printf("opensims2: wrote %s (%llu ticks)\n", shot.string().c_str(), (unsigned long long)simulation.ticks());
+            return exit;
+        }
         bool pauseClick = false;
         if (liveUi && liveUi->ok()) {
             if (const auto rect = liveUi->controlRect(os2::LiveUi::kMainWindow, 0x27D7258F)) {
@@ -1221,14 +2139,26 @@ int main(int argc, char** argv) {
         std::printf("opensims2: wrote %s (%zu objects, %zu Sims, %llu ticks)\n", shot.string().c_str(), objects, sims.size(),
                     (unsigned long long)simulation.ticks());
         if (exitAfterShot)
-            return 0;
+            return {};
 
-        bool running = true;
+        SDL_StartTextInput(app.window);
+        bool leftDown = false;
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_EVENT_QUIT)
                     running = false;
+                // An open dialog with a text box (naming a baby) takes the keys.
+                if (pie && pie->dialogOpen() && pie->dialogHasTextBox()) {
+                    if (event.type == SDL_EVENT_TEXT_INPUT) {
+                        pie->dialogKey(0xFFFF, event.text.text);
+                        continue;
+                    }
+                    if (event.type == SDL_EVENT_KEY_DOWN && macKeyCode(event.key.scancode) != 0xFFFF) {
+                        pie->dialogKey(macKeyCode(event.key.scancode), "");
+                        continue;
+                    }
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
                     const bool down = event.type == SDL_EVENT_KEY_DOWN;
                     switch (event.key.scancode) {
@@ -1238,23 +2168,118 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_W: keys[3] = down; break;
                     case SDL_SCANCODE_Q: if (down) camera.yaw -= 0.08f; break;
                     case SDL_SCANCODE_E: if (down) camera.yaw += 0.08f; break;
-                    case SDL_SCANCODE_ESCAPE: running = false; break;
+                    case SDL_SCANCODE_ESCAPE:
+                        if (down)
+                            escape();
+                        break;
                     default: break;
                     }
                 }
                 if (event.type == SDL_EVENT_MOUSE_WHEEL)
                     camera.distance = std::clamp(camera.distance - event.wheel.y * 1.5f, 6.f, 80.f);
-                if (liveUi && event.type == SDL_EVENT_MOUSE_MOTION)
-                    liveUi->hover(simd_make_float2(event.motion.x, event.motion.y));
-                if (liveUi && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                    (event.button.button == SDL_BUTTON_LEFT || event.button.button == SDL_BUTTON_RIGHT))
-                    liveUi->press(simd_make_float2(event.button.x, event.button.y), event.button.button == SDL_BUTTON_RIGHT);
+                if (event.type == SDL_EVENT_MOUSE_MOTION)
+                    mouseMoved(simd_make_float2(event.motion.x, event.motion.y), leftDown);
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                    (event.button.button == SDL_BUTTON_LEFT || event.button.button == SDL_BUTTON_RIGHT)) {
+                    const bool right = event.button.button == SDL_BUTTON_RIGHT;
+                    const SDL_Keymod mods = SDL_GetModState();
+                    leftDown = leftDown || !right;
+                    mouseDown(simd_make_float2(event.button.x, event.button.y), right, false, (mods & SDL_KMOD_CTRL) != 0,
+                              (mods & SDL_KMOD_SHIFT) != 0);
+                }
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
+                    leftDown = false;
+                    mouseUp(simd_make_float2(event.button.x, event.button.y));
+                }
             }
+            pollFlowDialog();
             showLiveUi();
             if (!frame())
                 running = false;
         }
-        return 0;
+        return exit;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: %s\n", e.what());
+        SceneExit failed;
+        failed.code = 1;
+        return failed;
+    }
+}
+
+int main(int argc, char** argv) {
+    SetUnhandledExceptionFilter(crashFilter);
+    if (argc < 2) {
+        std::fprintf(stderr, "usage: opensims2_win <TSData/Res> [lot.package] [--menu | --hood N001 [--hood-lot id] | --cas] "
+                             "[--screenshot file.png]\n");
+        return 2;
+    }
+    App app;
+    app.res = argv[1];
+    app.gameDir = app.res.parent_path().parent_path();
+    app.exe = exeDir();
+    app.args.push_back(argv[0]);
+    std::optional<std::filesystem::path> lotFile; // the old form: a lot package as the second argument
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (i == 2 && !a.starts_with("--"))
+            lotFile = a;
+        else
+            app.args.push_back(a);
+    }
+    if (auto shot = app.argument("--screenshot"))
+        app.shot = *shot;
+    try {
+        // The user's folder (app/user_data.hpp): --user-dir, %OS2_USER_DIR%, else %LOCALAPPDATA%\opensims2.
+        std::filesystem::path user = os2::defaultUserDir();
+        if (const char* env = std::getenv("OS2_USER_DIR"))
+            user = env;
+        if (auto dir = app.argument("--user-dir"))
+            user = *dir;
+        app.user = std::make_unique<os2::UserData>(app.gameDir, user);
+        app.settings = os2::GameSettings::load(*app.user);
+        app.settings.applyGraphics();
+        if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+            std::fprintf(stderr, "opensims2: SDL: %s\n", SDL_GetError());
+            return 1;
+        }
+        // One window for every scene; the UI canvas is its size, so it is not resized.
+        app.window = SDL_CreateWindow("opensims2", 1280, 720, 0);
+        if (!app.window) {
+            std::fprintf(stderr, "opensims2: window: %s\n", SDL_GetError());
+            return 1;
+        }
+        int code = 0;
+        if (lotFile) {
+            code = runLot(app, *lotFile, os2::Scene{}).code;
+        } else {
+            os2::Scene scene = os2::sceneOf(app.args);
+            if (scene.kind == os2::Scene::Kind::Other)
+                scene.kind = os2::Scene::Kind::MainMenu;
+            for (;;) {
+                std::printf("opensims2: scene %s\n", scene.kind == os2::Scene::Kind::MainMenu       ? "main menu"
+                                                     : scene.kind == os2::Scene::Kind::Neighborhood ? "neighborhood"
+                                                     : scene.kind == os2::Scene::Kind::Lot          ? "lot"
+                                                                                                    : "cas");
+                std::fflush(stdout);
+                SceneExit r;
+                switch (scene.kind) {
+                case os2::Scene::Kind::Neighborhood: r = runHood(app, scene); break;
+                case os2::Scene::Kind::Cas: r = runCas(app, scene); break;
+                case os2::Scene::Kind::Lot:
+                    r = runLot(app, os2::hoodLotPackage(app.res, app.hoodFolder(scene.hood).string(), scene.lot), scene);
+                    break;
+                default: r = runMenu(app, scene); break;
+                }
+                code = r.code;
+                if (!r.next)
+                    break;
+                app.args = os2::sceneArguments(app.args, *r.next, r.stepsUsed);
+                scene = *r.next;
+            }
+        }
+        SDL_DestroyWindow(app.window);
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return code;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: %s\n", e.what());
         return 1;

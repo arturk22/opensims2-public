@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <map>
+#include "port/files.hpp"
 
 namespace os2 {
 
@@ -80,7 +81,7 @@ std::vector<std::string> copySessionCharacters(vm::VM& vm, const fs::path& sessi
             }
             const fs::path tmp = chars / (name + ".saving");
             fs::copy_file(f.path(), tmp, fs::copy_options::overwrite_existing);
-            fs::rename(tmp, chars / name);
+            os2::replaceFile(tmp, chars / name);
             lines.push_back("character " + name + (dir == sessionDir ? " (grown up or born)" : " (NPC)"));
         }
     }
@@ -132,7 +133,7 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             for (const auto& w : records.warnings)
                 out.lines.push_back("warning: " + w);
         }
-        fs::rename(tmpLot, lotFile);
+        os2::replaceFile(tmpLot, lotFile);
         if (const fs::path chars = lotFile.parent_path().parent_path() / "Characters"; fs::is_directory(chars))
             for (auto& l : copySessionCharacters(vm, sessionDir, chars, lotFile.filename().string().substr(0, 4)))
                 out.lines.push_back(std::move(l));
@@ -140,7 +141,7 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             const fs::path tmpHood = hoodPackage.parent_path() / (hoodPackage.filename().string() + ".saving");
             const hood::Neighborhood hood = hood::Neighborhood::load(hoodPackage, true);
             const vm::HoodSaveResult h = vm::saveNeighborhood(vm, hood, hoodPackage, tmpHood);
-            fs::rename(tmpHood, hoodPackage);
+            os2::replaceFile(tmpHood, hoodPackage);
             char buf[512];
             std::snprintf(buf, sizeof buf,
                           "neighborhood %s: %zu families, %zu Sim descriptions, relationships %zu changed, %zu new%s, "

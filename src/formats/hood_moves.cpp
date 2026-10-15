@@ -13,6 +13,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include "port/files.hpp"
 
 namespace os2::hood {
 
@@ -62,7 +63,7 @@ void rewritePackage(const fs::path& file, const std::map<std::pair<uint32_t, uin
         pkg.closeFile();
         w.save(tmp);
     }
-    fs::rename(tmp, file);
+    os2::replaceFile(tmp, file);
 }
 
 void checkFolder(const fs::path& folder, const fs::path& forbidden) {

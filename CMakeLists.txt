@@ -48,7 +48,7 @@ else()
   target_compile_options(os2_speex PRIVATE -w)
 endif()
 
-add_library(os2_port src/port/process.cpp)
+add_library(os2_port src/port/process.cpp src/port/files.cpp)
 target_include_directories(os2_port PUBLIC src)
 os2_warnings(os2_port)
 
@@ -127,6 +127,7 @@ target_include_directories(os2_formats PUBLIC src)
 os2_warnings(os2_formats)
 find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
+target_link_libraries(os2_formats PUBLIC os2_port)
 
 add_library(os2_vm
   src/vm/hood_bridge.cpp
@@ -307,7 +308,9 @@ if(WIN32)
     add_custom_target(os2_shaders DEPENDS ${os2_shader_outputs})
     add_executable(opensims2_win src/app/win_main.cpp src/render/gpu_renderer.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp
       src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp
-      src/render/camera.cpp src/render/cas_camera.cpp)
+      src/render/camera.cpp src/render/cas_camera.cpp
+      src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/main_menu.cpp
+      src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp)
     target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_fx os2_port SDL3::SDL3 dbghelp)
     os2_warnings(opensims2_win)
     add_dependencies(opensims2_win os2_shaders)

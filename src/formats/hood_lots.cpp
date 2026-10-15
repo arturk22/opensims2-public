@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <set>
 #include <stdexcept>
+#include "port/files.hpp"
 
 namespace os2::hood {
 
@@ -74,7 +75,7 @@ void rewritePackage(const fs::path& file, const std::map<Key, std::vector<uint8_
         pkg.closeFile();
         w.save(tmp);
     }
-    fs::rename(tmp, file);
+    os2::replaceFile(tmp, file);
 }
 
 struct RoadTile {
@@ -1192,7 +1193,7 @@ LotResult makeLotFile(const fs::path& folder, uint32_t lotId, const fs::path& te
             out.lines.push_back("lot " + std::to_string(lotId) + " info: made facing edge 0, " + std::to_string(across) +
                                 "x" + std::to_string(along) + ", turned to front " + std::to_string(f));
         }
-        fs::rename(saving, file);
+        os2::replaceFile(saving, file);
         out.lines.push_back("lot " + std::to_string(lotId) + " file " + file.filename().string() + " from " +
                             tmpl.filename().string());
         out.ok = true;
@@ -1220,7 +1221,7 @@ LotResult placeBinLot(const fs::path& folder, const PlacementWorld& world, const
             rewritePackage(file.string() + ".saving", {},
                            {{hoodtype::FAMI, bin.familyId}, {kTypeStr, bin.familyId}, {hoodtype::Wardrobe, bin.familyId},
                             {0x8C3CE95A, bin.familyId}});
-        fs::rename(file.string() + ".saving", file);
+        os2::replaceFile(file.string() + ".saving", file);
         const LotInfo info = newLotInfo(bin.base, out.lot, x, y, front, p.heightAt(front));
         TerrainChange change;
         change.heights = &ground.heights;
@@ -1364,7 +1365,7 @@ LotResult moveLotToBin(const fs::path& folder, uint32_t lotId, const fs::path& c
                                 std::to_string(dropped) + " relationships with other Sims dropped)");
         }
         rewritePackage(to.string() + ".saving", binAdds, {});
-        fs::rename(to.string() + ".saving", to);
+        os2::replaceFile(to.string() + ".saving", to);
         rewritePackage(hood.package, hoodAdds, hoodDrops);
         if (fam && fs::exists(familyThumbnails(hood)))
             rewritePackage(familyThumbnails(hood), {}, {{kTypeFamilyThumb, famId}});

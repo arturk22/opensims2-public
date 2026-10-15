@@ -14,7 +14,11 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "render/camera.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
+#endif
 
 #include <algorithm>
 #include <chrono>

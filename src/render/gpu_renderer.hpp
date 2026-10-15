@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -32,7 +33,8 @@ struct FrameView {
 
 class GpuRenderer {
 public:
-    GpuRenderer(const std::filesystem::path& shaderFolder, int width, int height);
+    // Draws into `window` when given (the host keeps it across scenes), else opens its own.
+    GpuRenderer(const std::filesystem::path& shaderFolder, int width, int height, SDL_Window* window = nullptr);
     ~GpuRenderer();
     GpuRenderer(const GpuRenderer&) = delete;
     GpuRenderer& operator=(const GpuRenderer&) = delete;
@@ -120,6 +122,11 @@ public:
     // A real UI image, in window pixels from the top left.
     void setUiImage(const RgbaImage& image, float x, float y, float w, float h);
 
+    // The Mac renderer's UI overlay hook. Here the host composes the UI into setUiImage and
+    // offscreen captures never draw it, so the hook is only kept for code that saves and restores it.
+    using Overlay = std::function<void()>;
+    Overlay overlay() const { return overlay_; }
+    void setOverlay(Overlay overlay) { overlay_ = std::move(overlay); }
     // The window's background (the sky blue of the lot unless set).
     void setClearColor(simd_float4 color);
     SDL_Window* window() const;
@@ -137,6 +144,7 @@ private:
     struct Gpu;
 
     Gpu* gpu_ = nullptr;
+    Overlay overlay_;
 };
 
 // The name the shared app modules (VmObjectView, BuyMode) take the renderer by.
