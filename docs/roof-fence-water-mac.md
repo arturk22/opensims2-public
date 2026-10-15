@@ -151,6 +151,163 @@ tiles do atlas cortados onde as faces se cruzam). Comparado ao binário:
   abaixo de outro telhado). Portar isso é trocar o `lot_roof.cpp` inteiro:
   fica no `TODO.md`.
 
+### 1.5 O caminho do jogo, lido inteiro (rodada n13)
+
+Rodada n13 (2026-10-15), linha 13 do `docs/inventario-binario.md` §6. Modo:
+**Ghidra MCP** (só leitura) para o que o projeto tem como função, e
+**Ghidra headless** num clone APFS do projeto (`-readOnly`, nada salvo) para
+as funções sem definição (`nTSSG` em `0xc6…`/`0xc7…`/`0xec…`, as do tipo do
+mundo em `0x9c…`/`0x9d…`): o script cria a função só na memória e decompila,
+e um segundo script lista o assembly (o decompilador perde atribuições nas
+funções de textura; tudo abaixo que decide célula ou visibilidade foi lido no
+assembly). Os começos das funções vêm do `__eh_frame` (`dwarfdump`); as
+funções-folha sem FDE (`0xec6ce4..0xec7558`) foram dadas à mão.
+
+**Objeto do telhado (base, `FUN_019734cc`, no `+8` do tipo do mundo):**
+`+0x08/+0x0c` canto 0 (x, y), `+0x10` andar, `+0x14/+0x18` canto 1,
+`+0x20` tipo, `+0x24` com beiral, `+0x25` orientação, `+0x26` = x1 ≥ x0,
+`+0x27` = y1 ≥ y0, `+0x28` inclinação, `+0x30/+0x34` beiral (0,5).
+Orientação (ctor de cada tipo): duas águas (4), quatro águas (5) e meia água
+(1): `|Δy| ≤ |Δx|`; curta (3) e meia de quatro águas (2): `|Δx| < |Δy|`;
+mansarda (6): 0. Orientação 0 = as águas descem em x (cumeeira ao longo de y).
+
+**Limites** (`FUN_015aafb8` x mín., `015aaf40` y mín., `015ab0a8` x máx.,
+`015ab030` y máx.): o canto ± o beiral, menos do lado alto da meia água
+(tipo 1/0x12 com orientação 0, ou tipo 2 com orientação ≠ 0, no eixo x; os
+inversos no eixo y): sem beiral no lado mín. quando `+0x26`/`+0x27` = 0 e no
+lado máx. quando = 1. Grade: `2·tamanho + 1` pontos por eixo.
+
+**Grades** (`ComputeGridElevation`, slot `0x1c`; valores em entalhes):
+- duas águas e curta (`0x9d3c7c`, `0x9c5f20`): orientação 0 → `min(i, W−1−i)`
+  em todas as linhas; ≠ 0 → `min(j, H−1−j)`;
+- quatro águas (`0x9c642c`): `min(i, W−1−i, j, H−1−j)`;
+- mansarda (`0x9c6568`): o mesmo limitado a `k = max(1, min(min(W/2, H/2) − 1, 7))`;
+- meia água (`0x9d3ad8`, último argumento 1): `0,08 + i` (ou `W−1−i` quando
+  x1 < x0; no eixo y com y1 < y0);
+- meia de quatro águas (`0x9d0094`): `W' = 2·int(|Δx| + 1) + 1`,
+  `H' = 2·int(|Δy| + 1) + 1` (com beiral); o eixo cortado (x se orientação
+  ≠ 0) dobra para `2W' − 1`; a grade de quatro águas desse tamanho é copiada a
+  partir da coluna `W'` (lado alto em x mín., x1 < x0) ou da 0. Na grade real
+  (R pontos no eixo cortado): `min(R − 1 − c | c, distâncias no outro eixo)`.
+
+**Altura** (`GetElevation(x, y, margem)`, slot `0x28`, `FUN_009d2cf4`):
+`−FLT_MAX` fora dos limites encolhidos pela margem; senão o ponto da grade
+`(⌊2(x − xmín)⌋, ⌊2(y − ymín)⌋)` e o triângulo da célula pela paridade
+`(i + j) & 1` (par: diagonal (i,j)–(i+1,j+1)), interpolação baricêntrica das
+alturas `GetElevation(i, j)` (slot `0x54`, `0x9c6308`: base + s·g ± 0,42 + f(s)).
+`Contains` (slot `0x40`, `0x9cb4d4`): dentro dos limites e da grade.
+`IsInEaves` (`0x9c57e8`): com beiral, dentro, e fora do retângulo das paredes.
+`IsOnPeak` (slot `0x38`): o ponto mais próximo da grade tem g > 0 e g = máximo
+(`GetMaxElevation`, slot `0x3c`) → 3 (águas ±x) com orientação 0, `0xC` (±y)
+com ≠ 0; meia água: `0xC` se H ≤ W; mansarda (`0x9cc0cc`): `0x10` | 2 (i = k) |
+8 (j = k) | 1 (i = W−k−1) | 4 (j = H−k−1). `IsOnDiagonal` (slot `0x34`):
+duas águas/curta/meia água 0; quatro águas (`0x9d3728`, m = min(W/2, H/2)):
+i = j ≤ m → `0xA`, i > m e j = W−i−1 ≤ m → 9, j > m e i = H−j−1 → 6, ambos > m
+e W−i = H−j → 5; meia de quatro águas (`0x9d37d4`): o mesmo na grade dobrada
+(eixo dobrado = o menor, deslocado de `W'/2` quando x1 < x0).
+Máscaras de direção (`NormalType`, `0xc4e180`): x < −0,1 → 2, y < −0,1 → 8,
+x > 0,1 → 1, y > 0,1 → 4 (a normal "para cima" do triângulo, em entalhes).
+
+**Malha** (`cGableRoof::FillMeshBuilderData @ 0xc545d0`; os outros tipos
+`FUN_00c54f44`, chamado pelo `MakeTessellatedSolidRoof` de cada classe):
+três camadas de posições (−0,42, −0,5075, −0,67), 100 UVs
+(`AddTexCoordToMeshBuilder @ 0xc543c4`: índice k → u = t[k % 10],
+v = t[k / 10], t = 0, ,1992, ,1992, ,3984, ,3984, ,5977, ,5977, ,7969, ,7969, ,9961),
+normais: duas águas 0..3 = as duas águas (−x, +x ou −y, +y conforme a
+orientação) e o avesso delas, 4..7 = −x, −y, +x, +y; demais tipos 0..3 =
+−y, +y, −x, +x (a 45°), 4..7 o avesso, 8..11 = −x, −y, +x, +y. Subconjuntos:
+`subset0` = `ConnectHeightField(0, 0)`, `subsetlower` = `(2n, 2)` nas duas
+águas, `(2n, 4)` nos outros, `subsetroofupperstrip` = `DrawOuterStrips(n, 4|8, 0)`,
+`subsetroofstrip` = `(n, 4|8, n)`. Materiais (`MakeTessellatedSolidRoof`,
+`SetRoofPatternProduct @ 0x6bdefc`): `RoofTop` → subset0, `RoofUnder` →
+lower, **`RoofEdges` → faixa de cima** (camadas 1–2, 0,0875) e **`RoofTrim` →
+faixa de baixo** (camadas 2–3, 0,1625); `RoofEdges` recebe `textureedges` e
+`RoofTrim` `texturetrim` (membros `+0x60`/`+0x64` do produto lidos no
+`ReadProperties @ 0x84fc90`; a ordem dos getters `0xdc`/`0xe0` é inferida).
+
+**`ConnectHeightField`** (slot `0x3c`; duas águas `0xc7a188`, quatro águas
+`0xc7bef8`, mansarda `0xc7db54`, meia água `0xc7e908`, meia de quatro águas
+`0xc804dc`, curta `0xc821e4` com as classes de duas águas): para cada célula
+(i, j) de meio tile, em lote x = xmín + i/2, y = ymín + j/2, paridade
+`(int(2x) + int(2y)) & 1`:
+- par: 1.º triângulo (i,j), (i+1,j+1), (i,j+1) (centro x+1/6, y+1/3);
+  2.º (i,j), (i+1,j), (i+1,j+1) (centro x+1/3, y+1/6);
+- ímpar: 1.º (i,j), (i+1,j), (i,j+1) (x+1/6, y+1/6); 2.º (i+1,j), (i+1,j+1),
+  (i,j+1) (x+1/3, y+1/3).
+Cada um: escondido se `IsTriangleCenterLessThanAnyOtherRoofTriangleCenter`;
+senão `SetVertexProperties` (`0xc689cc`) com a `NormalType` da normal do
+triângulo, visível se ela devolve 1; o triângulo recebe as propriedades dos 3
+vértices e a contagem de vértices compartilhados do **outro** triângulo da
+mesma célula (0 se ele foi escondido). Normal do vértice: duas águas = base +
+(i ≥ W/2 com orientação 0, j ≥ H/2 com ≠ 0); outros = base + (x > 0,1 → 3,
+x < −0,1 → 2, y > 0,1 → 1, senão 0) (`0xc4f7f8`). O avesso usa a mesma
+visibilidade (o teste é sempre com o último argumento 0) e a ordem inversa.
+
+**Esconder sob outro telhado** (`IsTriangleCenterLess… @ 0xc63558`, todo no
+assembly): se o próprio telhado não cobre o centro (`IsRoofAtLocation`),
+visível. `e` = a altura do próprio no centro (`GetSampledElevationByRoofID`,
+margem 0,5 para telhados de andar acima do ponto); "estrito" = último
+argumento 0 e a inclinação global do `cWorldRoof` (`+0x40`) = 0,5. Para cada
+outro telhado dos andares L−1..L+2 (menos cone, cúpula, octogonal, pagodes e
+estufa, máscara `0x470380`): `eo` = a altura dele no centro; se ele é diagonal
+ou de outra inclinação: pula se o centro está no beiral dele, senão
+`eo −= s` (2·s com o último argumento ≠ 0); se é da mesma inclinação e
+`eo > e + 0,01` e ele é de duas águas/curta/meia água, do mesmo andar e o
+centro está no beiral dele: só segue se o próprio é 4/3/1/0xF com a mesma
+orientação e o centro está fora das paredes do próprio do lado em que os dois
+têm a mesma parede (orientação 0: y < ymín ou y > ymáx com o mesmo valor nos
+dois; ≠ 0 o mesmo em x). Esconde se `eo > e + 0,01` e (estrito, ou mesmo
+andar, ou `eo > e + s`).
+
+**Telhado com telhado** (`SetVertexProperties @ 0xc689cc`,
+`FUN_00c63b04`, `SetVertexPropertiesEx @ 0xc67ca8`): por vértice, os bits
+pico (0), diagonal (1) e compartilhado (2), o conjunto de telhados que passam
+pelo vértice na mesma altura (`≈` de 32 ULPs, `FUN_014cbe6c`) e, por telhado,
+os bits e as máscaras de pico (`+5`) e diagonal (`+4`). `FUN_00c63b04`
+decide quem perde: se os 3 vértices são compartilhados, para cada outro
+telhado que passa pelos 3: sem pico/diagonal nele → guarda o menor id; com →
+as contagens de diagonal/pico (`TriangleFlagCount`) atualizam um mínimo; o
+telhado sai do conjunto dos vértices (o bit 2 cai onde só sobra o próprio).
+Senão, sai do conjunto todo telhado em que algum vértice é pico/diagonal na
+direção da normal do triângulo. Se sobram ≥ 2 vértices compartilhados e algum
+telhado saiu, e nenhum passa por todos eles, o bit 2 fica só nos vértices do
+primeiro telhado do conjunto. Escondido: com um telhado "liso" nos 3
+vértices, o de id maior perde (o menor só se o centro está abaixo do outro);
+senão uma tabela das contagens de pico/diagonal do próprio contra o mínimo
+achado (no código, `roofMeetsRoofHidden`). Se o conjunto mudou, o
+`SetVertexPropertiesEx` refaz os bits: compartilhado quando outro telhado
+passa pelo vértice na mesma altura e não é pico/diagonal na direção da normal.
+
+**Célula do atlas** (classes `c{Even,Odd}Triangle{First,Second}{Gable,Hipped,
+Mansard,HalfGable,HalfHipped}`, `0xec1a50..0xec9600`; curta usa as de duas
+águas): no topo, `ComputeBaseTextureIndex` e depois os 3 índices por
+`TexCoordIndicesForNormal{NegX,PosX,NegY,PosY}` pela normal (|x|, |y| ≤ 0,1 →
+o mesmo índice 3 vezes: 60 nas pares, a base nas ímpares). Base das duas
+águas (e meia água): 60, ou 4 sem espelho com algum vértice de pico; com 1 ou
+2 vértices compartilhados, `ComputeTextureIndex{PosX,NegX,PosY,NegY}` pela
+normal troca para 0x14/0x1a (um vértice), 6/0x2e (dois, ou o irmão com
+dois) ou 0x16/0x2a (a diagonal da célula compartilhada) com o espelho de cada
+caso (tabela `kCellRules` no código; o par 1/2 de cada número é "algum vértice
+de pico"). Quatro águas, mansarda e meia de quatro águas: com 1 ou 2 vértices
+de diagonal, `UpdateTextureMirrorFor{One,Two}DiagonalVertex` (bases 2/0x42,
+0x28/0x2a, 0x18/0x56, 0x3e/0x40, 8, 0x2c, 0x52, 0 conforme normal, vértices e
+irmão), senão a das duas águas. Mapeamento dos cantos (sem espelho; o espelho
+troca u): par 1.º −x (c11, c00, c01), +x (c00, c11, c10), −y (c01, c10, c00),
++y (c10, c01, c11); par 2.º −x (c11, c10, c00), +x (c00, c01, c11), −y (c01,
+c11, c10), +y (c10, c00, c01); ímpar 1.º −x (c11, c10, c01), +x (c00, c01,
+c10), −y (c01, c11, c00), +y (c10, c00, c11); ímpar 2.º −x (c10, c00, c01),
++x (c01, c11, c10), −y (c11, c10, c00), +y (c00, c01, c11), com
+c00 = base, c10 = base+1, c01 = base+10, c11 = base+11. Avesso: UVs fixos por
+classe (par 1.º 0/9/90, par 2.º 9/99/90, ímpar 1.º 0/99/90, ímpar 2.º 0/9/99:
+a textura de baixo inteira em cada triângulo).
+
+**Faixas** (`DrawOuterStrips @ 0xc66504`): um quad por meio tile em cada uma
+das 4 bordas da grade, entre a camada de cima e a de baixo da faixa, escondido
+se o meio do segmento está abaixo de outro telhado (o mesmo teste); normal −x,
+−y, +x, +y; UVs 0, 1, 9, 8 (v = 0). Mansarda: também o anel em volta do topo
+plano (linhas/colunas 7 e n−8), escondido também se
+`IsTriangleCenterSupportedByOtherRoof` (`0xc660d0`).
+
 ## 2. Cercas (`nTSSG::cFenceGeometryNode`)
 
 Os métodos do `cFenceGeometryNode` no BV estão quase todos sem nome ou com

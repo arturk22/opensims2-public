@@ -2238,6 +2238,27 @@ lotes de N001–N003, 32 dos 275 telhados seriam recusados hoje pelo 5: todos
 têm janelas (e uma escada e uma cadeira) no nível do telhado, embaixo da
 beirada, postas depois do telhado (o teste só roda ao pôr o telhado).
 
+**O pré-teste (rodada n13, Ghidra MCP):** o membro `+0x6c` da ferramenta é o
+`cIWorldRoof` do mundo (vtable secundária do `cWorldRoof` em `0x281b948`,
+`this − 8`). No `DoesTileHasObjectIntersectingRoof`, no **primeiro** objeto do
+tile que passa no filtro (od 0x22 = 0, od 42 ≥ 0) a função decide e retorna:
+`IsAnyRoofAtLocation(centro, 1)` (slot `0x7c` → `0xc25398`: algum telhado
+**já posto** no andar do centro o cobre, `Contains` com beiral) e
+`DoesLocationHasClearanceHeight(3, centro, 1)` (slot `0xa0` → `0xc2435c`)
+liberam o tile; senão `0x7F` se o telhado novo no centro
+(`GetElevation(x, y, 0)`) < piso + 3. `DoesLocationHasClearanceHeight(h, loc)`:
+livre se nenhum telhado cobre `loc` nem o ponto um andar abaixo; senão `m` =
+o máximo (desde 0) das alturas dos telhados dos andares L−1..L+2
+(`AddRoofIdToArray(…, true)`), cada uma por
+`GetSampledElevationByRoofIDForClearance` (`0xc236b4`: `GetElevation(x, y,
+margem)`, margem 0,5 para telhados de andar acima de L; tipo 0xF = piso +
+0,2), e livre se `m ≥ piso + h` ou `m ≤ piso + 0,1`. O telhado sendo posto não
+está no mundo nessa hora (o `RoofIntersectWithObjects` o cria à parte). No
+app (`BuildEditor::roofError`) o pré-teste usa os outros telhados do lote; a
+contagem dos telhados do jogo aceitos (`s2pkg lot-save <lote> <saída>
+--check-build 1`) testa cada telhado salvo com o lote como está, ele próprio
+incluído entre os telhados já postos.
+
 `FUN_001648ac` (tile de cima de piscina) também dá o `0x46` das paredes (os
 dois lados sobre piscina) e o teste 9 do `FUN_009e9550`.
 
