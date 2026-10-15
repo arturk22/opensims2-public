@@ -155,6 +155,15 @@ places, so a derived index cannot be kept exact without a setter everywhere; the
 5% of an autonomy run each. The quadtree still misses when a walking Sim's cost rectangle moves
 (the summed-area tables are rebuilt, ~6% of the run).
 
+## Neighborhood hover and click (playtest hood-slow)
+
+The hover popup's lot price (`hood::lotFileInfo`, which loads and decompresses the whole lot
+package) was computed on every UI relayout, and the neighborhood UI is laid out again on each
+mouse move (up to three times: the hover, the cursor and the frame). `HoodUi::lotPrice` caches
+it per lot (cleared on `refresh()`). Per mouse move over N001 lot 11, headless
+(`OS2_PERF=1 opensims2 --hood N001 --hover x,y ...`, which now also times one relayout per
+step): `mouseMoved` 5.5-6.5 ms -> 0.7 ms, relayout 5.5-6 ms -> 0.75 ms.
+
 ## What is left (not done)
 
 - The scans of all objects per tick (`followContainers`, `tickOverlayEvents`,

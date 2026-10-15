@@ -150,13 +150,26 @@ const HoodUi::LotValues& HoodUi::lotValues(const HoodLot& lot) {
     return values_[lot.id] = v;
 }
 
+std::optional<int64_t> HoodUi::lotPrice(uint32_t lot) {
+    if (auto it = prices_.find(lot); it != prices_.end())
+        return it->second;
+    const hood::Lot* l = view_->neighborhood().lot(lot);
+    return prices_[lot] = l ? std::optional<int64_t>(hood::lotFileInfo(*l).price) : std::nullopt;
+}
+
 int64_t HoodUi::netWorth(const HoodLot& lot) {
-    // cTSFamilyManager::GetFamilyNetWorth: funds + the lot's price.
-    return hood::netWorth(view_->neighborhood(), lot.family);
+    // cTSFamilyManager::GetFamilyNetWorth: funds + the lot's price
+    // (hood::netWorth, with the price cached).
+    const hood::Neighborhood& h = view_->neighborhood();
+    const hood::Family* f = h.family(lot.family);
+    if (!f)
+        return 0;
+    return f->record.funds + (f->record.lot ? lotPrice(uint32_t(f->record.lot)).value_or(0) : 0);
 }
 
 void HoodUi::refresh() {
     values_.clear();
+    prices_.clear();
     pictures_.clear();
     hover_ = dialog_ = nullptr;
     bins_->setNeighborhood(&view_->neighborhood());
@@ -463,8 +476,7 @@ UiScreen HoodUi::screen(int width, int height) {
             const RgbaImage* pic = lotPicture(lot);
             const LotValues v = lotValues(lot); // the lot's SIMI
             // The lot's price (GetLotFileInfo: lot, objects and architecture).
-            const hood::Lot* hl = view_->neighborhood().lot(lot.id);
-            const int64_t price = hl ? hood::lotFileInfo(*hl).price : v.lot;
+            const int64_t price = lotPrice(lot.id).value_or(v.lot);
             if (panel == 0xA000) {
                 caption(0xA001, lot.familyName);
                 caption(0xA002, lot.name);
@@ -608,8 +620,8 @@ UiScreen HoodUi::screen(int width, int height) {
             if (auto* e = child(0xD003))
                 hk.captions[e] = lot.name;
             if (auto* e = child(0xD004)) { // an empty lot's value
-                if (const hood::Lot* l = view_->neighborhood().lot(lot.id))
-                    hk.captions[e] = formatMoney(hood::lotFileInfo(*l).price); // what moving in costs
+                if (const auto price = lotPrice(lot.id))
+                    hk.captions[e] = formatMoney(*price); // what moving in costs
                 else
                     hk.hide.insert(e);
             }

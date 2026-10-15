@@ -145,7 +145,12 @@ private:
     const LotValues& lotValues(const HoodLot& lot);
     // The family's net worth ("Patrimônio"): its funds, the lot and its objects.
     int64_t netWorth(const HoodLot& lot);
+    // The lot's price (hood::lotFileInfo, which parses the whole lot file:
+    // cached, as the hover popup and the dialog are laid out again on every
+    // mouse move; nullopt without a lot in the neighborhood).
+    std::optional<int64_t> lotPrice(uint32_t lot);
     std::map<uint32_t, LotValues> values_; // by lot
+    std::map<uint32_t, std::optional<int64_t>> prices_; // by lot
 
     const HoodView* view_;
     std::unique_ptr<HoodBins> bins_;

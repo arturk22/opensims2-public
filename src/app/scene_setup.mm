@@ -198,13 +198,25 @@ using namespace os2app;
             gStepsUsed = k + 1;
             if (steps[k].kind == os2::FlowStep::Kind::Click)
             {
+                perfLap("hood: before click");
                 gHood->mouseDown(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
                 gHood->mouseUp(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+                perfLap("hood: click");
+            }
+            if (steps[k].kind == os2::FlowStep::Kind::Hover) {
+                perfLap("hood: before hover");
+                gHood->mouseMoved(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+                perfLap("hood: hover");
+            }
+            if (perfOn()) { // one frame's relayout
+                gHood->ui().screen(int(w), int(h));
+                perfLap("hood: relayout");
             }
         }
         if (gPendingScene)
             return;
         [self captureScene:*shot];
+        perfLap("hood: frame after the steps");
         std::exit(0);
     }
 }
