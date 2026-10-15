@@ -20,8 +20,10 @@
 
 #include "formats/binreader.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
-#include <set>
+#include <vector>
 
 namespace os2::vm {
 
@@ -38,27 +40,46 @@ std::optional<ObjectId> nextVisibleObject(VM& vm, const Object& me, ObjectId cur
     const float step = diagonal ? 0.5f : 1.0f;
     const TilePos from = VM::tileOf(me);
     const int16_t myRoom = vm.world ? vm.world->room(from) : 0;
-    std::set<ObjectId> seen;
+    // The cone's tiles (one can come twice), marked on a map of the box
+    // round them.
+    std::vector<std::array<int, 2>> cone;
+    int x0 = from.x, y0 = from.y, x1 = from.x, y1 = from.y;
     for (int d = 0; d < rows; ++d)
         for (int l = std::max(-rows, -(2 * d + 1)); l <= std::min(rows, 2 * d + 1); ++l) {
             if (l * l + d * d > bound)
                 continue;
-            const TilePos t{int(std::floor(float(from.x) + 0.5f + float(l * rx + d * fx) * step)),
-                            int(std::floor(float(from.y) + 0.5f + float(l * ry + d * fy) * step)), from.level};
-            for (ObjectId id : vm.objectsOnTile(t)) {
-                const Object* x = vm.object(id);
-                if (!x || id == me.id || seen.count(id) || vm.dyingObjects.contains(id))
-                    continue;
-                if (x->definition && x->definition->objectType() == 5)
-                    continue;
-                if (vm.world && (vm.world->room(t) != myRoom || !vm.world->lineOfSight(from, t)))
-                    continue;
-                seen.insert(id);
-            }
+            const int tx = int(std::floor(float(from.x) + 0.5f + float(l * rx + d * fx) * step));
+            const int ty = int(std::floor(float(from.y) + 0.5f + float(l * ry + d * fy) * step));
+            cone.push_back({tx, ty});
+            x0 = std::min(x0, tx), y0 = std::min(y0, ty), x1 = std::max(x1, tx), y1 = std::max(y1, ty);
         }
-    if (current != 0 && !seen.count(current))
+    const int w = x1 - x0 + 1, h = y1 - y0 + 1;
+    std::vector<uint8_t> inCone(size_t(w) * size_t(h), 0);
+    for (const auto& [tx, ty] : cone)
+        inCone[size_t(tx - x0) * size_t(h) + size_t(ty - y0)] = 1;
+    // The objects on those tiles (as VM::objectsOnTile has them: in the
+    // world, not in a slot), in one walk over the objects by ID instead of
+    // one per tile: the same objects, whatever the order the tiles come in.
+    std::vector<ObjectId> seen;
+    for (const Object* x : vm.objectTable()) {
+        if (!x || !x->position.inWorld() || x->data[objdata::ContainerId] != 0)
+            continue;
+        const TilePos t = VM::tileOf(*x);
+        if (t.level != from.level || t.x < x0 || t.x > x1 || t.y < y0 || t.y > y1 ||
+            !inCone[size_t(t.x - x0) * size_t(h) + size_t(t.y - y0)])
+            continue;
+        const ObjectId id = x->id;
+        if (id == me.id || vm.dyingObjects.contains(id))
+            continue;
+        if (x->definition && x->definition->objectType() == 5)
+            continue;
+        if (vm.world && (vm.world->room(t) != myRoom || !vm.world->lineOfSight(from, t)))
+            continue;
+        seen.push_back(id);
+    }
+    if (current != 0 && !std::binary_search(seen.begin(), seen.end(), current))
         return std::nullopt;
-    auto next = seen.upper_bound(current);
+    auto next = std::upper_bound(seen.begin(), seen.end(), current);
     return next == seen.end() ? std::nullopt : std::optional<ObjectId>(*next);
 }
 
