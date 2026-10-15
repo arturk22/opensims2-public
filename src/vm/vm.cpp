@@ -816,6 +816,10 @@ Object& VM::instantiatePart(uint32_t group, uint16_t definitionInstance, ObjectI
     o.arrays.resize(std::min<size_t>(uint16_t(def->field(0x40 + 2 * 0x3B)), kMaxObjectArrays));
     o.definition = def;
     o.definitionInstance = definitionInstance;
+    if (const uint32_t g = o.guid()) { // objectsOfGuid
+        auto& list = byGuid_[g];
+        list.insert(std::upper_bound(list.begin(), list.end(), o.id), o.id);
+    }
     // Engine-maintained, as the lots' saved states show (600 of the 665 objects
     // of N001_Lot11; the rest are multi-tile parts and leftovers): the
     // number of container slots (type 0) of the object's SLOT.
@@ -916,6 +920,23 @@ void VM::checkContained() const {
             std::fprintf(stderr, "opensims2: object %d has timers or is a destination but is not listed\n", o->id);
             std::abort();
         }
+    size_t byGuid = 0;
+    for (const auto& [g, list] : byGuid_)
+        byGuid += list.size();
+    size_t withGuid = 0;
+    for (const Object* o : byId_)
+        if (o && o->guid()) {
+            ++withGuid;
+            const auto it = byGuid_.find(o->guid());
+            if (it == byGuid_.end() || !std::binary_search(it->second.begin(), it->second.end(), o->id)) {
+                std::fprintf(stderr, "opensims2: object %d is not listed under its GUID\n", o->id);
+                std::abort();
+            }
+        }
+    if (byGuid != withGuid) {
+        std::fprintf(stderr, "opensims2: %zu objects listed by GUID, %zu with a GUID\n", byGuid, withGuid);
+        std::abort();
+    }
 }
 
 uint16_t VM::functionTree(const Object& o, size_t function) {

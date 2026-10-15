@@ -467,6 +467,7 @@ Exit setToNext(Context& c) {
     }
 
     std::function<bool(const Object&)> matches;
+    uint32_t ofGuid = 0; // types 4 and 18
     switch (type) {
     case 0: matches = [](const Object&) { return true; }; break;                   // object
     case 1: matches = [](const Object& x) { return x.person.has_value(); }; break;  // person
@@ -478,6 +479,7 @@ Exit setToNext(Context& c) {
         if (!c.vm.code().definitionByGuid(g))
             return none();
         matches = [g](const Object& x) { return x.guid() == g; };
+        ofGuid = g;
         break;
     }
     case 6:                                                                         // category == param 0
@@ -538,9 +540,11 @@ Exit setToNext(Context& c) {
     // dartboard there between people, ends the search: false); 0 starts
     // at the first. Their order: Object::appendOrder.
     if (type == 1 || type == 4 || type == 18) {
+        // The candidates by ID, as a walk over every object would meet them:
+        // the people, or the objects of the GUID (both kept by the VM).
         std::vector<const Object*> v;
-        for (const Object* x : c.vm.objectTable())
-            if (x && matches(*x))
+        for (const ObjectId id : type == 1 ? c.vm.people() : c.vm.objectsOfGuid(ofGuid))
+            if (const Object* x = c.vm.object(id); x && matches(*x))
                 v.push_back(x);
         std::sort(v.begin(), v.end(), [](const Object* a, const Object* b) { return a->appendOrder < b->appendOrder; });
         size_t k = 0;

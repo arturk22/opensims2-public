@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -1092,8 +1093,14 @@ public:
 
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) {
-        if (auto it = objects_.find(id); it != objects_.end())
+        if (auto it = objects_.find(id); it != objects_.end()) {
             objectList_.erase(it->second.listOrder);
+            if (const uint32_t g = it->second.guid(); g)
+                if (auto b = byGuid_.find(g); b != byGuid_.end())
+                    if (auto at = std::lower_bound(b->second.begin(), b->second.end(), id);
+                        at != b->second.end() && *at == id)
+                        b->second.erase(at);
+        }
         objects_.erase(id);
         if (size_t(uint16_t(id)) < byId_.size())
             byId_[uint16_t(id)] = nullptr;
@@ -1131,6 +1138,15 @@ public:
             peopleTick_ = ticks, peopleGeneration_ = tableGeneration_;
         }
         return people_;
+    }
+    // The objects of a definition's GUID (Object::guid), in ID order: an
+    // object's definition is set as it is made (instantiatePart) and never
+    // changes; removeObject takes it out. Set to Next 4 and 18.
+    const std::vector<ObjectId>& objectsOfGuid(uint32_t guid) const {
+        checkContained();
+        static const std::vector<ObjectId> none;
+        const auto it = byGuid_.find(guid);
+        return it == byGuid_.end() ? none : it->second;
     }
     // `for (const auto& [id, o] : vm.eachObject())`: the same walk as over
     // objects() (ID order, an object made during the loop is met when its ID
@@ -1544,7 +1560,7 @@ private:
 
 public:
     // OS2_CHECK_CONTAINED=1: aborts unless the lists hold every object in a
-    // container, with timers, made as a destination.
+    // container, with timers, made as a destination, by GUID.
     void checkContained() const;
 
 private:
@@ -1553,6 +1569,7 @@ private:
     int64_t listFront_ = 0;                  // the next made object's listOrder is below this
     mutable std::vector<ObjectId> people_;
     mutable uint64_t peopleTick_ = ~uint64_t(0), peopleGeneration_ = ~uint64_t(0);
+    std::unordered_map<uint32_t, std::vector<ObjectId>> byGuid_;
     std::unordered_map<uint16_t, Primitive> primitives_;
 
     int initDepth_ = 0;
