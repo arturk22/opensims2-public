@@ -159,6 +159,18 @@ Ainda inferido ou sem portar:
 - o nível subtraído do andar em `AddRoofIdToArray` (`vtable 0x140` do
   mundo) tomado como 0 (os telhados dos andares L−1..L+2).
 
+Provas (antes = porte do OpenTS2, depois = caminho do jogo; capturas sem
+janela, `--lot … --zoom 2 --tilt 25`): `docs/screenshots/n13-telhado-duas-aguas-e-encontros.jpg`
+(N001_Lot68, N003_Lot128), `n13-telhado-quatro-aguas-N001_Lot11.jpg`
+(N001_Lot82, N001_Lot11), `n13-telhado-mansarda-N002_Lot10.jpg`,
+`n13-telhado-meia-agua-N002_Lot31.jpg` (e as curtas do N001_Lot59) e
+`n13-telhado-lotes-inteiros.jpg`. Por cima a imagem muda pouco (o OpenTS2
+imitava o resultado); as diferenças são as faixas da borda (a de cima com
+`textureedges`), o topo da mansarda, as células nos encontros e as normais.
+O teste `testGameRoofs` (`tests/test_formats.cpp`) confere a triangulação,
+as alturas, as células da cumeeira (4) e do resto (60), as do espigão e os
+triângulos escondidos entre duas águas que se cruzam.
+
 Efeitos que vêm do binário e parecem estranhos (mantidos): o triângulo
 plano usa o índice 60 três vezes nas células pares e a base nas ímpares (o
 topo da mansarda sai xadrez quando a base é 4); a meia água tem sempre a
