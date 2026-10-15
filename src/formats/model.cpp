@@ -482,6 +482,11 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     if (blended && !simHair && out.blend != StandardMaterial::Blend::Premultiplied)
         out.depthWrite = false;
     out.layer = stdLayer * 8 + (blended ? (simHair ? 3 : 7) : 0);
+    // The terrain's paints are passes of the terrain's own shader
+    // (TerrainCanvasShader / TerrainPaint), drawn with the terrain before the
+    // objects: the objects' blended ground shadow planes (GUOB) go over them.
+    if (type == "Terrain" && blended)
+        out.layer = stdLayer * 8 + 6;
     // The water layer (5) in stdMatLayer units, after the layers below it
     // and their blended parts (the terrain paints, layer 0 + 7): drawn
     // before them, without writing depth, the water of N001_Lot82's moat
