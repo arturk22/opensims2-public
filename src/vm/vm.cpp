@@ -1083,6 +1083,7 @@ void VM::resetObject(ObjectId id, Thread& t) {
         syncQueueData(*o);
     }
     o->route.reset();
+    o->outerRoutes.clear();
     const size_t done = t.instructions;
     t = start(id, main);
     t.instructions = done;

@@ -668,6 +668,11 @@ struct Object {
             bool mirror = false;
         } climb;
         bool endTurned = false; // the turn to the final facing was added
+        // Kept under a route a callback tree started (Object::outerRoutes):
+        // where the walker stood then, and whether it is current again.
+        float keptX = 0, keptY = 0;
+        int keptLevel = 0;
+        bool resumed = false;
         // The locomotion along the floor (routing_loco.cpp locoStep, after
         // cLocomotable::FollowOneStep, docs/routing-mac.md §6.1): a start
         // ("turnAndGo", or a step on a short way), the walk cycle, a stop
@@ -753,6 +758,13 @@ struct Object {
         uint16_t node = 0;
     };
     std::optional<Route> route;
+    // The routes of outer routing instructions while a tree they called routes
+    // again (cTSRoutingObjectAggregate's route stack, +0x14..+0x24; ProcessGoto
+    // works on its top, vtable 0x68): a goal check tree that refreshes a
+    // social's way runs "Route - Dynamic w/Lead in" again from inside the
+    // walk's goal check. When the inner route ends the outer one is current
+    // again (routing_walk.cpp). Not saved (a save resumes the inner one).
+    std::vector<Route> outerRoutes;
     // The walker's "Routing - Eye Attractor" (routing_walk.cpp): the object the
     // along route tree's parameter 5 names, kept on the way ahead.
     ObjectId eyeAttractor = 0;

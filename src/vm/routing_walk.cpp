@@ -217,6 +217,44 @@ bool runWalkTree(Context& c, const std::string& name, std::array<int16_t, 4> arg
     return true;
 }
 
+// The route stack (Object::outerRoutes): a route belongs to the routing
+// instruction at its depth while that frame is still there on the node.
+bool routeFrameLive(const Thread& t, const Object::Route& r) {
+    return r.depth >= 1 && r.depth <= t.stack.size() && t.stack[r.depth - 1].behavior == r.tree &&
+           t.stack[r.depth - 1].pc == r.node;
+}
+
+// A routing instruction starts a route of its own: one of an outer
+// instruction (a tree it called routes again: a goal check refreshing the
+// way, "Route - Refresh route") is kept under it, not dropped. Before, the
+// inner route replaced it, and back from the goal check the outer
+// instruction found no route and took the tree's false for its pre-route's:
+// a social refreshed in its goal check failed with 11 "pre-route failed"
+// (its caller, "Route to Person X", reads 13 as "close enough, lead in").
+void keepOuterRoute(Context& c, Object& me, size_t depth) {
+    if (me.route && me.route->depth < depth && routeFrameLive(c.thread, *me.route)) {
+        Object::Route& r = *me.route;
+        r.keptX = me.position.x, r.keptY = me.position.y, r.keptLevel = me.position.level;
+        me.outerRoutes.push_back(std::move(r));
+    }
+    me.route.reset();
+}
+
+// The route ends: the outer one whose instruction is still waiting on the
+// stack is current again.
+void endRoute(Context& c, Object& me) {
+    me.route.reset();
+    while (!me.outerRoutes.empty()) {
+        Object::Route r = std::move(me.outerRoutes.back());
+        me.outerRoutes.pop_back();
+        if (routeFrameLive(c.thread, r)) {
+            r.resumed = true;
+            me.route = std::move(r);
+            return;
+        }
+    }
+}
+
 // Moves a walking object along its route by one tick's worth. A wait or
 // climb phase takes whole ticks: the walker is put at its anchor when it
 // starts and stays there while it lasts. A Sim in the way blocks the walk:
@@ -244,6 +282,24 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         }
         if (which == 1 && startAlongRoute(c, me, r))
             return Step::Call;
+    }
+    if (std::exchange(r.resumed, false) &&
+        (std::hypot(me.position.x - r.keptX, me.position.y - r.keptY) > 1e-3f || me.position.level != r.keptLevel)) {
+        // The route under the one a callback tree walked (keepOuterRoute) and
+        // its tree let it go on: planned again from where the walker stands
+        // now, as DoInitial (inferred: what the binary's outer route does
+        // with a path its locomotor no longer follows is not read).
+        r.loco.kind = Object::Route::Loco::None;
+        r.loco.moving = false;
+        r.loco.onCurve = false;
+        r.blocker = 0, r.blockedTicks = 0;
+        Object::Route next = r;
+        RouteFail w;
+        if (!planRoute(vm, me, next, w)) {
+            why = w;
+            return Step::Failed;
+        }
+        r.points = std::move(next.points), r.plans = next.plans;
     }
     if (r.inPortal) {
         // Back from the portal tree (DoWaitingForPortal): the walk goes on
@@ -714,7 +770,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         return Step::Walking;
     }
     setDirection(me, r.facing);
-    me.route.reset();
+    endRoute(c, me);
     return Step::Arrived;
 }
 
@@ -772,7 +828,7 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees, b
                 std::fabs(x.position.x - me.position.x) < 4.6f && std::fabs(x.position.y - me.position.y) < 2.6f && VM::blocksRouting(x))
                 std::fprintf(stderr, "  near: %d %s at (%.2f, %.2f) flags %X layers %X h %X p %X w %X%s%s\n", id, x.definition ? x.definition->fileName.c_str() : "?",
                              x.position.x, x.position.y, x.data[objdata::Flags], x.data[63], x.data[4], x.data[42], x.data[13], x.person ? " person" : "", VM::blocksRouting(x) ? " blocks" : "");
-    me.route.reset();
+    endRoute(c, me);
     if (why == RouteFail::Success)
         why = RouteFail::Unknown;
     c.frame.pendingRouteResult = int16_t(why);
@@ -843,7 +899,7 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         case Step::Failed: return failRoute(c, why, blocker, me.route ? me.route->failureTrees : failureTrees);
         }
     }
-    me.route.reset();
+    keepOuterRoute(c, me, depth);
     worldOf(c);
     if (c.frame.preRouteRan) // back from the pre-route tree
         if (const auto ran = std::exchange(c.thread.rerunResult, std::nullopt); ran && !*ran)

@@ -909,6 +909,44 @@ static void testPreRouteTree() {
     }
 }
 
+// A goal check tree that routes the walker again (a social's "Goal Check -
+// Update Dynamic Route?" -> "Route - Refresh route" -> "Route - Dynamic
+// w/Lead in" from inside the walk's goal check): the inner route runs with
+// the outer one kept under it (the route stack of cTSRoutingObjectAggregate),
+// and back from the tree its false fails the outer route with 13 "goal not
+// available". Before, the inner route replaced the outer one, and the outer
+// instruction took the tree's false for its pre-route's (11).
+static void testRouteInGoalCheck() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(12, 6);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    ObjectFunctions f;
+    f.functions.resize(0x28);
+    f.functions[0x27] = {0, 0x1011}; // the goal check of the Go To's code owner (the Sim's own tree here)
+    code.add(kGroup, 0x81, f);
+    constexpr uint8_t Global = 0x06;
+    // The goal check: the first time it routes again (to the same slot) and
+    // then says no; inside that route it says yes.
+    code.add(kGroup, 0x1011, tree({expr(Global, 10, 3, Lit, 1, go(1), E),     // global 10 += 1
+                                   expr(Global, 10, Eq, Lit, 1, go(2), T),    // the first time?
+                                   instr(0x1B, go(3), go(3), {0, 0, 0, 0xFE, 0, 0, 0x02}),
+                                   expr(Global, 11, Assign, Lit, 1, F, E)}, 4)); // global 11: back from the inner route
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {9.5f, 2.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {1.5f, 2.5f, 1};
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    for (int i = 0; i < 3000 && t.status == Thread::Status::Running; ++i)
+        vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result && vm.globals[11] == 1 && vm.globals[10] >= 2 &&
+              sim.position.x > 7 && sim.person && sim.person->data[62] == int16_t(RouteFail::GoalNotAvailable) &&
+              !sim.route && sim.outerRoutes.empty(),
+          "a goal check that routes again: the inner route walks, the outer one fails with 13 (not 11) after it");
+}
+
 // A Sim standing in a corridor is asked to move (MoveOutOfWay): a
 // destination object (GUID 0x7C4) is made on it, with a routing slot 0 in
 // the alcove a tile past it (an alcove right beside it was a way round it
@@ -1903,6 +1941,7 @@ int main() {
     testDoorWait();
     testDoorPortalTree();
     testPreRouteTree();
+    testRouteInGoalCheck();
     testMoveOutOfWay();
     testGoHere();
     testPoolRoom();
