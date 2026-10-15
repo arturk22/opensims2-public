@@ -985,6 +985,78 @@ Portas viram portais do roteamento (`cTSRouteManager::AddDoorPortal`, BV
 `0x4f1ea8`) e da luz (portais de `docs/lighting-mac.md` §5.4); não dividem
 salas (só partições dividem).
 
+#### 7.6.1 Porta segurada, auto-giro e paredes cortadas (issue 002, binário: Ghidra MCP, BV)
+
+**Auto-giro** (`cTSUserToolObject::TryPlace`, BV `0x213118`, passo 2): se
+`ShouldAutoRotate` (vtable `0x1f4`) e o od 59 (`0x3b`) do objeto ≠ `0x7D`
+(sauna, só EP), roda `AutoRotateObjectToMatchWalls` (BV `0x209e14`) a cada
+`TryPlace`, ou seja, a cada movimento do mouse para outro tile:
+- `cTSObject::ShouldAutoRotate` (BV `0xafec08`): as wall placement flags
+  (vtable `0x25c` = od 13) `& 0x5F` ≠ 0 (exige parede na frente, direita,
+  trás, esquerda ou nas diagonais). `cEdithMTObject::ShouldAutoRotate` (BV
+  `0xaf062c`): o líder ou qualquer parte.
+- `AutoRotateObjectToMatchWalls`: no local da ferramenta (`this+0x7c`), testa
+  a direção atual e depois +2, +4, +6 (90° cada, volta em 0..7) com
+  `FUN_009eb96c` (`TSObjectIsInLockedArea` e
+  `TSObjectCanSetPositionAndOrientation`; sem procurar slot). A primeira que
+  passa vira a direção do objeto (vtable `0x2b4`). Nenhuma passando: troca
+  pelo objeto do "diagonal selector" (`SwapDiagonalObject`) e tenta mais 4;
+  ainda nada, troca de volta e a direção fica a mesma.
+- Girar com `,`/`.` (`TryTurn` → `TryOrient`) não passa por aqui; o próximo
+  movimento do mouse sim.
+
+**O mouse acha o chão, não a parede.** O vtable `0x80` da ferramenta
+(`cTSUserToolGroundBased::OnAnyMouseEvent`, BV `0x9b6e08`) é, para a
+ferramenta de objeto, `cTSUserToolObject::GroundAtGameWindowPoint` (BV
+`0x2055d0`, sem nome no Ghidra; o vtable de `cTSUserToolObject` começa em
+`0x27ab328`): o chão do andar (`cTSUserToolBase::GroundAtGameWindowPoint`),
+e para objetos de piscina (od 42 & `0x800`) e de telhado um ajuste. Não usa
+`GroundOrWallIntersectionAtGameWindowPoint` (BV `0x1f9c90`: o mais perto
+entre o chão e `NearestWallIntersection`, só nas outras ferramentas).
+`SnapToValidLocation` (vtable `0x168`, BV `0x203ec8`) põe no centro do tile.
+Então, com a parede cortada, o tile sob o mouse é o de dentro ou o de fora
+da parede, e é o auto-giro que encosta a porta nela (H3 da issue: o
+comportamento do app já era o do jogo).
+
+**O que some com a parede cortada** (`nTSSG::cWallManager::
+HideShowAttachedObjects`, BV `0x6c2ee4`): para cada objeto preso à parede
+(`cTSObject` vtable `0x26c`, BV `0xaf8458`: a parede está entre as que as
+wall placement flags pedem, vtable `0x274`/`0x284`), esconde (nó de cena,
+vtable `0x180`) quando:
+- `cTSObject::HideWhenWallDown` (BV `0xaff050`): tipo do OBJD 9 (janela) **ou**
+  object data 8 ("flags") com o bit `0x400` (o `HideForCutaway` da FreeSO; as
+  próprias árvores do objeto o ligam: portas `0x2490`, janelas `0x0404`,
+  portões, quadros, arandelas e lustres têm o bit nos lotes do jogo);
+- e as wall placement flags não têm `0x1000` (em cerca; vtable `0x268`);
+- e **não** é (modo de jogo 4 = Construção, `cTSMainToolbar +0x64`,
+  `ePlayMode`; `SelectBuildModeTool` só age no modo 4) **e**
+  `IsWallPortal` (tipo 8 ou 9). **No modo Construção portas e janelas ficam
+  à mostra na parede cortada**; nos modos Vivo e Compra somem (H4/H5).
+- Na mão: `cTSUserToolUndoableObject::SuppressHideWhenWallDownFlag` (base
+  `0x1335da0`; no BV inlinado) desliga o bit enquanto o objeto é segurado e
+  `RestoreHideWhenWallDownFlag` (BV `0x35ceb0`, chamado por `CommitSelf` e
+  `ResetSelf`) o religa (`od 8 |= 0x400` se `+0x8c`).
+- A parede **não sobe** sob a porta segurada: nada no caminho da ferramenta
+  de objeto (`OnAnyMouseEvent`, `TryPlace`) mexe no corte; o
+  `cWallCutawayManager::AddTargetLocation` (BV `0x6c22f4`) é dos Sims.
+
+**No app** (rodada da issue 002): `vm::shouldAutoRotate`/`vm::autoRotate`
+(`vm/placement.cpp`), chamados pelo `BuildMode::holdObjectAt`/`placeObjectAt`
+e pelo `BuyMode::holdAt` quando o mouse anda, aperta ou arrasta (não nas
+teclas de giro); `--door <obj>@x,y` sem direção (app e `s2pkg lot-save`)
+gira como um clique. O gancho de visibilidade (`app/lot_vm_setup.mm`) segue
+`HideWhenWallDown` + as exceções acima, no lugar da lista de prefixos de nome
+("door", "window", "curtain"...). Inferidos: qual parede o objeto ocupa é a
+geometria de `onCutWall` (`app/lot_view.mm`: parede cortada a até 0,6 tile, de
+frente para o objeto), não os wall locators; objetos do lote erguidos do piso
+(a base do modelo a mais de 0,5) que pedem parede também somem, como antes
+(espelhos: as flags salvas não têm `0x400`, e flutuando sobre o toco
+pareciam quebrados); o `SwapDiagonalObject` do auto-giro não existe (só BV).
+Teste `tests/door_cut_wall.sh`; `docs/screenshots/
+i002-porta-parede-cortada-antes-depois.jpg` (antes: vermelho, "Deve estar
+contra a parede"; depois: porta fantasma verde virada para a parede,
+colocada, e com as paredes erguidas) e `i002-porta-paredes-erguidas.jpg`.
+
 ### 7.7 Desfazer na construção
 
 Igual a §5: cada operação é um undoable com pré/pós-operações; `CommitIt`

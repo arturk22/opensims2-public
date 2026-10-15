@@ -412,6 +412,9 @@ set_tests_properties(glides PROPERTIES PASS_REGULAR_EXPRESSION "glides: ok" TIME
 # With the game's data: Buy mode places, charges, holds another chair and turns by a drag (tests/buy_place.sh).
 add_test(NAME buy_place COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buy_place.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/buy_place)
 set_tests_properties(buy_place PROPERTIES PASS_REGULAR_EXPRESSION "buy place: ok" TIMEOUT 300)
+# With the game's data: doors, windows, arches and gates turn to their wall; a door placed on a cut wall (tests/door_cut_wall.sh, issue 002).
+add_test(NAME door_cut_wall COMMAND sh ${CMAKE_SOURCE_DIR}/tests/door_cut_wall.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/door_cut_wall)
+set_tests_properties(door_cut_wall PROPERTIES PASS_REGULAR_EXPRESSION "door cut wall: ok" TIMEOUT 600)
 # With the game's data: a seated Sim reads the paper; the held paper is hidden behind the snapped
 # rolled and open papers, never two at once, and the open one plays its own animations (tests/newspaper_read.sh).
 add_test(NAME newspaper_read COMMAND sh ${CMAKE_SOURCE_DIR}/tests/newspaper_read.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/newspaper_read)
