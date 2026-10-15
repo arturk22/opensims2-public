@@ -575,7 +575,7 @@ tipo 0 (linha):
    PlaceWallLine(estilo, dir, n, início)
 tipo 1 (retângulo): se dx = 0 ou dy = 0 vira uma linha; senão tenta os dois
    "L" (pelo canto (x1,y0) e pelo canto (x0,y1)) e só aceita se os dois passam;
-   depois fecha o cômodo (FUN_009a7dd8)
+   depois aplaina o chão de dentro (FUN_009a7dd8, §7.24)
 tipo 2 (diagonal, só BV): se |dx| = |dy| vira o tipo 0; senão um losango
 tipo 3 (só BV): octógono de lado ≥ 3 (AddOctagonToWallList)
 ```
@@ -675,7 +675,8 @@ dele.
 vértice do trecho (os dois da parede reta; a caixa do tile para a diagonal)
 vai para uma altura dada (`FUN_009a5a68`); com `requiresFlatTop`, o vértice do
 andar de cima também. Aqui a altura é a do início do traço e um vértice preso
-por piso ou por outra parede não se move (inferido; o leveler não foi lido).
+por piso ou por outra parede não se move (inferido; rodada n20: o nivelador
+e a altura do início lidos, §7.24).
 
 O preço cheio só volta pelo **desfazer** (a mudança gravada sai com o custo).
 
@@ -2315,6 +2316,155 @@ o ponto do mouse não está no nível 0. O app segue com a regra inferida
 não foi trocada porque a global pode ser escrita por um caminho que o Ghidra
 não liga.
 
+**Correção (rodada n20):** a global é escrita, sim, por um inicializador
+estático que o Ghidra não analisou (seção `__StaticInit`, `0x1f66394`: `lis
+r3,0x2bb; addi r3,r3,-0x2f0; li r4,11255; bl 0x1598c50`, o construtor
+`std::bitset(unsigned long)`, que só guarda o valor). O pincel usa **`0x2BF7`**.
+As outras chamadas do teste de vértice também leem bitsets assim: o nivelador
+das paredes `0x02c761b0` e as escadas modulares `0x02c81020` valem
+**`0x2BB7`** (inicializadores em `0x2228a0c` e `0x22502e8`); cada unidade de
+tradução tem três (`0x2BB7`, `0x3BF7`, `0x2BF7`, nesta ordem). Ver §7.24.
+
+### 7.24 Colocação, cômodo, nivelador, desfazer e escadas (rodada n20, Ghidra MCP)
+
+Leitura do BV com o Ghidra MCP (só leitura); onde o Ghidra não tinha função
+(inicializadores estáticos, o gerente de desfazer) os bytes foram lidos do
+próprio `sims2_bv.ppc` com um desmontador simples (scripts de rascunho).
+
+**O teste de vértice `FUN_009e9550` por inteiro** (corrige a tabela de §7.23).
+`flags` é um `std::bitset` testado bit a bit (`FUN_01794c88`):
+
+1. pré-teste `FUN_009e75e0`: vértice no mundo (`WorldDB 0xfc`), senão `0x59`;
+2. bit 0 (`FUN_009e8780`): no nível 0, vértice na borda do mundo, ou um dos
+   tiles em volta fora do lote ou travado (sem o cheat de construir em
+   qualquer lugar, sim system `0xd4`) → `0x62`;
+3. o vértice **já está na altura** → devolve o resultado do bit 0 (os outros
+   testes nem rodam);
+4. bit 1: limites → `0x65`/`0x66`;
+5. sim system `0xd0` desligado → para aqui (cheat; ligado por padrão:
+   inferido, o `constrainFloorElevation`);
+6. bit 3 (`IsFloorable` em volta, `0x6B`), bit 2 (`FUN_009e856c`: algum
+   tile em volta, no nível do vértice, com piso em algum quarto,
+   `HasFloorTest(t, 0xF, qualquer)` → `0x5A`), bit 7 (objetos, `FUN_009e8e0c`:
+   `HasGroundPinningObjects` → `0x61`; subindo a menos de
+   `StandardLevelHeight` do nível de cima, `HasNonCeilingConformingObjects`
+   → `0x60`; objetos com od 42 `0x80` cujo piso subiria acima deles →
+   `0x68`), bit 6 (só muda uma cópia local: sem efeito), bit 4/5
+   (`FUN_009e9c98`/`0x9e9a78`: se o vértice do nível de cima ficaria a menos
+   de `MinLevelHeight` + ¼ de `FloorElevationUnit` da altura nova, ele tem de
+   poder ir a altura + `MinLevelHeight` (o mesmo teste, sem o bit 5), senão
+   `0x69`; o de baixo, ao contrário, `0x6A`; **`MinLevelHeight` = 0,75**, global
+   `0x02b14460` posta pelo inicializador `0x1d3da8c`), bit 8 (`FUN_009e8048` →
+   `FUN_009e7d08`: uma partição numa das quatro arestas que saem do vértice,
+   neste nível com `requiresFlatBottom` → `0x5B`, no de baixo com
+   `requiresFlatTop` → `0x5C`; antes, arcos/postes `FUN_009e7a44`), bit 9
+   (`FUN_009e8268`: um tile em volta sobre piscina, `FUN_001648ac`; sem
+   código), bit 10 (`0x1E`), bit 11 (cerca íngreme `0x31`), bit 13
+   (`FUN_009e8124`: um tile em volta com deck/fundação/piscina,
+   `DeckFoundationStyle` ≠ −1; sem código), e no fim praia (BV).
+
+Com `0x2BB7` (paredes, cômodo, escadas) rodam os bits 0, 1, 2, 4, 5, 7, 8, 9,
+11 e 13; com `0x2BF7` (pincel) os mesmos e o 6, sem efeito: **o pincel, as
+paredes e as escadas testam igual**.
+
+**O nivelador das paredes** (`FUN_009a5a68(altura, vértice, erros,
+undoable)`): `WorldDB 0xc0` = `IsWaterVertex` → `0x47` (sem texto no base);
+depois `FUN_009e9550(altura, vértice, 0x2BB7, erros)`; passou (e não é
+água) → `ChangeFloorAndWaterElevationCoupled` (os andares de cima juntos).
+`FUN_009a79d0` chama o nivelador quando o estilo `requiresFlatBottom` e,
+com `requiresFlatTop`, também o vértice do andar de cima (se no lote, `0xfc`)
+à altura do de baixo + `StandardLevelHeight`. A altura é a do **vértice
+onde o traço começou** (`WorldDB 0xd8` = `FloorElevation` no
+`UserAddPartitions`; era inferido).
+
+**O fechamento do cômodo (`FUN_009a7dd8`)** não fecha nada: depois que os dois
+"L" do retângulo passam, ele chama `FUN_009a79d0` em **todo vértice do
+retângulo** (cantos inclusive, x por fora e y por dentro, no nível do
+início) e faz o E dos resultados: o chão de dentro do cômodo é aplainado na
+altura do começo, e um vértice que não pode ir (água, piso em volta, …)
+reprova o cômodo inteiro (`UserAddPartitions` devolve 0).
+
+**Tudo ou nada.** `TryPlacePartition` (`0x9a9774`) zera a lista de erros a cada
+trecho, nivela (os erros do nivelador entram na lista), testa e insere; com
+algum erro que não seja `0x41` (já há partição) devolve 0. `PlaceWallLine`
+(`0x9a9fec`) e `EraseWallLine` (`0x9ac0e8`) devolvem 0 no primeiro trecho que
+falha. `ChangeWallsAndPlaceCursorAtEnd` (`0x1e1828`) guarda esse resultado em
+`+0xc4` (e zera com `CanAfford` falhando, `+0xc5` = sem dinheiro) e mostra o
+erro salvo `0x41`/`0x42`; `OnRelease` (`0x1e1fd0`) com `+0xc4` = 0 **desfaz
+a prévia inteira** (vtable `0x20` dos três undoables) e não submete nada.
+Ou seja: uma parede, cerca ou demolição arrastada que esbarra em algo não
+constrói nem apaga **nenhum** trecho (antes: os trechos antes do problema
+ficavam, inferido).
+
+**Colocação de objetos: onde entra o suporte.** `TestPlacementCommon`
+(`0x8aad90`) **não** usa `HasSupport`/`SupportedUnderneath`. O piso é
+`FUN_0016d518(tile, 0, 0, visível, porObjeto, piscina)`: `WorldDB 0xb8(tile,
+0xF, visível)` = no nível 0 sempre sim, acima `HasFloorTest(tile, 0xF,
+todos, visível)` (`FUN_000d2798`: **os quatro quartos com piso** e, com
+`visível`, os quatro visíveis), ou `TileHasFloorFromObject`; e, com
+`piscina`, o tile de baixo não é de piscina (`FUN_00164c40`). Para objetos
+comuns o teste é `(tile inteiro, 0, 0, !HidesFloorOnPlace, 1, 1)` (vtable
+`0x220` = `cTSObject::HidesFloorOnPlace`, `+0xaa` bit 14), salvo p&`0x200` ou
+p2&4 → `0x8E`; multi-tile: cada retângulo da pegada, pelo canto, com
+`(.., 1, 1, 1)` → `0x13`. Pessoas: p&`0x200`, o mesmo teste sem piscina, ou
+`FUN_00165924`. **Rampa** (passo 6) é `nTSWorld::IsFlat` (`0x165af8`): as
+quatro alturas do tile **exatamente iguais**, salvo p&`0x100` → `0x12`
+(multi-tile: cada tile de cada retângulo). `HasSupport` só aparece no
+`FUN_008a7164`: objeto de **tipo 10** (escadaria) → `CeilingTooHighForObject`
+(`0x16a6f8`): o tile de cima (nível + 1, no lote) com `HasSupport` e algum
+vértice dele mais de `StandardLevelHeight` + 0,001 acima do vértice de baixo
+→ `0x30` (salvo p2&`0x20`). O teste de altura do fim do `TestPlaceInWorld`
+(`0x8ad754`) é `od 4 & m` com `m` = vtable `0x2c(1)` de um objeto
+`0xFBA4DA53` criado na hora (o mesmo que o `ReadSlots` cria para as alturas
+dos slots): `0x19` sem o bit.
+
+**Desfazer, peça por peça.** O gerente (`cTSUserToolUndoManager`, vtable
+`0x2807200`, construtor `0x970710`: `+8` lista de desfazer, `+0x14` de refazer,
+vetores de ponteiros):
+
+| vtable | função | o que faz |
+|---|---|---|
+| `0x0c` | `CreateUndoable` (`0x970180`) | pelo CLSID |
+| `0x10` | `SubmitUndoable` (`0x970aa8`) | se o estado (`0x2c`) ≠ 2: som de pagar/receber pelo sinal do `TotalCost` (`0x34`), `CommitIt` (`0x14`); erro → `FlushCommandQueues` e sai. Estado 2 → entra no fim da lista (sem limite: só tira o primeiro se chegar ao `max_size`) e **a lista de refazer é solta** |
+| `0x14` | `UndoLastCommand` (`0x970910`) | o último: `UndoIt` (`0x18`); erro → **solta a lista de desfazer inteira**; senão vai para a de refazer, som `PTR 0x278a2c0` |
+| `0x18` | `RedoLastCommand` (`0x970798`) | o último da de refazer: `RedoIt` (`0x1c`); erro → **solta a de refazer**; senão volta à de desfazer, som `0x278a2b4` |
+| `0x1c` | `FlushCommandQueues` (`0x970568`) | solta as duas |
+| `0x20` / `0x24` | `CanUndo` / `CanRedo` (`0x1958e4c`/`0x1958e10`) | lista não vazia (os botões `0xA1`/`0xA2`) |
+
+Soltar (`0x9703a0`/`0x970484`) chama a vtable `0x10` de cada undoable (o
+`ResetSelf`, que mata os objetos vendidos) e o `Release`. O undoable
+(`cTSUserToolUndoable`, vtable `0x2808558`) guarda o estado em `+0x28`: 1
+novo, 2 feito, 3 desfeito, 4 falhou. `CommitIt` (`0x9b4ff0`): pré-operações,
+a própria (`0x58`), pós absolutas, pós; `UndoIt` (`0x9b65bc`; se ainda 1, faz
+antes): pós, a própria (`0x5c`), pós absolutas, pré; `RedoIt` (`0x9b519c`):
+como o `CommitIt` com `0x60`. Cada um termina com a vtable `0x68(±0x30)`
+(`0x9b4a6c`: manda ao sim system, vtable `0xb0(6, valor)`; inferido: a
+estatística de gastos de construção da família). Quem cobra é
+`cTSUserToolBuyBuild::SubmitUndoable` (`0x9b3b94`): sem "não cobrar", fundos
+−= `TotalCost` antes de submeter. Nem o gerente nem `RedoIt` testam o
+dinheiro (não achado quem testa no refazer).
+
+**Escadas modulares: o +0,75 e a "elevation".** `UserPlaceModularStairs`
+(`0x9edcf8`) soma 0,75 à altura de cima quando `FUN_0016854c(tile de cima)`:
+algum quarto do tile, **no nível dele**, com `DeckFoundationStyle` do tipo 4,
+que é o **deck** (`nTSWorld::HasDeck` = `IsDeckFoundationOfType(.., 4)`;
+`IsPool` = 3 ou 5), não a fundação. Nos lotes (3ARY `0x14`, `u32` por quarto,
+−1 nenhum, níveis a partir do −1 como as alturas) os marcadores ficam no
+**nível 0**, debaixo do piso levantado (o nível 1, já a +0,75: `N001_Lot68`,
+decks 1 e fundações 0 no nível 0, piscinas 3 no −1): um lance que sai do piso
+levantado (nível 1) não ganha o 0,75. Só ganha quem começa no tile do nível 0
+de um deck (no fim, `FUN_00164a7c` tira 0,75 do resto se o ponto final toca
+um quarto de deck). A "elevation" que o jogo salva é o `float +0x20c` do
+objeto (`WriteHeader` `0xb07790`), o valor que `SetPosition` (`0xafd048`)
+recebe: para os degraus, **a altura absoluta** que o lance calcula
+(`SampledFloorElevation` do topo − k × 0,1875), passada a `AddObject`
+(`0x3ffc28`) → `TrySetPosition` (`0x35cdd0`); patamares e reservas, 0.
+
+**Portas e janelas sem máscara.** `ComputeWallCutoutLocators` (`0x6612d8`):
+com o texto do STR# `0x85` vazio **não há recorte nenhum**; senão, para cada
+parte e lado, o nome da máscara vai ao `SetCutoutMaterial` (`0x6c5d6c`), sem
+caixa retangular: o jogo só abre a parede pela máscara.
+
 ---
 
 ## 8. Base vs BV
@@ -2363,7 +2513,7 @@ scripts de catálogo.
 - Mapa exato B7/B9 (Diversos, Hobbies "recreação") e os IDs dos sons.
 - Conferir `TestPlacementCommon` no base 1.0 (sem símbolos).
 - O que o teste de altura od 4 compara (máscara do serviço `0xBA4DA53`, vtable `0x2c`).
-- Construção: o fechamento do cômodo retangular (`FUN_009a7dd8`); o corpo de
-  `HasSupport`/`SupportedUnderneath`, do leveler `FUN_009a5a68` e do "preso
+- Construção (o cômodo, o nivelador e o suporte foram lidos na rodada n20,
+  §7.24; `HasSupport` na §7.21): o corpo do "preso
   à parede" (vtable `0x26c`); o custo por
   unidade de altura do terreno (`SetCostForUnitHeightChange`, não decompila).
