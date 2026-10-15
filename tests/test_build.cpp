@@ -496,7 +496,10 @@ static void testEditableArea() {
     BuildEditor ed(vm, lot);
     check(ed.tileLocked(0, 3, 20) && !ed.tileLocked(0, 3, 19), "without 3ARY 0x03, the road edge's strip is locked (inferred)");
     auto r = ed.drawWalls(1, 2, 22, 5, 22);
-    check(!r.ok && r.error == 0x45, "no walls in the road strip (0x45)");
+    // The walls' leveller runs first (TryPlacePartition): its edge test
+    // (FUN_009e8780) refuses the points by a locked tile, 0x62, before
+    // UserMayPlacePartition's 0x45 (both read "Location out of bounds").
+    check(!r.ok && r.error == 0x62, "no walls in the road strip (0x62)");
     r = ed.drawWalls(1, 2, 18, 5, 18);
     check(r.ok && r.changed == 3, "walls inside the area");
 }
@@ -525,15 +528,15 @@ static void testLockedTiles() {
     BuildEditor ed(vm, lot);
     check(vm.world->locked({3, 15, 1}) && !vm.world->locked({3, 14, 1}), "the world knows the locked tiles");
     auto r = ed.drawWalls(1, 2, 16, 5, 16);
-    check(!r.ok && r.error == 0x45, "no walls on locked tiles (0x45)");
+    check(!r.ok && r.error == 0x62, "no walls on locked tiles (0x62, the leveller's edge test)");
     r = ed.drawWalls(1, 2, 15, 5, 15);
-    check(!r.ok && r.error == 0x45, "a wall with one locked side (0x45)");
+    check(!r.ok && r.error == 0x62, "a wall with one locked side (0x62)");
     BuildFence fence;
     fence.guid = 0x2CB2A001, fence.price = 10;
     r = ed.drawFences(1, 2, 15, 5, 15, fence);
     check(r.ok && r.changed == 3, "a fence needs one side free");
     r = ed.drawWalls(1, 0, 2, 0, 5);
-    check(!r.ok && r.error == 0x40, "a wall on the lot's edge has a side off the lot (0x40)");
+    check(!r.ok && r.error == 0x62, "a wall on the lot's edge: its points are on the world's edge (0x62)");
     r = ed.drawFences(1, 0, 2, 0, 5, fence);
     check(r.ok && r.changed == 3, "a fence on the lot's edge");
     check(!ed.editablePoint(4, 15) && ed.editablePoint(4, 14) && !ed.editablePoint(0, 4),
@@ -541,6 +544,54 @@ static void testLockedTiles() {
 }
 
 // Fence arches: on a fence, not beside another, gone with the fence.
+// Round n20 (docs/buy-build-mac.md §7.24): the room tool levels the whole
+// rectangle (FUN_009a7dd8), the walls' leveller (FUN_009a5a68 with the
+// vertex test's 0x2BB7 flags) refuses water (0x47) and floors round a point
+// (0x5A), and a drag that meets a refusal builds nothing.
+static void testRoundN20() {
+    Lot lot = flatLot();
+    for (int x = 0; x <= 12; ++x) // a slope along x: elevation = x / 4
+        for (int y = 0; y <= 10; ++y)
+            lot.elevations[size_t(x) * 11 + size_t(y)] = float(x) * 0.25f;
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    const std::vector<float> slope = lot.elevations;
+    auto r = ed.drawRoom(1, 2, 2, 5, 5);
+    bool flat = true;
+    for (int x = 2; x <= 5; ++x)
+        for (int y = 2; y <= 5; ++y)
+            flat &= lot.elevation(0, x, y) == 0.5f;
+    check(r.ok && r.changed == 12 && flat, "a room levels every grid point of its rectangle to the start's height");
+    check(lot.elevation(0, 6, 3) == 1.5f && lot.elevation(0, 1, 3) == 0.25f, "and nothing outside it");
+    check(ed.undo() && lot.elevations == slope && lot.walls.empty(), "undo gives the slope back");
+    // A floor inside on the slope holds its points: the room is refused.
+    lot.floors[size_t(3) * 10 + 3] = {1, 1, 1, 1};
+    r = ed.drawRoom(1, 2, 2, 6, 6);
+    check(!r.ok && r.error == 0x5A && lot.walls.empty() && lot.elevations == slope,
+          "a floor round a point to level refuses the room (0x5A), nothing built");
+    lot.floors[size_t(3) * 10 + 3] = {};
+    // A point under water (IsWaterVertex) refuses, even at the height.
+    lot.water.assign(13 * 11, -10.0f);
+    lot.water[size_t(4) * 13 + 4] = 5.0f; // grid point (4, 4)
+    r = ed.drawRoom(1, 4, 2, 6, 6);
+    check(!r.ok && r.error == 0x47 && lot.walls.empty(), "a point under water refuses the room (0x47)");
+    r = ed.drawWalls(1, 2, 4, 6, 4);
+    check(!r.ok && r.error == 0x47 && lot.walls.empty() && lot.elevations == slope,
+          "a wall over water is refused whole: the sections before it are not built either");
+    lot.water.clear();
+    // A wall whose end meets a wall on another height: that wall's point
+    // cannot move (0x5B); the drag builds nothing.
+    r = ed.drawWalls(1, 8, 1, 8, 3);
+    check(r.ok && r.changed == 2, "a wall across the slope");
+    r = ed.drawWalls(1, 6, 2, 9, 2);
+    check(!r.ok && r.error == 0x5B && lot.walls.size() == 2,
+          "a run that would level the point of another wall is refused whole (0x5B)");
+}
+
 static void testFenceArch() {
     Lot lot = flatLot();
     CodeLibrary code;
@@ -856,6 +907,7 @@ int main() {
     testFenceArch();
     testEditableArea();
     testLockedTiles();
+    testRoundN20();
     testDesignCatalog();
     testWalkOver();
     testPool();

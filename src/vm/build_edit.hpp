@@ -53,27 +53,29 @@ public:
     // Wall tool: a wall along a straight run of grid points, along the
     // grid or diagonal (cTSUserToolWall drags in 45° steps), one section
     // per tile, §70 each (kWallSectionPrice). Sections that are there
-    // already are skipped; the first one that breaks a rule stops the run
-    // there (PlaceWallLine: the sections before it are built), and a price
-    // over the family's funds builds nothing. On the ground the terrain
-    // under each section is levelled first to the height of the run's
-    // start (TryAdjustFloorElevationForWall, free: FloorElevationUnitChangeCost
-    // is 0), unless a floor or another wall holds a point it would move.
+    // already are skipped; any other refusal, or a price over the family's
+    // funds, builds nothing (the tool's release undoes an invalid drag,
+    // docs/buy-build-mac.md §7.24). The ground under each section is
+    // levelled first to the height of the run's start vertex (the walls'
+    // leveller, levelForWall; free: FloorElevationUnitChangeCost is 0).
     Result drawWalls(int level, int x0, int y0, int x1, int y1);
-    // Room tool: the walls around the rectangle between two grid points.
+    // Room tool: the walls around the rectangle between two grid points,
+    // then every grid point of the rectangle levelled to the start's height
+    // (FUN_009a7dd8); a point that cannot go refuses the room.
     Result drawRoom(int level, int x0, int y0, int x1, int y1);
     // Ctrl-drag: the walls along the run go for int(70 x 0.8) = 56 a
     // section (the full price comes back only by undo). The objects
     // attached to a deleted section are sold with it (EraseWallAttachedObjects:
     // doors and windows in it, objects that need a wall on that side);
-    // one of them in use stops the run there (0x1B), as does a Sim beside
-    // it (0x4B).
+    // one of them in use (0x1B), or a Sim beside a section (0x4B), deletes
+    // nothing.
     Result deleteWalls(int level, int x0, int y0, int x1, int y1);
 
     // Fence tool: a fence of the catalog's `fence` along a run, its `cost` a
     // section, with a post at every grid point of the run that has none
-    // (UserMayPlaceFence: no slope steeper than 60°, 0x31). Ctrl deletes
-    // fences (int(cost x 0.8) back a section; posts left with no fence go).
+    // (UserMayPlaceFence: no slope steeper than 60°, 0x31); a refusal builds
+    // nothing. Ctrl deletes fences (int(cost x 0.8) back a section; posts
+    // left with no fence go).
     Result drawFences(int level, int x0, int y0, int x1, int y1, const BuildFence& fence);
     // Fence arches (fencearches.txt): on the fence of an edge (0x79 "Must be
     // placed on a fence."; where the game raises it is not found), then
@@ -344,6 +346,20 @@ public:
         return editableTile(x - 1, y - 1, li) && editableTile(x, y - 1, li) && editableTile(x - 1, y, li) &&
                editableTile(x, y, li);
     }
+    // The vertex test (FUN_009e9550, docs/buy-build-mac.md §7.24): may grid
+    // point (x, y) of lot level `li` go to `height`? 0 if so, else the game's
+    // code (kSilentRefusal for the tests that refuse without one). `mask`
+    // picks the tests (vertextest bits); a point already at the height only
+    // takes the edge test (bit 0). Done: the edge or a locked tile round it
+    // (0x62), the height limits (0x65/0x66), a floor quarter on a tile round
+    // it on its level (0x5A), the point a story up or down that would have
+    // to follow within MinLevelHeight (0.75) and cannot (0x69/0x6A), a wall
+    // on an edge from it that needs a flat bottom (0x5B, this level) or top
+    // (0x5C, the level below), a pool, foundation or deck round it (silent)
+    // and a fence that would get steeper than 60° (0x31). Not done: the
+    // objects that pin the ground (bit 7, 0x60/0x61/0x68).
+    static constexpr int kSilentRefusal = -1;
+    int vertexMoveError(int li, int x, int y, float height, uint32_t mask) const;
 
     // UserMayPlacePartition's common test (BV 0x9a7384) and its partition
     // test FUN_009a6b20, for an edge on lot level `li`: 0x40 off the lot,
@@ -445,6 +461,20 @@ private:
                    bool wholeTiles) const;
     // A ground grid point no floor, wall or foundation holds.
     bool terrainFree(int x, int y) const;
+    // Moves a grid point of lot level `li` to `height` and the stories
+    // above it by the same amount (ChangeFloorAndWaterElevationCoupled;
+    // inferred from the name, as the terrain brush does).
+    void moveVertexCoupled(int li, int x, int y, float height);
+    // The walls' leveller over the grid points of lot level `li`
+    // (TryAdjustFloorElevationForWall / FUN_009a79d0 / FUN_009a5a68, docs/
+    // buy-build-mac.md §7.24): each point not yet at `height` that is under
+    // water refuses (0x47), else it must pass the vertex test with the walls'
+    // flags (vertextest::kWalls) and moves with the stories above; a wall
+    // style that requiresFlatTop also takes the point a story up to `height`
+    // + 3 when the lot has that level. Nothing moves when one refuses; `code`
+    // gets the refusal (0: one the game refuses without a code).
+    bool levelForWall(int li, const std::vector<std::array<int, 2>>& points, float height, bool flatTop,
+                      int* code);
     uint32_t revision_ = 0;
     std::array<int, 4> editable_{0, 0, 0, 0}; // inferredRoadStripArea, for a lot without 3ARY 0x03
 };
@@ -474,6 +504,20 @@ constexpr float kFloorElevationUnit = 0.1875f;
 constexpr float kMinTerrainElevation = -150 * kFloorElevationUnit;
 constexpr float kMaxTerrainElevation = 150 * kFloorElevationUnit;
 int terrainLimitError(float height);
+
+// The vertex test's flags (FUN_009e9550 tests a std::bitset bit by bit;
+// docs/buy-build-mac.md §7.24) and the bitsets the game's static
+// initializers build: the walls' leveller and the modular stairs use 0x2BB7,
+// the terrain brush 0x2BF7 (its extra bit 6 only changes a local copy).
+namespace vertextest {
+constexpr uint32_t Edge = 1u << 0, Limits = 1u << 1, Floor = 1u << 2, Floorable = 1u << 3, Above = 1u << 4,
+                   Below = 1u << 5, Objects = 1u << 7, Partitions = 1u << 8, Pool = 1u << 9,
+                   Submersible = 1u << 10, FenceSlope = 1u << 11, DeckFoundation = 1u << 13;
+constexpr uint32_t kWalls = 0x2BB7, kBrush = 0x2BF7;
+// cWorldDB::MinLevelHeight (the global 0x02b14460, set to 0.75 by a static
+// initializer): how close a story may come to the one below.
+constexpr float kMinLevelHeight = 0.75f;
+} // namespace vertextest
 
 // Splits a run between two grid points into tile-long sections (along an
 // axis or a 45° diagonal); empty for other slopes.

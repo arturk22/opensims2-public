@@ -344,6 +344,155 @@ bool BuildEditor::terrainFree(int x, int y) const {
     return true;
 }
 
+int BuildEditor::vertexMoveError(int li, int x, int y, float height, uint32_t mask) const {
+    using namespace vertextest;
+    const int W = int(lot_.width), H = int(lot_.height);
+    // FUN_009e75e0: the point is in the world (WorldDB 0xfc), else 0x59.
+    if (!lot_.hasLevel(li) || lot_.elevations.empty() || x < 0 || y < 0 || x > W || y > H)
+        return 0x59;
+    // Bit 0 (FUN_009e8780): on the world's edge (level 0), or a tile round
+    // it off the lot or locked: 0x62.
+    const int edge = (mask & Edge) && !editablePoint(x, y, li) ? 0x62 : 0;
+    // Already at the height: only the edge test counts.
+    if (std::fabs(lot_.elevation(li, x, y) - height) < 1e-4f)
+        return edge;
+    if (edge)
+        return edge;
+    if (mask & Limits)
+        if (const int e = terrainLimitError(height))
+            return e;
+    // (The sim system's vtable 0xd0 -- the constrainFloorElevation cheat,
+    // inferred -- is on: the tests below run.)
+    auto tilesRound = [&](auto&& f) {
+        for (int tx = x - 1; tx <= x; ++tx)
+            for (int ty = y - 1; ty <= y; ++ty)
+                if (tx >= 0 && ty >= 0 && tx < W && ty < H && f(tx, ty))
+                    return true;
+        return false;
+    };
+    // Bit 2 (FUN_009e856c): a floor quarter on a tile round it, on its level.
+    if ((mask & Floor) && tilesRound([&](int tx, int ty) {
+            for (uint16_t q : lot_.floor(li, uint32_t(tx), uint32_t(ty)))
+                if (q)
+                    return true;
+            return false;
+        }))
+        return 0x5A;
+    // (Bit 7, the objects that pin the ground, 0x60/0x61/0x68: not done.)
+    // Bits 4 and 5 (FUN_009e9c98 / 0x9e9a78): the point a story up (down)
+    // that the new height would bring within MinLevelHeight + a quarter of
+    // FloorElevationUnit must be able to follow, MinLevelHeight away.
+    constexpr float kSlack = kFloorElevationUnit * 0.25f;
+    if ((mask & Above) && lot_.hasLevel(li + 1) && lot_.elevation(li + 1, x, y) <= height + kMinLevelHeight + kSlack &&
+        vertexMoveError(li + 1, x, y, height + kMinLevelHeight, mask & ~Below))
+        return 0x69;
+    if ((mask & Below) && lot_.hasLevel(li - 1) && lot_.elevation(li - 1, x, y) >= height - kMinLevelHeight - kSlack &&
+        vertexMoveError(li - 1, x, y, height - kMinLevelHeight, mask & ~Above))
+        return 0x6A;
+    // Bit 8 (FUN_009e8048 -> FUN_009e7d08): a partition on one of the four
+    // edges from the point, on its level with requiresFlatBottom (walls.txt:
+    // walls and attic walls; foundation, deck, pool walls and fences say
+    // false) -> 0x5B, on the level below with requiresFlatTop (all walls but
+    // the attic's; fences say false) -> 0x5C.
+    if (mask & Partitions) {
+        auto flatBottom = [](uint32_t t) {
+            return !Lot::isFence(t) && t != Lot::Foundation && t != 0x10 && t != 0x18 && t != Lot::DeckSkirt &&
+                   t != Lot::Pool;
+        };
+        auto flatTop = [](uint32_t t) { return !Lot::isFence(t) && t != Lot::Attic; };
+        for (const auto& w : lot_.walls) {
+            const int ax = int(std::lround(w.a.x)), ay = int(std::lround(w.a.y));
+            const int bx = int(std::lround(w.b.x)), by = int(std::lround(w.b.y));
+            const bool axisEdge = std::abs(ax - bx) + std::abs(ay - by) == 1;
+            if (!axisEdge || !((ax == x && ay == y) || (bx == x && by == y)))
+                continue;
+            if (w.a.level == li && flatBottom(w.type))
+                return 0x5B;
+            if (w.a.level == li - 1 && flatTop(w.type))
+                return 0x5C;
+        }
+    }
+    // Bit 9 (FUN_009e8268 -> FUN_001648ac): a tile round it over a pool.
+    if ((mask & Pool) && li == 0 && tilesRound([&](int tx, int ty) { return poolTile(tx, ty); }))
+        return kSilentRefusal;
+    // Bit 11 (FUN_009e8ad0): a fence from the point would get steeper than
+    // sqrt(3) (60°).
+    if (mask & FenceSlope)
+        for (const auto& w : lot_.walls) {
+            if (!Lot::isFence(w.type) || w.a.level != li)
+                continue;
+            const int ax = int(std::lround(w.a.x)), ay = int(std::lround(w.a.y));
+            const int bx = int(std::lround(w.b.x)), by = int(std::lround(w.b.y));
+            int ox = 0, oy = 0;
+            if (ax == x && ay == y)
+                ox = bx, oy = by;
+            else if (bx == x && by == y)
+                ox = ax, oy = ay;
+            else
+                continue;
+            const float len = std::hypot(float(ox - x), float(oy - y));
+            if (len > 0 && std::fabs(height - lot_.elevation(li, ox, oy)) / len > std::sqrt(3.0f))
+                return 0x31;
+        }
+    // Bit 13 (FUN_009e8124): a tile round it with a deck, foundation or pool
+    // marker (DeckFoundationStyle != -1). The lots keep the markers of
+    // foundations and decks on level 0, under their raised floor, and the
+    // pools' on level -1.
+    if ((mask & DeckFoundation) &&
+        tilesRound([&](int tx, int ty) { return (li == 0 && foundationTile(tx, ty)) || (li == -1 && poolTile(tx, ty)); }))
+        return kSilentRefusal;
+    return 0;
+}
+
+void BuildEditor::moveVertexCoupled(int li, int x, int y, float height) {
+    const int W = int(lot_.width), H = int(lot_.height);
+    if (!lot_.hasLevel(li) || x < 0 || y < 0 || x > W || y > H || lot_.elevations.empty())
+        return;
+    const size_t plane = size_t(W + 1) * size_t(H + 1);
+    const size_t i = size_t(li - lot_.minLevel) * plane + size_t(x) * size_t(H + 1) + size_t(y);
+    const float d = height - lot_.elevations[i];
+    for (int k = li; lot_.hasLevel(k); ++k)
+        lot_.elevations[i + size_t(k - li) * plane] += d;
+}
+
+bool BuildEditor::levelForWall(int li, const std::vector<std::array<int, 2>>& points, float height, bool flatTop,
+                               int* code) {
+    const int W = int(lot_.width), H = int(lot_.height);
+    auto fail = [&](int c) {
+        if (code)
+            *code = c == kSilentRefusal ? 0 : c;
+        return false;
+    };
+    if (lot_.elevations.empty() || !lot_.hasLevel(li))
+        return true;
+    std::vector<std::array<float, 4>> moves; // level, x, y, height
+    for (const auto& [x, y] : points) {
+        if (x < 0 || y < 0 || x > W || y > H)
+            continue;
+        // FUN_009a5a68: a point under water refuses (IsWaterVertex, 0x47),
+        // even when it is at the height already.
+        if (li == 0 && lot_.waterLevel(x, y) > lot_.elevation(0, x, y) + 1e-4f)
+            return fail(0x47);
+        if (const int e = vertexMoveError(li, x, y, height, vertextest::kWalls))
+            return fail(e);
+        moves.push_back({float(li), float(x), float(y), height});
+        // FUN_009a79d0: with requiresFlatTop the point a story up (when the
+        // lot has it) goes to the height + StandardLevelHeight, once the
+        // coupled move has taken it along.
+        if (flatTop && lot_.hasLevel(li + 1)) {
+            const float above = lot_.elevation(li + 1, x, y) + (height - lot_.elevation(li, x, y));
+            if (std::fabs(above - (height + 3.0f)) > 1e-4f) {
+                if (const int e = vertexMoveError(li + 1, x, y, height + 3.0f, vertextest::kWalls))
+                    return fail(e);
+                moves.push_back({float(li + 1), float(x), float(y), height + 3.0f});
+            }
+        }
+    }
+    for (const auto& m : moves)
+        moveVertexCoupled(int(m[0]), int(m[1]), int(m[2]), m[3]);
+    return true;
+}
+
 void BuildEditor::beginTerrainStroke(TerrainOp op, float x, float y) {
     Stroke s;
     s.op = op;

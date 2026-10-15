@@ -250,8 +250,9 @@ bool BuildEditor::levelPoints(const std::vector<std::array<int, 2>>& points, flo
         if (terrainLimitError(height))
             return false;
         // A ground floor on a tile around the point, or a wall (or fence)
-        // ending there, holds it (inferred: the binary's leveller,
-        // FUN_009a5a68, is not read).
+        // ending there, holds it (inferred: the foundation and pool tools'
+        // own levelling, MayPlaceQuadrilateral, is not read; the walls use
+        // the game's leveller, levelForWall).
         for (int tx = x - 1; tx <= x; ++tx)
             for (int ty = y - 1; ty <= y; ++ty)
                 if (tx >= 0 && ty >= 0 && tx < W && ty < H)
@@ -281,20 +282,32 @@ BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, in
         return r;
     }
     Geometry before = capture();
-    // PlaceWallLine: section by section from the start, the ground levelled
-    // under each to the start's height; the first refusal stops the run.
-    const float height = lot_.elevation(0, x0, y0);
+    // PlaceWallLine (BV 0x9a9fec): section by section from the start; each
+    // goes through TryPlacePartition (0x9a9774): the ground under it is
+    // levelled to the height of the drag's start vertex (the walls'
+    // leveller, levelForWall), then UserMayPlacePartition; one that is there
+    // already is skipped (0x41). The first refusal makes the whole drag
+    // invalid, and the tool's release undoes what the drag laid
+    // (ChangeWallsAndPlaceCursorAtEnd / OnRelease, docs/buy-build-mac.md
+    // §7.24): nothing is built.
+    const int li = level - 1;
+    const float height = lot_.hasLevel(li) ? lot_.elevation(li, x0, y0) : 0.0f;
     std::vector<std::array<int, 4>> todo;
     for (const auto& s : sections) {
-        if (findWall(lot_, level - 1, s[0], s[1], s[2], s[3]))
+        if (findWall(lot_, li, s[0], s[1], s[2], s[3]))
             continue;
-        const std::vector<float> ground = lot_.elevations;
-        if (level == 1)
-            levelPoints(sectionPoints(s), height, todo);
+        int code = 0;
+        if (!levelForWall(li, sectionPoints(s), height, true, &code) && code) {
+            restore(before);
+            r.error = code;
+            r.message = "cannot build a wall from " + point(s[0], s[1]) + " to " + point(s[2], s[3]) +
+                        ": the ground there cannot be levelled";
+            return r;
+        }
         if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3], &r.error); !why.empty()) {
-            lot_.elevations = ground;
+            restore(before);
             r.message = "cannot build a wall from " + point(s[0], s[1]) + " to " + point(s[2], s[3]) + ": " + why;
-            break;
+            return r;
         }
         todo.push_back(s);
     }
@@ -303,21 +316,20 @@ BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, in
         restore(before);
         if (!todo.empty())
             r.message = "not enough money (" + money(r.cost) + ")";
-        else if (r.message.empty())
+        else
             r.ok = true, r.message = "the walls are there already";
         r.cost = 0;
         return r;
     }
     const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
     for (const auto& s : todo)
-        if (addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
+        if (addWall(lot_, li, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
             ++r.changed;
     chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
-    r.message = std::to_string(r.changed) + " wall sections for " + money(r.cost) +
-                (r.message.empty() ? "" : " (stopped: " + r.message + ")");
+    r.message = std::to_string(r.changed) + " wall sections for " + money(r.cost);
     return r;
 }
 
@@ -327,18 +339,28 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
         r.message = "a room needs an area";
         return r;
     }
-    // The four sides, as one change; the room tool's "L"s must both pass
-    // (UserAddPartitions type 1), so any refusal builds nothing.
+    // UserAddPartitions type 1 (BV 0x9aa90c): the two "L"s round the
+    // rectangle (each section as the wall tool lays it, levelled to the
+    // start vertex's height) must both pass, so any refusal builds nothing;
+    // then FUN_009a7dd8 levels every grid point of the rectangle, corners
+    // included, to that height (the room's floor comes out flat), and one
+    // that cannot go refuses the room too (docs/buy-build-mac.md §7.24).
     const std::array<std::array<int, 4>, 4> sides{{{x0, y0, x1, y0}, {x1, y0, x1, y1}, {x1, y1, x0, y1}, {x0, y1, x0, y0}}};
     Geometry before = capture();
-    const float height = lot_.elevation(0, x0, y0);
+    const int li = level - 1;
+    const float height = lot_.hasLevel(li) ? lot_.elevation(li, x0, y0) : 0.0f;
     std::vector<std::array<int, 4>> todo;
     for (const auto& side : sides)
         for (const auto& s : wallSections(side[0], side[1], side[2], side[3])) {
-            if (findWall(lot_, level - 1, s[0], s[1], s[2], s[3]))
+            if (findWall(lot_, li, s[0], s[1], s[2], s[3]))
                 continue;
-            if (level == 1)
-                levelPoints(sectionPoints(s), height, todo);
+            int code = 0;
+            if (!levelForWall(li, sectionPoints(s), height, true, &code) && code) {
+                restore(before);
+                r.error = code;
+                r.message = "cannot build the room: the ground under " + point(s[0], s[1]) + " cannot be levelled";
+                return r;
+            }
             if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3], &r.error); !why.empty()) {
                 restore(before);
                 r.message = "cannot build the room: " + why;
@@ -346,6 +368,16 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
             }
             todo.push_back(s);
         }
+    std::vector<std::array<int, 2>> inside;
+    for (int x = std::min(x0, x1); x <= std::max(x0, x1); ++x)
+        for (int y = std::min(y0, y1); y <= std::max(y0, y1); ++y)
+            inside.push_back({x, y});
+    if (int code = 0; !levelForWall(li, inside, height, true, &code)) {
+        restore(before);
+        r.error = code;
+        r.message = "cannot build the room: the ground inside cannot be levelled";
+        return r;
+    }
     if (!canAfford(vm_, int(todo.size()) * kWallSectionPrice)) {
         restore(before);
         r.message = "not enough money (" + money(int(todo.size()) * kWallSectionPrice) + ")";
@@ -353,11 +385,11 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
     }
     const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
     for (const auto& s : todo)
-        if (addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
+        if (addWall(lot_, li, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
             ++r.changed;
     r.cost = r.changed * kWallSectionPrice;
     r.ok = true;
-    if (!r.changed) {
+    if (!r.changed && lot_.elevations == before.elevations) {
         restore(before);
         return r.message = "the walls are there already", r;
     }
@@ -439,28 +471,41 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     int refund = 0, objectRefund = 0; // the objects' is paid by sell()
     std::vector<Sold> sold;
     std::vector<std::array<int, 2>> ends;
-    std::string stopped;
-    for (const auto& s : sections) {
-        const Lot::Wall* w = findWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
+    // UserMayEraseWallOrFence for every section first: EraseWallLine (BV
+    // 0x9ac0e8) gives up at the first section that refuses, and the tool's
+    // release then undoes the whole drag (docs/buy-build-mac.md §7.24): a
+    // Sim beside a section (0x4B) or an attached object in use (0x1B)
+    // deletes nothing. No wall there is skipped (0x42).
+    auto erasable = [&](const Lot::Wall* w) {
         // Only the partitions the wall tool deletes (walls.txt deleteTool
         // partition: walls and fences; foundations, deck skirts and pools go
-        // with their own tools). UserMayEraseWallOrFence: no wall there is
-        // skipped (0x42), a Sim beside it (0x4B) or an attached object in use
-        // (0x1B) stops the run there.
-        if (!w || !(w->type == Lot::Normal || Lot::isFence(w->type)) || (fences && !Lot::isFence(w->type)))
+        // with their own tools).
+        return w && (w->type == Lot::Normal || Lot::isFence(w->type)) && (!fences || Lot::isFence(w->type));
+    };
+    for (const auto& s : sections) {
+        if (!erasable(findWall(lot_, level - 1, s[0], s[1], s[2], s[3])))
             continue;
-        const uint32_t type = w->type;
         int code = 0;
         if (wallBlocked(level, s[0], s[1], s[2], s[3], &code, true) == "a Sim is in the way") {
-            r.error = 0x4B, stopped = "a Sim is in the way";
-            break;
+            r.error = 0x4B;
+            r.message = "cannot delete the wall: a Sim is in the way";
+            return r;
         }
         bool inUse = false;
-        const auto attached = attachedObjects(level, s[0], s[1], s[2], s[3], &inUse);
+        attachedObjects(level, s[0], s[1], s[2], s[3], &inUse);
         if (inUse) {
-            r.error = 0x1B, stopped = "an object on the wall is in use";
-            break;
+            r.error = 0x1B;
+            r.message = "cannot delete the wall: an object on the wall is in use";
+            return r;
         }
+    }
+    for (const auto& s : sections) {
+        const Lot::Wall* w = findWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
+        if (!erasable(w))
+            continue;
+        const uint32_t type = w->type;
+        bool inUse = false;
+        const auto attached = attachedObjects(level, s[0], s[1], s[2], s[3], &inUse);
         // TryRemoveWallOrFence: the attached objects are sold first
         // (EraseWallAttachedObjects, their current value back), then the
         // section for int(price x RefundRate); the full price comes back
@@ -499,8 +544,8 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     }
     if (!r.changed) {
         restore(before);
-        r.ok = stopped.empty();
-        r.message = stopped.empty() ? "no walls there" : "cannot delete the wall: " + stopped;
+        r.ok = true;
+        r.message = "no walls there";
         return r;
     }
     r.ok = true;
@@ -509,8 +554,7 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     changed();
     r.message = std::to_string(r.changed) + (fences ? " fence" : " wall") + " sections deleted for " + money(refund) +
                 (sold.empty() ? "" : ", " + std::to_string(sold.size()) + " attached objects sold for " +
-                                         money(objectRefund)) +
-                (stopped.empty() ? "" : " (stopped: " + stopped + ")");
+                                         money(objectRefund));
     commit(std::move(before), r.cost, std::move(sold));
     return r;
 }
@@ -727,9 +771,12 @@ BuildEditor::Result BuildEditor::drawFences(int level, int x0, int y0, int x1, i
     for (const auto& s : sections) {
         if (findWall(lot_, level - 1, s[0], s[1], s[2], s[3]))
             continue;
+        // As the wall tool (PlaceWallLine): the first refusal makes the
+        // whole drag invalid and nothing is built (docs/buy-build-mac.md
+        // §7.24). Fences need no flat bottom: nothing is levelled.
         if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3], &r.error, true); !why.empty()) {
             r.message = "cannot put a fence from " + point(s[0], s[1]) + " to " + point(s[2], s[3]) + ": " + why;
-            break;
+            return r;
         }
         todo.push_back(s);
     }
@@ -767,8 +814,7 @@ BuildEditor::Result BuildEditor::drawFences(int level, int x0, int y0, int x1, i
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
-    r.message = std::to_string(r.changed) + " sections of " + fence.name + " for " + money(r.cost) +
-                (r.message.empty() ? "" : " (stopped: " + r.message + ")");
+    r.message = std::to_string(r.changed) + " sections of " + fence.name + " for " + money(r.cost);
     return r;
 }
 
