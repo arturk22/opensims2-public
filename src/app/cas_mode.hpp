@@ -163,6 +163,7 @@ private:
     bool mabOpen_ = false;
     int mabParent_[2] = {-1, -1};
     uint32_t mabAge_ = 0x01, mabGender_ = 0;
+    uint32_t mabSeed_ = 0; // --cas-baby-seed: the child's draws repeatable (0: random)
     std::optional<Member> mabChild_;
     // The family tree dialog (2C054EF0) and its "Make %s a ..." popup
     // (2C054EF3): pick a member, then another, then the tie.

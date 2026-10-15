@@ -768,6 +768,8 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             treeOpen_ = true;
             dirty_ = true;
         }
+        else if (a == "--cas-baby-seed") // the next --cas-baby's draws (genes, regions, gender) from this seed
+            mabSeed_ = uint32_t(std::stoul(v));
         else if (a == "--cas-baby") { // Make a Child of the family's first two grown-ups, at an age
             mabAge_ = v == "child" ? cas::age::Child : v == "teen" ? cas::age::Teen : cas::age::Toddler;
             mabParent_[0] = mabParent_[1] = -1;

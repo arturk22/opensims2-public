@@ -115,7 +115,7 @@ void CasMode::makeChild() {
         return;
     const Member& a = family_[size_t(mabParent_[0])];
     const Member& b = family_[size_t(mabParent_[1])];
-    std::mt19937 rng(std::random_device{}());
+    std::mt19937 rng(mabSeed_ ? mabSeed_ : std::random_device{}());
     auto random = [&](uint32_t n) { return n ? uint32_t(rng() % n) : 0u; };
     auto dnaOf = [&](const Member& m) {
         return genetics::dnaFromLook(cas::toneFamily(m.spec.hairTone), cas::toneFamily(m.spec.skinTone), m.spec.eyes,
