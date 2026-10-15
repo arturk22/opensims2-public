@@ -184,6 +184,37 @@ int cmdEffects(const std::string& path, const std::vector<std::string>& names) {
             std::printf("  draw type %d: %d\n", v, n);
         for (auto [v, n] : aligns)
             std::printf("  alignment %d: %d\n", v, n);
+        // Flag bits (the binary's std::bitset<38> at cTSParticlesDescription
+        // +0x158; docs/effects-mac.md §1.2), with a few components using each.
+        std::map<int, std::string> blockName;
+        for (const auto& v : lib.visuals)
+            for (const auto& c : v.components)
+                if (c.type == fx::Block::Particles && !blockName.count(c.index))
+                    blockName[c.index] = c.name;
+        for (int b = 0; b < 32; ++b) {
+            int n = 0;
+            std::string some;
+            for (size_t i = 0; i < lib.particles.size(); ++i)
+                if (lib.particles[i].flags >> b & 1)
+                    if (++n <= 4)
+                        some += " " + blockName[int(i)];
+            if (n)
+                std::printf("  flag bit %d: %d%s\n", b, n, some.c_str());
+        }
+        for (int b = 0; b < 32; ++b) {
+            int n = 0;
+            for (const auto& v : lib.visuals)
+                n += int(v.flags >> b & 1);
+            if (n)
+                std::printf("  effect flag bit %d: %d\n", b, n);
+        }
+        for (int b = 0; b < 64; ++b) {
+            int n = 0;
+            for (const auto& m : lib.metaParticles)
+                n += int(m.flags >> b & 1);
+            if (n)
+                std::printf("  meta flag bit %d: %d\n", b, n);
+        }
         std::vector<std::pair<uint32_t, std::string>> sorted;
         for (const auto& [n, i] : lib.names)
             sorted.emplace_back(i, n);
@@ -198,7 +229,7 @@ int cmdEffects(const std::string& path, const std::vector<std::string>& names) {
             std::printf("%s: no such effect\n", n.c_str());
             continue;
         }
-        std::printf("%s (#%u)\n", n.c_str(), *i);
+        std::printf("%s (#%u) flags=0x%X\n", n.c_str(), *i, lib.visuals[*i].flags);
         printEffect(lib, *i, 0);
     }
     return 0;

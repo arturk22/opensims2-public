@@ -306,6 +306,221 @@ desenho 4) com a textura `plumbBobGlow`/`plumbBobShine`, todos com flags
   da primeira volta). O giro e o dono estão em `primitives-mac.md`, seção
   0x69/0x6A/0x6B (Animate Object com temp 1 = −1; Generic Sims Call 25).
 
+## 4e. Rodada n15: o sistema de partículas lido no binário **[bin]**
+
+Ghidra MCP (`sims2_bv.ppc`, só leitura) e Ghidra headless num clone
+descartável para as funções que o projeto não tinha criado (o
+`ApplyEffect` das partículas, os leitores das descrições, os comandos do
+script). Nomes pelo mapa do `tools/symxfer` regerado; vários nomes "fill",
+"gap" e "moved" do mapa estão trocados nesta região (por exemplo
+`cTSScreenEffect::Start` no endereço de `cBoundingBox::Translate`), então
+cada função citada abaixo foi conferida pelo código. Endereços do BV.
+
+### 4e.1 A descrição das partículas (`cTSParticlesDescription`)
+
+`cTSCompDescriptionBaseT<cTSParticlesDescription,1>::Read` (vtable
+`0x2acce10`, entrada `0x1c1e698`) lê a versão u16 (1–11) e chama o
+`ReadDescription` das partículas (`0xead010`; o "ReadDescription" que o
+mapa põe em `0xf67848` é outra coisa). Ordem do arquivo → deslocamento na
+descrição → nome no script do Swarm (dos comandos `cParticle*Command`,
+vtables no `ppc_syms.txt`, entrada 4 de cada uma):
+
+| arquivo (nosso nome antigo) | desc | comando / opção |
+|---|---|---|
+| flags u32 (v ≤ 4; depois `bitset<38>`) | +0x158 | ver 4e.2 |
+| life (V2) | +0x4 | `life` |
+| preRoll | +0xc | `-preroll`? (usado no 1º passo do `ApplyEffect`) |
+| rateDelay (V2) | +0x28 | `rate -delay`: espera antes de começar |
+| rateTrigger (V2) | +0x30 | `rate -trigger`: espera entre os ciclos (e no começo, se o delay < 0) |
+| emitDirection, emitSpeed, emitVolume, torus | +0x38, +0x50, +0x58, +0x70 | `emit`, `source` |
+| rateCurve, rateCurveTime, rateCurveCycles (u16) | +0x10, +0x20, +0x24 | `rate` (`-loop n`, `-single`) |
+| rateSpeedScale | +0x160 | `rate -speedScale`: taxa × (1 + escala × velocidade do emissor) |
+| size, sizeVary, aspect, aspectVary | +0x74, +0x84, +0x88, +0x98 | `size`, `aspect` |
+| rotateAxis (V3), V3, u8 | +0x164, +0x170, +0x17c | `rotate -axis`; o u8 é quantos `rotate` há (1 ou 2) |
+| 2 floats que pulávamos (v < 6) | +0x180..+0x18c | por rotação: x > 0 → multiplicador aleatório em [−x, x] por partícula; senão 1 |
+| rotateOffsetX, rotateOffsetY | +0x190, +0x194 | deslocamento fixo (voltas) da 1ª e da 2ª rotação |
+| rotateCurveX, rotateCurveY | +0x198, +0x1a8 | as curvas das duas rotações |
+| alpha, alphaVary, colors, colorVary | +0xb4, +0xc4, +0x9c, +0xa8 | `alpha`, `color` |
+| material, tileU, tileV, alignment, drawType, layer, frameSpeed, frameStart, frameCount | +0x1d0, +0x1d4, +0x1d5, +0xec, +0x1d6, +0x1d8, +0x1dc, +0x1e0, +0x1e1 | `texture -tile -draw -layer`, `frames`, `alignment` |
+| force (V3) | +0xc8 | `force -gravity g` (z −= g) e `-wind v s` (somados num vetor só) |
+| windStrength | +0xd4 | `force -globalWind`: × o vento do mundo |
+| **drag** (era o arrasto) | +0xd8 | `force -bomb s`: velocidade radial na emissão |
+| **force2** (V3) | +0xdc | `force -bomb s ponto`: o centro da bomba |
+| **force2a** | +0xe8 | `force -drag`: **o arrasto** |
+| force2b | +0x1e4 | `stretch` (esticar pela velocidade) |
+| screw, wiggles, bloom | +0xf0, +0xf4, +0x100 | `force -screw`, `wiggle`, `screenBloom` |
+| colisores, nome | +0x130, +0x21c | `collide`, `deathEffect` |
+| terreno (6 floats), killHeight, 2 floats, V2 | +0x104..+0x124 | `terrainCollide`, `terrainRepel` |
+| randomWalkDelay, randomWalkStrength, turnX, turnY | +0x22c, +0x234, +0x23c, +0x240 | `randomWalk -delay -strength -turn a b` |
+| atrator (v < 8): V3, curva, alcance | +0x13c | `attractor` |
+
+A meta (`0xeae76c`, versões 1–4) tem a mesma forma até o grupo de forças;
+os dois passeios aleatórios são `cRandomWalk` de 7 floats (atraso V2,
+força V2, giro, giro mínimo, mistura vertical) em +0x17c e +0x198.
+
+### 4e.2 Os bits
+
+- **Partículas** (`bitset<38>`; v ≤ 4 lê um u32 = bits 0–31): 0 `inject`, 1
+  `maintain`, 2 `rate -sustain` (no fim dos ciclos segura o último em vez
+  de parar), 3/4 colisores, 5 `emit -base`, 6 `emit -radial` (a direção é a
+  posição), 8 elipsoide, 9 sem translação (nenhum uso no jogo base), 10
+  altura, 11/12/13 `rate -sizeScale/-areaScale/-volumeScale`, 14
+  `source -scaleParticles`, 15/17/18 terreno, 20 `randomWalk`, 21 material
+  próprio, 22 forma (malha), **23 `texture -light`** (iluminada; 1.441 do
+  base), 24 `-acceptOverride` (a textura pode ser trocada: os ícones dos
+  balões), 25 `-acceptComposite`, 26 `force -attractor`, 28
+  `emit -scaleExisting`, 29 `source -resetIncoming`, 30 `rate -cycleKill`,
+  31 `texture -directLayer` (a camada crua, sem × 8 + 7), 33/34/35 caminhos.
+  **Os bits 0/1 não querem dizer "presas ao efeito"** (era a nossa
+  inferência).
+- **Meta** (`bitset<34>`; `operator>>` `0x1c229d0` lê o **primeiro u32 como
+  os bits 32–33** e o segundo como os bits 0–31: o nosso "bit 32 + k" é o bit
+  k do binário): 0 `inject`, 1 **`maintain`** (o nosso "presas ao volume",
+  bit 33), 2 `sustain`, 4 `base`, 5–10 colisão/terreno, 11 elipsoide, 12
+  sem translação, 22 `scaleParticles`, 23 `randomWalk -sync`, **24
+  `randomWalk`** (o nosso "a taxa é quantas ficam vivas", bit 56), 25
+  `randomWalk -wait`, 27 `attractor`, 28 opção do atrator, 29 trator, 30
+  **caminho** (`path`: a partícula segue os pontos do caminho, que o nosso
+  parser chama de "tractor points"), 31 `alignment -windBank`, 32
+  `resetIncoming`, 33 `limitHeight`.
+- **Efeito visual** (`effect`, parser `0x1a7e510`): 0 `viewRelative`, 1
+  `cameraFacing`, 2 `cameraAttached`, 3 `noAutoStop`, 4 `hardStop`, **5
+  `rigid`**, 6 `noPropagate`/`ignoreParams`, 7 `applyCursor`, 8
+  `ignoreScale`, 9 `ignoreOrientation`, 10 `orientZPole`, 11 `gameTime`, 12
+  `realTime`, 13 `detach`, 14 `notify`, 15 `clampScreenSize`, 16
+  `noSmoothClamp`. O brilho do PlumbBob é `0x1020` (rigid, realTime); os
+  balões `0x18223`.
+- **Componente** (u32 de flags de cada componente;
+  `CreateComponentFromDescription` `0xc042e4`, `UpdateVisualEffect`
+  `0xc04544`): 0 `ignoreLength`, 5 `ignoreParams`; **1 corrente**: o
+  componente é o "efeito de corrente" do componente de corrente anterior
+  (`SetChainEffect`), e o 2 fecha a corrente; **3 corrente de estados**: só
+  o primeiro é criado, os seguintes com o bit 3 são as descrições que o
+  estado (parâmetro 0xF, `SelectDescriptionState` `0xeb04f4`) troca
+  (`SwitchDescription`), até um com o bit 4. As baratas são `0x2`, os peixes
+  `0x8`. Quem é alvo de corrente não emite (`SetChainEffect` liga o +0x1e8
+  das partículas / +0x16c da meta, que o `ApplyEffect` testa antes de
+  `GenerateNewParticles`).
+
+### 4e.3 Emissão (`ApplyEffect` `0xebb7c8`, `GenerateNewParticles` `0xeb8c90`)
+
+- `Start(t)` (`0xeb726c`): com t ≠ 0 (começo forte) um emissor de ciclos
+  finitos não começa, salvo com `sustain`; zera o relógio; espera inicial =
+  `RandomRange(delay)` se delay ≥ 0, senão `RandomRange(trigger)` se ≥ 0;
+  marca o pre-roll **só no começo forte** (`this[0x3c] = t ≠ 0`). Com
+  `randomWalk`, os dois ângulos do passeio começam em [−0,5, 0,5] volta.
+- `ApplyEffect(dt)`: no primeiro passo depois de um começo forte, dt +=
+  preRoll. Primeiro anda as partículas vivas, depois gera as novas (salvo
+  alvo de corrente), depois o passeio aleatório do efeito.
+- `GenerateNewParticles(dt)`: desconta a espera (+0x88); com preRoll > 0, o
+  dt da geração fica ≤ preRoll − 0,01; bit 1 → `MaintainParticles`, bit 0
+  → `InjectParticles`, senão `AddRateCurveParticles`.
+- `AddRateCurveParticles` (`0xeb8728`): taxa × escala de emissão (LOD,
+  componente; × s, s² ou s³ com os bits 11–13); com speedScale, × (1 +
+  speedScale × |deslocamento do emissor| / dt). Em fatias de no máximo 1/15
+  s: o relógio em ciclos (+0x40) avança dt / rateCurveTime; ao cruzar um
+  ciclo: `cycleKill` limpa; no último ciclo para (Stop suave) ou, com
+  `sustain`, segura o fim; com trigger ≥ 0 a fatia acaba no fim do ciclo e
+  depois se espera `RandomRange(trigger)`. A quantidade é
+  `escala × fatia × curva(fração do ciclo) + resto`, o inteiro de baixo; o
+  resto fica para a próxima. Cada nova nasce espalhada pela fatia: a
+  posição recua pelo deslocamento do emissor na proporção do tempo que
+  falta, e já anda (`UpdateParticlePhysics`) esse tempo.
+- `InjectParticles` (`0xeb83f4`): em cada início de ciclo, `ceil(curva[0] ×
+  escala)` partículas de uma vez, todas com a mesma idade (o tempo desde o
+  início do ciclo), se ela for menor que a vida máxima; para depois de
+  `cycles` ciclos.
+- `MaintainParticles` (`0xeb822c`): `ceil(curva[0])` vivas (sem a escala de
+  emissão), as que faltam criadas na hora e já andadas dt.
+- Densidade: com os bits 0/1, `ApplyEffect` multiplica a taxa e o tamanho
+  pela densidade de partículas do gerente (se a curva[0] > 20 no inject);
+  não fizemos (a densidade padrão é 1, **[inferido]**).
+
+### 4e.4 Física
+
+- `UpdateParticlePhysics` (`0xeb6ecc`): idade += dt; morta se idade ≥ vida.
+  Sem nenhum dos bits 3, 4, 15, 17, 26 (máscara da `__StaticInit`
+  `0x26447f4`) e com dt × arrasto ≤ 0,05, **um passo só** (`0x1c2aca0`):
+  v' = (v + dt·a)(1 − dt·arrasto), posição += (v + v')·dt/2. Senão
+  `UpdateParticlePhysicsTimeStep` (`0xeb6d50`): passos de **no máximo 1/15 s**
+  (`0x3d888889`; usávamos 0,1): posição += passo·v; v += passo·a; depois
+  `ApplyForces` (`0xeb6604`): v += passo × atrator; v ×= 1 − passo ×
+  arrasto (o +0xe8: o nosso `force2a` era mesmo o arrasto); colisores,
+  terreno, morte fora do lote com o bit 18.
+- A aceleração do efeito (+0x58, `ApplyEffect`) = `force` + `globalWind` ×
+  vento do mundo + o vetor do passeio aleatório. A força vale **no
+  referencial das partículas** (o mundo, ou o do efeito com `rigid`), sem
+  girar pelo componente: confirma a nossa escolha antiga.
+- **Passeio aleatório das partículas** (`UpdateRandomWalk` `0xeb70dc`, bit
+  20): **um por efeito, não por partícula**: a cada `RandomRange(delay)` os
+  dois ângulos (rumo, elevação, em voltas) mudam de `aleatório(−turnX,
+  turnX)` mais ±turnY no mesmo sentido, e o vetor = força × (cos e cos r,
+  cos e sen r, sen e) entra na aceleração de todas.
+- `InitParticle` (`0xeb746c`): vida = `RandomRange(life)`; posição na caixa
+  (ou elipsoide); direção na caixa de direção (ou a própria posição com
+  `radial`) com o tamanho = escala de velocidade × `RandomRange(speed)`;
+  **bomba**: v += s × (p − centro)/|p − centro|; depois a posição passa pela
+  transformação do emissor e a velocidade pela rotação dela. Variações por
+  partícula: tamanho × (1 ± vary) × escala de tamanho, aspecto, alfa, cor (3
+  canais), multiplicadores das rotações (4e.1).
+
+### 4e.5 Onde as partículas vivem
+
+`cTSVisualEffect::UpdateTransforms` (`0xeb0b8c`) põe a transformação do nó
+(osso ou slot, ligado por `SetUnknownParam(2, nó)`) na **transformação do
+efeito**; `cTSVisualEffect::SetTransforms` (`0xeb1760`) dá a cada componente
+t1 = componente ∘ efeito e t2 = fonte (normalmente a identidade). As
+partículas nascem em t1 (no mundo) e são desenhadas por t2: **não seguem o
+efeito**, ficam onde nasceram (a fumaça do fogão, o fogo). Com o bit 5 do
+efeito visual (**`rigid`**), `SetTransforms` passa a transformação do efeito
+para a fonte e deixa a do efeito em identidade: as partículas vivem no
+referencial do efeito e andam com ele (o brilho do PlumbBob, os balões,
+489 efeitos do base). Um efeito aninhado herda: basta um nível `rigid`. As
+filhas das meta-partículas são efeitos com a transformação da
+meta-partícula e a fonte da meta (`UpdateActiveParticles` `0xf5f5b0`).
+
+### 4e.6 Desenho e ordem dentro da camada 7
+
+- O vértice (`0xeb8dbc`, o caminho sem vertex program): t = idade / vida;
+  tamanho = vary × curva(t) × escala; altura × aspecto(t) × vary; rotação =
+  (curva de rotação(t) × multiplicador + deslocamento) voltas; cor =
+  cores(t) × vary × cor do efeito; alfa = vary × alfa(t) × alfa do efeito;
+  quadro do atlas = `int(frameSpeed × idade + frameStart)`, dentro de
+  `frameCount` se ≠ 0, célula pelos bits (u = quadro & (tileU − 1)). Uma
+  chamada de desenho por componente, as partículas na ordem da lista (sem
+  ordenar entre si).
+- A display list (`cDisplayList::AddGeometry` `0xca8598`) guarda por parte
+  a chave (camada × 8 + 7 para as com blend, ímpar) e uma profundidade; o
+  comparador `cLessGeomPartInfo` (`__median` `0x1af5960`) ordena por chave
+  e, **com chave ímpar, só pela profundidade, a maior primeiro**. As
+  partículas vão com a flag 0x40 (`AddElementsToDisplayList` `0xeba5cc`):
+  profundidade = z/w do **centro** da caixa das partículas (`0x86ed4`); as
+  partes dos objetos = o **menor** z/w dos 8 cantos da caixa (`0x86d4c`),
+  o canto mais perto. Partes de uma mesma geometria ganham 1e−5 × índice.
+- Daí o PlumbBob: o diamante (`plumbbob_corecolor`, blend alpha, camada 7)
+  conta pelo canto mais perto, o brilho pelo centro; os dois em volta do
+  mesmo ponto, o diamante fica mais perto e é desenhado **depois**: o
+  ponto branco pequeno fica **atrás** do diamante.
+
+### 4e.7 Meta-partículas
+
+- Física (`0xf62d10`, `0xf63184`): os mesmos passos de 1/15 e o caminho
+  rápido; com o bit 24 cada meta-partícula tem dois `cTSRWState`
+  (`Update` `0xf60d9c`): a cada `RandomRange(delay)`, força s =
+  `RandomRange(strength)`; mistura m = giro[2]: m ≥ 0,5 → vertical s,
+  horizontal 2s(1 − m), senão horizontal s, vertical 2sm; rumo e elevação
+  mudam de `aleatório(−giro[0], giro[0])` ± giro[1] voltas; o vetor
+  (`0xf5e5bc`) é uma **aceleração**. Bit 29: trator; bit 30: caminho
+  (`SnapParticleToPath` `0xf5fb18`: posição e velocidade por Hermite entre
+  os pontos, em t1 a cada passo, então segue o emissor); bit 9 mata fora do
+  lote.
+- `InitParticle` (`0xf63310`): igual às partículas (caixa, direção,
+  velocidade, bomba, t1), e cria a filha (`CreateVisualEffect` da base) com
+  **começo suave** (sem pre-roll) e a transformação só de translação.
+- `HandOffParticleToChainSystem` (`0xf63d30`): no fim da vida a partícula
+  vai para o efeito de corrente com vida nova, troca a filha se a base muda
+  e, com `resetIncoming`, é reiniciada.
+
 ## 5. Uso
 
 - `s2pkg effects <effects.package>`: contagens e todos os nomes;
