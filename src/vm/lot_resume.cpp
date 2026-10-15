@@ -84,6 +84,7 @@ void restoreState(Object& o, const LotObjects::State& s) {
     t.inventoryId = f[1];
     t.counted = f[2] != 0;
     t.index = f[3];
+    std::copy(f.begin() + 4, f.end(), t.copied.begin());
     t.token.guid = s.token.guid;
     t.token.flags = int16_t(s.token.flags);
     t.token.properties = s.token.properties;

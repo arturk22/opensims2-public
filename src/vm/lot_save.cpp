@@ -217,6 +217,7 @@ void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects:
     s.tempTokenFields[1] = t.inventoryId;
     s.tempTokenFields[2] = t.counted;
     s.tempTokenFields[3] = t.index;
+    std::copy(t.copied.begin(), t.copied.end(), s.tempTokenFields.begin() + 4);
     s.token.guid = t.token.guid;
     s.token.flags = uint16_t(t.token.flags);
     s.token.properties = t.token.properties;
@@ -534,7 +535,8 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
                 if (x.arrays[i].values != y->arrays[i].values || x.arrays[i].iterator != y->arrays[i].iterator)
                     diff(at + "array " + std::to_string(i));
         if (x.tempToken.token.guid != y->tempToken.token.guid ||
-            x.tempToken.token.properties != y->tempToken.token.properties || x.tempToken.index != y->tempToken.index)
+            x.tempToken.token.properties != y->tempToken.token.properties || x.tempToken.index != y->tempToken.index ||
+            x.tempToken.copied != y->tempToken.copied)
             diff(at + "temporary token");
         if (x.timers.size() != y->timers.size())
             diff(at + "timer count");

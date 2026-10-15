@@ -248,7 +248,11 @@ struct Inventory {
 // 3 token index (from 0, as the game keeps it: TryInventoryAction BV
 // 0xe26a40), 4-5 GUID low/high word, 6 flags, 7 property count, 8 property
 // index, 9 property value (at that index; ours: in the game 8 and 9 are the
-// pointer to the token object).
+// pointer to the token object). Fields 4-7 are raw copies (cTSObject
+// +0x1A8..+0x1AE, saved with the object; docs/save-mac.md §8): every
+// Manage Inventory read of a token copies its GUID, flags and property
+// count there, writing them changes nothing else, and the singular
+// operation 11 gives the copy it adds the flags of field 6.
 struct TempToken {
     InventoryToken token;
     bool loaded = false;
@@ -256,7 +260,13 @@ struct TempToken {
     int16_t inventoryId = 0;
     bool counted = false;
     int16_t index = 0; // from 0
+    std::array<int16_t, 4> copied{}; // fields 4-7
     int16_t propertyIndex = 0;
+    // What a Manage Inventory read leaves in fields 4-7.
+    void copyFields() {
+        copied = {int16_t(token.guid & 0xFFFF), int16_t(token.guid >> 16), token.flags,
+                  int16_t(token.properties.size())};
+    }
 };
 
 struct VMError : std::runtime_error {

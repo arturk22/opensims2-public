@@ -1275,7 +1275,7 @@ Exit changeMaterial(Context& c) {
 //   9 save my temporary token back where it was read; false if it is gone (a
 //     temporary token read from counted tokens runs the counted 9 instead)
 //  10 token count into the second
-//  11 add a copy of my temporary token (the copy keeps its flags)
+//  11 add a copy of my temporary token, with the flags in its field 6
 // Counted (properties 0 and 1 are the count and the category):
 //   0 add the second operand to the count of the GUID and category (byte 9);
 //     a new token gets flags byte 0 bits 3-5; false if the number is not > 0
@@ -1331,6 +1331,7 @@ Exit manageInventory(Context& c) {
     auto load = [&](size_t i) {
         temp = {.token = tokens[i], .loaded = true, .kind = kind, .inventoryId = id, .counted = counted,
                 .index = int16_t(i)};
+        temp.copyFields();
     };
 
     if (counted) {
@@ -1550,11 +1551,15 @@ Exit manageInventory(Context& c) {
         return Exit::True;
     }
     case 10: set2(int16_t(tokens.size())); return Exit::True;
-    case 11:
+    case 11: {
+        // A copy of the token with the flags of field 6 (BV 0xe27798).
         if (!temp.loaded || tokens.size() >= kMaxInventoryTokens)
             return Exit::False;
-        tokens.push_back(temp.token);
+        InventoryToken copy = temp.token;
+        copy.flags = temp.copied[2];
+        tokens.push_back(std::move(copy));
         return Exit::True;
+    }
     default: return Exit::False;
     }
 }
