@@ -581,3 +581,72 @@ pela câmera das cinemáticas e pela raiz da locomoção na VM),
 `WriteTo` os grava, a razão das tangentes e as chaves assadas. Testes
 `test_anim` ("tangent decoding", "baked keys a frame apart", "rotation
 slerped between frames", "written back byte for byte").
+
+## 10. O canal de eventos e o que as árvores de evento recebem (rodada n23)
+
+### 10.1 Quem cria as chaves de evento
+
+- As chaves do ANIM (`cEventChannel`, registros de 14 bytes, §9.1) são os
+  tipos 1005 ("event=N", os snaps), 1014 (som) e 8 (efeito); as do motor
+  são feitas pelo `cActiveAnimEvent::AnimUpdateDefault` (BV `0xd38bec`), que
+  guarda quatro chaves próprias (`+0x3C`…`+0x48`) e as põe na lista de
+  eventos do quadro: uma quando o pedido foi abortado (`IsAborted`, uma vez
+  só), uma quando o fade de saída começa (`HasFadeOutStartTicksPassed`, no
+  `ActualFadeOutStart`), uma no fim de cada volta (ao passar da duração; ao
+  contrário, ao passar de 0) e uma no fim do pedido. Os tipos delas
+  (−1, 7, 6/3) vêm do construtor, que não foi achado: que a do fim de cada
+  volta seja a 6 (9998) e a do fim do pedido a 3 (9999) segue **inferido**
+  (bate com a ordem 9998, 9999 no fim).
+- **Toda** animação de um `cAnimatable` tem esse tratador: o
+  `AddChoreoAnimRequest` (BV `0x696644`) cria um `cCustomEventHandler2`
+  (`0x29d10617`/`0x3b4265f2`) para todo pedido, Animate Sim incluído. Logo a
+  árvore de eventos do **Animate Sim** também recebe 9997, 9998, 9999 e −1 —
+  o `opensims2` só mandava os "event=N" a ela. Nos dados (`s2pkg
+  event-tree-sweep`): "Event - Get", "Event - Clean", "Event Tree - Read
+  Stop", "Event - Walk and Sip", "Event - Introduce", "Animate - Burned -
+  Events" e outras árvores de Animate Sim comparam o parâmetro 0 com 9997 ou
+  9999.
+
+### 10.2 `nTSSG::cCustomEventHandler2::HandleEvents` (BV `0x780ad4`)
+
+Lido no Ghidra sem janela (a função não existe no projeto). Para cada chave
+na janela do quadro:
+
+- tipo 1005: o número é o `atoi` do campo "event"; tipo 7 → **9997**,
+  6 → **9998**, 3 → **9999**, −1 → **−1**; 0x3F6 (som: `HandleSoundEvent` e
+  `TriggerFootstepFX`); 8 (efeito, `FUN_00d85e68`); 0x3F7 ("nodeindex"); 4
+  ("look_state", o olhar); 2 ("action" begin/end: muda o fim da ação do
+  pedido); os outros vão ao `cEventHandler` base.
+- O pedido (`cAnimRequest`, pelo `cAnimatable` vtable `0x264`) dá a árvore
+  (`EventTreeID`, vtable `0xa4`), o stack object (`StackObjectID`, `0x9c`)
+  e o GUID do código (`ObjectScopeGUID`, `0xa0`: o comportamento desse
+  objeto, vtable `0x48`); sem árvore ou com o `State` < 0, nada roda.
+- **Os parâmetros** (5 shorts em `sp+0xb8`): `[0]` o evento; `[1]` o
+  **`StackObjectID` do pedido** (que o `try_animate_sim`, BV `0x69d634`,
+  grava com o stack object do quadro — vtable `0x30` do
+  `cITSTreeStackElem`, o campo `+0x0A` — e o `try_animate_overlay` igual);
+  `[2]` `int(PortionCompleted × 100)` (`FLOAT_0274b5b0` = 100, o
+  `cChoreoRequest::PortionCompleted`, vtable `0xac`); `[3]` `NumLoops`
+  (`+0x44`, vtable `0xc8`: 1, ou o temp 1 do Animate Overlay com a flag
+  0x20, −1 até parar); `[4]` `IsAborted` (vtable `0x88`).
+- **Onde roda:** `cTSObject::RunTree(comportamento, stack object, árvore,
+  parâmetros, tempo do evento, false, true)` (vtable `0x3ac`, BV
+  `0xb02278`) no **objeto animado**: com o último `true` ele guarda os 8
+  temps do objeto (`+0x8A`), roda `RunOneTickTree` (vtable `0x524`,
+  `cTSTreeSim::RunOneTickTree` BV `0xe1ab54`) e **põe os temps de volta**:
+  o que a árvore escreve nos temps não vaza para a thread. Se a tree sim do
+  objeto já tem um erro (`+0x34`), nada roda; o erro da árvore vai para a
+  tree sim do objeto (o que acontece depois com ele não foi seguido).
+- O tratador do alcance (`cEventHandlerReach`, BV `0x752b3c`, o do
+  `try_new_reach`) monta os mesmos 5 parâmetros e roda "CT - Reach -
+  Events" e "CT - Grab"/"CT - Put" pelo nome.
+
+**O que o `opensims2` fazia** (inferido): parâmetro 1 = o objeto de IK do
+Animate Sim (o `TargetID` do pedido; nos casos comuns é o stack object
+também), 2–4 = 0, os temps da thread do Sim compartilhados com a árvore de
+evento (e escritos de volta), e os overlays com temps zerados e parâmetro 1
+= 0. Nos dados, 25 árvores de overlay leem o parâmetro 4 (abortado: "Idle -
+Events", "Event - Talk", "Facial Overlay - Continue", ...), "Facial -
+Background - Events", "Events - Notify Out Of Idle" e "Events - Animate
+Overlay Complete" leem o 1, "Facial Overlay - Continue Loop" o 2 e o 3, e as
+árvores do alcance ("Event - Reach - Grab/Put") o 1.
