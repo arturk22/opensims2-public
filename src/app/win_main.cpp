@@ -28,6 +28,7 @@
 #include "app/head_shot.hpp"
 #include "app/hood_mode.hpp"
 #include "app/main_menu.hpp"
+#include "app/options_panel.hpp"
 #include "app/tutorial.hpp"
 #include "app/user_data.hpp"
 #include "render/camera.hpp"
@@ -308,6 +309,14 @@ struct App {
     }
 };
 
+// The option windows' volumes and mutes on the mixer's groups (the Mac host's applyAudioSettings).
+void applyAudioSettings(os2::GameAudio& audio, const os2::GameSettings& settings) {
+    const os2::SoundGroup groups[4] = {os2::SoundGroup::Vox, os2::SoundGroup::Sfx, os2::SoundGroup::Music,
+                                       os2::SoundGroup::Ambience};
+    for (size_t g = 0; g < 4; ++g)
+        audio.mixer().setGroupVolume(groups[g], settings.muted[g] ? 0.0f : settings.volume[g]);
+}
+
 // Where a scene goes when it ends: the next scene (none: quit), and how many
 // scripted steps it used (the next scene gets the rest).
 struct SceneExit {
@@ -346,6 +355,7 @@ SceneExit runCas(App& app, const os2::Scene& scene) {
         }
     }
     os2::GameAudio gameAudio(res, {});
+    applyAudioSettings(gameAudio, app.settings);
     os2::CasMode cas(renderer, index, app.gameDir, args);
     bool running = true;
     SceneExit exit;
@@ -533,6 +543,7 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
     }
 
     os2::GameAudio gameAudio(app.res, {});
+    applyAudioSettings(gameAudio, app.settings);
     hood.ui().playSound = [&](const std::string& name) { gameAudio.playUi(name); };
     // Head shots for the characters whose files have none (app/head_shot.hpp).
     std::vector<os2::SimPart> parts;
@@ -555,6 +566,7 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
         app.settings = s;
         s.save(*app.user);
         app.settings.applyGraphics();
+        applyAudioSettings(gameAudio, app.settings);
         hood.view().refreshLightMap();
     };
     hood.ui().options().playSound = [&](const std::string& name) { gameAudio.playUi(name); };
@@ -725,6 +737,7 @@ SceneExit runMenu(App& app, const os2::Scene& scene) {
     menu.setEpisodes(os2::loadTutorialEpisodes(
         app.res, app.user->hasCopy("Tutorial") ? app.user->neighborhoodsDir() / "Tutorial" : std::filesystem::path()));
     os2::GameAudio gameAudio(app.res, {});
+    applyAudioSettings(gameAudio, app.settings);
     menu.setSoundPlayer([&](const std::string& name) { gameAudio.playUi(name); });
     renderer.setClearColor(simd_make_float4(0, 0, 0, 1));
     SDL_SetWindowTitle(app.window, "opensims2");
@@ -1356,6 +1369,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         }
 
         os2::GameAudio gameAudio(res, {});
+        applyAudioSettings(gameAudio, app.settings);
         os2::LotAudio lotAudio(gameAudio, index, lot, {});
         for (auto& sim : sims)
             lotAudio.attachSim(*sim.actor, sim.id, {});
@@ -1410,6 +1424,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         }
 
         std::unique_ptr<os2::LiveUi> liveUi;
+        std::unique_ptr<os2::OptionsPanel> lotOptions; // the option windows of the live panel's options
         std::unique_ptr<os2::BuyMode> buy;
         std::unique_ptr<os2::BuildMode> build;
         std::unique_ptr<os2::PieMenuHost> pie;
@@ -1421,9 +1436,19 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 liveUi->setSim(pie->sim());
             else if (!sims.empty())
                 liveUi->setSim(sims.front().id);
-            os2::UiScreen screen = liveUi->screen(1280, 720);
-            liveWindows = int(screen.windows);
-            liveDrawn = int(screen.drawn);
+            os2::UiScreen liveScreen = liveUi->screen(1280, 720);
+            liveWindows = int(liveScreen.windows);
+            liveDrawn = int(liveScreen.drawn);
+            // Under the puck, as Buy mode's panel (the window's tab rises behind the puck).
+            os2::UiScreen screen;
+            if (lotOptions && !liveUi->optionsOpen() && lotOptions->active())
+                lotOptions->closeWindow(); // the options panel closed
+            if (lotOptions && lotOptions->active())
+                screen = lotOptions->screen(1280, 720);
+            screen.width = liveScreen.width, screen.height = liveScreen.height;
+            screen.quads.insert(screen.quads.end(), liveScreen.quads.begin(), liveScreen.quads.end());
+            for (auto& text : liveScreen.textImages)
+                screen.textImages.push_back(std::move(text));
             os2::UiScreen buyScreen;
             if (buy && buy->active()) {
                 buy->update();
@@ -2120,7 +2145,34 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             liveUi->onNeighborhood = leaveLot;
             liveUi->onQuit = [&] { openFlowDialog(FlowDialog::Quit); };
             liveUi->onSave = [&] { saveGameNow(); };
+            try {
+                lotOptions = std::make_unique<os2::OptionsPanel>(index, res, app.settings);
+                lotOptions->onChanged = [&](const os2::GameSettings& s) {
+                    app.settings = s;
+                    if (app.user)
+                        s.save(*app.user);
+                    app.settings.applyGraphics(); // for what loads next
+                    applyAudioSettings(gameAudio, app.settings);
+                };
+                lotOptions->playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+                liveUi->onOptionWindow = [&](int window) { lotOptions->toggleWindow(window); };
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: options panel: %s\n", e.what());
+                lotOptions.reset();
+            }
         }
+        // A click on an open option window (the options panel itself is the
+        // live panel's): whatever the window covers is its own.
+        auto pressOptions = [&](simd_float2 p) {
+            if (!lotOptions)
+                return false;
+            if (liveUi && !liveUi->optionsOpen() && lotOptions->active())
+                lotOptions->closeWindow();
+            if (!lotOptions->active())
+                return false;
+            lotOptions->setCanvas(1280, 720);
+            return lotOptions->press(p) != os2::OptionsPanel::Action::None || lotOptions->covers(p);
+        };
         // Esc: the open pie menu first, else back to the neighborhood (the lot
         // given on its own just closes).
         auto escape = [&] {
@@ -2155,6 +2207,8 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
             if (pie && pie->isOpen() && pie->press(p))
                 return;
+            if (!right && pressOptions(p)) // the option windows float over everything
+                return;
             if (liveUi && !right) {
                 if (liveUi->overModeButton(p) && liveUi->press(p))
                     return;
@@ -2166,7 +2220,12 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 return;
             if (!right && !optionsOver && build && build->active() && build->press(p))
                 return;
-            if (liveUi && liveUi->press(p, right))
+            if (liveUi && liveUi->press(p, right)) {
+                if (lotOptions && !liveUi->optionsOpen())
+                    lotOptions->closeWindow();
+                return;
+            }
+            if (!right && pressOptions(p)) // under the puck
                 return;
             if (right) {
                 rightOnWorld = true;
