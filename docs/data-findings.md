@@ -1,6 +1,6 @@
 # Achados nos dados do jogo
 
-Itens do `TODO.md` marcados como "confirmar o que foi inferido" que dava para
+Itens do `TODO.md` (e do `docs/TODO-HISTORICO.md`) marcados como "confirmar o que foi inferido" que dava para
 resolver olhando os próprios arquivos do jogo: rótulos do editor de SimAntics
 que vieram no `objects.package` (STR# do grupo `0x7FE59FD0`), strings do
 `Sims2.exe` (o disassembler do editor, `cEdithLanguage::Cat*`, fica em
@@ -602,6 +602,6 @@ motivos salvos nos PERS de `N001_Lot11`.
     pessoa 189 e 172 do BV): segue inferido.
 
 **Conclusão.** Implementado em `src/vm/motives.*` e `src/vm/autonomy.*`
-(ver TODO.md M6, "Motor de motivos" e "Autonomia"). Inferido: o
+(ver docs/TODO-HISTORICO.md M6, "Motor de motivos" e "Autonomia"). Inferido: o
 decaimento no motor e a unidade por dia; os vieses do `FBA_ScoreInteraction`
 (posse, memória, relacionamento, clima) ficam em 1.

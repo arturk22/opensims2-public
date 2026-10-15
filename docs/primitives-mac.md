@@ -3578,7 +3578,7 @@ classes de operando dele, e o `OnTryElement` (0x00B3A8F4, slot do vtable de
   Awareness" (→ 0x35) não existe (dá falso).
 - Set to Next: nos tipos que percorrem listas (1 pessoa, 4/18 GUID, 3, 16, …)
   **o alvo vira 0 quando nada é achado** (base e BV). Contradiz o "Set to
-  Next sem achar não mexe no alvo" do `TODO.md`.
+  Next sem achar não mexe no alvo" do `docs/TODO-HISTORICO.md`.
 - Strings do editor que só existem no BV (ausentes no exe base): "Young
   Adult", "Kitten list"/"Puppy list", "Scratch-Chew", "including disabled
   objects", "To Sub Queue", "Disabled (NonPropagating)", "Receptivity

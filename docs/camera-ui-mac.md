@@ -252,7 +252,7 @@ Pedidos internos (`HandleRequest`, binário):
 
 ### 1.5 O que difere do código atual (`src/render/camera.*`, `src/app/camera_input.*`)
 
-| item `TODO.md` | jogo |
+| item do `TODO.md` ou do `docs/TODO-HISTORICO.md` | jogo |
 |---|---|
 | yaw 0 = +X | heading h põe o olho em (cos h, sin h) do pivô; a câmera olha para −(cos h, sin h) |
 | distância da zoom table horizontal | distância 3D ao longo da visão |
