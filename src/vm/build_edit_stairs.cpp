@@ -212,10 +212,13 @@ int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::o
         float& g = plan.ground[size_t(gx) * rowH + size_t(gy)];
         if (std::fabs(g - h) < 1e-4f)
             return true;
-        if ((limit = terrainLimitError(h)) != 0)
+        // FUN_009e9550 with the stairs' flags (the global 0x02c81020, 0x2BB7
+        // like the walls': docs/buy-build-mac.md §7.24).
+        if (const int e = vertexMoveError(0, gx, gy, h, vertextest::kWalls)) {
+            if (e == 0x65 || e == 0x66)
+                limit = e;
             return false;
-        if (!terrainFree(gx, gy))
-            return false;
+        }
         g = h;
         plan.terrain[{gx, gy}] = h;
         return true;
@@ -273,16 +276,11 @@ int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::o
                 return std::array<std::array<int, 2>, 2>{{{nx, t.y}, {nx, t.y + 1}}};
             return std::array<std::array<int, 2>, 2>{{{t.x, ny}, {t.x + 1, ny}}};
         };
-        // FUN_009e9550 for a ground grid point going to `h` (upper floors'
-        // points are not dug here: inferred).
-        // (A point already at that height passes after the first tests:
-        // FUN_009e9550 returns before the rest.)
+        // FUN_009e9550 (the stairs' flags, 0x2BB7) for a ground grid point
+        // going to `h` (upper floors' points are not dug here: inferred). A
+        // point already at that height passes the edge test alone.
         auto canMove = [&](int l, const std::array<int, 2>& c, float h) {
-            if (l != 0 || !editablePoint(c[0], c[1]))
-                return false;
-            if (std::fabs(lot_.elevation(0, c[0], c[1]) - h) < 1e-4f)
-                return true;
-            return !terrainLimitError(h) && terrainFree(c[0], c[1]);
+            return l == 0 && vertexMoveError(0, c[0], c[1], h, vertextest::kWalls) == 0;
         };
         auto flat = [&](int l, const TilePos& t) {
             const float z0 = lot_.elevation(l, t.x, t.y);
@@ -514,12 +512,9 @@ BuildEditor::Result BuildEditor::placeStairs(const BuildStairs& product, TilePos
     }
     Geometry before = capture();
     // The terrain under the steps and the bottom tile.
-    const int W = int(lot_.width), H = int(lot_.height);
-    const size_t plane = size_t(W + 1) * size_t(H + 1);
-    for (const auto& [g, h] : plan.terrain) {
-        const size_t at = size_t(g.first) * size_t(H + 1) + size_t(g.second);
-        lot_.elevations[size_t(0 - lot_.minLevel) * plane + at] = h;
-    }
+    // (ChangeFloorAndWaterElevationCoupled: the stories above go along.)
+    for (const auto& [g, h] : plan.terrain)
+        moveVertexCoupled(0, g.first, g.second, h);
     // The floors over the steps go (the placeholders keep that space free;
     // inferred, as the staircase objects' stairwell).
     for (int i = 0; i < n; ++i) {
@@ -556,10 +551,11 @@ BuildEditor::Result BuildEditor::placeStairs(const BuildStairs& product, TilePos
         Position pos{at[0], at[1], level};
         if (height) {
             pos.height = *height;
-            // The saved flights keep each step's height over the bottom
-            // story's floor, the top step's too (inferred: the terrain under
-            // them is 0 in every saved lot).
-            pos.elevation = *height - lot_.elevationAt(B - 1, at[0], at[1]);
+            // The saved "elevation" (cTSObject +0x20c, WriteHeader BV
+            // 0xb07790) is the float SetPosition was given: for the steps
+            // the flight's height itself (UserPlaceModularStairs ->
+            // AddObject -> TrySetPosition; docs/buy-build-mac.md §7.24).
+            pos.elevation = *height;
         }
         for (ObjectId part : groupOf(vm_, id))
             p.parts.push_back({part, {int(std::floor(at[0])), int(std::floor(at[1])), level}, pos});
