@@ -109,6 +109,7 @@ static void testPng() {
     writePng(path, img);
     std::ifstream f(path, std::ios::binary);
     std::vector<uint8_t> png((std::istreambuf_iterator<char>(f)), {});
+    f.close();
     std::filesystem::remove(path);
     check(png.size() > 8 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G', "png signature");
 

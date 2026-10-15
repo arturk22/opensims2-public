@@ -11,7 +11,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-#include <unistd.h>
 
 namespace os2 {
 

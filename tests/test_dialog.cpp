@@ -6,9 +6,9 @@
 #include "formats/character_write.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/neighborhood.hpp"
+#include "port/process.hpp"
 
 #include <filesystem>
-#include <unistd.h>
 
 #include <cstdio>
 #include <initializer_list>
@@ -412,7 +412,7 @@ static void testLightAndOutfit() {
 // clothing rack adds is written back as new BINX/3IDR of the family's bin.
 static void testClothingBin() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / ("os2-clothing-bin-" + std::to_string(::getpid()));
+    const fs::path dir = fs::temp_directory_path() / ("os2-clothing-bin-" + std::to_string(processId()));
     fs::create_directories(dir);
     const Tgi a{0xEBCF3E27, 0x2C17B74A, 0xAAA, 0}, b{0xEBCF3E27, 0x2C17B74A, 0xBBB, 0};
     {
@@ -448,7 +448,7 @@ static void testClothingBin() {
 // SDSC, its SDNA and its GUID among the service family's members.
 static void testNpcNeighborSaved() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / ("os2-npc-save-" + std::to_string(::getpid()));
+    const fs::path dir = fs::temp_directory_path() / ("os2-npc-save-" + std::to_string(processId()));
     fs::create_directories(dir);
     {
         hood::FamilyRecord f;
@@ -488,7 +488,7 @@ static void testNpcNeighborSaved() {
 // one's, a family made in play gets a FAMI, a removed family loses its own.
 static void testFamilyMembershipSaved() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / ("os2-members-save-" + std::to_string(::getpid()));
+    const fs::path dir = fs::temp_directory_path() / ("os2-members-save-" + std::to_string(processId()));
     fs::create_directories(dir);
     const uint32_t g1 = 0x0FD10001, g2 = 0x0FD10002, g3 = 0x0FD10003, g4 = 0x0FD10004;
     {
@@ -548,7 +548,7 @@ static void testFamilyMembershipSaved() {
 // instances past the package's, and the bin when the family has none.
 static void testFamilyBinEntries() {
     namespace fs = std::filesystem;
-    const fs::path file = fs::temp_directory_path() / ("os2_bin_" + std::to_string(getpid()) + ".package");
+    const fs::path file = fs::temp_directory_path() / ("os2_bin_" + std::to_string(processId()) + ".package");
     DbpfWriter w;
     w.add(Tgi{hoodtype::BINX, 0xFFFFFFFF, 5, 0}, {1, 2, 3});
     w.add(Tgi{hoodtype::Wardrobe, 0xFFFFFFFF, 1, 0}, {1});

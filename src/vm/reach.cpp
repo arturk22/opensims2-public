@@ -576,8 +576,9 @@ Exit reachPut(Context& c) {
         }
         if (r.tick < r.end)
             return Exit::Yield;
+        const std::string played = r.animation;
         me.reach.reset();
-        if (anim.name == r.animation) {
+        if (anim.name == played) {
             anim.name.clear();
             anim.tree = nullptr;
         }

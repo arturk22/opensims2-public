@@ -29,6 +29,8 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
                              const std::filesystem::path& lotFile, bool fromInit)
     : index_(index), lot_(lot), code_(std::make_unique<vm::CodeLibrary>(&index)),
       vm_(std::make_unique<vm::VM>(*code_)) {
+    std::fprintf(stderr, "opensims2: vm constructed\n");
+    std::fflush(stderr);
     vm::VM& m = *vm_;
     m.initCreatedObjects = true;
     m.instructionsPerTurn = 100000; // the binary's limit (cTSTreeSim::DoNodeAction: 0x44D past 100000 nodes)
@@ -36,11 +38,19 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     m.clock.ticksPerSecond = kTicksPerSecond;
     m.walkTilesPerTick = float(2.0 / kTicksPerSecond);
     m.setClockGlobals();
+    std::fprintf(stderr, "opensims2: loading saved objects\n");
+    std::fflush(stderr);
     LotObjects saved = LotObjects::load(lotPackage);
+    std::fprintf(stderr, "opensims2: saved objects %zu, arrivals\n", saved.objects.size());
+    std::fflush(stderr);
     // A family that just moved in: its Sims join the lot (formats/lot_arrivals.hpp).
     const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index_, false);
+    std::fprintf(stderr, "opensims2: arrivals done, neighborhood\n");
+    std::fflush(stderr);
     // The neighborhood first, as lot-run (lot_neighborhood.hpp).
     const bool hood = vm::loadLotNeighborhood(m, lotFile);
+    std::fprintf(stderr, "opensims2: neighborhood %d, loading lot into the VM\n", hood ? 1 : 0);
+    std::fflush(stderr);
     if (hood && arrivals.family && arrivals.charge) {
         // The move-in charge (LoadLot step 0x1B), into the budget globals.
         const auto f = int16_t(arrivals.family);
@@ -48,6 +58,8 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
         std::fprintf(stderr, "opensims2: family %d moved in: charged %lld\n", f, (long long)arrivals.charge);
     }
     const vm::LotLoad load = vm::loadLot(m, lot, saved, vm::charactersDirOf(lotFile));
+    std::fprintf(stderr, "opensims2: lot loaded, %zu created, resuming\n", load.created);
+    std::fflush(stderr);
     // What the lot's file had that could not be read and the objects the VM
     // could not create (s2pkg's lot commands print them; the app did not):
     // the first 10 of each load.
@@ -69,6 +81,8 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     if (hood)
         vm::bindLotSims(m);
     const vm::ResumeResult r = vm::startSavedLot(m, load, saved, fromInit);
+    std::fprintf(stderr, "opensims2: saved lot resumed\n");
+    std::fflush(stderr);
     // The family's first day (SetupFamilyFirstDay): the "reset lot"
     // broadcast, whose "Sub - Generate Family" brings the family's Sims.
     if (hood && arrivals.firstDay) {

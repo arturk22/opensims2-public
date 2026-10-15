@@ -10,12 +10,11 @@
 #include "vm/hood_save.hpp"
 #include "vm/lot_records.hpp"
 #include "vm/lot_save.hpp"
+#include "port/process.hpp"
 
 #include <algorithm>
 #include <string>
-#include <unistd.h>
 #include <cerrno>
-#include <csignal>
 #include <cstdlib>
 #include <cstdio>
 #include <map>
@@ -27,9 +26,15 @@ namespace fs = std::filesystem;
 namespace {
 
 bool under(const fs::path& path, const fs::path& dir) {
-    const std::string d = fs::weakly_canonical(fs::absolute(dir)).string();
-    const std::string p = fs::weakly_canonical(fs::absolute(path)).string();
-    return p == d || (p.size() > d.size() && p.compare(0, d.size(), d) == 0 && p[d.size()] == '/');
+    std::error_code ec;
+    const fs::path d = fs::weakly_canonical(fs::absolute(dir), ec);
+    const fs::path p = fs::weakly_canonical(fs::absolute(path), ec);
+    auto di = d.begin();
+    auto pi = p.begin();
+    for (; di != d.end(); ++di, ++pi)
+        if (pi == p.end() || *pi != *di)
+            return false;
+    return true;
 }
 
 } // namespace
@@ -159,7 +164,7 @@ const char* const kSessionPrefix = "opensims2-characters-";
 
 void removeSessionCharacters() {
     std::error_code ec;
-    fs::remove_all(fs::temp_directory_path(ec) / (kSessionPrefix + std::to_string(::getpid())), ec);
+    fs::remove_all(fs::temp_directory_path(ec) / (kSessionPrefix + std::to_string(processId())), ec);
 }
 
 } // namespace
@@ -167,7 +172,7 @@ void removeSessionCharacters() {
 fs::path sessionCharactersDir() {
     static const fs::path dir = [] {
         removeStaleSessionCharacters(fs::temp_directory_path());
-        fs::path d = fs::temp_directory_path() / (kSessionPrefix + std::to_string(::getpid()));
+        fs::path d = fs::temp_directory_path() / (kSessionPrefix + std::to_string(processId()));
         std::error_code ec;
         fs::create_directories(d, ec);
         std::atexit(removeSessionCharacters); // what was not saved goes with the session
@@ -191,7 +196,7 @@ size_t removeStaleSessionCharacters(const fs::path& tempDir) {
         const long pid = std::stol(digits);
         // A session still running keeps its folder (kill 0: the process
         // exists; EPERM: it exists under another user).
-        if (pid > 0 && (::kill(pid_t(pid), 0) == 0 || errno == EPERM))
+        if (processAlive(pid))
             continue;
         stale.push_back(e.path());
     }

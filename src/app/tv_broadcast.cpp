@@ -134,7 +134,7 @@ void TvBroadcast::next(Live& l, const Definition& d, double now) {
         if (soundWanted_ && l.movie->hasSound())
             l.sound.pcm = std::make_shared<const Pcm>(l.movie->decodeSound());
         if (std::getenv("OS2_DEBUG_TV"))
-            std::fprintf(stderr, "opensims2: tv plays %s\n", pick.filename().c_str());
+            std::fprintf(stderr, "opensims2: tv plays %s\n", pick.filename().string().c_str());
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: tv %s: %s\n", pick.c_str(), e.what());
         l.movie.reset();
