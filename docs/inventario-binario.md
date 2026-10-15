@@ -74,7 +74,7 @@ palavra.
 | Sistema | Classes (estudadas) | Cobertura de nomes | Índice de fidelidade | "inferido" em src / docs |
 |---|---|---|---|---|
 | VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 8,5 / 11 = **77%** | 125 / 80 |
-| Rotas | 27 (12) | 113 / 622 = 18,2% | 6 / 8 = **75%** | 59 / 38 |
+| Rotas | 27 (13) | 113 / 622 = 18,2% | 7 / 8 = **88%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 7,5 / 10 = **75%** | 10 / 8 |
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 7,5 / 11 = **68%** | 63 / 50 |
@@ -134,9 +134,9 @@ Código: `src/vm/routing*.cpp`, `path_planner.*`, `locomotion.*`,
 | Obstáculos: `cTSRouteManager` (70, 12), `WorkOutTileCostAndPassability` | `vm/path_planner.cpp`, `routing_plan.cpp` | inferido | O custo exato de cada `ePassabilityState` falta; tile da parte de multi-tile e caixa sem lista são inferidos. |
 | Objetivos: `cTSRoute::EvalTileForGoal`, gerador de pontos | `vm/routing.cpp` | fiel | A tabela da §9 do `routing-mac.md` ainda diz "aproximação": está velha. |
 | Máquina do roteador: `cTSRoutingObjectAggregate` (95, 48): pós-rota, goal check, portais, `AskBlockerToMove`/`MoveOutOfWay` | `vm/routing*.cpp` | fiel | O mais estudado da rota. |
-| Locomotor: `nTSSG::cLocomotable` (57, 14): `FollowOneStep`, `ComputeTurn`, `CollisionCheck` | `vm/routing_loco.cpp`, `routing_walk.cpp` | inferido | O teste de segmento do `CollisionCheck` não foi lido. 22 marcadores nos dois arquivos. |
-| Slots de rota: `cTSRoutingSlot` (58, 3), `cTSSlotDescriptor` (39, 0), `cTSSlotLoader` (19, 0) | `vm/routing.cpp`, `formats/` (SLOT) | inferido | Direções, distâncias e facing do SLOT são inferidos (`TODO.md`). |
-| Portais de objeto e escadas: `cPathPlanner::AddDoorPortal`, pares de slots | `vm/routing_plan.cpp` | inferido | Flag `0x200000` e o slot de portal do degrau são inferidos; um Sim não sobe a escada reta do N001_Lot11. |
+| Locomotor: `nTSSG::cLocomotable` (57, 14): `FollowOneStep`, `ComputeTurn`, `CollisionCheck` | `vm/routing_loco.cpp`, `routing_walk.cpp` | inferido | Rodada n03: o `CollisionCheck` e as exclusões do `EstimateWhenPathWillBeBlocked` lidos (quem se afasta sai da varredura, feito); as exceções do alvo da rota e de "já sobrepostos" não estão no binário e seguem inferidas (`routing-mac.md` §6.1). |
+| Slots de rota: `cTSRoutingSlot` (58, 3), `cTSSlotDescriptor` (39, 0), `cTSSlotLoader` (19, 0) | `vm/routing.cpp`, `formats/` (SLOT) | inferido | Rodada n03: `Init`, `Read`/`Write` do descritor e os bits das RS flags (par `0x200000`, aleatório `0x2000`, parado `0x40000`, paredes `0x80000`, continuação `0x400000`/`0x800000`) lidos; o nome de osso exige `0x20000` (`routing-mac.md` §8.6); o +20 "parado" feito. Falta: a escala 1/16 do `Read` por versão e o +25 das paredes. |
+| Portais de objeto e escadas: `cPathPlanner::AddDoorPortal`, pares de slots | `vm/routing_plan.cpp` | fiel | Rodada n03: escadas pelos slots das peças, duas faixas de mão única (sobe/desce), flag `0x200000` e mão única conferidas (`routing-mac.md` §8.6). Falta: retângulos de custo junto das pontas da escada. |
 | Rota salva: `cTSRoute::SaveToStream` | `vm/lot_save.cpp` | fiel | `save-mac.md` §7c. |
 
 ### 3.3 Animação e IK
@@ -357,7 +357,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 |---|---|---|---|---|
 | 1 | **Sentar** (issue 001, linhas A–H) — **feita** (n01): objetivos de sentar, Snap Into/PlaceInSlot, direção do Snap e lista 0x92 do binário; E, G, I ficam para a rodada 2 (`docs/seat-mac.md`). | Sentar aparece em toda refeição, sofá e privada; 7 de 10 partes inferidas. | 3 Opus (1 leitura + 2 código) | sim |
 | 2 | **Corpo do Sim: coreografia, mistura e IK** (`cChoreoQueue`, `cChannelUber*`, `cActiveAnimIK`, `cIKChain`, transições de locomoção) — **feita** (n02): ordem da fila, expiração, peso dos canais e o solucionador de IK do binário; memória do osso; E, G, I da issue 001 (`docs/anim-mac.md`); transições de locomoção ficam no `TODO.md`. | Todo Sim, todo quadro. Junta com a parte G do sentar se rodar junto. | 2 Opus (1 leitura + 1 código) | sim |
-| 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
+| 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) — **feita** (n03): escadas como portais dos slots (duas faixas de mão única, os Sims não se travam no patamar), bits do `cTSRoutingSlot`, `CollisionCheck` e o +20 "parado" do binário (`routing-mac.md` §6.1, §8.2, §8.6). | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
 | 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |
 | 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) | Visível em todo lote; rodada pequena. | 1 Opus | sim |
 | 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |

@@ -319,6 +319,19 @@ Sims parados a ~0,52 um do outro nunca saíam do lugar (o pedido para sair
 e o que esperava, cada passo "bloqueado": N001_Lot68). Com as paredes
 infladas 0,125 o centro anda até 0,375 fora do meio de um corredor de 1
 tile: um Sim parado sozinho no corredor é ultrapassado.
+**Rodada n03, o resto do `CollisionCheck`** (BV `0x6b49e8`) e quem entra no
+`EstimateWhenPathWillBeBlocked` (BV `0x6b3574`): ficam de fora o próprio
+Sim, quem está fora do mundo (`0x2e0`), quem pode ser atravessado
+(`CanIntersectPeople`, `0x1d8`), quem está contido (`IsContained`,
+`0x11c`), outro andar (`GetLevel`, `0x90`) e **um ID a ignorar**: quando a
+janela acha um bloqueador que está se afastando (a distância no fim da
+janela não é menor que no começo), o `CollisionCheck` passa esse ID como o
+"ignorar" das janelas seguintes, e a varredura segue sem ele (o VM agora
+faz assim; antes voltava a testá-lo na janela seguinte). Não há no binário
+a exceção do Sim que é o alvo da rota nem a de "já sobrepostos (< 0,3)":
+as duas seguem no VM como inferidas (sem elas dois Sims numa conversa ou
+encostados ficavam "bloqueados" para sempre).
+
 Também (inferido): quem começa a rota dentro da inflação de um objeto sai
 para o ponto mais perto da célula livre mais perto, não para o meio dela
 (o meio podia ficar na direção do outro Sim, e esse primeiro passo era
@@ -1284,6 +1297,20 @@ Custo de um objetivo aceito (BV `0x4790xx`): penalidades de §8.2 +
 `docs/seat-mac.md` §A) usa o mesmo laço com o callback de slots de cadeira. O `cTSRoute::ScanCone` que o
 symxfer nomeou no BV é outra função (um dump de desejos).
 
+**Os objetivos em pé depois da varredura** (rodada n03, BV `0x478518`, o
+callback de pontos é o `0x4740d8`): a cada objetivo, `placar += em pé × 10`
+(`+0x4c` do pedido); com `HasRandomScoring` (vtable `0x78` do slot, RS
+flag `0x2000`) `+ 20·sorteio − 10`; **+25** se a direção do objetivo
+(`+0x20`) não está na máscara de paredes em volta do alvo (só quando o slot
+não tem a RS flag `0x80000`, vtable `0x4c`; a máscara vem do mundo, vtable
+`0x148`, com o lugar e a direção do alvo, e cada bit marcado espalha para
+as duas direções vizinhas; a função do mundo não foi decifrada: **não
+feito**); **+20** (`HasStationaryBonus`, vtable `0x80` = RS flag `0x40000`
+desligada) para o objetivo **exatamente onde o roteador está** (compara os
+8 primeiros bytes do lugar, `FUN_01655330`, com o do roteador) se ele não
+está contido (`IsContained`, vtable `0x11c`): feito; e com o byte `+0x24`
+do pedido o placar vai × 0,01.
+
 ## 8.3 Árvores da rota: pós-rota, goal check e along route (binário, rodada 7)
 
 Os números são os **entry points** do STR# 0xF5 (`objects.package`, grupo
@@ -1458,12 +1485,19 @@ Clique com um objeto sob o mouse (rodada 13):
 | objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | aproximação da busca de objetivos (`routing.cpp`) |
 | pegada do objeto: a do modelo (CRES "footprint", máscara 16×16 reduzida a 1/8 tile) ou a caixa do OBJD (flag 0x80 do od 8) | igual desde a rodada 14 (`VM::routingFootprint`); o tile da parte no modelo e a caixa do modelo sem lista são inferidos; `OS2_TILE_FOOTPRINTS=1` volta ao tile inteiro para comparar |
 | quadtree, inflação 1/8, filtros, A* com ruído, Sims como retângulos de custo, códigos de falha, "CT - Route Blocked" | seguem o doc |
-| portais de objeto (pares de slots, a escada da piscina e o trampolim), parâmetros 2/3 das árvores de portal = andares (§8, §8.5) | desde a rodada 15 (a flag `0x200000` do par e o portal de mão única por ligação são inferidos) |
+| portais de objeto (pares de slots, a escada da piscina e o trampolim), parâmetros 2/3 das árvores de portal = andares (§8, §8.5) | desde a rodada 15; a flag `0x200000` do par e o portal de mão única por ligação conferidos na rodada n03 (§8.6) |
+| escadas: portais dos slots das peças (nomes `_top`/`_bottom`), duas faixas de mão única a 0,33 tile (§8.6) | desde a rodada n03 (antes um portal só, de patamar a patamar, nos dois sentidos; `OS2_STAIR_ONE_PORTAL=1` volta ao antigo); o portal geométrico fica para escadas sem objetos |
 | escadas (tipos 10, 11) no planejador pelas pegadas; exceção do campo `0x4b` = `0x93`; penalidade de rota com escala 0 (custo 1) | desde a rodada 15 (§2) |
 
 ## 10. O que falta
 
 - O custo exato de cada `ePassabilityState`.
-- O teste de segmento do `CollisionCheck` (vtable 0x478) em detalhe.
+- Os retângulos de custo 10 junto das pontas das escadas reta e modular
+  (`TSObjectGetModelType` 2–4, ±0,32499, §8.6) e os portais dinâmicos dos
+  dados de objeto `0x58`–`0x61` (só no BV).
+- O +25 dos objetivos em pé (a máscara de paredes do mundo, vtable `0x148`).
+- A escala de x,y por 1/16 do `cTSSlotDescriptor::Read` até a "versão"
+  `0x46` (os SLOT `0x43`–`0x46` do jogo base já estão em tiles: qual versão
+  ele compara?).
 - Confirmar que nada escreve a escala de portal (`DAT_02d86430`) por um
   caminho indireto.

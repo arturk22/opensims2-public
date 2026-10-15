@@ -268,6 +268,6 @@ Feito (rodada n01, cada parte um commit, testes verdes):
 
 Sobras (no `TODO.md`): o Snap de um ponto só (o primeiro osso; sem o anel
 nosso nem a varredura para slots sem osso), a parede entre o lugar velho e o
-novo (erro 8), a árvore 0x34 "allow in slot", o +25/+20 dos objetivos em pé,
+novo (erro 8), a árvore 0x34 "allow in slot", o +25 dos objetivos em pé (o +20 é o "parado", feito na rodada n03, `routing-mac.md` §8.2),
 a altura em metros do alcance e o índice explícito do Reach (flag 0x08). As
 partes E, G e I foram feitas na rodada n02 (`docs/anim-mac.md`).
