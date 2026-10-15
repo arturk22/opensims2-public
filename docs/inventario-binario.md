@@ -301,17 +301,17 @@ Código: `src/app/cas_*.{hpp,cpp}`, `src/formats/cas_*.{hpp,cpp}`,
 
 Código: `src/render/*`, `src/formats/lot_model.*`, `lot_lightmap.*`,
 `model.*`, `gmdc.*`, `txmt.*`, `effects.*`, `lighting_config.*`,
-`src/app/lot_lighting.*`, `lot_effects.*`, `plumbob_effects.mm`. Docs:
-`shaders-mac.md`, `lighting-mac.md`, `effects-mac.md`.
+`src/app/lot_lighting.*`, `lot_effects.*`, `plumbob_effects.mm`, `lot_water.*`. Docs:
+`shaders-mac.md`, `lighting-mac.md`, `effects-mac.md`, `roof-fence-water-mac.md`.
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
 | Materiais e shaders (caminho DX8 dos `.matShad`) | `render/shaders.metal`, `renderer.cpp` | inferido | Muito lido; faltam a fórmula do normal map, o passe de recorte e o CelShaded. |
 | Luz e light maps: `cLightingManager` (88, 25), `cLightMapManager`, `cDiffusion*` | `formats/lot_lightmap.*`, `app/lot_lighting.*` | inferido | Lista longa de inferidos no `TODO.md` M4 (sala de fora, portais, paredes sem grade). |
-| Sombras: `nTSSG::cShadow` (32, 7), height map do sol | `formats/lot_lightmap.cpp`, `render/` | inferido | Faltam objetos e árvores (`AddBlobToHeightMap`, "LM_sunHM"). |
+| Sombras: `nTSSG::cShadow` (32, 7), height map do sol | `formats/lot_lightmap.cpp`, `render/` | inferido | Rodada n06: os planos GUOB dos objetos lidos (`UpdateGUOBs`, `EnableGUOB`) e conferidos no lote; falta recalcular os de parede ao mover objetos e o "LM_sunHM". |
 | Paredes e pisos: `cWallGeometryNode`, `cFloorGeometryNode` (32, 0), `cFloorManager` (31, 0) | `formats/lot_model.cpp` | inferido | UV dos pisos e do topo das paredes são chutes. |
-| Telhados e cercas: `cFenceGeometryNode` (57, 0), `cFenceManager` (41, 0), classes de telhado | `formats/lot_roof.cpp`, `lot_model.cpp` | inferido | Pagodes seguem o OpenTS2; cônico, cúpula e octogonal não são desenhados. |
-| Água e piscina: `cWaterGeometryBuilder` (35, 0), `cPoolGeometryNode` | `formats/lot_model.cpp` | inferido | Cor, alfa e reflexo são chutes; falta o bump animado. |
+| Telhados e cercas: `cFenceGeometryNode` (57, 0), `cFenceManager` (41, 0), classes de telhado | `formats/lot_roof.cpp`, `lot_model.cpp` | inferido | Rodada n06 (`roof-fence-water-mac.md` §1–2): grade, alturas, camadas e triângulos do jogo lidos; espessura, beiral, meia água e mansarda corrigidos; a triangulação e o atlas ainda são do OpenTS2. Trilho e poste das cercas conferidos. |
+| Água e piscina: `cWaterGeometryBuilder` (35, 0), `cPoolGeometryNode` | `formats/lot_water.*`, `lot_model.cpp` | inferido | Rodada n06 (§3): alfa por profundidade (`Terrain.ini`), só o reflexo, leito e praia pintados como o binário; falta a passada de bump e a piscina. |
 | Efeitos: `cTSEffectsManager` (55, 1), `cTSParticlesEffect`, `cTSMetaParticlesEffect` | `render/particle_system.*`, `app/lot_effects.*` | inferido | 7 marcadores no sistema de partículas. |
 | Objetos e Sims: `nTSSG::cObject` (140, 20), `nTSSG::cPerson` (50, 5), censura | `app/vm_objects.cpp`, `formats/sim_censor.*` | inferido | Objetos animados escolhidos pela malha de repouso. |
 | Espelhos: `MirrorReflectionMaterial`, alvo `ScreenReflection` | `render/` | faltando | Só um espelho reflete por quadro, sem o stencil do jogo. |
@@ -360,7 +360,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) — **feita** (n03): escadas como portais dos slots (duas faixas de mão única, os Sims não se travam no patamar), bits do `cTSRoutingSlot`, `CollisionCheck` e o +20 "parado" do binário (`routing-mac.md` §6.1, §8.2, §8.6). | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
 | 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) — **feita** (n04): `OnRoomChanged` (entrada 7, portas com as duas salas), `UpdateObjectsInRoom`, load em todo objeto carregado (`PostLoad`), `UpdateWallAdjacency` (od 5 e entrada 6, 319/321 bancadas batem), `SetCurrentAction` (`primitives-mac.md` §4i). | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |
 | 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) — **feita** (n05): posição da câmera, `WallsBetweenPointSetAndPoint` (raio até 3,0 de altura), `Expose` com memória de 3 cômodos e o Start das cinemáticas (`ui-live-mac.md` §8d). | Visível em todo lote; rodada pequena. | 1 Opus | sim |
-| 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |
+| 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos — **feita** (n06): telhados, cercas, água e GUOB lidos (`docs/roof-fence-water-mac.md`); água do terreno como o jogo (alfa por profundidade, leito e praia), parâmetros dos telhados, pinturas antes dos GUOB; a triangulação dos telhados, o bump da água e a piscina ficam no `TODO.md`. | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |
 | 7 | **Construção: suporte, telhado e terreno** (`HasSupport`, `SupportedUnderneath`, leveler, `cTSUserToolRoof`, piscinas) | Erros de colocação no modo Construção. | 1 Opus | sim |
 | 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |
 | 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
