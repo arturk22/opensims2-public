@@ -1072,3 +1072,94 @@ teste; a captura usa o piso do espelho do `N001_Lot68`, o Daniel em
 "Praticar Discurso"). Captura antes/depois: `docs/screenshots/
 r22-censor-espelho.jpg` (a faixa pixelada sob o casaco do reflexo, à direita).
 Teste `censor` ("the reflected view's rectangle is the mirrored one").
+
+## Rodada n10: corpo gordo e roupa aleatória (binário, Ghidra MCP)
+
+### O corpo gordo é um morph, não uma roupa
+
+- `cTSUISimEditor::HandleTabFitness` (BV `0x1b5cfc`): os botões
+  `0x2C720000` (normal) e `0x2C720001` (gordo) chamam
+  **`SetFitnessLevel(500)`** e **`SetFitnessLevel(1000)`**.
+- `SetFitnessLevel` (BV `0x1b5b24`): dado de pessoa 82 = valor, 81 = 1 se
+  ≥ 502; depois, para **todas as idades × sexos** do editor, a roupa
+  (`GetOutfitData(idade, sexo, true)`) recebe `SetFitness(2 se ≥ 502, senão
+  0)` (vtable `0x10c`, BV `0x810888`: só grava o campo `+0x16c`; o
+  `GetFitness` é `0x810890`). **Nenhuma peça de roupa é trocada.**
+- `nTSSG::cPerson::UpdateFitnessLevel` (BV `0x6724dc`), no jogo: fitness =
+  **1 se o dado 81 tem o bit 0x10**, senão `(dado 81 & 1) << 1` (2 = gordo);
+  se mudou, `SetFitness` no AGED e na roupa em uso, e a roupa é refeita.
+- O desenho: um método virtual do `cTSSimOutfitData` (BV `0x8141c4`, slot
+  ao lado de `DetermineSkeleton` `0x81452c` e `SetupParts` `0x814850`, sem
+  nome no `ppc_syms`) recebe o nó da cena do Sim e põe **peso 1,0 se
+  `GetFitness() == 2`, senão 0,0** em `"_fat"` (vtable `0xd8` do nó) e, por
+  `FUN_0017464c` (percorre os nós da cena e acha o morph pelo grupo e nome),
+  nos morphs **`"fattop"` do grupo `"topmorphs"`** e **`"fatbot"` do grupo
+  `"botmorphs"`** (strings em `0x102bcc4`…`0x102bcec`). O magro (fitness 1)
+  não tem morph.
+- Dados (`s2pkg cas-catalog`, linha "outfit parts by GZPS fitness"): dos
+  6.828 GZPS, 6.731 têm fitness 0; os 53 com 1 e os 44 com 2 são só as
+  variantes nuas escondidas (`CASIE_<p>topnaked_nudecut_sN` /
+  `_nudesoft_sN`, flags 9). Não há roupa "versão gorda": a lista do CAS
+  filtrada por fitness 2 ficava vazia e o botão gordo não mudava nada (o
+  bug visível).
+- Quando o Sim tem a variante nua de cada fitness (nudecut/nudesoft) não
+  foi lido (`SetupNakedEntries`); fica no TODO.
+
+### O botão aleatório (`HandleButtonGlobalRandomize`, BV `0x1bc14c`)
+
+Humanos (espécie 0): `FUN_001b7f08(editor, −1)` (os pets usam
+`FUN_009418f0`, uma raça pronta). Com todos os bits:
+
+1. Bit 1: `SetValidFlags(~1)`, `Randomize(−1, 9)` (pele),
+   `SetValidFlags(−1)`, e **`SetFitnessLevel(500)`**: o aleatório volta
+   sempre ao corpo normal.
+2. Bit 2: cor do cabelo (`Randomize(−1, 9)` com idade adulta), depois
+   `GetValidHairColorForAgeGender` da idade e sexo atuais.
+3. Bits 8/0x10/0x20/0x40: **`SetDefaultClothing(true, bits)`** (BV
+   `0x1b63ac`).
+4. Bits 0x80/4/0x200: rosto, `SetValidFlags(~8)` + `Randomize(−1, 9)`.
+
+`SetDefaultClothing(aleatório, bits)`, para cada idade × sexo do editor:
+copia pele, idade, sexo, cor do cabelo etc. para a roupa; válidos =
+`~0x400`, e com aleatório: tira 4 (cabelo) se bit 8, tira 0x20 (roupas)
+se 0x10/0x20/0x40. Então `SetValidFlags(v)` + **`Randomize(4, 0)`** e
+`SetValidFlags(v)` + **`Randomize(−1, 9)`**, depois
+`SetValidFlags(0x434)` e vtable `0x148(0x880)`.
+
+`Randomize(incluir, excluir)` (`RandomizeForHumans`, BV `0x818734`): um
+item entra na lista se `(incluir == −1 ou flags & incluir)` e
+`!(flags & excluir)`; 1ª passada = só os "default" (flag 4), 2ª = todos
+menos escondidos e "no_random" (flags 1|8), e a 2ª só troca o que achar.
+Cada parte inválida:
+
+- 0x80 idade `1 << rand(6)`; 0x100 sexo (`rand(100) > 49` → mulher);
+  **0x40 forma física: `SetFitness(rand(100) > 74 ? 2 : 0)`** (25 % gordo;
+  não acontece pelo botão, que deixa 0x40 válido).
+- 1 pele e 2 cor do cabelo: sorteio na lista filtrada (sem nada, a pele
+  `b9a94827-…` / o tom de `0x2c359e0`).
+- 4 cabelo: lista do catálogo (vtable `0x34`: idade, sexo, pele, cor do
+  cabelo, espécie, parte 1) filtrada, um sorteado; para cada categoria
+  `1 << 0..12` menos `0x880`: apaga o cabelo e, se o sorteado tem a flag 2
+  (chapéu) e a categoria tem a flag 1 no catálogo, usa o da **mesma
+  família** sem chapéu. Bebê: o primeiro cabelo da idade.
+- 8 rosto (menos bebê com cabelo): sobrancelhas (subtipo 1) e olhos (3,
+  também `SetEyeColor`) sorteados; barba (0) só homem fora de criança
+  pequena/criança e `rand(100) > 25`; subtipo 5 (óculos) se
+  `rand(100) > 90`; arquétipo sorteado com peso 1,0. As listas juntam
+  `textureoverlay` e `meshoverlay` filtrados pelas flags. Nos dados todas as
+  barbas e óculos têm a flag 8 (`no_random`) e o olho alienígena 9: com
+  `(−1, 9)` só saem sobrancelhas, um dos 5 olhos normais e o arquétipo.
+- **0x20 roupas**: para cada categoria `1 << 0..12` menos `0x880` e as de
+  flag 2 no catálogo: `r = rand(100)`; se `r ≥ 51` (49 %) tenta uma roupa
+  inteira (parte 8; achou → apaga 8/0x10/4 e põe); senão (ou sem roupa
+  inteira) um top (4; apaga 8/4) e uma calça (0x10; apaga 8/0x10), e sem
+  calça uma roupa inteira. A lista é da categoria (9º argumento, na pilha)
+  e não tem fitness.
+
+Flags das categorias no catálogo (`cTSSkinCatalog::CheckInit`, BV
+`0x7e4c34`, mapa `+0x15c`; `GetCategoryFlags` BV `0x7e9058`): `0x8`,
+`0x10`, `0x40`, `0x80`, `0x200` → 1 (sem chapéu); `0x400` → 2 (provador:
+não sorteia roupa); `0x800` → 3. Cotidiano, formal e gestante: 0.
+Nos dados as roupas de gestante têm flags 9 menos
+`afbodymaternityshirtpants_navyrust` (13 = 9|4, "default"): é ela que
+o aleatório veste na gestante.

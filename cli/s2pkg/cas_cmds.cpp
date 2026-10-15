@@ -59,6 +59,18 @@ int cmdCasCatalog(const std::string& res, uint32_t ageBit, uint32_t genderBit, c
                 "%zu neutral faces, %zu texture overlays, %zu mesh overlays, %zu outfit parts\n",
                 c.skinTones.size(), c.hairTones.size(), c.archetypes.size(), c.modifiers.size(), c.regions.size(),
                 c.neutrals.size(), c.textureOverlays.size(), c.meshOverlays.size(), c.parts.size());
+    {
+        // GZPS "fitness": only the hidden naked texture variants have 1
+        // (nudecut) or 2 (nudesoft); the fat body is a morph (docs/cas-mac.md).
+        std::map<uint32_t, size_t> fitness;
+        for (const auto& p : c.parts)
+            if (p.property("type") == "skin")
+                ++fitness[p.number("fitness")];
+        std::printf("outfit parts by GZPS fitness:");
+        for (const auto& [f, n] : fitness)
+            std::printf(" %u=%zu", f, n);
+        std::printf("\n");
+    }
     std::printf("for %s %s (%s):\n", cas::ageName(ageBit), genderBit == cas::gender::Female ? "female" : "male",
                 cas::agePrefix(ageBit, genderBit).c_str());
     const auto want = [&](const char* k) { return only.empty() || only == k; };
