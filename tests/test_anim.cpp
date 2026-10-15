@@ -307,9 +307,11 @@ static void testIk() {
     // and the foot reach the goal.
     Skeleton s;
     s.bones.push_back({"root", -1, Xform{}, -1, 0});
-    s.bones.push_back({"thigh", 0, Xform{{}, {0, 0, 1}}, 0, 1});
-    s.bones.push_back({"calf", 1, Xform{{}, {0, 0, -0.5f}}, 1, 2});
-    s.bones.push_back({"foot", 2, Xform{{}, {0, 0, -0.5f}}, 2, 3});
+    // The bones lie along their +Y, as the game's skeletons (the solver
+    // relies on it): the thigh turned to point down.
+    s.bones.push_back({"thigh", 0, Xform{quatFromEulerXYZ(-float(M_PI) / 2, 0, 0), {0, 0, 1}}, 0, 1});
+    s.bones.push_back({"calf", 1, Xform{{}, {0, 0.5f, 0}}, 1, 2});
+    s.bones.push_back({"foot", 2, Xform{{}, {0, 0.5f, 0}}, 2, 3});
     s.bones.push_back({"goal", 0, Xform{{}, {0, 0, 0}}, -1, 4});
     s.bones.push_back({"pole", 0, Xform{{}, {0, 1, 0.5f}}, -1, 5});
     Animation::Target t;
@@ -340,11 +342,12 @@ static void testArmIk() {
     Skeleton s;
     s.bones.push_back({"root", -1, Xform{}, -1, 0});
     s.bones.push_back({"spine", 0, Xform{{}, {0, 0, 1}}, 0, 1});
-    s.bones.push_back({"upperarm", 1, Xform{{}, {0, 0, 0.5f}}, 1, 2});
-    s.bones.push_back({"bicep", 2, Xform{{}, {0.15f, 0, 0}}, 2, 3});
-    s.bones.push_back({"forearm", 3, Xform{{}, {0.15f, 0, 0}}, 3, 4});
-    s.bones.push_back({"wrist", 4, Xform{{}, {0.15f, 0, 0}}, 4, 5});
-    s.bones.push_back({"hand", 5, Xform{{}, {0.15f, 0, 0}}, 5, 6});
+    // (Along their +Y, the upperarm turned to point along +X.)
+    s.bones.push_back({"upperarm", 1, Xform{quatFromEulerXYZ(0, 0, -float(M_PI) / 2), {0, 0, 0.5f}}, 1, 2});
+    s.bones.push_back({"bicep", 2, Xform{{}, {0, 0.15f, 0}}, 2, 3});
+    s.bones.push_back({"forearm", 3, Xform{{}, {0, 0.15f, 0}}, 3, 4});
+    s.bones.push_back({"wrist", 4, Xform{{}, {0, 0.15f, 0}}, 4, 5});
+    s.bones.push_back({"hand", 5, Xform{{}, {0, 0.15f, 0}}, 5, 6});
     s.bones.push_back({"handcontrol", 0, Xform{{}, {5, 5, 5}}, -1, 7}); // misplaced on purpose
     s.bones.push_back({"handcontrolrot", 7, Xform{}, -1, 8});
     s.bones.push_back({"pole", 0, Xform{{}, {0.3f, -1, 1.5f}}, -1, 9});
@@ -369,6 +372,28 @@ static void testArmIk() {
           "arm IK: hand on the goal in the frame bone's space");
     check(w[4].t[1] < -0.1f, "arm IK: elbow (forearm, past the twist bone) towards the pole");
     check(near(w[6].q.w, 1, 1e-3f), "arm IK: hand takes the control rotation node's");
+    // cIKStrategy7DOF: the elbow is a hinge about the forearm's X only.
+    check(near(local[4].q.y, 0, 1e-4f) && near(local[4].q.z, 0, 1e-4f) && local[4].q.x > 0.1f,
+          "arm IK: the joint turns about its X only (a hinge)");
+    {
+        // The twist split: the bicep takes 0.65 of the upperarm's twist and
+        // the wrist 0.75 of the hand's; the hand still ends on the control's
+        // rotation.
+        auto l = s.restPose();
+        l[7].t = {0.3f, 0, 0.6f};
+        l[8].q = quatFromEulerXYZ(0, 0, 0.6f); // the hand control turned
+        applyIk(t, s, 0, l);
+        const auto wl = s.world(l);
+        const Quat goalQ = wl[1].q * l[7].q * l[8].q; // spine * control * rotation node
+        const Quat diff = conjugate(goalQ) * wl[6].q;
+        check(std::fabs(diff.w) > 0.9999f, "arm IK, twist split: the hand on the control's rotation");
+        auto twist = [](const Quat& q) { return 2 * std::atan2(q.y, q.w); };
+        const Quat upper = l[2].q * l[3].q, end = l[5].q * l[6].q;
+        check(near(twist(l[3].q), 0.65f * twist(upper), 1e-3f) && near(l[3].q.x, 0, 1e-4f) && near(l[3].q.z, 0, 1e-4f) && near(l[5].q.x, 0, 1e-4f) && near(l[5].q.z, 0, 1e-4f),
+              "arm IK, twist split: the bicep takes 0.65 of the upperarm's twist, it and the wrist about their Y only");
+        check(std::fabs(twist(end)) > 0.1f && near(twist(l[5].q), 0.75f * twist(end), 1e-3f),
+              "arm IK, twist split: the wrist takes 0.75 of the hand's twist");
+    }
 
     // Type 2: the frame bone is the IK object's (a2b-babybottle-feeder's
     // right hand at the baby's head_grip), given in this skeleton's model
@@ -659,9 +684,11 @@ static void testDeltaChannels() {
 static void testDeltaIk() {
     Skeleton s;
     s.bones.push_back({"root", -1, Xform{}, -1, 0});
-    s.bones.push_back({"thigh", 0, Xform{{}, {0, 0, 1}}, 0, 1});
-    s.bones.push_back({"calf", 1, Xform{{}, {0, 0, -0.5f}}, 1, 2});
-    s.bones.push_back({"foot", 2, Xform{{}, {0, 0, -0.5f}}, 2, 3});
+    // The bones lie along their +Y, as the game's skeletons (the solver
+    // relies on it): the thigh turned to point down.
+    s.bones.push_back({"thigh", 0, Xform{quatFromEulerXYZ(-float(M_PI) / 2, 0, 0), {0, 0, 1}}, 0, 1});
+    s.bones.push_back({"calf", 1, Xform{{}, {0, 0.5f, 0}}, 1, 2});
+    s.bones.push_back({"foot", 2, Xform{{}, {0, 0.5f, 0}}, 2, 3});
     s.bones.push_back({"goal", 0, Xform{{}, {0, 0, 0}}, -1, 4});
     s.bones.push_back({"pole", 0, Xform{{}, {0, 1, 0.5f}}, -1, 5});
     auto translation = [](const char* bone, float x, float y, float z, bool delta) {

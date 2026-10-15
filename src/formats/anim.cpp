@@ -346,28 +346,38 @@ float length(const Vec3& a) { return std::sqrt(dot(a, a)); }
 Vec3 scale(const Vec3& a, float k) { return {a[0] * k, a[1] * k, a[2] * k}; }
 Vec3 add(const Vec3& a, const Vec3& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 
-// Shortest rotation taking direction u to direction v.
-Quat rotationBetween(const Vec3& u, const Vec3& v) {
-    const float lu = length(u), lv = length(v);
-    if (lu == 0 || lv == 0)
-        return {};
-    const Vec3 c = cross(u, v);
-    const float w = lu * lv + dot(u, v);
-    if (w < 1e-6f * lu * lv) {
-        // Opposite: half a turn about any axis perpendicular to u.
-        Vec3 axis = cross(u, {1, 0, 0});
-        if (length(axis) < 1e-6f)
-            axis = cross(u, {0, 1, 0});
-        axis = scale(axis, 1 / length(axis));
-        return {axis[0], axis[1], axis[2], 0};
-    }
-    return normalized({c[0], c[1], c[2], w});
-}
-
 Xform parentWorld(const Skeleton& s, const std::vector<Xform>& world, int bone) {
     const int p = s.bones[size_t(bone)].parent;
     return p >= 0 ? world[size_t(p)] : Xform{};
 }
+
+// The rotation whose columns are the orthonormal axes x, y, z.
+Quat quatFromAxes(const Vec3& x, const Vec3& y, const Vec3& z) {
+    const float m00 = x[0], m10 = x[1], m20 = x[2], m01 = y[0], m11 = y[1], m21 = y[2], m02 = z[0], m12 = z[1], m22 = z[2];
+    const float tr = m00 + m11 + m22;
+    Quat q;
+    if (tr > 0) {
+        const float s = std::sqrt(tr + 1) * 2;
+        q = {(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, s / 4};
+    } else if (m00 > m11 && m00 > m22) {
+        const float s = std::sqrt(1 + m00 - m11 - m22) * 2;
+        q = {s / 4, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s};
+    } else if (m11 > m22) {
+        const float s = std::sqrt(1 + m11 - m00 - m22) * 2;
+        q = {(m01 + m10) / s, s / 4, (m12 + m21) / s, (m02 - m20) / s};
+    } else {
+        const float s = std::sqrt(1 + m22 - m00 - m11) * 2;
+        q = {(m02 + m20) / s, (m12 + m21) / s, s / 4, (m10 - m01) / s};
+    }
+    return normalized(q);
+}
+
+Quat rotY(float a) { return {0, std::sin(a / 2), 0, std::cos(a / 2)}; }
+Quat rotX(float a) { return {std::sin(a / 2), 0, 0, std::cos(a / 2)}; }
+// The angle q turns about the bone's own Y axis (its twist; the bones lie
+// along +Y): the Y component of the solution's Euler angles in the binary,
+// whose exact Euler order (0x01020100) was not decoded (inferred).
+float twistY(const Quat& q) { return 2 * std::atan2(q.y, q.w); }
 
 } // namespace
 
@@ -444,24 +454,30 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         const int b0 = bone(chain.crcs[0]), b2 = bone(chain.crcs[2]);
         if (b0 < 0 || b2 < 0)
             continue;
-        // The joint between: of the bones from the end up to the begin bone
-        // (calf; forearm, past the bicep and wrist twist bones), the one
-        // farthest from both ends in the rest pose.
-        int b1 = -1;
-        float best = -1;
-        bool linked = false;
-        for (int b = s.bones[size_t(b2)].parent; b >= 0; b = s.bones[size_t(b)].parent) {
-            if (b == b0) {
-                linked = true;
+        // The chain's bones, begin to end, and each one's IK channel type
+        // (cIKStrategy7DOF::SetUberChannelIKTypes, Mac BV 0xd36d38): three
+        // bones (thigh, calf, foot) are 1, 4, 6; otherwise (upperarm, bicep,
+        // forearm, wrist, hand) 2, 3, 4, 7, 8 and 0 past the fifth.
+        std::vector<int> bones;
+        for (int b = b2; b >= 0; b = s.bones[size_t(b)].parent) {
+            bones.push_back(b);
+            if (b == b0)
                 break;
-            }
-            const float d = std::min(length(sub(restWorld[size_t(b)].t, restWorld[size_t(b0)].t)),
-                                     length(sub(restWorld[size_t(b)].t, restWorld[size_t(b2)].t)));
-            if (d > best)
-                best = d, b1 = b;
         }
-        if (!linked || b1 < 0)
+        if (bones.back() != b0)
             continue;
+        std::reverse(bones.begin(), bones.end());
+        std::vector<int> types(bones.size(), 0);
+        static constexpr int kThree[] = {1, 4, 6}, kFive[] = {2, 3, 4, 7, 8};
+        for (size_t i = 0; i < bones.size(); ++i)
+            types[i] = bones.size() == 3 ? kThree[i] : i < 5 ? kFive[i] : 0;
+        int joint = -1; // the elbow or knee (type 4)
+        for (size_t i = 0; i < bones.size(); ++i)
+            if (types[i] == 4)
+                joint = int(i);
+        if (joint < 0)
+            continue;
+        const int b1 = bones[size_t(joint)];
         const std::optional<Xform> pole = nodeLocal(chain.crcs[4]);
         const int poleFrame = bone(chain.crcs[5]);
         float weight = 1;
@@ -565,43 +581,76 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         if (reach)
             reach->push_back({b2, T, weight * contact, chain.crcs[0]});
         objectFrame.reset();
-        const Vec3 A = world[size_t(b0)].t, B = world[size_t(b1)].t, C = world[size_t(b2)].t;
-        const float a = length(sub(B, A)), b = length(sub(C, B));
-        Vec3 toT = sub(T, A);
-        float d = length(toT);
-        if (a <= 0 || b <= 0 || d <= 1e-6f)
-            continue;
-        const Vec3 u = scale(toT, 1 / d);
-        d = std::clamp(d, std::fabs(a - b) + 1e-4f, a + b - 1e-4f);
-        // Knee/elbow in the plane of the root, the goal and the pole (or the current joint).
-        Vec3 toP = sub(pole ? inFrame(world, poleFrame, *pole, false).t : B, A);
-        Vec3 v = sub(toP, scale(u, dot(toP, u)));
-        if (length(v) < 1e-6f)
-            continue;
-        v = scale(v, 1 / length(v));
-        const float cosA = std::clamp((a * a + d * d - b * b) / (2 * a * d), -1.0f, 1.0f);
-        const Vec3 K = add(A, add(scale(u, a * cosA), scale(v, a * std::sqrt(1 - cosA * cosA))));
-        (void)C;
-
-        const Quat q0 = local[size_t(b0)].q, q1 = local[size_t(b1)].q, q2 = local[size_t(b2)].q;
-        // Root bone: the joint onto K.
-        Xform w0 = world[size_t(b0)];
-        local[size_t(b0)].q =
-            normalized(conjugate(parentWorld(s, world, b0).q) * (rotationBetween(sub(B, A), sub(K, A)) * w0.q));
-        world = s.world(local);
-        // Joint: the end onto the goal.
-        const Vec3 B1 = world[size_t(b1)].t, C1 = world[size_t(b2)].t;
-        local[size_t(b1)].q = normalized(conjugate(parentWorld(s, world, b1).q) *
-                                         (rotationBetween(sub(C1, B1), sub(T, B1)) * world[size_t(b1)].q));
+        // The two-joint solution of cIKStrategy7DOF (Mac BV 0xd37848 for the
+        // translation, 0xd36ecc for the end's rotation; docs/anim-mac.md §4).
+        // The bones lie along their +Y. a: the upper length (the Y of the
+        // local translations of the chain's bones of type < 5 after the
+        // first: bicep + forearm, the calf), b: the lower (types >= 5: wrist
+        // + hand, the foot). G the goal and P the pole from the begin bone.
+        float a = 0, b = 0;
+        for (size_t i = 1; i < bones.size(); ++i)
+            (types[i] < 5 ? a : b) += local[size_t(bones[i])].t[1];
+        const Vec3 A = world[size_t(b0)].t;
+        const Vec3 G = sub(T, A);
+        // (No pole node: the joint as it is; inferred, the game needs the
+        // pole's outlet.)
+        const Vec3 P = sub(pole ? inFrame(world, poleFrame, *pole, false).t : world[size_t(b1)].t, A);
+        const float d = length(G);
+        Vec3 n = cross(G, P);
+        if (a <= 0 || b <= 0 || d <= 0 || length(n) <= 0)
+            continue; // no solution this frame
+        n = scale(n, 1 / length(n));
+        Vec3 m = cross(n, G);
+        m = scale(m, 1 / length(m)); // in the goal-pole plane, towards the pole
+        // The upper bone: at A from the goal towards the pole (cos A by the
+        // law of cosines), straight across (90 degrees) when cos A <= 0.
+        Vec3 v = m;
+        const float cosA = (a * a + d * d - b * b) / (2 * a * d);
+        if (cosA > 0) {
+            v = add(G, scale(m, d * std::tan(std::acos(std::min(cosA, 1.0f)))));
+            v = scale(v, 1 / length(v));
+        }
+        // Its +Y on v, rolled about it so that its X (the joint's hinge) is
+        // across the goal-pole plane: the joint bends by +X towards the goal.
+        const Vec3 X = scale(n, -1), Z = cross(X, v);
+        std::vector<Quat> before(bones.size());
+        for (size_t i = 0; i < bones.size(); ++i)
+            before[i] = local[size_t(bones[i])].q;
+        local[size_t(b0)].q = normalized(conjugate(parentWorld(s, world, b0).q) * quatFromAxes(X, v, Z));
+        // The upper twist bone (type 3, the bicep) takes 0.65 of the upper
+        // bone's twist (FLOAT_0274b6cc), which keeps the rest.
+        constexpr float kUpperTwist = 0.65f, kLowerTwist = 0.75f;
+        for (size_t i = 0; i < bones.size(); ++i)
+            if (types[i] == 3) {
+                const float t = twistY(local[size_t(b0)].q);
+                local[size_t(b0)].q = normalized(local[size_t(b0)].q * rotY(-kUpperTwist * t));
+                local[size_t(bones[i])].q = rotY(kUpperTwist * t);
+            }
+        // The joint: a hinge about X only, pi - the angle between the two
+        // segments.
+        local[size_t(b1)].q = rotX(float(M_PI) - std::acos(std::clamp((a * a + b * b - d * d) / (2 * a * b), -1.0f, 1.0f)));
         if (endRotation) {
+            // The end's rotation in the frame of the joint (the parent of the
+            // first lower bone): the foot takes it all (type 6); in the arm
+            // the wrist (type 7) takes 0.75 of its twist and the hand (8) the
+            // rest.
             world = s.world(local);
-            local[size_t(b2)].q = normalized(conjugate(parentWorld(s, world, b2).q) * *endRotation);
+            const Quat E = normalized(conjugate(world[size_t(b1)].q) * *endRotation);
+            int wrist = -1;
+            for (size_t i = 0; i < bones.size(); ++i)
+                if (types[i] == 7)
+                    wrist = bones[i];
+            if (wrist >= 0) {
+                const float t = twistY(E);
+                local[size_t(wrist)].q = rotY(kLowerTwist * t);
+                local[size_t(b2)].q = normalized(rotY(-kLowerTwist * t) * E);
+            } else {
+                local[size_t(b2)].q = normalized(conjugate(parentWorld(s, world, b2).q) * *endRotation);
+            }
         }
-        if (weight < 1) {
-            local[size_t(b0)].q = nlerp(q0, local[size_t(b0)].q, weight);
-            local[size_t(b1)].q = nlerp(q1, local[size_t(b1)].q, weight);
-            local[size_t(b2)].q = nlerp(q2, local[size_t(b2)].q, weight);
-        }
+        if (weight < 1)
+            for (size_t i = 0; i < bones.size(); ++i)
+                local[size_t(bones[i])].q = nlerp(before[i], local[size_t(bones[i])].q, weight);
     }
 }
 

@@ -171,7 +171,11 @@ rodada): os dois primeiros ossos giravam pela menor rotação até o cotovelo e
 até o alvo, mantendo a torção que a animação dava (o braço e a junta podiam
 girar em qualquer eixo); a mão ficava com a rotação toda e o bíceps e o
 pulso só "iam junto". O cotovelo caía no mesmo lugar (mesma fórmula de `A`),
-mas a torção dos ossos e da pele não era a do jogo. **A mudar** (§7).
+mas a torção dos ossos e da pele não era a do jogo. **Feito** (rodada n02):
+o `applyIk` usa o solucionador acima (tipos por posição, comprimentos pelo
+Y, dobradiça em X, giro do braço pelo polo, 65 %/75 % da torção no bíceps e
+no pulso); testes `test_anim` "arm IK" (dobradiça, partilha da torção).
+Continua nosso: sem nó de polo, o polo é a junta como está.
 
 ## 5. Vários alvos e o que o IK lê
 
