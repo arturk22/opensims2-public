@@ -84,11 +84,11 @@ palavra.
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% (não recontado na n12) | 5,5 / 7 = **79%** | 41 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
-| Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13 nem na n16) | 5,5 / 10 = **55%** | 55 / 40 |
+| Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13 nem na n16) | 6 / 10 = **60%** | 54 / 41 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **84 / 110 = 76,4%** | **510 em src** |
+| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **84,5 / 110 = 76,8%** | **509 em src** |
 
-"Estudadas" = classes com pelo menos um método nomeado. Os 520 marcadores
+"Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
 próprias: a cobertura é das 34 funções que a issue 001 manda ler.
 
@@ -313,7 +313,7 @@ Código: `src/render/*`, `src/formats/lot_model.*`, `lot_lightmap.*`,
 | Telhados: `nTSSG::c…Roof`, `nTSWorld::c…RoofType`, classes `c{Even,Odd}Triangle{First,Second}…` | `formats/lot_roof_game.*`, `lot_roof.cpp` | fiel | Rodada n13 (`roof-fence-water-mac.md` §1.4–1.5): os tipos 1–6 como o jogo (grades, `ConnectHeightField`, triângulo escondido sob outro telhado, telhado com telhado nos vértices, célula do atlas por classe, faixas); inferidos: a inclinação global (0,5) e a ordem dos getters das texturas das faixas; sem portar: o `IsTriangleCenterSupportedByOtherRoof` do anel da mansarda; diagonais e pagodes ainda no OpenTS2. |
 | Cercas: `cFenceGeometryNode` (57, 0), `cFenceManager` (41, 0) | `formats/lot_model.cpp` | inferido | Rodada n06 (`roof-fence-water-mac.md` §2): trilho e poste conferidos; falta o +0,75 nas pontas sobre piso "tipo 4". |
 | Água e piscina: `cWaterGeometryBuilder` (35, 0), `cPoolGeometryNode` | `formats/lot_water.*`, `lot_model.cpp` | inferido | Rodada n06 (§3): alfa por profundidade (`Terrain.ini`), só o reflexo, leito e praia pintados como o binário; piscina como o caminho DX8 do Mac (ondas, reflexo, camadas de fundo); falta a passada de bump e as cáusticas. |
-| Efeitos: `cTSEffectsManager` (55, 1), `cTSParticlesEffect`, `cTSMetaParticlesEffect` | `render/particle_system.*`, `app/lot_effects.*` | inferido | 7 marcadores no sistema de partículas. fix-plumbob: bit 1 das flags (`MaintainParticles`, a taxa é a contagem viva) e o material das partículas (`SetupTextureParticle`) lidos; falta a ordem dentro da camada 7. |
+| Efeitos: `cTSEffectsManager` (55, 1), `cTSParticlesEffect`, `cTSMetaParticlesEffect` | `render/particle_system.*`, `app/lot_effects.*` | fiel | Rodada n15 (`effects-mac.md` §4e): descrição, bits, emissão (`ApplyEffect`, `AddRateCurve`/`Inject`/`Maintain`, começo forte/suave), física em passos de 1/15 s, partículas no mundo salvo `rigid`, meta-partículas (cadeias pelas flags dos componentes, `cTSRWState`, colisores planos, caminhos) e a ordem dentro da camada 7 (`cDisplayList::AddGeometry`) lidas e seguidas. Sobras: iluminação (bit 23), LOD pela distância, colisores das partículas e terreno, `wiggle`/`screw`, trator, `cTSSequenceEffect`. |
 | Objetos e Sims: `nTSSG::cObject` (140, 20), `nTSSG::cPerson` (50, 5), censura | `app/vm_objects.cpp`, `formats/sim_censor.*` | inferido | Objetos animados escolhidos pela malha de repouso. |
 | Espelhos: `MirrorReflectionMaterial`, alvo `ScreenReflection` | `render/` | faltando | Só um espelho reflete por quadro, sem o stencil do jogo. |
 
@@ -389,7 +389,7 @@ no jogo base.
 |---|---|---|---|
 | 13 | **Telhados do jogo**: triangulação, células do atlas e telhado com telhado (portar o `lot_roof.cpp` para as funções do `cWorldRoof` mapeadas no `TODO.md`) + pré-teste 0x7F do `cTSUserToolRoof` (beiral sobre janelas) — **feita** (n13): tipos 1–6 pelo caminho do jogo (`formats/lot_roof_game.*`, `roof-fence-water-mac.md` §1.5) e o pré-teste com a caixa do beiral (245 de 275 telhados aceitos; os 30 restantes o jogo também recusa) | 3.12 telhados, 3.5 telhados | telhado |
 | 14 | **Locomoção**: `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle`, encadeamento das fases e o primeiro pé da parada — **feita** (n14): relógio das fases e entrega na saída do pedido (a rota acaba 233 ms antes do fim da parada), trocas por `BlendDistance` com cosseno, pé da parada pelo `0x178`, rotas curtas, parada ao bloquear (`anim-mac.md` §8) | 3.3 locomoção | animação |
-| 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 | 3.12 efeitos | efeitos |
+| 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 — **feita** (n15): emissão, física, meta-partículas e a ordem na camada 7 lidas e seguidas (`effects-mac.md` §4e); sobras no `TODO.md` | 3.12 efeitos | efeitos |
 | 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) — **feita** (n16): a grade de piso e as paredes do `cDiffusionManager` lidas inteiras e feitas (`formats/lot_diffusion.*`), cômodos sem luz, fontes só com extensão de difusão, irradiância dos cômodos e o `L` dos portais pelos `Lookup*Diffusion`, portais como o construtor do jogo os monta (`lighting-mac.md` §10); a sala da fonte de um portal segue inferida | 3.12 luz | luz |
 | 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) — **feita** (n17): curvas e conjuntos do jogo, motor de 60 ticks (decaimento, trava, conjunto antigo), humor do base com o dado 163 (bate com os 55 Sims salvos), pontuação da autonomia do base, desejos pela ordem do mapa de árvores e o `std::sort` da libstdc++ (`motives-mac.md`, `wants-mac.md` §9) | 3.8 curvas, desejos | motivos |
 | 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |

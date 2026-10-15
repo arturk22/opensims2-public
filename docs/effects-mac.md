@@ -110,63 +110,17 @@ app para depois de 4 s, **[inferido]**).
 
 ## 3. Simulação — `cTSParticlesEffect` **[bin]**
 
-- `UpdateParticlePhysicsTimeStep` @ 0x00eb6d50: passos de no máximo uma
-  constante (usamos 0,1 s **[inferido]**): posição += v·dt; v += dt × força do
-  efeito; depois `ApplyForces`: colliders e `v *= 1 − dt × arrasto` (campo
-  +0xE8 da descrição), terreno/água e morte fora dos limites.
-- `InitParticle` @ 0x00eb746c: posição aleatória no volume (`RandomVector3`
-  na caixa; elipsoide com a flag 8), direção aleatória na caixa de direção
-  escalada para uma velocidade do intervalo (`ScaleToMagnitude`), girada
-  pela transformação do componente; tamanhos/aspecto/cores com
-  `FxVary` = valor × (1 ± variação).
+Desde a rodada n15 a emissão, a física, o referencial das partículas, as
+meta-partículas e a ordem na camada 7 seguem o binário: ver §4e (o que foi
+lido) e §4e.8 (o que mudou no código e o que segue inferido). As escolhas
+antigas desta seção (arrasto = primeiro float do segundo grupo, bits 0/1 =
+"presas ao efeito", pre-roll só nos contínuos, passos de 0,1 s, bits
+"quantas ficam vivas"/"cadeia"/"presas ao tanque" das metas, a subida de
+0,2 m dos balões) saíram; o que o binário diz no lugar de cada uma está em
+4e.1–4e.7.
 
-Escolhas nossas **[inferido]**, conferidas com `s2pkg effect-sim` e capturas:
+Outros pontos do desenho e dos componentes:
 
-- Arrasto = primeiro float do segundo grupo (fumaça do fogão 1,8: sobe a
-  ~0,2 m/s; balões 0–3); a força é o primeiro vetor (fumaça +Z, Zzz −0,015).
-- A força fica no referencial do efeito, a rotação do componente só gira a
-  emissão (os componentes da fumaça do fogão têm rotação de 90° em X: sai pela
-  frente e sobe).
-- Bits 0/1 das flags: partículas presas ao efeito (balões, brilho do
-  PlumbBob; inferido). **[bin]** (fix-plumbob) o que o jogo faz com eles é a
-  emissão: `GenerateNewParticles` (`0xeb8c90`) testa o bitset de flags
-  (`std::bitset<38>` em +0x158 da descrição): bit 1 → `MaintainParticles`
-  (`0xeb822c`), bit 0 → `InjectParticles` (`0xeb83f4`), nenhum →
-  `AddRateCurveParticles`. Ver §4d; bit 20: passeio aleatório ligado (todos os efeitos com passeio
-  real; o valor padrão sem ele é 5/50); bit 24: a textura é o ícone do balão.
-- Pre-roll só nos emissores contínuos (ciclos 0): os balões têm vida 4 e
-  pre-roll 4 e sumiriam.
-- Meta-partículas (rodada 10): partículas de verdade, cada uma com o seu
-  efeito carregado (uma instância própria) que se move com ela; as curvas de
-  tamanho/alpha escalam o efeito pela vida (o balão que "estoura" de 0 a 1,2
-  e some no fim); morta, o efeito acaba. Lidos agora do bloco (layout do
-  OpenTS2): alinhamento, segundo grupo (vetor, f) com o f como arrasto,
-  wiggles, os dois passeios aleatórios (atraso, força, 3 floats de giro),
-  direção preferida, amortecimento/inclinação, atrator (ponto, curva de
-  força, alcance) e pontos de tração. Inferido pelos dados:
-  - bit 0x01 do byte alto das flags de 64 bits: a taxa é **quantas ficam
-    vivas** (um peixe por cadeia, uma barata; vida 60000 e taxa 1/s dariam
-    milhares);
-  - 0x18 no byte alto: o componente **continua** a meta-partícula anterior
-    do mesmo efeito: uma cadeia de passos. Com a vida de um passo no fim, a
-    partícula passa ao seguinte mantendo posição e velocidade (as baratas
-    `cockroachfloorbehaviour*`: parada → circulando → andando → correndo);
-    o estado do efeito (modos 10–13) põe todas no passo do estado (cada
-    peixe do aquário: nadando, comendo, morto; o morto vive 2 s). Só nascem
-    no primeiro passo, no estado 0; passos de vida sem fim (> 1000 s) voltam
-    ao 0 quando o estado volta a 0;
-  - bit 0x02 da segunda u32 (bit 33): presas ao volume de emissão do
-    primeiro passo (o tanque, ±0,4 × ±0,2 × ±0,15), voltando nas bordas; as
-    baratas (bit 32) não;
-  - passeio 1: a cada atraso (negativo = o mínimo, 0,05 s) uma nova
-    direção, girada até `giro[0]` volta da anterior, subindo até `giro[2]`
-    (inclinação), na velocidade do intervalo de força; o `giro[1]` não é
-    usado; atrator: aceleração para o ponto (no referencial do componente)
-    pela curva de força, dentro do alcance; alinhamentos 2 (o +X do modelo
-    na velocidade, com inclinação: os peixes são compridos em X) e 3 (só o
-    rumo, nivelado), virando no máximo `amortecimento` voltas/s (padrão 1).
-  - Não feitos: wiggles, pontos de tração, o segundo passeio, inclinação
-    pelo vento.
 - LOD: escalas do fim (detalhe máximo). Alinhamentos: 0 câmera, 1 chão
   (ondas, manchas), 2 velocidade (chuva), 6 eixo Z (jatos de água, feixes);
   5 (anéis, peças do despertador) desenhado como 0.
@@ -196,8 +150,12 @@ Escolhas nossas **[inferido]**, conferidas com `s2pkg effect-sim` e capturas:
 São efeitos `uiHeadlineGroup_*` no slot `hat_grip` (tipo 2, slot 4) dos
 Sims: meta-partícula com a bolha (`uieffects-headlines-conversationballoon`
 ou `-thoughtballoon`) e a partícula do ícone (bit 24, atlas 16×1 ou miniatura).
-O app sobe o balão 0,2 m sobre o `hat_grip` **[inferido]** e ordena as
-partes de um balão pela posição do efeito, na ordem dos componentes.
+Até a rodada n15 o app subia o balão 0,2 m sobre o `hat_grip` (inferido);
+agora quem o sobe é o caminho das meta-partículas (bit 30,
+`SnapParticleToPath`: de 0,15 a 0,35 m acima do `hat_grip` em 0,18 s), e o
+efeito é `rigid` (anda com o Sim) e `viewRelative`/`cameraFacing` (vira
+para a câmera do lote). As partes de um balão vão juntas na ordem dos
+componentes (cada emissor é um grupo na display list, §4e.6).
 Captura: `docs/screenshots/r8-effects-balloon.jpg` (`--lot N001_Lot11
 --run-vm 145 --pivot 6.5,22.5 --zoom 5`).
 
@@ -298,9 +256,9 @@ desenho 4) com a textura `plumbBobGlow`/`plumbBobShine`, todos com flags
   do jogo base têm o bit 1: o brilho do PlumbBob, os postes do cursor do
   modo construir (vida 0,1: com a taxa por segundo apareciam 10% do tempo),
   as setas do terreno, o OVNI e as estrelas da abdução (100 e 300 vivas).
-  Feito em `EffectSystem::stepEmitter` (`kMaintain`), depois da física,
-  como o jogo. O bit 0 (`InjectParticles`: rajadas de `taxa × escala` por
-  ciclo, 524 partículas: balões, ícones de aspiração) segue como antes.
+  Feito em `EffectSystem::maintainParticles` (antes `stepEmitter`),
+  depois da física, como o jogo. O bit 0 (`InjectParticles`, 524 partículas: balões, ícones de
+  aspiração) dá rajadas de `ceil(curva[0] × escala)` por ciclo (§4e.3).
 - **Material das partículas** (`cTSParticlesRenderable::SetupTextureParticle`
   `0xeb3254`): `StandardParticlesMaterial` com `stdParticleTexture`; tipo de
   desenho 1 `stdPMInvertDepth`, 2 `stdPMDoDepthTest false`, 3
@@ -311,10 +269,11 @@ desenho 4) com a textura `plumbBobGlow`/`plumbBobShine`, todos com flags
   profundidade e com teste: **a mesma camada dos materiais com blend**
   (`plumbbob_corecolor*` é StandardMaterial com `blend alpha`, alfa 1,
   camada 7). O `AddElementsToDisplayList` (`0xeba5cc`) passa à display list
-  a flag `bit 23 das flags | 0x40` (o brilho tem o bit 23). **Não lido**: a
-  ordem dentro da camada 7 entre o diamante e as partículas; o app desenha
-  as partículas depois de tudo, então o ponto branco pequeno fica por cima
-  do diamante (inferido; `TESTAR.md`).
+  a flag `bit 23 das flags | 0x40` (o brilho tem o bit 23). A ordem dentro
+  da camada 7 entre o diamante e as partículas foi lida na rodada n15
+  (§4e.6): o diamante conta pelo canto mais perto da caixa, o brilho pelo
+  centro, então o ponto branco pequeno fica **atrás** do diamante (antes o
+  app desenhava as partículas depois de tudo, por cima).
 - Capturas: `docs/screenshots/fix-plumbob-brilho.jpg` (antes, depois,
   depois à noite) e `fix-plumbob-giro.jpg` (o giro entre 4,4 e 5,0 s, depois
   da primeira volta). O giro e o dono estão em `primitives-mac.md`, seção
@@ -535,6 +494,58 @@ meta-partícula e a fonte da meta (`UpdateActiveParticles` `0xf5f5b0`).
   vai para o efeito de corrente com vida nova, troca a filha se a base muda
   e, com `resetIncoming`, é reiniciada.
 
+### 4e.8 O que mudou no código (rodada n15) e o que segue inferido
+
+- **Nomes** (`formats/effects.*`): os campos com os nomes do script (4e.1:
+  `bomb`, `bombCenter`, `drag`, `stretch`, `globalWind`, `rotateCount`,
+  `rotateRange`, `rotateOffset`), as flags da meta como o `bitset<34>` do
+  binário, os pontos de caminho, os colisores lidos inteiros; os bits têm
+  nome (`pflag`, `mflag`, `vflag`, `cflag`).
+- **Emissão e física** (`render/particle_system.*`): `startEmitter`
+  (começo forte/suave), `applyEmitter`, `generate`,
+  `addRateCurveParticles`, `injectParticles`, `maintainParticles`,
+  `initParticle`, `updatePhysics` (1/15 s, o passo único),
+  `updateRandomWalk` (um por efeito), o atrator com ponto e o gerador
+  aleatório do jogo (`FUN_00171b0c`, LCG `0x278dde6d`). As partículas vivem
+  no mundo salvo com `rigid`: a fumaça e o fogo ficam onde nasceram.
+- **Meta**: cadeias pelas flags dos componentes (0x2, 0x8), `maintain`,
+  `inject`, os dois `cTSRWState`, atrator, colisores planos (as seis
+  paredes do aquário no lugar da caixa inferida), caminhos (Hermite),
+  alinhamentos 2/3/4 com amortecimento, curva de rotação, filhas com
+  começo suave, efeitos que encaram a câmera (`EffectSystem::setView`, do
+  `gCamera`).
+- **Camada 7** (`render/particle_layer.*`, o renderer): cada emissor é um
+  grupo com a profundidade do centro da caixa, as partes com blend a do
+  canto mais perto, ordenados juntos (`setExternalBlended`); a caixa das
+  partes animadas segue os vértices posados.
+- **Balões**: sem a subida de 0,2 m (o caminho sobe); a foto do ícone com
+  as alternativas da §4b.
+- **Ainda inferido** (marcado no código): os itens de uma sequência começam
+  suaves (`cTSSequenceEffect` não lido); os eixos depois do X nos efeitos que
+  encaram a câmera; atrator sem ponto próprio (puxa para o alvo do efeito,
+  que nada liga aqui) não puxa; sem vento do mundo no lote; o rumo
+  amortecido da meta a cada passo de 1/15 s; nas cadeias de estado só
+  nascem partículas no estado 0 (`SwitchDescription` não seguido); no
+  `lot_effects`, o SLOT tipo 4 como "alvo", os efeitos salvos voltando com
+  começo forte, as alternativas da foto do balão; a malha das partículas
+  de forma girada só no Z.
+- **Não feito**: colisores das partículas e terreno (bits 3/4, 15/17/18),
+  `wiggle`, `screw`, a escolha de LOD pela distância da câmera (as moscas têm
+  3 componentes de LOD; usamos as escalas do fim), a iluminação (bit 23
+  `light`), o trator das metas (bit 29), `cTSSequenceEffect`, efeitos de
+  colisão e de morte, a densidade de partículas do gerente.
+- **Provas** (antes = main `4e9084e5`, depois = a branch; `--run-vm` em
+  passos, mesma câmera): `docs/screenshots/n15-particulas-1.jpg` (PlumbBob
+  de perto: o ponto branco atrás do diamante; balão; fogo da lareira; vapor
+  do chuveiro) e `n15-particulas-2.jpg` (fumaça do fogão, moscas, abelhas,
+  faíscas da lâmpada quebrada, peixes do aquário). As abelhas e as faíscas
+  ficam menos numerosas (taxa por ciclo em fatias de 1/15 s, rajadas de
+  `ceil(taxa)`), o vapor e a fumaça sobem como uma nuvem só (um passeio
+  aleatório por efeito), os peixes nadam dentro das paredes do tanque.
+- Ferramentas: `s2pkg effects` conta os bits e lista os pontos de caminho;
+  `s2pkg effect-sim <pacote> <nome>~soft` roda com começo suave (sem
+  `~soft`, forte, com o pre-roll).
+
 ## 5. Uso
 
 - `s2pkg effects <effects.package>`: contagens e todos os nomes;
@@ -543,8 +554,8 @@ meta-partícula e a fonte da meta (`UpdateActiveParticles` `0xf5f5b0`).
   partículas.
 - `s2pkg effect-tables <Res> <pacote> [grupo[:STR#]]`: STR# que nomeiam
   efeitos (0x8F), ou a lista de um grupo.
-- App: `--effect <nome>[~<estado>][@<objeto>[:<índice no STR# 0x90>] | @x,y,z]`
-  (repetível); `OS2_DEBUG_FX=1` imprime os efeitos que a VM liga.
+- App: `--effect <nome>[~<estado>][#<guid>][@<objeto>[:<índice no STR# 0x90>] | @x,y,z]`
+  (repetível; `#<guid>` dá a foto desse GUID ao ícone de um balão); `OS2_DEBUG_FX=1` imprime os efeitos que a VM liga.
 - Captura (rodada 10): `docs/screenshots/r10-fx-aquario-peixes.jpg`
   (`--lot N001_Lot11 --effect aquarium_fish_effects@6.5,17.5,1.0 --pivot
   6.5,17.5 --zoom 9 --orientation 4 --time 6 --frames 3`; antes: a poeira do
