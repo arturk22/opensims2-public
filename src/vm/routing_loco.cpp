@@ -112,6 +112,10 @@ SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r) {
         const bool walking = o.route && !o.route->waiting;
         const float ratio = walking ? walkTilesPerTick(vm, o) / mySpeed : 0;
         const float reach = kCentres + kAhead;
+        static const char* dbg = std::getenv("OS2_DEBUG_AHEAD");
+        if (dbg && std::atoi(dbg) == me.id)
+            std::fprintf(stderr, "t%llu ahead %d: %d at %.2f (walking %d, left %.2f, points %zu)\n", (unsigned long long)vm.ticks, me.id, id,
+                         std::hypot(o.position.x - me.position.x, o.position.y - me.position.y), walking, left, r.points.size());
         // Out of reach within the horizon whatever the two do (the binary's
         // first test, at 0.283 + 0.35 between the centres).
         if (std::hypot(o.position.x - me.position.x, o.position.y - me.position.y) >

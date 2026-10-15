@@ -724,7 +724,14 @@ static void testBlockedBySim() {
         vm.run(t);
     check(t.status == Thread::Status::Finished && t.result && walker.position.x > 9, "and walks on once it is gone");
 
-    // Two Sims walking at each other in the open pass each other.
+    // Two Sims walking at each other in the open pass each other (each
+    // pauses, "CT - Route Blocked Animation" here a 30-tick wait, and plans
+    // round the other: the blocked walk's try counter goes on with the same
+    // Sim since round n18, so without the pause's time the second block
+    // gave up).
+    Behavior pauseTree = tree({expr(0x09, 2, Assign, Lit, 30, go(1), E), instr(0x00, T, E, {2, 0})}, 4);
+    pauseTree.fileName = "CT - Route Blocked Animation";
+    code.add(kGlobalGroup, 0x1BB, pauseTree);
     vm.world = World(12, 12);
     Object& a = walker;
     Object& b = other;
@@ -1772,6 +1779,47 @@ static void testObjectPortals() {
     }
 }
 
+// The floors' routing costs (WorkOutTileCostAndPassability, round n18): a
+// quarter tile's floor pattern's routingcost (held in [0.5, 10]), the
+// terrain (no floor) and an unknown pattern the route manager's 2, a slope
+// over half a tile raising it; the planner walks the cheaper floor.
+static void testFloorCosts() {
+    Lot lot;
+    lot.width = 6, lot.height = 3;
+    lot.minLevel = 0, lot.levelCount = 1;
+    lot.elevations.assign(7 * 4, 0.0f);
+    lot.floors.assign(18, {0, 0, 0, 0});
+    lot.floorPatterns = {{1, "sidewalk"}, {2, "road_asphalt"}, {3, "cc13f31"}, {4, "nothing_known"}};
+    auto at = [&](uint32_t x, uint32_t y) -> std::array<uint16_t, 4>& { return lot.floors[x * 3 + y]; };
+    at(1, 0) = {1, 1, 1, 1};
+    at(2, 0) = {2, 2, 2, 2};
+    at(3, 0) = {3, 3, 0, 0}; // west and north quarters floored
+    at(4, 0) = {4, 4, 4, 4};
+    for (uint32_t x = 0; x < 6; ++x)
+        at(x, 2) = {1, 1, 1, 1}; // a sidewalk along y = 2
+    setFloorRoutingCosts({{"sidewalk", 1}, {"road_asphalt", 4}, {"cc13f31", 0}});
+    World w = World::fromLot(lot);
+    check(w.cost({0, 0, 1}) == 2 && w.cost({1, 0, 1}) == 1 && w.cost({2, 0, 1}) == 4 && w.cost({4, 0, 1}) == 2,
+          "floor costs: terrain 2, sidewalk 1, road 4, unknown 2");
+    check(w.cost({3, 0, 1}, 3.1f, 0.5f) == 0.5f && w.cost({3, 0, 1}, 3.9f, 0.5f) == 2,
+          "floor costs: per quarter, a 0 held at 0.5, the bare quarter the terrain's");
+    // From (0.5, 1.5) to (5.5, 1.5) over the grass (2) or along the sidewalk (1).
+    PathPlanner planner(w);
+    PlannedPath path;
+    RouteFail why;
+    check(planner.plan({0.5f, 1.5f}, 1, 1, {{5.5f, 1.5f, 0}}, path, why), "floor costs: a way");
+    float maxY = 0;
+    for (const auto& p : path.points) {
+        maxY = std::max(maxY, p.y);
+        if (std::getenv("DEBUG_FLOOR"))
+            std::fprintf(stderr, "floor path (%.2f, %.2f) cost %.2f\n", p.x, p.y, planner.costAt(1, {p.x, p.y}));
+    }
+    check(maxY > 2.0f, "floor costs: the walker takes the sidewalk over the grass");
+    setFloorRoutingCosts({});
+    World plain = World::fromLot(lot);
+    check(plain.cost({1, 0, 1}) == 1 && plain.cost({0, 0, 1}) == 2, "floor costs: without the catalog floors 1, terrain 2");
+}
+
 // A pool's rooms: the floor (the level below the pool's) is a room of its own
 // and is a pool ("Swim Here?" of the go-here destination); the water over it
 // takes the same room; a lawn is not a pool.
@@ -1838,6 +1886,7 @@ int main() {
     testMoveOutOfWay();
     testGoHere();
     testPoolRoom();
+    testFloorCosts();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

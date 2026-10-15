@@ -623,7 +623,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                             tiles[{t.x, t.y}] = {cost, out.goals.size(), std::fabs(lateral)};
                         }
                         const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
-                        const float floorCost = world->contains(t) ? world->cost(t) : 1;
+                        const float floorCost = world->contains(t) ? world->cost(t, px, py) : 1;
                         if (add(px, py, cost + (floorCost > 1 ? (floorCost - 1) * 10 : 0)))
                             ++accepted;
                     }

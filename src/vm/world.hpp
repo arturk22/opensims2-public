@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -176,10 +177,15 @@ public:
         if (contains(t))
             pools_.insert(cell(t));
     }
-    // What walking over a tile costs per tile walked (1 by default; the
-    // terrain's slope raises it, World::fromLot).
+    // What walking over a tile costs per tile walked (1 by default; from a
+    // lot, World::fromLot: the floor's routing cost, the terrain's 2, the
+    // slope), the most of its four quarter-tile triangles; and the cost of
+    // the quarter under a point of it (west, north, east, south: the
+    // nearest edge, as the lots' floors are laid).
     float cost(TilePos t) const;
+    float cost(TilePos t, float x, float y) const;
     void setCost(TilePos t, float cost);
+    void setQuarterCosts(TilePos t, const std::array<float, 4>& costs);
 
     // Index of a tile within one level's grid (x * height + y).
     size_t index(int x, int y) const { return size_t(x) * height_ + size_t(y); }
@@ -197,7 +203,7 @@ private:
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height
     std::vector<Stair> stairs_;
     std::vector<uint8_t> diagonals_;  // [level][x][y]: 1 a diagonal wall crosses it, 2 a door opens it
-    std::vector<float> costs_;        // [level][x][y]
+    std::vector<std::array<float, 4>> costs_; // [level][x][y], per quarter (west, north, east, south)
     std::vector<Door> doors_;
     std::vector<Segment> diagonalWalls_;
     size_t cell(TilePos t) const;
@@ -221,6 +227,11 @@ std::vector<Stair> lotStairs(const Lot& lot);
 // (formats/build_catalog.hpp walkOverFences).
 void setWalkOverFences(std::set<uint32_t> guids);
 const std::set<uint32_t>& walkOverFences();
+
+// The floors' routing costs by pattern name (formats/build_catalog.hpp
+// floorRoutingCosts): World::fromLot gives each quarter tile its floor's.
+// Set once from the build catalog; empty: every floor costs 1.
+void setFloorRoutingCosts(std::map<std::string, float> costs);
 
 // Tiles of one level that something stands in the way on (1 = blocked),
 // indexed by World::index. Routing builds one per route from the objects.

@@ -26,12 +26,13 @@ grep -q "\"N001_User00072 - Kaylynn\" at .*, 2) .* greet 0$" "$first" ||
 log="$out/greet.log"
 # (9000 ticks: since round n14 the walks end as their stop starts to fade
 # out and the visitor reaches the door earlier, leaves it before Daniel
-# comes and is greeted at the foot of the stairs; she comes in on her own
-# for a social with Daniel upstairs (tick 5581). Round n17 had her route to
-# him failing with 13 for good and sent her to a kitchen chair instead;
-# since round n18's CollisionCheck and blocked-walk counter she comes in
-# again by herself.)
-S2PKG_SHOW_CREATED=1 S2PKG_WATCH=Kaylynn S2PKG_PIE_ALSO="116,$id,Cumprimentar,1800" "$s2pkg" pie "$lot" Daniel Phone --select 0 --ticks 9000 > "$log" 2>/dev/null
+# comes and is greeted at the foot of the stairs. Coming in on her own
+# hangs on her autonomy: round n17 had her route to Daniel upstairs failing
+# with 13 for good; since round n18 it no longer fails (her runs show no
+# route failure), but with the floors' routing costs she and Daniel play
+# their socials at the front door instead. So once greeted she is told to
+# sit on a kitchen chair (643): the door must let her in.)
+S2PKG_SHOW_CREATED=1 S2PKG_WATCH=Kaylynn S2PKG_PIE_ALSO="116,$id,Cumprimentar,1800;$id,643,Sentar,2500" "$s2pkg" pie "$lot" Daniel Phone --select 0 --ticks 9000 > "$log" 2>/dev/null
 grep -q "also queued \"Cumprimentar" "$log" || { echo "FAIL: no Cumprimentar for the visitor"; fail=1; }
 grep -q "^  tick [0-9]*: $id \"N001_User00072 - Kaylynn\" at .* greet [1-9]" "$log" ||
     { echo "FAIL: the visitor was not greeted"; fail=1; }

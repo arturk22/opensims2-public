@@ -117,6 +117,33 @@ std::set<uint32_t> walkOverFenceGuids(ResourceIndex& index) {
     return out;
 }
 
+std::map<std::string, float> floorRoutingCosts(ResourceIndex& index) {
+    std::map<std::string, float> out;
+    if (const auto res = resFolder(index); !res.empty())
+        for (const auto& block : scriptBlocks(res / "Catalog" / "Scripts" / "floorPatterns.txt", "floorPattern")) {
+            if (block.empty() || block[0].size() < 2)
+                continue;
+            std::string name = block[0][1];
+            std::erase(name, '"');
+            float cost = 1; // the script's default
+            for (const auto& w : block)
+                if (lower(w[0]) == "routingcost" && w.size() > 1)
+                    cost = std::strtof(w[1].c_str(), nullptr);
+            out[lower(name)] = cost;
+        }
+    for (const auto& loc : index.ofType(kTypeCatalogPattern)) {
+        const auto bytes = index.read(loc);
+        const auto p = parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        if (text(p, "type") != "floor")
+            continue;
+        char b[16];
+        std::snprintf(b, sizeof b, "%x", number(p, "guid"));
+        const auto it = p.find("routingcost");
+        out[b] = it != p.end() ? std::strtof(it->second.c_str(), nullptr) : 0.0f; // the entry's default, 0
+    }
+    return out;
+}
+
 int railingToolPrice(ResourceIndex& index) {
     // userToolProxies.txt "userToolProxy 0x2c7bf690"
     // (kGZCLSID_cTSUserToolModularStairsRailing): catalog text "build" 139

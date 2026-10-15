@@ -301,6 +301,7 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         if (!walkOverRead && code.index()) {
             walkOverRead = true;
             setWalkOverFences(walkOverFenceGuids(*code.index()));
+            setFloorRoutingCosts(floorRoutingCosts(*code.index()));
         }
         vm.world = World::fromLot(current);
         // The straight (multi-tile) staircases, which lotStairs does not

@@ -151,6 +151,9 @@ public:
                float maxCost = std::numeric_limits<float>::infinity()) const;
     // What walking a tile at a point costs (the floor and the cost rectangles).
     float costAt(int level, Point2 p) const;
+    // What walking the segment costs (each cell's cost x the length in it,
+    // cQuadTree::GetCostAlongLine), infinity when a cell of `mask` is on it.
+    float costAlong(int level, Point2 a, Point2 b, uint8_t mask = 0xFF) const;
 
     // Plans from `start` on `startLevel` to the cheapest of `goals` (on
     // `goalLevel`): false and `why` when none can be reached. A start

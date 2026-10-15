@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -50,6 +51,14 @@ struct BuildFence {
 // not; routing leaves them out (inferred: MayWalkOver as the partition's
 // BlocksLocomotion, while it still blocks placement).
 std::set<uint32_t> walkOverFenceGuids(ResourceIndex& index);
+
+// The floors' routing costs (cTSProductPatternEntry::RoutingCost, which
+// nTSWorld::FloorTileRoutingCost reads for the route manager's
+// WorkOutTileCostAndPassability; docs/routing-mac.md §9.1), by the name a
+// lot keeps a floor pattern by: the catalog's property sets
+// ("routingcost", by GUID in lowercase hex) and Catalog/Scripts/
+// floorPatterns.txt ("routingCost", default 1, by pattern name).
+std::map<std::string, float> floorRoutingCosts(ResourceIndex& index);
 
 // A terrain paint (catalog property sets of type 0x4DCADB7E: "texturetname",
 // "brushwidth", free).

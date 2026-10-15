@@ -42,10 +42,13 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         for (int x = 0; x < int(world.width()); ++x)
             for (int y = 0; y < int(world.height()); ++y) {
                 const TilePos t{x, y, level};
-                const float c = world.cost(t);
+                // Each cell the cost of the quarter tile its centre is in
+                // (the floor rectangles' shapes: a cell takes a shape's cost
+                // when its centre is inside it, UpdateTraversalCostAndPassability).
                 for (int i = 0; i < K; ++i)
                     for (int j = 0; j < K; ++j)
-                        cost[cellIndex(x * K + i, y * K + j)] = c;
+                        cost[cellIndex(x * K + i, y * K + j)] =
+                            world.cost(t, float(x) + (float(i) + 0.5f) / K, float(y) + (float(j) + 0.5f) / K);
                 if (!world.hasFloor(t))
                     stamp(grid, float(x) - e, float(y) - e, float(x + 1) + e, float(y + 1) + e, kNoFloor);
             }
@@ -290,6 +293,46 @@ bool PathPlanner::clear(int level, Point2 a, Point2 b, uint8_t mask, float maxCo
             return false;
     }
     return true;
+}
+
+float PathPlanner::costAlong(int level, Point2 a, Point2 b, uint8_t mask) const {
+    if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount())
+        return kInf;
+    const auto& costs = costs_[size_t(level - world_->firstLevel())];
+    const float ax = a[0] * K, ay = a[1] * K, bx = b[0] * K, by = b[1] * K;
+    const float length = dist(a, b);
+    int cx = int(std::floor(ax)), cy = int(std::floor(ay));
+    auto cellCost = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= cw_ || y >= ch_ || (cellAt(level, x, y) & mask))
+            return kInf;
+        return costs[cellIndex(x, y)];
+    };
+    const float dx = bx - ax, dy = by - ay;
+    const int sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+    const float tdx = dx != 0 ? std::fabs(1.0f / dx) : kInf, tdy = dy != 0 ? std::fabs(1.0f / dy) : kInf;
+    float tx = dx != 0 ? (dx > 0 ? (float(cx + 1) - ax) : (ax - float(cx))) * tdx : kInf;
+    float ty = dy != 0 ? (dy > 0 ? (float(cy + 1) - ay) : (ay - float(cy))) * tdy : kInf;
+    float t = 0, total = 0;
+    for (int guard = 0; guard < 4 * (cw_ + ch_); ++guard) {
+        const float c = cellCost(cx, cy);
+        if (c >= kInf)
+            return kInf;
+        const float next = std::min(1.0f, std::min(tx, ty));
+        total += (next - t) * length * c;
+        t = next;
+        if (t >= 1.0f)
+            break;
+        if (std::fabs(tx - ty) < 1e-6f) {
+            if (cellCost(cx + sx, cy) >= kInf || cellCost(cx, cy + sy) >= kInf)
+                return kInf;
+            cx += sx, cy += sy, tx += tdx, ty += tdy;
+        } else if (tx < ty) {
+            cx += sx, tx += tdx;
+        } else {
+            cy += sy, ty += tdy;
+        }
+    }
+    return total;
 }
 
 bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
@@ -852,29 +895,40 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
     auto smoothClear = [&](int level, Point2 a, Point2 b) {
         return clear(level, a, b, 0xFF, std::max(costAt(level, a), costAt(level, b)));
     };
-    std::vector<WP> pulled;
-    size_t i = 0;
-    pulled.push_back(wps[0]);
-    while (i + 1 < wps.size()) {
-        size_t j = i + 1;
-        if (wps[j].portal < 0 && wps[j].level == wps[i].level)
-            for (size_t k = j + 1; k < wps.size(); ++k) {
-                if (wps[k].portal >= 0 || wps[k].level != wps[i].level)
-                    break;
-                if (smoothClear(wps[i].level, wps[i].p, wps[k].p))
-                    j = k;
-                if (wps[k].fixed)
-                    break;
-            }
-        // Never skip over a fixed point.
-        for (size_t k = i + 1; k < j; ++k)
-            if (wps[k].fixed) {
-                j = k;
-                break;
-            }
-        pulled.push_back(wps[j]);
-        i = j;
+    // CornerCuttingFilter (BV 0x60372c, read in round n18): along the
+    // path, from the last point kept, a point is dropped when the straight
+    // line from that point to the one after it is passable and costs less
+    // than the path between them plus 0.5 (cQuadTree::GetCostAlongLine
+    // against the path's own cost), and kept otherwise (or when it is
+    // within 0.1 of the last one kept, dropped); the ends, portals and
+    // level changes are kept. A detour the A* took for a cheaper floor (the
+    // sidewalk round the grass) stays.
+    std::vector<float> along(wps.size(), 0.0f); // the path's cost from its start
+    for (size_t k = 1; k < wps.size(); ++k) {
+        const bool leg = wps[k].portal < 0 && wps[k].level == wps[k - 1].level;
+        const float c = leg ? costAlong(wps[k].level, wps[k - 1].p, wps[k].p, kStatic | kObject) : 0.0f;
+        along[k] = along[k - 1] + (c < kInf ? c : dist(wps[k - 1].p, wps[k].p) * costAt(wps[k].level, wps[k].p));
     }
+    std::vector<WP> pulled;
+    pulled.push_back(wps[0]);
+    size_t anchor = 0;
+    for (size_t k = 1; k + 1 < wps.size(); ++k) {
+        const WP& w = wps[k];
+        const WP& next = wps[k + 1];
+        bool keep = w.fixed || w.portal >= 0 || next.portal >= 0 || next.level != w.level ||
+                    wps[anchor].level != w.level;
+        if (!keep) {
+            const float direct = costAlong(w.level, wps[anchor].p, next.p, kStatic | kObject);
+            keep = direct >= kInf ||
+                   (along[k + 1] - along[anchor] <= direct - 0.5f && dist(wps[anchor].p, w.p) >= 0.1f);
+        }
+        if (keep) {
+            pulled.push_back(w);
+            anchor = k;
+        }
+    }
+    if (wps.size() > 1)
+        pulled.push_back(wps.back());
     std::vector<WP> spaced;
     spaced.push_back(pulled[0]);
     for (size_t k = 1; k < pulled.size(); ++k) {

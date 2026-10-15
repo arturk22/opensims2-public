@@ -33,7 +33,7 @@ World::World(uint32_t width, uint32_t height, int firstLevel, int levelCount)
     walkable_.assign(levels * width * height, 1);
     rooms_.assign(levels * width * height, 0);
     diagonals_.assign(levels * width * height, 0);
-    costs_.assign(levels * width * height, 1.0f);
+    costs_.assign(levels * width * height, {1.0f, 1.0f, 1.0f, 1.0f});
     xWalls_.assign(levels * width * (height + 1), 0);
     yWalls_.assign(levels * (width + 1) * height, 0);
 }
@@ -89,7 +89,39 @@ bool lotTileLocked(const Lot& lot, const std::array<int, 4>& area, int level, in
     return x < area[0] || y < area[1] || x >= area[2] || y >= area[3];
 }
 
+namespace {
+std::map<std::string, float>& floorCostMap();
+} // namespace
+
 World World::fromLot(const Lot& lot) {
+    // The floors' routing costs (WorkOutTileCostAndPassability, BV 0x4f3d84;
+    // docs/routing-mac.md §9.1): a quarter tile's floor pattern's
+    // routingcost, held in [0.5, 10]; a quarter without a floor, or whose
+    // pattern the catalog does not know (FloorTileRoutingCost fails), the
+    // route manager's default, 2 (its +0x34, set by its constructor): the
+    // Sims keep to floors, sidewalks and crosswalks (1) over the grass (2)
+    // and the street (4). Without the catalog every floor costs 1.
+    const auto& known = floorCostMap();
+    auto patternCost = [&](uint16_t ref) {
+        constexpr float kNoPattern = 2.0f;
+        if (!ref)
+            return kNoPattern;
+        if (known.empty())
+            return 1.0f;
+        const auto it = lot.floorPatterns.find(ref);
+        if (it == lot.floorPatterns.end())
+            return kNoPattern;
+        std::string name;
+        for (char ch : it->second)
+            if (ch != '"')
+                name += char(std::tolower(uint8_t(ch)));
+        auto k = known.find(name);
+        if (k == known.end() && name.size() > 1 && name.find_first_not_of("0123456789abcdef") == std::string::npos) {
+            const size_t nz = name.find_first_not_of('0');
+            k = known.find(nz == std::string::npos ? "0" : name.substr(nz));
+        }
+        return k == known.end() ? kNoPattern : std::clamp(k->second, 0.5f, 10.0f);
+    };
     // VM levels count from 1 = the lot's ground level (0).
     World w(lot.width, lot.height, lot.minLevel + 1, lot.levelCount);
     {
@@ -107,6 +139,11 @@ World World::fromLot(const Lot& lot) {
             for (uint32_t y = 0; y < lot.height; ++y) {
                 const TilePos t{int(x), int(y), lotLevel + 1};
                 const size_t i = (size_t(li) * lot.width + x) * lot.height + y;
+                std::array<float, 4> quarters{2.0f, 2.0f, 2.0f, 2.0f};
+                if (!lot.floors.empty())
+                    for (size_t q = 0; q < 4; ++q)
+                        quarters[q] = patternCost(lot.floors[i][q]);
+                w.setQuarterCosts(t, quarters);
                 if (lotLevel != 0) {
                     bool floor = false;
                     if (!lot.floors.empty())
@@ -136,8 +173,11 @@ World World::fromLot(const Lot& lot) {
                     const float rise = hi - lo;
                     if (rise >= 1.0f || water)
                         w.setWalkable(t, false);
-                    else if (rise > 0.5f)
-                        w.setCost(t, std::max(1.0f, (rise - 0.5f) * 20.0f));
+                    else if (rise > 0.5f) {
+                        for (float& c : quarters)
+                            c = std::max(c, (rise - 0.5f) * 20.0f);
+                        w.setQuarterCosts(t, quarters);
+                    }
                 }
                 if (!lot.rooms.empty()) {
                     for (uint16_t r : lot.rooms[i])
@@ -177,6 +217,15 @@ std::set<uint32_t>& walkOverSet() {
 } // namespace
 
 void setWalkOverFences(std::set<uint32_t> guids) { walkOverSet() = std::move(guids); }
+
+namespace {
+std::map<std::string, float>& floorCostMap() {
+    static std::map<std::string, float> m;
+    return m;
+}
+} // namespace
+
+void setFloorRoutingCosts(std::map<std::string, float> costs) { floorCostMap() = std::move(costs); }
 const std::set<uint32_t>& walkOverFences() { return walkOverSet(); }
 
 std::vector<Stair> lotStairs(const Lot& lot) {
@@ -296,12 +345,32 @@ bool World::walkable(TilePos t) const {
 
 bool World::hasFloor(TilePos t) const { return contains(t) && walkable_[cell(t)]; }
 
-float World::cost(TilePos t) const { return contains(t) ? costs_[cell(t)] : 1.0f; }
+float World::cost(TilePos t) const {
+    if (!contains(t))
+        return 1.0f;
+    const auto& q = costs_[cell(t)];
+    return std::max(std::max(q[0], q[1]), std::max(q[2], q[3]));
+}
+
+float World::cost(TilePos t, float x, float y) const {
+    if (!contains(t))
+        return 1.0f;
+    const float fx = x - float(t.x), fy = y - float(t.y);
+    // The quarter whose edge is the nearest: west (x), north (+y), east, south.
+    const std::array<float, 4> d{fx, 1 - fy, 1 - fx, fy};
+    return costs_[cell(t)][size_t(std::min_element(d.begin(), d.end()) - d.begin())];
+}
 
 void World::setCost(TilePos t, float cost) {
     ++revision_;
     if (contains(t))
-        costs_[cell(t)] = cost;
+        costs_[cell(t)] = {cost, cost, cost, cost};
+}
+
+void World::setQuarterCosts(TilePos t, const std::array<float, 4>& costs) {
+    ++revision_;
+    if (contains(t))
+        costs_[cell(t)] = costs;
 }
 
 bool World::diagonalWall(TilePos t) const { return contains(t) && diagonals_[cell(t)] != 0; }
