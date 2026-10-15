@@ -413,13 +413,19 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.loco.kind = Object::Route::Loco::None;
         r.loco.moving = false;
         // DoBlockedGoalStillAvailable's tries start again when the blocker
-        // changes or has moved 0.25 tile since the last one.
+        // differs from the one the route remembers (+0x3e: kept when the
+        // way is free again, BV 0x57a8d4) or has moved 0.25 tile since.
+        // Forgetting it once the way was free started the count again at
+        // every block: two Sims 0.285 apart, each stepping into the other,
+        // paused and planned again for ever (N001_Lot11, OS2_SEED=12).
         // (Not while waiting for it to move: DoWaitingForPersonToMove
         // does not come here.)
-        if (b != r.blocker ||
+        if (b != r.blocker)
+            r.blocker = b, r.blockedTicks = 0;
+        if (b != r.lastBlocker ||
             (r.blockedTicks == 0 &&
              std::hypot(blocker.position.x - r.blockerX, blocker.position.y - r.blockerY) >= kBlockerMovedTries)) {
-            r.blocker = b, r.replans = 0, r.blockedTicks = 0;
+            r.lastBlocker = b, r.replans = 0;
             r.blockerX = blocker.position.x, r.blockerY = blocker.position.y;
         }
         if (r.blockedTicks == 0) {

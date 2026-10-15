@@ -15,7 +15,8 @@ namespace {
 
 // 2: a route's asideFrom (the Sim a step-aside route gives way to).
 // 3: the locomotion's planned stop foot, short way, fade and halt walk.
-constexpr uint32_t kVersion = 3;
+// 4: the route's remembered blocker (DoBlockedGoalStillAvailable's +0x3e).
+constexpr uint32_t kVersion = 4;
 uint32_t readingVersion = kVersion; // of the state being read
 bool knownVersion(uint32_t v) {
     readingVersion = v;
@@ -104,6 +105,7 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     w.u32(uint32_t(l.segment)), w.u32(uint32_t(l.taken)), w.f32(l.arc), w.u8(l.onCurve);
     w.u8(l.halting), w.u8(l.haltDone), w.i16(l.halted);
     w.u8(l.stopOtherFoot), w.u8(l.shortWay), w.f32(l.fade), w.f32(l.haltWalk), w.u8(l.haltOtherFoot), w.u8(l.crossover), w.f32(l.haltRoom), w.i32(l.requestTicks), w.f32(l.requestLength);
+    w.i16(r.lastBlocker);
 }
 
 Object::Route readRoute(BinReader& r, size_t& frame) {
@@ -167,6 +169,8 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
     if (readingVersion >= 3)
         l.stopOtherFoot = r.u8(), l.shortWay = r.u8(), l.fade = r.f32(), l.haltWalk = r.f32(), l.haltOtherFoot = r.u8(),
         l.crossover = r.u8(), l.haltRoom = r.f32(), l.requestTicks = r.i32(), l.requestLength = r.f32();
+    if (readingVersion >= 4)
+        x.lastBlocker = r.i16();
     return x;
 }
 

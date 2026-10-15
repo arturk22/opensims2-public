@@ -630,6 +630,10 @@ struct Object {
         bool waiting = false;
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
         ObjectId blocker = 0;     // the Sim in the way
+        // The blocker the try counter (replans) counts for: the route's own
+        // memory (DoBlockedGoalStillAvailable's +0x3e), kept when the way is
+        // free again, so blocks by the same Sim go on counting.
+        ObjectId lastBlocker = 0;
         // DoBlockedGoalStillAvailable (routing_walk.cpp): the walker steps aside
         // itself on a way of its own (TryGetSelfOutOfWay, once a route), then
         // plans its route again; a pause ("CT - Route Blocked Animation")
