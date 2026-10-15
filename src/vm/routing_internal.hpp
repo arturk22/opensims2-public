@@ -63,6 +63,9 @@ struct LocoStep {
     float x = 0, y = 0;  // where the walker (the root) stands
     int level = 0;
     float facing = 0; // the body's heading
+    // The walk ends here as its last clip starts to fade out (FollowOneStep's
+    // hand-off): the clip plays on in the world.
+    bool handOff = false;
 };
 
 // One tick of the locomotion along the floor (FollowOneStep).

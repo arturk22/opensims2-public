@@ -37,6 +37,8 @@ void SimMotion::sample(VM& vm, const Object& o) {
         s.animPlayed = o.animation.requestId ? o.animation.playedTicks : 0.0f;
     }
     s.serial = o.animation.serial;
+    s.handOff = count_ && o.locoHandOff != handOffs_;
+    handOffs_ = o.locoHandOff;
     if (s.walking) {
         using Loco = Object::Route::Loco;
         const Loco& L = o.route->loco;

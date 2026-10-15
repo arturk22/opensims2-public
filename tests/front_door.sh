@@ -24,7 +24,10 @@ grep -q "route of $id failed with [0-9]* in \"CT - Knock on Door\" #1" "$first" 
 grep -q "\"N001_User00072 - Kaylynn\" at .*, 2) .* greet 0$" "$first" ||
     { echo "FAIL: the visitor never waited at the door"; fail=1; }
 log="$out/greet.log"
-S2PKG_SHOW_CREATED=1 S2PKG_WATCH=Kaylynn S2PKG_PIE_ALSO="116,$id,Cumprimentar,1800" "$s2pkg" pie "$lot" Daniel Phone --select 0 --ticks 6500 > "$log" 2>/dev/null
+# (9000 ticks: since round n14 the walks end as their stop starts to fade
+# out and the visitor reaches the door earlier, leaves it before Daniel
+# comes and is greeted at the foot of the stairs; she came in at tick 6938.)
+S2PKG_SHOW_CREATED=1 S2PKG_WATCH=Kaylynn S2PKG_PIE_ALSO="116,$id,Cumprimentar,1800" "$s2pkg" pie "$lot" Daniel Phone --select 0 --ticks 9000 > "$log" 2>/dev/null
 grep -q "also queued \"Cumprimentar" "$log" || { echo "FAIL: no Cumprimentar for the visitor"; fail=1; }
 grep -q "^  tick [0-9]*: $id \"N001_User00072 - Kaylynn\" at .* greet [1-9]" "$log" ||
     { echo "FAIL: the visitor was not greeted"; fail=1; }

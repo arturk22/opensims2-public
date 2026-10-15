@@ -698,7 +698,15 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     };
     // The stride weight for what is left from here (a walk planned again):
     // the stop alone between.
-    auto refitStride = [&] { (void)fit(0, 0, true); };
+    // A new request (BeginFollow): its length and played ticks from here.
+    auto newRequest = [&] {
+        L.requestTicks = 0;
+        L.requestLength = curveLeft();
+    };
+    auto refitStride = [&] {
+        newRequest();
+        (void)fit(0, 0, true);
+    };
     // A request's fades (FollowOneStep / InitChannelNetwork's FUN_00a46ea8):
     // in over 233.3 ms, out over 233.3 ms with a stop clip and 0.6 of it
     // (140) without, both shrunk in proportion (times 0.9999) when the
@@ -729,6 +737,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
                 if (chord > 1e-3f && std::fabs(chord - length) < 0.02f) {
                     const float way = headingOfMotion(dx, dy);
                     if (const BlendedClip step = sideStep(vm, me, std::remainder(way - facing, float(2 * M_PI)), chord, itps)) {
+                        newRequest();
                         L.sidestep = true;
                         begin(Loco::Start, step, stretch, way);
                         L.cycleStart = L.cycle = 0;
@@ -739,6 +748,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
                 }
             }
             if (!L.sidestep) {
+                newRequest();
                 const BlendedClip goLong = turnClip(vm, me, "turnAndGo", angle, itps, 0);
                 const BlendedClip goShort = turnClip(vm, me, "turnAndGo", angle, itps, 1);
                 StrideFit f;
@@ -938,11 +948,32 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     out.level = out.consumed > 0 ? r.points[out.consumed - 1].level : me.position.level;
     // The root: the clip's offset from the frame at this tick.
     float rx = 0, ry = 0, yaw = 0;
+    if (L.moving)
+        ++L.requestTicks;
     if (L.kind == Loco::Start || L.kind == Loco::Stop) {
         ++L.tick;
         if (const BlendedClip c = current()) {
             const auto rt = c.root(std::min(1.0f, (float(L.tick) + L.lead) / float(std::max(L.ticks, 1))));
             rx = rt[0], ry = rt[1], yaw = rt[2];
+        }
+        // The way's last clip (the stop, or a sidestep's step): the walk is
+        // done as the request starts to fade out, 233.3 ms before its end
+        // with a stop clip, 140 without (both shrunk for a short request),
+        // unless the way is at most 0.5 long with 40 ms or more left; the
+        // Sim goes to the way's end with the final facing, and the clip
+        // plays on where it is in the world (FollowOneStep: the hand-off to
+        // the ending state, then MarkActiveLocoStateAsCompleted; BV
+        // 0x6b80e8, docs/anim-mac.md §8.3).
+        if (final && !L.halting && (L.kind == Loco::Stop || L.sidestep)) {
+            const float left = (float(L.ticks) - float(L.tick) - L.lead) / tps;
+            const float in = kBlendTicks / 1000, full = L.kind == Loco::Stop ? in : 0.6f * in;
+            const float total = float(L.requestTicks) / tps + left;
+            const float fadeOut = total > 0 && total < in + full ? full * total / (in + full) * 0.9999f : full;
+            if (left > 1e-4f && left <= fadeOut && (L.requestLength > 0.5f || left < 0.04f)) {
+                L.tick = L.ticks;
+                L.lead = 0;
+                out.handOff = true;
+            }
         }
         if (float(L.tick) + L.lead >= float(L.ticks)) {
             if (L.halting && L.kind == Loco::Start) { // the start played out: the halt's stop
@@ -1125,6 +1156,8 @@ void applyLocoStep(VM& vm, Object& me, Object::Route& r, const LocoStep& st) {
                      st.loco.halting ? " halting" : "");
     }
     r.loco = st.loco;
+    if (st.handOff)
+        ++me.locoHandOff;
     r.points.erase(r.points.begin(), r.points.begin() + std::ptrdiff_t(std::min(st.consumed, r.points.size())));
     moveTo(vm, me, st.x, st.y, st.level);
     setDirection(me, directionOf(-std::sin(st.facing), std::cos(st.facing)));

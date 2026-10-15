@@ -103,7 +103,7 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     }
     w.u32(uint32_t(l.segment)), w.u32(uint32_t(l.taken)), w.f32(l.arc), w.u8(l.onCurve);
     w.u8(l.halting), w.u8(l.haltDone), w.i16(l.halted);
-    w.u8(l.stopOtherFoot), w.u8(l.shortWay), w.f32(l.fade), w.f32(l.haltWalk), w.u8(l.haltOtherFoot), w.u8(l.crossover), w.f32(l.haltRoom);
+    w.u8(l.stopOtherFoot), w.u8(l.shortWay), w.f32(l.fade), w.f32(l.haltWalk), w.u8(l.haltOtherFoot), w.u8(l.crossover), w.f32(l.haltRoom), w.i32(l.requestTicks), w.f32(l.requestLength);
 }
 
 Object::Route readRoute(BinReader& r, size_t& frame) {
@@ -166,7 +166,7 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
     l.halting = r.u8(), l.haltDone = r.u8(), l.halted = r.i16();
     if (readingVersion >= 3)
         l.stopOtherFoot = r.u8(), l.shortWay = r.u8(), l.fade = r.f32(), l.haltWalk = r.f32(), l.haltOtherFoot = r.u8(),
-        l.crossover = r.u8(), l.haltRoom = r.f32();
+        l.crossover = r.u8(), l.haltRoom = r.f32(), l.requestTicks = r.i32(), l.requestLength = r.f32();
     return x;
 }
 

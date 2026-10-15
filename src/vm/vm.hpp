@@ -698,6 +698,11 @@ struct Object {
             float haltWalk = 0;
             bool haltOtherFoot = false;
             float haltRoom = 0; // how far its frame may still go (inferred)
+            // The request (BeginFollow's): VM ticks it has played and the
+            // length of its way (FollowOneStep hands it off as its fade out
+            // starts: docs/anim-mac.md §8.3).
+            int requestTicks = 0;
+            float requestLength = 0;
             float distance = 0;      // its way along the route
             float speed = 0;         // the walk's, tiles per tick
             float fx = 0, fy = 0;    // the frame
@@ -733,6 +738,10 @@ struct Object {
     // The walker's "Routing - Eye Attractor" (routing_walk.cpp): the object the
     // along route tree's parameter 5 names, kept on the way ahead.
     ObjectId eyeAttractor = 0;
+    // Bumped when a walk ends as its last clip starts to fade out
+    // (FollowOneStep's hand-off): the clip plays on where it was in the
+    // world while the next one blends in (draw only, not saved).
+    uint32_t locoHandOff = 0;
     // A routing slot 0 the engine gave the object (the synthetic slot of a
     // move-out-of-way destination, routing_loco.cpp), instead of its SLOT's.
     std::optional<Slots::Slot> syntheticSlot;

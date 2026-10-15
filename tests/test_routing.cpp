@@ -1169,9 +1169,11 @@ static void testLocoPhases() {
         check(std::fabs(lagMid - 0.05f) < 0.02f, "loco: in the start the Sim stands at the clip's root, behind its frame");
         check(std::fabs(startStep - 0.85f / 23) < 0.01f || facing != 4, "loco: the start's frame covers its distance in its length");
         check(std::fabs(walkStep - 2.0f / 30) < 0.002f, "loco: the walk cycle at the gait's speed");
+        // (The walk is done as the stop starts to fade out, 233.3 ms before
+        // its 0.5 s end: FollowOneStep's hand-off.)
         check(clips.size() >= 3 && clips[clips.size() - 2] == "a-male-walk-alt0-normal" &&
-                  clips.back().starts_with("a-turnAndStop-alt-") && stopTicks >= 14 && stopTicks <= 16,
-              "loco: start, walk, stop");
+                  clips.back().starts_with("a-turnAndStop-alt-") && stopTicks >= 7 && stopTicks <= 9,
+              "loco: start, walk, stop, done as the stop fades out");
         check(std::fabs(sim.position.x - 10.5f) < 0.05f && lastDir == 4, "loco: stopped in front of the lamp, facing it");
     }
 }

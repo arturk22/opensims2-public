@@ -77,6 +77,10 @@ public:
         // cosine crossover (`walkEase`; docs/anim-mac.md §8.4).
         float walkFade = 0.1f;
         bool walkEase = false;
+        // The walk ended this tick as its last clip started to fade out
+        // (FollowOneStep's hand-off): that clip plays on where it was in the
+        // world while the body is placed at the way's end.
+        bool handOff = false;
     };
 
     // Records the object's state after a VM tick (call once per tick,
@@ -117,6 +121,7 @@ private:
     State previous_, current_;
     size_t count_ = 0;
     float heading_ = 0;
+    uint32_t handOffs_ = 0; // the object's locoHandOff last seen
 };
 
 } // namespace os2::vm
