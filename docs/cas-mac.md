@@ -1220,3 +1220,223 @@ inferido).
   `amarcheafr` antes, depois, e o `amarcheafr` inteiro.
 - Testes: `test_anim` (morphs do fitness), `test_formats`
   (`testCasRandomize`, `testFaceRegionMasks`, com `OS2_DATA`).
+
+## Rodada n21: pele, câmera do CAS, rosto dos filhos e biografia da família (binário, Ghidra MCP)
+
+Lido no BV 1.10 pelo Ghidra MCP (só leitura). As funções do compositor não
+têm nome no BV; os nomes vêm do `baserom.sym` pela ordem e pelo tamanho
+(`TSSkinCompositionSupport.cpp`, `0xa52000`–`0xa62000` lá).
+
+### O compositor da pele (`cTSSkinTextureCompositor`)
+
+**Quem monta.** `cTSCASBodyPartSystem::UpdateMaterialForMaterialEntry` (BV
+`0x80ea00`) → `GetMaterialLayersToBeComposited` (`0x80d5e8`) →
+`nTSSkinCompositionSupport::CreateCompositedMaterial` (`0xda008c`; a versão
+sem alfas, `0xda197c`, põe 0xFF em todos) → `cDiffuseCompositedTextureUpdate
+Strategy` (`UpdateTopMipSurface` `0xd9f408`, `BlendTextures` `0xd9fb80`,
+`MergeTextureAlpha` `0xd9fa88`, `CopyToTopMipSurface` `0xd9fd68`), com o
+`cTSSkinTextureCompositor` em `+0x54` (`Blend(img, mip)` `0xefc4f8`,
+`Blend(img, mip, máscara, mip, alfa)` `0xefca48`, `BlendFromDXT5` `0xefb9d4`,
+`BlendAlpha` `0xefb868`, `Extract` `0xef71f4`).
+
+**As camadas** (`GetMaterialLayersToBeComposited`):
+
+0. A pele do rosto: `QuerySkins` com idade, sexo, tom, cor do cabelo,
+   espécie, parte 2 e flags `0x80`/8; das materiais da entrada, a que tem
+   "face" no nome. Sem resultado, repete com o tom `00000002-…` (Medium).
+   Sem máscara, alfa 0xFF.
+1. As operações de overlay da pilha do editor (tipo 3 na lista `+0x38`): vale
+   a última operação de cada família, e só com peso > 0,5. Para cada uma,
+   `QueryTextureOverlays` com a família, idade, sexo, tom, cor do cabelo e
+   espécie; sem resultado, de novo com a cor do `GetHairToneEntry` e depois
+   com `00000001-…` (preto), ou `00000005-…` (grisalho) para idoso (`0x10`).
+   Vale a primeira entrada achada. **Um overlay por `bin`** (`+0x8C` do
+   `cTSTextureOverlayEntry`; mapa bin → entrada: a última operação do bin
+   ganha e fica no lugar da primeira). Depois a lista é ordenada por
+   **`layer`** (`+0x88`) por inserção estável (entra antes do primeiro de
+   layer maior). Cada uma: material `materialkeyidx` (`+0x94`), máscara
+   `maskMaterialkeyidx` (`+0xA4`) se houver, alfa 0xFF
+   (`GetMaterialsNamesForOverlayTexture`, `0x944fb8`).
+2. `cafOverlay<i>` = as famílias de todas as operações de peso > 0,5, na
+   ordem das operações (não na ordem das camadas); `cafNumOverlays`,
+   `cafHairTone`, `cafSkinTone`, `paramAge`, `paramGender`, `paramSpecies`.
+
+O `ReadProperties` do `cTSTextureOverlayEntry` (`0x7ee820`) lê `subtype`
+(`+0xB4`), `bin` (`+0x8C`), `layer` (`+0x88`), `category`, `coatcolor`,
+`materialkeyidx`, `maskMaterialkeyidx`, `skintone` e `hairtone`; a interface
+`cITSTextureOverlayEntry` (em `+100`) dá `layer` no slot `0x18` e `bin` no
+`0x1C`.
+
+**O material** (`CreateCompositedMaterial`): por camada `baseTexture<i>` (a
+textura base do TXMT da camada), `baseMask<i>` (a do TXMT da máscara),
+`baseMaskAmount<i>` quando o alfa < 255, `specTexture<i>`, `bumpTexture<i>`;
+e `numTexturesToComposite`, `compositeBaseTextureName` (os nomes juntos +
+"-diffuse"), `compositeSpecTextureName`, `compositeBumpTextureName`,
+`stdMatNormalMapTextureEnabled` (com bump), tipo "SimSkin". Cabelo (entrada
+de tipo ≥ 4): `simHairFlag`, `stdMatAlphaBlendMode blend` e o formato
+"RGBA".
+
+**A composição** (`UpdateTopMipSurface`): no tamanho da textura base, em
+blocos 4×4; a camada 0 é o `InitTexture`, cada uma das seguintes um
+`BlendTextures(img, máscara, alfa)`. `ExtractMipLevel` (`0xd9e8f0`) pega o
+mip de tamanho mais próximo (`ClosestMipLevel` `0xd9d0d4`) e, se não for
+igual, reduz um maior (potência de 2) ao tamanho certo; uma textura menor que
+a base faz a camada ser pulada. No jogo base todas as peles de rosto e todos
+os overlays são 512×512.
+
+**A conta**, por texel, nos bytes ARGB, com w de 0 a 256 (`a + (a >> 7)`):
+
+- sem máscara: w = alfa do texel do overlay (DXT5: a paleta de alfa do
+  bloco; DXT1: 0 ou 256); `dst += (src − dst)·w/256`, arredondado
+  (`+0x800080`), **nos quatro canais**, o alfa também. Um bloco todo opaco
+  troca o bloco de cor inteiro; um bloco todo transparente não mexe;
+- com máscara: w = o byte dos bits 8–15 do texel da máscara, vezes alfa/255
+  quando o alfa < 255; só entra o texel do overlay diferente de 0.
+
+Nos dados do jogo base nenhum `textureoverlay` tem `maskMaterialkeyidx`
+(contagem das chaves do `Skins.package`) e todo alfa é 0xFF: só o primeiro
+caso acontece.
+
+**Os overlays nos dados** (144 de textura; subtipo, bin, layer): 0 (barba de
+textura) bins 1/2, layers 60/70; 1 sobrancelha bin 3, layer 80; 2 batom bin
+10, layer 0; 3 olhos bin 11, layer 0; 4 bins 20 (layers 10 e 50) e 5 (layer
+60); 5 bin 7, layer 5; 6 bin 8, layer 20; 7 bins 6/7, layers 40/30. Os
+subtipos 5 e 7 dividem o bin 7: só um dos dois fica. As sobrancelhas de idoso
+só existem grisalhas (`age` 0xD0; as outras têm 0xEF, sem idoso): a busca com
+a cor do cabelo de um idoso falha e cai no `00000005`, que é o que o
+`writeCharacter` já fazia.
+
+**No opensims2.** O shader mistura cada `baseTexture<i>` sobre a pele por
+`mix(dst, src, src.a)`: a mesma conta em ponto flutuante, sem o
+arredondamento por camada nem o reempacotamento DXT1 da textura composta (o
+alfa composto não é usado no rosto). O `writeCharacter` passa a deixar um
+overlay por bin e a gravar `cafOverlay` na ordem de escolha (abaixo).
+
+### A câmera do CAS (`cCameraCreateASimController`)
+
+**Spec ↔ localizador: está nos dados.** O editor manda eventos ao objeto
+"CAS - Backdrop" (GUID `0x8C9971B6` = `CASRunObjGUID` da tabela de constantes
+do `CB980E50`; árvore `CASTreeId_Main` = `0x1008` "CT - CAS - Event
+Handler") por `SendMessageToSimulator` (vtable `0x2F0`) e
+`ProcessSimulatorMessages` (`0x1b6da8`), com os parâmetros
+`CASParamConstant_*` (EditSim 1, DoneEditSim 2, EditSimFace 3, ...). A
+árvore "Camera - Set" liga, com o Effect Stop/Start (índice no temp 0), um
+**efeito** do STR# 0x8F do objeto: 0 `CASCam_Family_Effect`, 1–4
+`CASCam_Clothes{Adult,Child,Teen,Toddler}_Effect`, 5–8
+`CASCam_Face{Adult,Child,Teen,Toddler}_Effect`, 9/10 `CASCam_ZoomDisabled…`;
+o 0 no osso do fundo, os 1–8 nos ossos 0–7 do pódio, que no STR# 0x90 são
+`camera_clothes_adult`, `…_child`, `…_teen`, `…_toddler`,
+`camera_face_adult`, …, `camera_face_toddler`, na mesma ordem. O índice sai
+de "Get in Temp 0 - Camera from Sim ID": idade (dado 58) ≤ limite 0 → criança
+pequena (bebê também), ≤ limite 1 → criança, ≤ limite 2 → adolescente, senão
+adulto (idoso também); parâmetro 1 = 1 (roupa) → 1–4, senão (rosto) → 5–8
+(BCON `0x1003` "CAS Cameras" = 0..9; os limites de idade vêm de uma tabela
+semi-global, entradas 0–2). `cTSCameraEffect::Start` (`0xf583b4`) troca o
+controlador de câmera pelo nome do bloco de câmera do efeito (`desc+0xAC`);
+o lugar e o giro vêm do osso (`HandleRequest` `0x7aa7e0`: requisição
+`0xBB661105` = posição, `0xCCB772E6` = rotação). Ou seja: o pareamento por
+nome do app é o do jogo. Fica inferido **qual passo** manda `EditSimFace`
+(a chamada é pela interface do editor, não achada).
+
+**Botões de zoom** (`cTSUISimEditor::DoMessage(cGZMessage&)` `0x1ca3f8`):
+apertar 0x2D486AC2 manda à câmera a mensagem `0x6D41F7AB`, soltar
+`0xED409660`; 0x2D486ACD manda `0xAD41F8D8`/`0xED40965A`. No `DoMessage` da
+câmera (`0x7aa0f8`): segurar = ±`keyboardzoomspeed` em `+0x2E4`, soltar = 0;
+`0x2CA298E9`/`0xCCA298C4` = um passo −/+ no alvo (preso em [minzoom,
+maxzoom]). Não há "10 passos por clique". Os botões de girar o Sim
+(0x2CAFB772/0x4CAFB7AA) mandam ao simulador 0xC/0xD ao apertar e 0xE (parar)
+ao soltar: o pódio gira enquanto segura.
+
+**Zoom segurado** (`Update` `0x7a9d68`, fora da transição): alvo +=
+segurado × 50 / Δt (Δt em ms; 0 vira 1), preso, a cada atualização. É assim
+no binário: o passo por quadro cresce quando os quadros encurtam.
+
+**Roda** (`FillDeviceMap` `0x7a9600`: eixos 1 e 2 do dispositivo 4, escala
+1/120; `HandleRequest`): `0xBC17E412` guarda o valor absoluto da roda,
+`0x9C17E415` soma (novo − guardado) × `mousewheelsensitivity` ao alvo, preso
+em [minzoom, maxzoom]. Nenhum dos dois olha a transição; ao chegar, a
+transição põe o alvo no zoom da câmera nova de todo jeito.
+
+**Direção do zoom** (`0x7aa284`): s = t²(3 − 2t); heading e elevação
+interpolados; M = Q · Rx(−zoomelevation) · Rz(zoomheading), com
+`FUN_000ea0dc(x, y, z)` = Rz·Ry·Rx de colunas, o produto `FUN_00083498(out,
+A, B)` = B·A e `operator*(cVector<3>, cSqMatrix<3>)` (`0x14cf93c`) = M·v;
+direção = M·(0, 1, 0) normalizada, olho = posição + zoom × direção. Lido ao
+pé da letra (rotações nos eixos da própria câmera, Q = o quaternion do
+localizador como o lemos), a câmera das roupas subiria 36° e passaria por
+cima da cabeça no zoom máximo, o que não pode ser o jogo: a convenção do
+quaternion da GZ não fica resolvida, e o app mantém a leitura da rodada 16
+(rotações nos eixos do mundo, depois da rotação da câmera; inferido).
+
+### A compensação do modificador no `BlendArchetype`
+
+A correção `−(escala × valor) × w × delta do modificador` do
+`BlendArchetype` (`0x80a380`) só roda com espécie ≠ 0 (`+0x190`, o campo que
+o `GetMaterialLayersToBeComposited` usa como espécie) e com o modificador de
+pelagem ativo (`FUN_007f468c`, `GetActivePetCoatShapeModifier`): é dos
+animais (BV). Nos humanos não existe; não há o que fazer.
+
+### O rosto de um filho (`BlendFaces`, BV `0x80748c`)
+
+**Os dados** (`LoadHumanFaceBlendData`, `0x7fd514`): o recurso `FACE`
+(`0x46414345`, grupo `0xFFFFFFFF`, instância 1) do
+`Catalog/Skins/FaceInfo.package`: u32 versão (1); u32 n e n passos de quatro
+strings (u32 tamanho + texto) → `AddBlendStep(a, b, máscara se acima,
+máscara se abaixo)`; u32 m e m limites (u32 idade, u32 sexo, string a,
+string b, f32 mín., f32 máx.) → `SetBlendLimits`. No jogo base, 8 passos:
+
+| a | b | acima | abaixo |
+|---|---|---|---|
+| ears | brow | — | — |
+| brow | eyes | eyesUp | eyesDown |
+| eyes | nose | noseUp | noseDown |
+| eyes | cheekbones | cheekbonesUp | cheekbonesDown |
+| nose | mouth | mouthUp | mouthDown |
+| mouth | jaw | jawUp | jawDown |
+| cheekbones | cheek | cheeksUp | cheeksDown |
+| jaw | cheek | cheeksUp | cheeksDown |
+
+e 70 limites, por idade do editor (0 criança pequena … 4 idoso; nenhum para
+o bebê) e sexo (iguais nos dois): brow/eyes 0,020–0,031 (0) … 0,023–0,028
+(2–4), eyes/nose 0,018–0,033 … 0,033–0,045, nose/mouth 0,025–0,032 …
+0,033–0,045, mouth/jaw 0,023–0,037 … 0,038–0,045, eyes/cheekbones
+0,016–0,033 … 0,035–0,037, cheekbones/cheek 0,020–0,035 … 0,042–0,060,
+jaw/cheek ±9999. Os limites valem por padrão (`+0x1A1` = 1 no construtor;
+a trapaça `faceBlendLimits -off` desliga).
+
+**A conta**, para cada idade, sexo, espécie e parte em que os dois pais têm
+dados (o LxNR dos dois com a mesma chave):
+
+1. A malha começa no **rosto neutro** (`BuildBaseMesh`), não na média dos
+   pais.
+2. O script do `DetermineDescendantFace` vira um mapa região → pai:
+   `"<região>,1"` = o primeiro pai (o `param_1`), `,0` = o segundo; região
+   fora do script = o primeiro.
+3. Para cada passo, na ordem: se a região a ainda não foi misturada,
+   `BlendMeshInRegionWithBodyPartData` (`0x7f3748`): cada vértice com peso de
+   máscara w ≥ 0,001 vai a `(1 − w)·pos + w·pos do pai`; idem para b. Assim
+   as regiões entram na ordem ears, brow, eyes, nose, cheekbones, mouth, jaw,
+   cheek; vértices fora de toda máscara ficam no neutro.
+4. Mede a altura de cada região: `ComputeAveragePositionInRegion`
+   (`0x7f44b4`), a média dos vértices com peso ≥ 0,9, e d = z(a) − z(b).
+5. Com os limites (mín., máx.) da chave (espécie << 8 | idade << 1 | sexo;
+   sem chave, ±9999): d < mín. → `ApplyRegionMaskToMeshAsZShift` (`0x7f33d4`)
+   com a máscara "abaixo" e d − mín. (z += w × valor nos vértices com w ≥
+   0,0001); d > máx. → a máscara "acima" com d − máx. Cada passo mede a malha
+   já corrigida pelos anteriores.
+6. `BuildNormals` e grava a chave.
+
+O `DetermineDescendantFace` (`0x548404`) escreve 1 para o primeiro pai (com
+r < 50, ou r > 66 quando só o segundo é dominante) e 0 para o segundo; o
+nosso `DescendantFace::script` escrevia o índice do pai (0 para o primeiro).
+
+### A biografia da família
+
+`HandleButtonShowHouseholdBio` (`0x1b56e0`) só mostra/esconde a janela
+`0x6CB7DA9A` (a caixa de texto `0xACB7B555` na barra da família). O botão que
+a chama, `0x8CB7B638` ("Biografia da Família"), está escondido nos dois
+`CB980E50` do `ui.package`, e nenhum código o mostra (o ID só aparece no
+`InitButtonCallbacks`). `SaveFamily` (`0x1cb798`) grava como descrição da
+família o texto da caixa sem espaços nas pontas: no jogo base a família nova
+sai sempre sem descrição, que é o que o opensims2 já grava
+(`writeNewFamily(..., "", ...)`). Não há tela a fazer.
