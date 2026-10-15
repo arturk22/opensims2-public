@@ -17,8 +17,8 @@
 // inside ambient, seeded by each light (max per channel) and propagated
 // through the samples of the same room, dividing the light by 1 + k at each
 // half-tile step (k = the light's falloff x floorThreshold, x 1.4 on
-// diagonals); dark rooms get half the unlitRoomColor added. See
-// computeLotLightMap for what is inferred.
+// diagonals); dark rooms get the unlitRoomColor added as the lighting
+// manager does it. See computeLotLightMap for what is inferred.
 
 #include "image.hpp"
 #include "lighting_config.hpp"
@@ -124,6 +124,7 @@ struct LightMapGlobals {
     std::array<float, 3> outsideWallAmbient{0.25f, 0.25f, 0.25f}; // ... x outsideWallAmbient
     float terrainStrength = 1;     // the state's direct light on the outdoor floors and terrain
     float floorLightMapScale = 0.5f; // cLightMapManager +0x68: the direct light is stored halved
+    float wallLightMapScale = 0.5f;  // cLightMapManager +0x6C (the walls' page scale, also 0.5)
     // Height-map sun shadows (Shadows $Medium/$High: heightMapShadows): a
     // texel d under the shadow's top keeps the sun's weight x max(0, 1 - d
     // x hmSunLightTransitionZone) (LightTerrainTileWithShadows, Mac BV 0x705068).
@@ -169,8 +170,8 @@ std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<flo
 // side they shine into); the propagation rule (if neighbour - c > k c:
 // c = neighbour / (1 + k) + 0.01) over up to floorPropagationSteps (50)
 // passes with sources of equal falloff together, strongest falloff first,
-// k = falloff x the modifier's diffusion falloff x floorThreshold; +0.5 x
-// unlitRoomColor in dark rooms. Outdoor texels lose the outside ambient
+// k = falloff x the modifier's diffusion falloff x floorThreshold.
+// Outdoor texels lose the outside ambient
 // again (it only shapes the falloff) and get the state's direct light
 // E(n) = (1 - sum w) skylight + sum w colour, w = max(0, n.dir) x intensity
 // over sun, sky, fill1, fill2, x terrainStrength x 0.5 (the floor light
@@ -194,8 +195,11 @@ std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<flo
 //   a light reaches, darkWallFloor on the others) divided likewise going up;
 //   walls facing out are lit like the outdoor floor (less the outside wall
 //   ambient, plus 0.5 E(normal)).
-// - A room is dark when its mean floor brightness is under a threshold;
-//   it gets the brightest unlitRoomColor whose threshold it is under.
+// Unlit rooms as cLightingManager::FindUnlitRooms / BrightenUnlitRooms
+// (docs/lighting-mac.md 6.1): after the room irradiance, a room whose mean
+// irradiance's largest channel m is under the threshold t gets
+// unlitRoomColor x (1 - m / t) added to its floor and wall texels (x 0.5)
+// and to five of its six irradiance colours.
 LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingState& state,
                                const std::vector<LightMapLight>& lights, const LightMapGlobals& globals = {});
 

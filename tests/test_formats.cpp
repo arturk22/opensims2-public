@@ -876,6 +876,44 @@ end
     check(tinted.rooms.at({0, 2})[4][1] < lit.rooms.at({0, 2})[4][1] * 0.6f &&
               std::fabs(tinted.rooms.at({0, 2})[4][0] - lit.rooms.at({0, 2})[4][0]) < 1e-4f,
           "floor colour in the room irradiance");
+    // Unlit rooms (FindUnlitRooms / BrightenUnlitRooms): the last
+    // unlitRoomColor of the state; a room whose mean irradiance peaks at m
+    // under t gets colour x (1 - m/t) x 0.5 on its texels and colour x
+    // (1 - m/t) on five of its six irradiance colours; lit rooms nothing.
+    {
+        const auto unlitCfg = parseLightingConfig(R"(
+lightingState day
+   skylight (1,1,1) 0.5
+   light sun (0, 0, 1) (1, 1, 1) 1
+   diffParam insideAmbientColor (1, 1, 1)
+   diffParam insideFloorAmbient 0.1
+   diffParam floorThreshold 0.5
+   modifiers insideObjects 1 1 1 1
+   unlitRoomColor (1, 0, 0) -threshold .9
+   unlitRoomColor (.4, .4, .4) -threshold .5
+end
+)");
+        const LotLightMap u = computeLotLightMap(layout, *unlitCfg.state("day"), {});
+        const auto& before = dark.rooms.at({0, 2});
+        const auto& after = u.rooms.at({0, 2});
+        float m = 0;
+        for (int c = 0; c < 3; ++c) {
+            float s = 0;
+            for (const auto& v : before)
+                s += v[size_t(c)];
+            m = std::max(m, s / 6);
+        }
+        const float f = 1 - m / 0.5f;
+        check(std::fabs(after[0][1] - before[0][1] - 0.4f * f) < 1e-4f && std::fabs(after[5][1] - before[5][1]) < 1e-6f,
+              "unlit room: five irradiance colours brightened, the sixth not");
+        check(std::fabs(texel(u.image, 4, 4) - (0.1f + 0.2f * f)) < 0.01f, "unlit room: floor texels + colour x f x 0.5");
+        check(std::fabs(texel(u.image, 28, 28) - 0.5f) < 0.01f, "unlit room: outdoors untouched");
+        LightMapLight bright = lamp;
+        bright.color = {20, 20, 20};
+        const LotLightMap litRoom = computeLotLightMap(layout, *unlitCfg.state("day"), {bright});
+        const LotLightMap litPlain = computeLotLightMap(layout, day, {bright});
+        check(std::fabs(texel(litRoom.image, 14, 14) - texel(litPlain.image, 14, 14)) < 0.01f, "a lit room is not brightened");
+    }
 }
 
 // With the game's data (OS2_DATA): character files our CAS saved before the

@@ -45,8 +45,9 @@ struct LightingState {
         float practical = 1, diffusion = 1, practicalFalloff = 1, diffusionFalloff = 1;
     };
     std::map<std::string, Modifier> modifiers;
-    // `unlitRoomColor (colour) [-threshold t]`: extra ambient for rooms
-    // darker than the threshold, in file order.
+    // `unlitRoomColor (colour) [-threshold t]`: extra light for rooms
+    // darker than the threshold, in file order. The game's state keeps one
+    // colour and threshold (+0x144, +0x150): the last command wins.
     struct UnlitRoom {
         std::array<float, 3> color{0, 0, 0};
         float threshold = 0;

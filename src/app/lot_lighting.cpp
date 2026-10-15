@@ -507,7 +507,7 @@ void LotLighting::update(double seconds) {
             for (const auto& v : L)
                 a += v;
             a /= 6;
-            // (Dark rooms are already brightened in the light maps.)
+            // (Dark rooms' irradiance is already brightened with the light maps.)
             Renderer::LightSet set;
             set.ambient = a;
             for (auto& v : L)

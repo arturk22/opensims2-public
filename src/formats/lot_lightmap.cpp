@@ -675,29 +675,6 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             std::fprintf(stderr, "lightmap source li %d room %d out %d colour %.2f %.2f %.2f falloff %.2f\n", src.li,
                          int(room[src.seeds[0]]), int(src.outdoor), src.color[0], src.color[1], src.color[2], src.falloff);
 
-    // Dark rooms: + 0.5 x unlitRoomColor (the brightest whose threshold the room's mean is under).
-    std::map<std::pair<int, uint16_t>, std::pair<V3, size_t>> sums;
-    for (size_t at = 0; at < grid.size(); ++at)
-        if (!outside[at]) {
-            auto& sm = sums[{layout.minLevel + int(at / perLevel), room[at]}];
-            sm.first = sm.first + grid[at];
-            ++sm.second;
-        }
-    std::map<std::pair<int, uint16_t>, V3> brighten;
-    for (const auto& [key, sm] : sums) {
-        const float bright = luminance(sm.first * (1.0f / float(sm.second)));
-        V3 add{0, 0, 0};
-        for (const auto& u : state.unlitRooms)
-            if (bright < u.threshold && luminance(V3{u.color[0], u.color[1], u.color[2]}) > luminance(add))
-                add = V3{u.color[0], u.color[1], u.color[2]};
-        if (luminance(add) > 0)
-            brighten[key] = add * 0.5f;
-    }
-    for (size_t at = 0; at < grid.size(); ++at)
-        if (!outside[at])
-            if (auto it = brighten.find({layout.minLevel + int(at / perLevel), room[at]}); it != brighten.end())
-                grid[at] = grid[at] + it->second;
-
     auto put = [&](uint32_t x, uint32_t y, V3 e) {
         if (x >= out.width || y >= out.height)
             return;
@@ -835,10 +812,6 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         const V3 mid{f.origin[0] + f.along[0] * f.length / 2, f.origin[1] + f.along[1] * f.length / 2, (f.base + f.top) / 2};
         const bool lit = luminance(lightAt(mid)) > luminance(ambient) + 0.02f;
         const float contribution = lit ? globals.brightWallFloor : globals.darkWallFloor;
-        V3 extra{0, 0, 0};
-        if (!out_)
-            if (auto it = brighten.find({f.level, f.room}); it != brighten.end())
-                extra = it->second;
         const V3 sunlit = out_ ? illum(n) * directScale : V3{0, 0, 0};
         // A face towards the sun takes the height map's shadow texel by
         // texel (AddDirectWallLighting -> LightWallTileWithShadows, Mac BV
@@ -861,7 +834,6 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 } else {
                     const V3 floor = floorValue(li, x + n[0] * 0.25f, y + n[1] * 0.25f) * contribution;
                     e = vmax(e, floor * (1 / std::pow(1 + wallThreshold, 2 * (z - f.base))));
-                    e = e + extra;
                 }
                 put(f.x + i, f.y + j, e);
                 sum = sum + e, ++count;
@@ -883,6 +855,63 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         auto& r = result.rooms[key];
         for (size_t d = 0; d < 6; ++d)
             r[d] = g.second[d] > 0 ? g.first[d] * (1 / g.second[d]) : V3{0, 0, 0};
+    }
+
+    // Unlit rooms (cLightingManager::FindUnlitRooms, Mac BV 0x701a28, and
+    // BrightenUnlitRooms 0x707820, after GatherRoomLighting): the state
+    // keeps one unlitRoomColor and threshold t (the last command wins);
+    // with a colour and t > 0, a room whose mean irradiance (the six
+    // directions / 6) has its largest channel m under t gets f = 1 - m / t:
+    // colour x f x the light map's scale (0.5) added to every floor texel
+    // of the room and every texel of its walls' sides (AddToARGB32,
+    // saturating), and colour x f added to the first five of its six
+    // irradiance colours. (t <= 0 gives the game a denormal f: no effect.)
+    if (!state.unlitRooms.empty()) {
+        const auto& u = state.unlitRooms.back();
+        const V3 unlit{u.color[0], u.color[1], u.color[2]};
+        std::map<std::pair<int, uint16_t>, float> unlitShare;
+        if (u.threshold > 0 && (unlit[0] != 0 || unlit[1] != 0 || unlit[2] != 0))
+            for (auto& [key, r] : result.rooms) {
+                V3 mean{0, 0, 0};
+                for (const auto& v : r)
+                    mean = mean + v;
+                mean = mean * (1.0f / 6);
+                const float m = std::max({std::fabs(mean[0]), std::fabs(mean[1]), std::fabs(mean[2])});
+                if (m < u.threshold) {
+                    const float f = 1 - m / u.threshold;
+                    unlitShare[key] = f;
+                    for (size_t d = 0; d < 5; ++d)
+                        r[d] = r[d] + unlit * f;
+                }
+            }
+        auto add = [&](uint32_t x, uint32_t y, V3 e) {
+            if (x >= out.width || y >= out.height)
+                return;
+            uint8_t* px = &out.pixels[(size_t(y) * out.width + x) * 4];
+            for (size_t c = 0; c < 3; ++c)
+                px[c] = uint8_t(std::min(255L, long(px[c]) + std::lround(std::clamp(e[c], 0.0f, 1.0f) * 255.0f)));
+        };
+        if (!unlitShare.empty()) {
+            for (int li = 0; li < levels; ++li)
+                for (uint32_t j = 0; j < ph; ++j)
+                    for (uint32_t i = 0; i < pw; ++i) {
+                        const int level = layout.minLevel + li;
+                        const float x = (float(i) + 0.5f) / float(k8), y = (float(j) + 0.5f) / float(k8);
+                        if (!layout.hasFloorAt(level, x, y))
+                            continue;
+                        const uint16_t r = layout.roomAt(level, x, y);
+                        if (layout.outdoor(level, r))
+                            continue;
+                        if (auto it = unlitShare.find({level, r}); it != unlitShare.end())
+                            add(i, uint32_t(li) * ph + j, unlit * (it->second * globals.floorLightMapScale));
+                    }
+            for (const auto& f : layout.walls)
+                if (!layout.outdoor(f.level, f.room))
+                    if (auto it = unlitShare.find({f.level, f.room}); it != unlitShare.end())
+                        for (uint32_t j = 0; j < f.h; ++j)
+                            for (uint32_t i = 0; i < f.w; ++i)
+                                add(f.x + i, f.y + j, unlit * (it->second * globals.wallLightMapScale));
+        }
     }
     return result;
 }
