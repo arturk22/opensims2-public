@@ -276,6 +276,25 @@ static void testRoutingGoals() {
     point.facing = -2;
     g = vm.routingGoals(point, o);
     check(g.goals.size() == 1 && g.onTarget && g.facings[0] == 2, "a bone slot is on the object, facing its way");
+    // The +25 (round n18): with no wall of the target's tile in the scan's
+    // last direction (spread), the standing goals score 25 more (cost -25);
+    // RS flag 0x80000 has none.
+    vm.world = World(10, 10);
+    front.flags = 0x01;
+    front.standing = 1;
+    g = vm.routingGoals(front, o);
+    const float open = g.goals.empty() ? 0 : g.goals[0].cost;
+    front.flags = 0x01 | 0x80000;
+    g = vm.routingGoals(front, o);
+    const float none = g.goals.empty() ? 0 : g.goals[0].cost;
+    vm.world->addWall(1, 5, 5, 6, 5); // behind it: its tile's edge at -Y (direction 6; in its frame 4)
+    front.flags = 0x01;
+    g = vm.routingGoals(front, o);
+    const float walled = g.goals.empty() ? 0 : g.goals[0].cost;
+    if (std::getenv("DEBUG_GOALS"))
+        std::fprintf(stderr, "+25: open %.2f, flag %.2f, walled %.2f\n", open, none, walled);
+    check(std::fabs(open - (none - 25)) < 1e-3f && std::fabs(walled - open) < 1e-3f,
+          "+25 for standing goals away from the target's walls (the scan's last direction, 2 here, off the wall's 3-5)");
 }
 
 static ObjectDefinition definition(uint32_t guid, uint16_t slotsId = 0, bool person = false) {

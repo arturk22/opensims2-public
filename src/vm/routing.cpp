@@ -516,10 +516,8 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     // * |lateral| (a tie-break) + 10 per routing cost of its floor above 1.
     // Not done: the router's own radius added to the distances (vtable 0xB4
     // of the router: its "slot displacement", 0 for the base game's Sims),
-    // and the +25 for a goal whose direction is off the walls around the
-    // target (unless RS flag 0x80000; the world's wall mask, world vtable
-    // 0x148 on the target's place and direction, spread one direction each
-    // way, is not decoded). The +20 is HasStationaryBonus (below). With a sitting weight the
+    // The +25 for goals away from the target's walls is scanStanding's
+    // (below). The +20 is HasStationaryBonus (below). With a sitting weight the
     // chairs in the cone give sitting goals too (scanSitting below).
     const float minD = slot.minDistance, optimal = slot.optimalDistance;
     const float maxD = std::min(slot.maxDistance, 32.0f);
@@ -540,7 +538,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     // then standing weight x 10 added to each score; here taken off the
     // cost). Limits: 100 candidates and 48 accepted, 16 more each for the
     // second of two scans.
-    auto scanStanding = [&](int maxCandidates, int maxAccepted) {
+    auto scanStandingBody = [&](int maxCandidates, int maxAccepted, int& lastEntry) {
         int candidates = 0, accepted = 0;
         struct Tile {
             float cost;
@@ -581,6 +579,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                     for (const int d : entries) {
                         if (candidates >= maxCandidates || accepted >= maxAccepted)
                             return;
+                        lastEntry = d; // the scan's context direction (+0x20)
                         if (total > 100 && std::uniform_int_distribution<int>(0, total - 1)(random) > 100)
                             continue;
                         ++candidates;
@@ -629,6 +628,35 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                     }
                 }
             }
+    };
+    // The +25 (FUN_00478518, after the scan; docs/routing-mac.md §9.1):
+    // unless the slot has RS flag 0x80000, the walls of the target's tile
+    // (cEdithObjectModule::GetWallBlockFlagsAtTile: bit d for a wall on the
+    // tile's edge toward direction d, the diagonals not), turned into the
+    // target's frame and each spread to its two neighbours; every standing
+    // goal of the scan scores 25 more when that mask does not hold the
+    // scan context's direction, which the scan leaves at the direction of
+    // the last origin it went through (absolute: the binary compares it
+    // with the turned mask as it is). Here a cost, 25 less.
+    auto scanStanding = [&](int maxCandidates, int maxAccepted) {
+        const size_t first = out.goals.size();
+        int lastEntry = 0;
+        scanStandingBody(maxCandidates, maxAccepted, lastEntry);
+        if (slot.flags & 0x80000)
+            return;
+        int walls = 0;
+        for (int d = 0; d < 8; d += 2) {
+            const auto [sx, sy] = directionStep(d);
+            if (world->wallBetween(centre, sx, sy, true))
+                walls |= 1 << ((d - objDir + 8) % 8);
+        }
+        int mask = 0;
+        for (int d = 0; d < 8; ++d)
+            if (walls & (1 << d))
+                mask |= (1 << d) | (1 << ((d + 1) % 8)) | (1 << ((d + 7) % 8));
+        if (!(mask & (1 << (lastEntry & 7))))
+            for (size_t k = first; k < out.goals.size(); ++k)
+                out.goals[k].cost -= 25;
     };
     // The sitting goals (ScanConeForSittingGoals, BV 0x4788cc; docs/seat-mac.md
     // §A): the same cone, whole tiles (resolution 1) and a tile wider each
