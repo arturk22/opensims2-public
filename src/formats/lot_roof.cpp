@@ -156,7 +156,10 @@ enum class EdgeEnd { Normal, Flat, FlatShort };
 
 class RoofEdge {
 public:
-    static constexpr float kThicknessTop = 0.075f, kThicknessInner = 0.15f,
+    // The game's three layers (cGableRoof::FillMeshBuilderData, BV 0xc545d0):
+    // the top, 0.0875 below it (the upper strip, RoofTrim) and 0.25 below
+    // it (the lower strip, RoofEdges, and the underside).
+    static constexpr float kThicknessTop = 0.0875f, kThicknessInner = 0.1625f,
                            kThicknessTotal = kThicknessTop + kThicknessInner, kTileSize = 0.5f,
                            kDiagonalScale = 0.7071067811865475f, kAtlasUVYOff = 2.0f / 512.0f,
                            kAtlasUVSize = 102.0f / 512.0f, kBias = 0.0001f;
@@ -199,7 +202,7 @@ public:
     }
 
     void generate(Out top, Out edges, Out trim, Out under) const {
-        V3 base{tl_.x, tl_.y, height_ + maxHeight() + kThicknessTop};
+        V3 base{tl_.x, tl_.y, height_ + maxHeight() + topOffset()};
         const V3 xTile{xNormal_.x * tileSize_, xNormal_.y * tileSize_, 0};
         V3 yTile{yNormal_.x * -tileSize_, yNormal_.y * -tileSize_, -slope_};
         if (lEnd_ != EdgeEnd::FlatShort)
@@ -378,6 +381,20 @@ private:
         const float intersectY = float(tileHeight_ - 2);
         const float a = heightIntersect / (intersectY * intersectY);
         return 2 * a * fromBottom;
+    }
+
+    // Height of the top surface above the plane the faces are built on (the
+    // eave tip sits `overhang * slope` below the wall line). The game puts
+    // the top of a point `g` slope steps from the eave tip at
+    // level + s*g - 0.42 + f(s), f(s) = s >= 0.499 ? 0 : 0.5 - s
+    // (cBaseSGRoof::AddPositionsToMeshBuilder 0xc57a3c, the -0.42 layer of
+    // FillMeshBuilderData, FUN_009d3a30). Diagonal and pagoda faces keep
+    // the layer thickness (inferred: their grids were not read).
+    float topOffset() const {
+        if (diagonal_ || pagoda_)
+            return kThicknessTop;
+        const float f = slope_ >= 0.499f ? 0.0f : 0.5f - slope_;
+        return float(overhang_) * slope_ - 0.42f + f;
     }
 
     float maxHeight() const {
@@ -675,8 +692,12 @@ std::vector<RoofEdge> hip(const Lot::Roof& r, float h, bool pagoda, bool diag, b
     } else {
         const V2 size = c.tr - c.bl;
         float m = std::min(size.x, size.y) / 2;
+        // The game's mansard grid (FUN_009c6568) is min(dx, dy, k) slope steps
+        // from the eave tip, k = max(1, min(7, min(w/2, h/2) - 1)) with w, h
+        // the grid points (one per half tile, the eave included): the flat
+        // top starts (k - 1)/2 tiles in from the walls, at most 3.
         if (mansard)
-            m = std::min(3.0f, m); // OpenTS2: flat top beyond 3 tiles in
+            m = std::min(3.0f, std::max(0.0f, (std::min(size.x, size.y) - 1) / 2));
         minX = {m, 0}, minY = {0, m};
     }
     const float s = r.angle;
@@ -737,7 +758,10 @@ LotRoofs::LotRoofs(const Lot& lot) {
         auto roof = std::make_unique<Roof>();
         roof->level = r.level;
         switch (r.type) {
-        case Lot::ShedGable: roof->edges = shedGable(r, h, false, false); break;
+        // The shed gable's grid is i + 0.08 slope steps (FUN_009d3ad8 with
+        // its last argument set, cHalfGableRoofType::ComputeGridElevation
+        // 0x9c52a0); the other grids start at 0.
+        case Lot::ShedGable: roof->edges = shedGable(r, h + 0.08f * r.angle, false, false); break;
         case Lot::ShedHip: roof->edges = shedHip(r, h, false); break;
         case Lot::ShortGable: roof->edges = gable(r, h, false, false, false); break;
         case Lot::LongGable: roof->edges = gable(r, h, true, false, false); break;
