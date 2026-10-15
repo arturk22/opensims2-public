@@ -27,6 +27,7 @@
 #include "app/game_flow.hpp"
 #include "app/head_shot.hpp"
 #include "app/hood_mode.hpp"
+#include "app/game_cursors.hpp"
 #include "app/main_menu.hpp"
 #include "app/options_panel.hpp"
 #include "app/tutorial.hpp"
@@ -317,6 +318,42 @@ void applyAudioSettings(os2::GameAudio& audio, const os2::GameSettings& settings
         audio.mixer().setGroupVolume(groups[g], settings.muted[g] ? 0.0f : settings.volume[g]);
 }
 
+// The game's mouse cursors (app/game_cursors.hpp) as SDL cursors, loaded on
+// first use; the system arrow stands in for a missing file.
+void setGameCursor(const std::filesystem::path& res, os2::GameCursor which) {
+    static std::array<SDL_Cursor*, size_t(os2::GameCursor::Count)> cursors{};
+    static SDL_Cursor *arrow = nullptr, *shown = nullptr;
+    static bool loaded = false;
+    if (!loaded) {
+        loaded = true;
+        arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+        const std::filesystem::path dir = res / "UI" / "Cursors";
+        for (size_t i = 0; i < cursors.size(); ++i) {
+            const std::filesystem::path f = os2::findCursorFile(dir, os2::gameCursorName(os2::GameCursor(i)));
+            if (f.empty())
+                continue;
+            std::ifstream in(f, std::ios::binary);
+            const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            auto img = os2::decodeCursor(bytes);
+            if (!img)
+                continue;
+            if (SDL_Surface* s = SDL_CreateSurfaceFrom(img->width, img->height, SDL_PIXELFORMAT_RGBA32, img->rgba.data(),
+                                                       img->width * 4)) {
+                cursors[i] = SDL_CreateColorCursor(s, img->hotX, img->hotY);
+                SDL_DestroySurface(s);
+            }
+        }
+        std::printf("opensims2: %zu of %zu cursors\n",
+                    size_t(std::count_if(cursors.begin(), cursors.end(), [](SDL_Cursor* c) { return c != nullptr; })),
+                    cursors.size());
+    }
+    SDL_Cursor* c = cursors[size_t(which)] ? cursors[size_t(which)] : arrow;
+    if (c && c != shown) {
+        SDL_SetCursor(c);
+        shown = c;
+    }
+}
+
 // Where a scene goes when it ends: the next scene (none: quit), and how many
 // scripted steps it used (the next scene gets the rest).
 struct SceneExit {
@@ -423,6 +460,7 @@ SceneExit runCas(App& app, const os2::Scene& scene) {
     bool dragging = false;
     const auto start = std::chrono::steady_clock::now();
     auto last = start;
+    setGameCursor(app.res, os2::GameCursor::Arrow);
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -622,6 +660,7 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
     bool dragging = false;
     bool keys[4] = {}; // left, right, back, forward
     auto last = std::chrono::steady_clock::now();
+    setGameCursor(app.res, os2::GameCursor::Arrow);
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -819,6 +858,7 @@ SceneExit runMenu(App& app, const os2::Scene& scene) {
         return exit;
     }
 
+    setGameCursor(app.res, os2::GameCursor::Arrow);
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -3003,6 +3043,28 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
 
         SDL_StartTextInput(app.window);
         bool leftDown = false, rotating = false;
+        // The cursor for what is under the mouse (the game's arrow over the
+        // UI, Buy mode's hands over the lot), as the Mac host's refreshGameCursor.
+        auto refreshCursor = [&](simd_float2 p) {
+            using Ctx = os2::CursorContext;
+            Ctx c;
+            c.mode = buy && buy->active()       ? Ctx::Mode::Buy
+                     : build && build->active() ? Ctx::Mode::Build
+                     : liveUi                   ? Ctx::Mode::Live
+                                                : Ctx::Mode::Other;
+            c.overUi |= pie && (pie->isOpen() || pie->dialogOpen());
+            c.overUi |= liveUi && liveUi->overPanel(p);
+            if (buy && buy->active()) {
+                c.overUi |= buy->overPanel(p);
+                c.buyTool = Ctx::BuyTool(int(buy->tool()));
+                c.holding = buy->held() != 0;
+                c.pressing = buy->pressing();
+                c.turned = buy->turned();
+                c.overObject = buy->overObject();
+            }
+            setGameCursor(app.res, os2::chooseCursor(c));
+        };
+        refreshCursor(simd_make_float2(-1, -1));
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -3098,6 +3160,11 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 }
             }
             pollFlowDialog();
+            if (!rotating) {
+                float mx = 0, my = 0;
+                SDL_GetMouseState(&mx, &my);
+                refreshCursor(simd_make_float2(mx, my));
+            }
             showLiveUi();
             if (!frame())
                 running = false;
@@ -3155,6 +3222,7 @@ int main(int argc, char** argv) {
         }
         int code = 0;
         if (lotFile) {
+            setGameCursor(app.res, os2::GameCursor::Hourglass);
             code = runLot(app, *lotFile, os2::Scene{}).code;
         } else {
             os2::Scene scene = os2::sceneOf(app.args);
@@ -3166,6 +3234,7 @@ int main(int argc, char** argv) {
                                                      : scene.kind == os2::Scene::Kind::Lot          ? "lot"
                                                                                                     : "cas");
                 std::fflush(stdout);
+                setGameCursor(app.res, os2::GameCursor::Hourglass); // each scene's loop puts the arrow back
                 SceneExit r;
                 switch (scene.kind) {
                 case os2::Scene::Kind::Neighborhood: r = runHood(app, scene); break;
