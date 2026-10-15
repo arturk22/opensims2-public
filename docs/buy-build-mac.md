@@ -2496,9 +2496,10 @@ caixa retangular: o jogo só abre a parede pela máscara.
   (`0x5B`/`0x5C`), piscina, fundação ou deck em volta (sem código), cerca
   íngreme `0x31`. Falta o bit 7 (objetos que prendem o chão). Usam: o
   nivelador das paredes e do cômodo (`levelForWall`: água `0x47`, os andares de
-  cima juntos) e as escadas modulares. O pincel de terreno (`0x2BF7`, os mesmos
-  testes) e as fundações/piscinas (`MayPlaceQuadrilateral`, não lido) seguem
-  com a regra antiga (`terrainFree`/`levelPoints`): fora desta rodada.
+  cima juntos), as escadas modulares e o pincel de terreno (`ChangeTerrainElevation`
+  com `0x2BF7`, os mesmos testes: a ponta de uma parede fica, a de uma cerca
+  anda; antes `terrainFree`, inferido). As fundações e piscinas
+  (`MayPlaceQuadrilateral`, não lido) seguem com a regra antiga (`levelPoints`).
 - Paredes, cercas e demolição arrastadas: tudo ou nada; o cômodo aplaina o
   retângulo inteiro; a altura é a do vértice de início no nível dele.
 - Colocação: `IsFlat` (`0x12`) e os quatro quartos com piso, pelo

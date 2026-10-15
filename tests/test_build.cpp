@@ -387,6 +387,20 @@ static void testTerrain() {
         e = -28.125f;
     r = ed.terrainStroke(BuildEditor::TerrainOp::Lower, 6, 5, 10, 1, profile);
     check(!r.ok && r.error == 0x65 && lot.elevation(0, 6, 5) == -28.125f, "can't lower terrain further");
+    // The brush's vertex test (flags 0x2BF7, round n20): a wall's end stays
+    // (it needs a flat bottom, 0x5B), a fence's end moves (fences say no),
+    // a point by a floor stays (0x5A).
+    for (float& e : lot.elevations)
+        e = 0.0f;
+    addWall(lot, 0, 6, 5, 7, 5, Lot::Normal, {0xFFFF, 0xFFFF});
+    addWall(lot, 0, 9, 5, 10, 5, 0x2CB2A001, {0xFFFF, 0xFFFF});
+    lot.floors[size_t(3) * 10 + 5] = {1, 1, 1, 1};
+    check(ed.vertexMoveError(0, 6, 5, 0.5f, vertextest::kBrush) == 0x5B, "a wall's end may not move (0x5B)");
+    check(ed.vertexMoveError(0, 9, 5, 0.5f, vertextest::kBrush) == 0, "a fence's end may");
+    check(ed.vertexMoveError(0, 4, 6, 0.5f, vertextest::kBrush) == 0x5A, "a point by a floor may not (0x5A)");
+    check(ed.vertexMoveError(0, 0, 3, 0.5f, vertextest::kBrush) == 0x62, "nor one on the lot's edge (0x62)");
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Raise, 6.5f, 6.5f, 10, 1, profile);
+    check(r.ok && lot.elevation(0, 6, 5) == 0.0f && lot.elevation(0, 6, 6) > 0.0f, "the brush leaves the wall's end where it is");
 }
 
 static void testRoof() {

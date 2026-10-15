@@ -568,7 +568,7 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
     for (int x = 0; x <= W; ++x)
         for (int y = 0; y <= H; ++y) {
             const int p = strength(float(x), float(y));
-            if (!p || !editablePoint(x, y) || !terrainFree(x, y))
+            if (!p)
                 continue;
             const size_t i = base + size_t(x) * size_t(H + 1) + size_t(y);
             const float h = lot_.elevations[i];
@@ -595,10 +595,17 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
             }
             if (std::fabs(n - h) < 1e-6f)
                 continue;
-            // FUN_009e9550 test 1 (FUN_009e7700): not under MinTerrainElevation
-            // (0x65) nor over MaxTerrainElevation (0x66); the point stays.
-            if (const int e = terrainLimitError(n)) {
-                r.error = e;
+            // ChangeTerrainElevation (BV 0x4010e0): FUN_009e9550 with the
+            // brush's flags (the global 0x02bafd10, 0x2BF7, set by a static
+            // initializer: docs/buy-build-mac.md §7.24) -- the edge and locked
+            // tiles, the height limits (0x65/0x66, kept as the stroke's
+            // error), a floor round the point, the stories above, a wall that
+            // needs a flat bottom there, pools, foundations and decks round
+            // it, fences turned too steep; a point that may not go stays (was
+            // the inferred "no floor, foundation, wall or fence end round it").
+            if (const int e = vertexMoveError(0, x, y, n, vertextest::kBrush)) {
+                if (e == 0x65 || e == 0x66)
+                    r.error = e;
                 continue;
             }
             changes.push_back({i, n});
