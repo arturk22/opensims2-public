@@ -9,10 +9,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <string>
 #include <vector>
+
+// The game's float arithmetic is reproduced operation by operation (its
+// fused multiply-adds are std::fmaf): no contraction here.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
 
 namespace os2::vm {
 
@@ -24,8 +31,26 @@ namespace {
 // (elder, adult, teen, child, toddler, baby; then dog and cat, Pets only).
 constexpr uint16_t kHappyCurveStrings = 0x226;
 constexpr uint16_t kScoreCurveStrings = 0x28A;
+constexpr int kCurvePoints = 32; // the sets give each curve room for 32 points
 
-const MotiveCurveSet& curvesFrom(VM& vm, uint16_t instance) {
+// cTSMotiveCurveSet::LoadFromFile (base 0xb910dc, BV 0x51cadc): text i of
+// the STR# is curve i; the curves past the texts are constant 1.
+size_t curveTexts(const StringTable* t) {
+    if (!t)
+        return 0;
+    const size_t n = t->count(lang::EnglishUS);
+    return n ? n : t->entries.size();
+}
+
+MotiveCurveSet loadCurves(const StringTable* t) {
+    MotiveCurveSet set;
+    const size_t n = curveTexts(t);
+    for (size_t m = 0; m < kMotiveCount; ++m)
+        set[m] = m < n ? MotiveCurve::parse(t->get(m, lang::EnglishUS), kCurvePoints) : MotiveCurve::constant(1.0f);
+    return set;
+}
+
+const MotiveCurveSet& curvesFrom(VM& vm, uint32_t group, uint16_t instance) {
     // Parsed once per string table. The cache is keyed by the table's
     // address, which a later code library may reuse for another table (the
     // tests make one per fixture: that was the flaky autonomy test), so the
@@ -35,81 +60,123 @@ const MotiveCurveSet& curvesFrom(VM& vm, uint16_t instance) {
         MotiveCurveSet curves;
     };
     static std::map<const StringTable*, Entry> cache;
-    static const MotiveCurveSet empty{};
-    const StringTable* t = vm.code().strings(kGlobalGroup, instance);
-    if (!t)
-        return empty;
+    const StringTable* t = vm.code().strings(group, instance);
     auto [it, added] = cache.try_emplace(t);
     Entry& e = it->second;
-    bool same = !added && e.texts.size() == kMotiveCount;
-    for (size_t m = 0; same && m < kMotiveCount; ++m)
-        same = e.texts[m] == t->get(m, lang::EnglishUS);
-    if (!same) {
-        e.texts.resize(kMotiveCount);
-        for (size_t m = 0; m < kMotiveCount; ++m) {
-            e.texts[m] = t->get(m, lang::EnglishUS);
-            e.curves[m] = MotiveCurve::parse(e.texts[m]);
-        }
+    std::vector<std::string> texts;
+    for (size_t m = 0; m < kMotiveCount && m < curveTexts(t); ++m)
+        texts.push_back(t->get(m, lang::EnglishUS));
+    if (added || e.texts != texts) {
+        e.texts = std::move(texts);
+        e.curves = loadCurves(t);
     }
     return e.curves;
 }
 
 } // namespace
 
+// cTSPiecewiseFunction's value (base 0xc43110, BV 0xa910c4): from the last
+// point back to the first one left of x; on a point the segment to its
+// left. Single precision, in the game's order (no fused multiply-add).
 float MotiveCurve::at(float x) const {
     if (points.empty())
         return 0;
-    if (x <= points.front().first)
-        return points.front().second;
-    if (x >= points.back().first)
-        return points.back().second;
-    for (size_t i = 1; i < points.size(); ++i) {
-        const auto [x1, y1] = points[i];
-        if (x <= x1) {
-            const auto [x0, y0] = points[i - 1];
-            return x1 == x0 ? y1 : y0 + (y1 - y0) * (x - x0) / (x1 - x0);
-        }
+    const int last = int(points.size()) - 1;
+    int i = last;
+    float d = 0;
+    for (; i >= 0; --i) {
+        d = x - points[size_t(i)].first;
+        if (d > 0)
+            break;
     }
-    return points.back().second;
+    if (i == last)
+        return points[size_t(last)].second;
+    if (i < 0)
+        return points[0].second;
+    const float y0 = points[size_t(i)].second, y1 = points[size_t(i) + 1].second;
+    const float t = d * inverse[size_t(i)];
+    const float dy = y1 - y0;
+    const float ty = t * dy;
+    return ty + y0;
 }
 
-MotiveCurve MotiveCurve::parse(const std::string& text) {
-    MotiveCurve c;
-    for (size_t at = 0; (at = text.find('(', at)) != std::string::npos;) {
-        const size_t semi = text.find(';', at), close = text.find(')', at);
-        if (semi == std::string::npos || close == std::string::npos || semi > close)
+// AddPoint (base 0xc42b9c, BV 0xa919a4): nothing when full or when a point
+// has that x already; else it goes in its place and the widths are redone.
+void MotiveCurve::add(float x, float y) {
+    if (maxPoints >= 0 && int(points.size()) == maxPoints)
+        return;
+    size_t at = 0;
+    for (; at < points.size(); ++at) {
+        if (points[at].first == x)
+            return;
+        if (x < points[at].first)
             break;
-        const float x = std::strtof(text.c_str() + at + 1, nullptr);
-        const float y = std::strtof(text.c_str() + semi + 1, nullptr);
-        c.points.emplace_back(x, y);
+    }
+    points.insert(points.begin() + std::ptrdiff_t(at), {x, y});
+    inverse.assign(points.size() - 1, 0.0f);
+    for (size_t k = 0; k + 1 < points.size(); ++k)
+        inverse[k] = 1.0f / (points[k + 1].first - points[k].first);
+}
+
+// The text reader (base 0xc42f00, BV 0xa91d74): every "(" ... ")" is read
+// with sscanf("(%f;%f)"); one that does not give two numbers is skipped.
+MotiveCurve MotiveCurve::parse(const std::string& text, int maxPoints) {
+    MotiveCurve c;
+    c.maxPoints = maxPoints;
+    size_t at = 0;
+    for (;;) {
+        at = text.find('(', at);
+        if (at == std::string::npos)
+            break;
+        const size_t close = text.find(')', at);
+        if (close == std::string::npos || close == at)
+            break;
+        float x = 0, y = 0;
+        if (std::sscanf(text.substr(at, close - at + 1).c_str(), "(%f;%f)", &x, &y) == 2)
+            c.add(x, y);
         at = close + 1;
     }
-    // A few unused motives list their points out of order.
-    std::stable_sort(c.points.begin(), c.points.end(), [](auto& a, auto& b) { return a.first < b.first; });
     return c;
 }
 
+MotiveCurve MotiveCurve::constant(float y) {
+    MotiveCurve c;
+    c.maxPoints = kCurvePoints;
+    c.add(0.0f, y);
+    return c;
+}
+
+// The person's age tests (base cTSPerson vtable 0x690-0x6a4 on person data
+// 58), asked from the elder down; none true (a negative age) is the adult.
 int curveAgeIndex(const Object& sim) {
     const int16_t age = sim.person ? sim.person->data[persondata::PersonAge] : lifestage::Adult;
-    if (age <= lifestage::Baby)
-        return 5;
+    if (age > 0x32)
+        return 0;
+    if (age >= lifestage::Adult)
+        return 1;
+    if (age >= lifestage::Teen)
+        return 2;
+    if (age >= lifestage::Child)
+        return 3;
     if (age == lifestage::Toddler)
         return 4;
-    if (age < lifestage::Teen)
-        return 3;
-    if (age < lifestage::Adult)
-        return 2;
-    if (age < lifestage::Elder)
-        return 1;
-    return 0;
+    if (age >= 0)
+        return 5;
+    return 1;
 }
 
 const MotiveCurveSet& happyCurves(VM& vm, const Object& sim) {
-    return curvesFrom(vm, uint16_t(kHappyCurveStrings + curveAgeIndex(sim)));
+    return curvesFrom(vm, kGlobalGroup, uint16_t(kHappyCurveStrings + curveAgeIndex(sim)));
 }
 
 const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim) {
-    return curvesFrom(vm, uint16_t(kScoreCurveStrings + curveAgeIndex(sim)));
+    // cTSPerson::LoadMotiveEffects (base 0xb773b0): the definition's field
+    // 0x33 "motive effects id", a STR# of the object's own group (in the
+    // base game only a window has one), else the age's.
+    if (sim.definition)
+        if (const uint16_t own = sim.definition->field(0x40 + 2 * 0x33))
+            return curvesFrom(vm, sim.group, own);
+    return curvesFrom(vm, kGlobalGroup, uint16_t(kScoreCurveStrings + curveAgeIndex(sim)));
 }
 
 float computeMood(VM& vm, const Object& sim) {

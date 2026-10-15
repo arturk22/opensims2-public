@@ -55,18 +55,32 @@ constexpr int16_t MotivesNotInMood = 118;
 } // namespace persondata
 
 // A piecewise linear curve, as the game's curve STR#s write them:
-// "(-100;0) (-90;6.5) ... (100;1)". Flat beyond its ends.
+// "(-100;0) (-90;6.5) ... (100;1)" (cTSPiecewiseFunction, docs/motives-mac.md
+// §1): points kept in increasing x, a point whose x is already there is
+// left out (the first one stays), at most `maxPoints` (the curve sets use
+// 32), with the inverse widths 1 / (x[i+1] - x[i]) beside them. Flat beyond
+// its ends; 0 without points.
 struct MotiveCurve {
-    std::vector<std::pair<float, float>> points; // sorted by x
+    std::vector<std::pair<float, float>> points; // increasing x
+    std::vector<float> inverse;                  // 1 / (x[i+1] - x[i]), as floats
+    int maxPoints = -1;                          // -1: no limit
     float at(float x) const;
-    static MotiveCurve parse(const std::string& text);
+    void add(float x, float y); // AddPoint (vtable 0x14)
+    static MotiveCurve parse(const std::string& text, int maxPoints = 32);
+    static MotiveCurve constant(float y); // the one point (0; y)
 };
 using MotiveCurveSet = std::array<MotiveCurve, kMotiveCount>;
 
 // The age group of a Sim's curves: 0 elder, 1 adult, 2 teen, 3 child,
-// 4 toddler, 5 baby (the order of the curve STR#s), by person data 58.
+// 4 toddler, 5 baby (the order of the curve STR#s), by person data 58 as
+// the person's age tests have it (baby 0-1, toddler 2, child 3-15, teen
+// 16-18, adult 19-50, elder above; none, a negative age: adult).
 int curveAgeIndex(const Object& sim);
-// The curves for a Sim's age (empty curves if the game data has none).
+// The curves for a Sim's age (cTSMotiveCurveSet::LoadFromFile: a STR# with
+// fewer than 16 texts, or none, leaves the rest constant 1; an empty text
+// is a curve without points, 0). The interaction score curves are the
+// Sim's own when its definition's field 0x33 "motive effects id" names a
+// STR# of its group (cTSPerson::LoadMotiveEffects).
 const MotiveCurveSet& happyCurves(VM& vm, const Object& sim);
 const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim);
 

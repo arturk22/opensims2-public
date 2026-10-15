@@ -1450,7 +1450,7 @@ static void testResumeSavedLot() {
               cs.stack[0].behaviorSaveType == 0,
           "captured tree stack: tree, node, owner, the saved parameter count and save type");
     check(cs.motives[7] == sim.person->exactMotives[7] && cs.motives[7] > 37.0f && cs.motives[7] < 37.2f &&
-              cs.motives[3] == float(sim.person->motives[3]) && cs.personData[31] == 12,
+              cs.motives[3] == sim.person->exactMotives[3] && cs.personData[31] == 12,
           "motives: the engine's floats, with their fractions");
     check(cs.motiveIncs.empty(), "captured Set Motive Changes (none left)");
     sim.attributes[1] = 0;
