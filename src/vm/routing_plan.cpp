@@ -236,8 +236,9 @@ std::pair<ObjectId, ObjectId> straightStairPads(VM& vm, const Stair& st) {
 // the two ends (the door's "Function - Portal" picks its side and the
 // opening animation from parameter 6), 8 the gait (1 walking, 2 running)
 // and 9 a constant of the binary (0 here). The stack object is the entry
-// object. Inferred: which routing slot is a stair step's portal slot
-// (the first).
+// object. A stair's portal made of its pieces' slots (refreshObjectPortals)
+// passes each end's slot; the old geometric one (a stair without such
+// objects) passes slot 0 (inferred).
 struct PortalUse {
     ObjectId entry = 0, exit = 0, owner = 0;
     uint16_t guard = 0, action = 0;
