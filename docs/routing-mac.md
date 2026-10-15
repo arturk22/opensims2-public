@@ -1442,7 +1442,9 @@ tem o objeto em `+0x20`, então os offsets abaixo são os do objeto: direções
   `c = 1`, `+0x4c = 0,25`, largura `0,625`, `0x48 = 0`, `0x50 = 0`.
 - **Tipo 2**: igual ao 1 com `b = 6`, `0x48 = 1`, `0x50 = 1`, `0x94 = 1`.
 
-**Inferido**: pela varredura de §8.2 (fileiras com passo `+0x38` e largura
+**Corrigido na rodada n30 (§9.3)**: `0xD0` é `SetDistances(mín., máx.,
+ótima)`, `0xCC` `SetGradient` e `0xD4` `SetSpacing`; a leitura abaixo
+(resolução, largura) ficou só como histórico. **Inferido** (antes): pela varredura de §8.2 (fileiras com passo `+0x38` e largura
 `+0x44`), `b`/`c` são os raios máximo/mínimo. No tipo 0 isso daria uma
 fileira a 0,3 tile do bloqueador, a 45° da direção de quem pede, com passo de
 1/16 e largura praticamente ilimitada (o custo de §8.2 escolhe). Os tipos 1/2
@@ -1692,7 +1694,8 @@ de `0xa0(0)` + 2 passos, `EndFollow`.
 O contador `+0x3c` sobe a cada entrada e volta a 1 só quando o bloqueador
 difere do **último** guardado (`+0x3e`, que fica no estado da rota e não é
 apagado quando o caminho fica livre) ou quando ele se afastou ≥ 0,25 do lugar
-anotado (mapa da rota `0x1d8`/`0x1d4`, ID → lugar). O VM apagava o
+anotado (mapa da rota `0x1d8`/`0x1d4`, ID → lugar; **rodada n30, §9.3**: a
+chave é o ID de quem anda, não o do bloqueador: é quem anda que se afastou). O VM apagava o
 bloqueador quando o caminho ficava livre, e a contagem recomeçava: dois
 Sims a 0,285 um do outro, cada um "entrando" no outro pelo teste por passo
 (0,283) mas fora da previsão (a exceção dos 0,3), pausavam e replanejavam
@@ -1915,6 +1918,165 @@ acaba com o 13 de propósito, duas vezes quando o goal check refaz a rota
 verdade: 14, 15, 9, 10, 3) caiu de 205/588 para 35/161, e as interações
 "feitas" subiram (750 → 770 no Lot68, 489 → 505 no Lot11). Dos 161 do
 Lot11, 117 são da semente 4: o impasse do alpendre (§10).
+
+## 9.3 Rodada n30 (o impasse do alpendre): o que foi lido
+
+Leitura de 2026-10-15, **Ghidra MCP** (só leitura, nada renomeado nem
+gravado; as funções que o projeto não tem como função lidas com
+`disassemble_bytes` em `dry_run`). Endereços BV. Os nomes dos métodos do
+slot sintético vêm da tabela de símbolos do binário BV que está em
+`references/sims2_mac_decomp/baserom.sym` (outro arranjo de endereços,
+mas os mesmos nomes); a posição de cada um na vtable foi conferida pelos
+getters que a varredura chama.
+
+O cenário (`N001_Lot11`, sementes 2 e 4 até o tick 3000): o alpendre é o
+tile (8, 12, 2), parede a oeste (x = 8) e ao norte (y = 13), a porta a leste
+(x = 9) e a escada do deck ao sul; o planejador deixa livre só
+x ∈ [8,25; 9], y ∈ [12; 12,75] (paredes infladas 0,125). A Cassandra sobe a
+escada rumo à porta e o Alexander sai pela porta rumo à escada: cada um
+para sobre a ponta de portal de que o outro precisa (a do topo da escada e
+a da porta, a 0,35 uma da outra).
+
+### O lugar para sair do caminho (`CreateMoveOutOfWayDestination`, BV `0x57dcac`, lido de novo)
+
+A função **não escolhe ponto nenhum**: cria o objeto "Destination - For Go
+Here & Shoo" no lugar (`cLocation`, vtable `0xa8`) de quem vai sair do
+caminho (`this`) e põe nele, como slot 0, um slot de rota sintético
+(`cTSRoutingSlot`, CLSID `0xFBA4DA4F`). O ponto sai depois da varredura
+comum desse slot (§8.2, BV `0x4778b4`) e do A*, na rota da interação "Move
+Out Of Way" (pedido de outro) ou na rota empurrada pelo `TryGetSelfOutOfWay`.
+**Devolve 1 sempre que os dois estão a ≤ 4 tiles** (no tipo 0; nos tipos
+1 e 2 sempre): não confere se a varredura terá algum ponto válido. Sem
+ponto, é a rota até o destino que falha.
+
+Os métodos do slot (vtable; os getters já vistos na varredura, os setters
+pelo par getter/setter da tabela de símbolos, inferido onde só a vizinhança
+diz): `0x20` AllowDirection(d), `0x18` todas as direções, `0x28`/`0x30`/`0x40`
+os modos de facing (`0x40` = SetFacingDirection(d)), `0x44`/`0x48`
+Get/SetIgnoreRooms (a RS flag `0x800`), `0x4c`/`0x50` Get/SetIgnoreWalls (a RS
+flag `0x80000` que tira o +25), `0x5c`–`0x68` o "slot displacement",
+`0x6c`/`0x70` Get/SetAllowOtherDirectionsAtLowerScore, `0x74`/`0x78`
+Set/HasRandomScoring, `0x7c`/`0x80` Set/HasStationaryBonus, **`0xb8`
+GetMinDist, `0xbc` GetMaxDist, `0xc0` GetOptimalDist, `0xc4` GetSpacing,
+`0xc8` GetGradient, `0xcc` SetGradient, `0xd0` SetDistances(mín., máx.,
+ótima), `0xd4` SetSpacing**, `0xdc` SetMultiplier(posição, valor). A
+varredura (`BuildGoalList`, BV `0x478d2c`, lida na listagem: `0x479500`–
+`0x4797d8`) monta o contexto assim: mín. `+0x28` = deslocamento + `0xb8`,
+máx. `+0x2c` = deslocamento + `0xbc` (no máximo 32), ótima `+0x30` =
+deslocamento + `0xc0`, gradiente `+0x34` = `0xc8`, passo `+0x38` = o maior de
+`0xc4` e 1/16, `+0x40` = π/4 (o cone de 45°) e a **largura `+0x44` = 0** (as
+metas em pé nunca a usam); recusa sem metas se não for 0 ≤ mín. ≤ ótima ≤ máx.
+Isso **corrige a leitura de §8.3** ("`a` = resolução, `b`/`c` = máx./mín.,
+largura 100"): com ela o tipo 0 teria mín. 0,3 > ótima e nenhuma meta.
+
+- **Tipo 0** (o pedido de quem anda e o `TryGetSelfOutOfWay`): a direção
+  `d+7` ou `d+1` de antes (d = a de quem pede; absoluta, inferido: é
+  calculada da direção de quem pede, e o tipo 0 não chama nenhum setter de
+  "absoluto"), `SetDistances(0,0625, 0,3, 0,3)`, `SetGradient(100)`,
+  `SetSpacing(0,025)` (a varredura usa 1/16), facing para quem pede
+  (`0x40`, a direção de quem sai até quem pede), sem sorteio (`0x74(0)`),
+  sem o bônus de ficar parado (`0x7c(0)`), salas e paredes contam (`0x48(0)`,
+  `0x50(0)`), multiplicador em pé 1 (`0xdc(0, 1)`). A varredura dá **duas
+  fileiras** (0,3 e 0,2375 à frente, a mais longe primeiro) de **três pontos**
+  cada (lateral −1/16, 0 e +1/16: o ±2/16 cai fora do cone, abaixo), cada um
+  pelo `EvalTileForGoal`; placar 100 − 16·100·|d − 0,3| − 0,001·100·|lateral|
+  − penalidades (o do meio a 0,3: 100; os laterais a 0,3: ~89,7; a fileira
+  de 0,2375: ~0–13), +25 sem parede na direção (§9.1). Ou seja: **um passo de
+  0,3 tile na diagonal**, à frente de quem pede, do lado em que quem sai está;
+  com parede a menos de 0,3 do ponto (`EvalTileForGoal` 4), outra sala (2) ou
+  um Sim perto (6), nada.
+- **Tipo 1** (o bloqueador está a < 1,5 tile do objeto da minha rota):
+  direções 1, 2, 6 e 7, `SetDistances(1, 3, 1)`, `SetSpacing(0,25)`,
+  `SetGradient(0,625)`, sorteio ligado, sem o bônus de ficar parado,
+  `0x70(1)` (outras direções com placar menor), salas e paredes contam.
+- **Tipo 2**: o 1 com `SetDistances(1, 6, 1)` e salas e paredes ignoradas
+  (`0x48(1)`, `0x50(1)`), `0x94(1)`. As direções dos tipos 1/2 são relativas à
+  direção do destino, que é a de quem sai (o `cLocation` dele; inferido).
+
+### O cone da varredura (`FUN_01655af0`)
+
+Antes do `EvalTileForGoal` cada ponto em pé passa por um filtro: no
+referencial da origem e da direção (`+0x18`, `+0x20` do contexto), à frente
+f ≥ 0 e f ∈ [mín. − largura − 0,001; máx. + largura + 0,001], e 2·atan2(máx(0,
+|lateral| − largura), f) ≤ o ângulo (`+0x40`). As fileiras vão de
+`floor(−f·tan(22,5°)/passo)` a `ceil(f·tan(22,5°)/passo)`, então os dois
+pontos das pontas, que passam de f·tan(22,5°), **não entram** (o VM os
+punha).
+
+### A contagem das tentativas (`DoBlockedGoalStillAvailable`, BV `0x57a8d4`, lido de novo)
+
+A rota guarda um mapa ID de roteador → lugar (`cTSRoute +0x134`,
+`Get/SetRouterLastKnownLocation`, vtables `0x1d8`/`0x1d4`). O `InitRoute` (BV
+`0x5737cc`) anota, **a cada planejamento**, o lugar de todos os roteadores do
+gerente de rotas, o próprio Sim incluído. No `DoBlockedGoalStillAvailable`:
+
+- o contador `+0x3c` sobe a cada entrada e volta a 1 quando o bloqueador é
+  outro que o último (`+0x3e`) **ou quando eu (quem anda) me afastei ≥ 0,25
+  do lugar anotado para mim**; depois o meu lugar é anotado de novo
+  (`0x1d4(eu, meu lugar)`). Corrige §6 e §9.1, que diziam "o bloqueador se
+  afastou 0,25";
+- "ele saiu do lugar" (a re-rota dos ramos: parado com contador < 2; o que
+  me bloqueia e roteia com contador == 2; o que eu bloqueio até o 4) é o
+  lugar atual do bloqueador **diferente** do anotado para ele no meu último
+  planejamento (os 8 bytes do `FTilePt`, `FUN_01655330`: qualquer
+  movimento); sem anotação, não. Corrige o VM, que comparava o tile do
+  bloqueador com o de quando o contador recomeçou;
+- os ramos são os de §6 (rodadas 13, 19, 22), conferidos de novo.
+
+### "CT - Route Blocked" (`TriggerRouteBlockedTree` BV `0x57946c`, `DoWaitingForRouteBlockedTree` BV `0x56d7dc`)
+
+Só na rota de base e **uma vez por rota** (`0xe4`/`0xe0` da rota,
+`RouteBlockedTreeHasRun`): stack object = o bloqueador, parâmetros 0 = o
+índice do slot (`WorkOutSlotIndex`), 1 = o ID do alvo da rota, 2 = o `+0x14`
+do objetivo atual, 3 = 0; a árvore é procurada pelo nome nas do Sim (o
+semi-global da pessoa: "CT - Route Blocked" `0x20BE` só devolve
+verdadeiro). **Verdadeiro → `DoInitial`** (planeja de novo); falso → 14.
+Da segunda vez que o ramo chega lá, 14 direto. O VM falhava com 14 na
+volta da árvore e passava o bloqueador como parâmetro 0.
+
+### A pausa (`DoPause` BV `0x579e48`, `DoContinueAfterPause` BV `0x570f30`)
+
+`DoPause` copia o estado da locomoção para a rota, vai ao 0x1D e roda "CT -
+Route Blocked Animation" (`TriggerBlockedAnimation`); **a pausa dura o que a
+árvore dura**. `DoContinueAfterPause`: `ShouldInterrupt` → 3, senão
+`DoInitial`. Como o VM.
+
+### Esperando quem foi pedido (`DoWaitingForPersonToMove` BV `0x579ffc`, `MoveOutOfWay` BV `0x57ee3c`, `DoPostFailedOrSucceeded` BV `0x56f610`)
+
+- `MoveOutOfWay` aceita (empurra a interação "sair do caminho" com a
+  prioridade de quem pede) **sem saber se há lugar**; recusa se já foi
+  pedido, se a prioridade não deixa, se a minha rota tem ≤ 1 objetivo, a
+  mais de 4 tiles, ou se a rota corrente dele já pediu a alguém para sair
+  (`0x188`). O VM exigia um lugar livre e recusava se a rota dele tinha
+  qualquer bloqueador.
+- Aceito, a minha rota guarda quem foi pedido e o ID da interação (`0x190`).
+  Quando a rota dele **dentro dessa interação** acaba (chegou ou falhou), o
+  `DoPostFailedOrSucceeded` dela avisa toda rota que o pediu
+  (`0x198(sucesso)`, `0x190(0, 0)`), e o `DoWaitingForPersonToMove`, sem o
+  pedido, vai **na hora** ao `DoInitial`. O VM esperava até 126 ticks ou até
+  1,25 tile. A rota do `TryGetSelfOutOfWay` (flag `+0x115`, `0xcc`) não grava o
+  dado 62 nem avisa ninguém; ao acabar sai da pilha e a de baixo continua do
+  estado em que ficou (o `DoInitial` que o `DoBlockedGoalStillAvailable` lhe
+  deu): planeja de novo.
+
+### O teste por passo (`LocoPlaceFromSceneGraph`, BV `0x6b2ee0`, lido de novo)
+
+`TSObjectCanSetPosition` no lugar novo falha → se o Sim está no mundo, o
+mesmo teste no **lugar atual**; se o atual também falha (qualquer motivo:
+outro Sim a < 0,283, uma pegada, parede), o passo vai assim mesmo. Senão a
+lista de erros é percorrida e o primeiro erro `0xC` ("intersects object")
+dá o bloqueador; sem `0xC` (parede...) o passo para sem bloqueador
+(`DoBlocked`: pausa, depois 15). O VM fazia "já dentro deste Sim" pessoa a
+pessoa e "já numa pegada" só para as pegadas.
+
+### Como o jogo acaba com o impasse
+
+Pela leitura, o roteador não tem nada além disto: pedir para sair (aceito
+mesmo sem lugar; quem pede replaneja assim que a rota do outro acaba),
+sair do caminho uma vez por rota, a pausa com replanejamento, o "CT - Route
+Blocked" (um replanejamento a mais) e, esgotadas as tentativas (contador
+> 4, ou > 3 com o outro parado), o 14 "blocked by person": a interação
+acaba e a autonomia escolhe outra.
 
 ## 10. O que falta
 
