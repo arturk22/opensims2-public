@@ -7,6 +7,7 @@
 #include "vm/kill.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
+#include "vm/memories.hpp"
 #include "vm/vm.hpp"
 #include "vm/placement.hpp"
 #include "vm/interactions.hpp"
@@ -602,6 +603,44 @@ static void testRelationship() {
         std::fprintf(stderr, "  thread failed: %s\n", t.error.c_str());
     check(t.status == Thread::Status::Finished && t.temps[1] == 40 && t.temps[2] == 1,
           "Relationship sets and gets; Sims are keyed by neighbor ID");
+}
+
+// cTSPerson::UpdateMemories and the Memory Score (docs/relationships-mac.md §4).
+static void testMemories() {
+    Fixture fx;
+    constexpr uint32_t kSim = 0x55667788;
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x81);
+    me.person->data[persondata::NeighborId] = 5;
+    // A memory: kind, ..., subject (5, 6), start, end, step, now, aspiration.
+    auto memory = [](int16_t flags, int16_t start, int16_t end, int16_t step, int16_t now, int16_t asp = 0) {
+        return InventoryToken{0xAB, flags, {0, 0, 0, 0, 0, 0x1111, 0x2222, start, end, step, now, asp}};
+    };
+    auto& tokens = fx.vm.inventory(InventoryKind::Neighbor, 5).singular;
+    tokens = {memory(3, 50, 10, 15, 50), memory(3, 40, 40, 0, 30), memory(3, -20, -20, 0, -20),
+              memory(3, 10, 10, 0, 10), memory(2, 5, 5, 0, 5), // invisible: not in the list
+              InventoryToken{0xCD, 3, {1, 2, 3}}};               // too few properties: not a memory
+    updateMemories(fx.vm, me, false);
+    // Highest three 50, 30, 10 (weight 3, sum 90), lowest -20 (weight 1):
+    // avg 70 / 3; total of the starts 50 + 40 - 20 + 10 = 80:
+    // 23.33 + 80 * 76.67 / 580 = 33.9.
+    check(me.person->memories.size() == 4 && me.person->memories[0].subject == 0x22221111 &&
+              me.person->data[kPersonDataMemoryScore] == 33,
+          "Memory Score from the visible memories");
+    updateMemories(fx.vm, me, true);
+    updateMemories(fx.vm, me, true);
+    updateMemories(fx.vm, me, true);
+    check(tokens[0].properties[10] == 10 && tokens[1].properties[10] == 30,
+          "memories fade by their step toward the end value, within it");
+    // With the aspiration: weight 1.2 and the start counted twice.
+    tokens = {memory(3, 60, 60, 0, 60, 2), memory(3, -30, -30, 0, -30)};
+    me.person->data[kPersonDataAspiration] = 2;
+    updateMemories(fx.vm, me, false);
+    // avg (72 - 30) / 1.2 = 35; total 120 - 30 = 90: 35 + 90 * 65 / 590 = 44.9.
+    check(me.person->data[kPersonDataMemoryScore] == 44, "the Sim's aspiration weighs its memories more");
+    tokens.clear();
+    updateMemories(fx.vm, me, false);
+    check(me.person->data[kPersonDataMemoryScore] == 0, "no memories, no score");
 }
 
 static void testArrays() {
@@ -2073,6 +2112,7 @@ int main() {
     testPrimitives();
     testRunTreeByName();
     testRelationship();
+    testMemories();
     testArrays();
     testChangeMaterial();
     testManageInventory();

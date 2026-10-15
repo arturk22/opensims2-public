@@ -99,6 +99,7 @@ add_library(os2_vm
   src/vm/hood_save.cpp
   src/vm/wants.cpp
   src/vm/kill.cpp
+  src/vm/memories.cpp
   src/vm/rooms.cpp
   src/vm/build_edit.cpp
   src/vm/characters.cpp

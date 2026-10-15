@@ -422,6 +422,18 @@ struct MotiveChange {
 };
 
 // State only Sims have.
+// cITSPerson::cMemoryInfo (0x1C bytes): a visible memory (memories.hpp).
+struct MemoryInfo {
+    uint32_t guid = 0;      // the memory object
+    uint32_t subject = 0;   // property 6 << 16 | property 5
+    int32_t kind = 0;       // property 0
+    int32_t current = 0;    // property 10
+    int32_t initial = 0;    // property 7
+    int32_t final = 0;      // property 8
+    int32_t aspiration = 0; // property 11
+    bool operator==(const MemoryInfo&) const = default;
+};
+
 struct Person {
     std::array<int16_t, kPersonDataCount> data{};
     std::array<int16_t, kMotiveCount> motives{};
@@ -445,6 +457,11 @@ struct Person {
         bool failed = false;
     };
     std::vector<AutonomyMemory> autonomyMemory;
+    // The memories as last read (cTSPerson +0x8F4, memories.hpp), whether
+    // they were, and the tick of the last 60-tick look (+0x2E4).
+    std::vector<MemoryInfo> memories;
+    bool memoriesRead = false;
+    uint64_t memoriesTick = 0;
 };
 
 // Where an object is in the lot, as the lot's saved state has it: the tile

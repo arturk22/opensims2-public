@@ -204,8 +204,10 @@ void tickMotives(VM& vm) {
                     continue;
                 setExactMotive(sim, m, exactMotive(sim, m) + float(p.data[size_t(d)]) / ticksPerDay);
             }
-        // Mood (cTSMotives::UpdateMood); Mood+Mem adds the memories, which
-        // are not simulated, so it follows the mood (inferred).
+        // Mood (cTSMotives::UpdateMood); Mood+Mem is the mood, within
+        // -100..100 (cTSMotives::UpdateMetaMood, Mac BV 0x485e68: the
+        // memories do not enter it; their score is person data 54,
+        // memories.cpp; docs/relationships-mac.md §4).
         const float mood = computeMood(vm, sim);
         setExactMotive(sim, motive::Mood, mood);
         setExactMotive(sim, motive::MoodMem, mood);

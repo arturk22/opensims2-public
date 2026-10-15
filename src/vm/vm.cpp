@@ -1,3 +1,4 @@
+#include "memories.hpp"
 #include "engine.hpp"
 #include "formats/log_once.hpp"
 #include "errors.hpp"
@@ -976,6 +977,10 @@ void VM::tick() {
                 ++globals[global::DaysRunning];
                 globals[global::DayOfWeek] = int16_t(globals[global::DaysRunning] % 7);
                 dayPassed(*this); // the objects depreciate (placement.cpp)
+                // cTSPerson::DayPassed: the memories fade (memories.cpp).
+                for (Object* o : objectTable())
+                    if (o && o->person)
+                        updateMemories(*this, *o, true);
                 if (++clock.day > 30) {
                     clock.day = 1;
                     globals[global::MaxDayNumber] = 30;
@@ -990,6 +995,7 @@ void VM::tick() {
     if (dialogClockIsTicks) // dialog.hpp: headless, game time at speed 1 is the clock
         autoTimeOutDialogs(*this, double(ticks) / clock.ticksPerSecond);
     tickMotives(*this); // motives.cpp
+    tickMemories(*this); // memories.cpp
     tickWants(*this);   // wants.cpp
     handleTimers();
     // Objects created or removed during the tick: the IDs are read first;
