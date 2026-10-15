@@ -1342,7 +1342,7 @@ a `DoNeedFailureFeedback` (0x14) com o código abaixo.
 | árvore | quem roda, em que objeto | quando | parâmetros | falso → |
 |---|---|---|---|---|
 | **post route 0x26** (`TriggerPostRouteTree`, BV `0x577cf4`) | a árvore **do próprio Sim** que anda, stack object = ele | em `DoFailedOrSucceeded` (BV `0x577ea0`, estados 9/10), uma vez: só se a pilha de rotas tem **uma** rota, a rota tem o flag `+0xac` ligado e o `+0xad` desligado (o `+0xad` é ligado ao rodar), e o estado não pede para pular (`+0x4c`) | 0 = o `+0x10` do objetivo atual (a cadeira de um objetivo de sentar; 0 sem objetivo), 1 = código de resultado da rota (`+0x64`), 2–3 = 0 (corrigido na rodada n01: o u32 big-endian põe o `+0x10` primeiro; `docs/seat-mac.md` §A) | código 12 "post-route failed" (estado 7/8 → `DoWaitingForPostRouteTree`, BV `0x56ddac`) |
-| **goal check 0x27** (`TriggerGoalCheckTree`, BV `0x575e34`) | a árvore 39 **do objeto dono do código do frame que chamou o Go To** (o frame logo abaixo do topo da pilha do Sim: o OBJf do seletor desse frame), rodada no Sim com stack object = o stack object desse frame (sem ele, o alvo da rota) | em `DoWalking` (BV `0x576acc`) **a cada tile cruzado** (o avanço da rota, vtable `0x60`, indica que mudou de célula e o temporizador de callbacks deixa); antes chama `AlongRouteUpdate` | 0 = índice do slot de rota (`WorkOutSlotIndex`), 1 = `+0x14` do objetivo, 2 = `+0x10` do objetivo, 3 = distância restante (vtable `0x3c`) × 100 | código 13 "goal not available" (estado 4; bloqueado: estado 0x19 → 9) |
+| **goal check 0x27** (`TriggerGoalCheckTree`, BV `0x575e34`) | a árvore 39 **do objeto dono do código do frame que chamou o Go To** (o frame logo abaixo do topo da pilha do Sim: o OBJf do seletor desse frame), rodada no Sim com stack object = o stack object desse frame (sem ele, o alvo da rota) | em `DoWalking` (BV `0x576acc`), **antes do passo**, quando `DoAlongRouteCheckTest` (vtable `0x60` da rota, BV `0x470fe4`) diz (caminho novo, sala ou andar mudou, mais de 1 andado no caminho; na 1ª vez de uma rota sempre) e o byte `+0x20` do gerente de rotas deixa (rodada n18b, §9.2; antes "a cada tile cruzado"); e **forçado** no `DoBlocked` com bloqueador (estado 0x19); antes chama `AlongRouteUpdate` | 0 = índice do slot de rota (`WorkOutSlotIndex`), 1 = `+0x14` do objetivo, 2 = `+0x10` do objetivo, 3 = distância restante (vtable `0x3c`) × 100 | código 13 "goal not available" (estado 4; bloqueado: estado 0x19 → 9) |
 | **along route 0x29** (`TriggerAlongRouteTree`, BV `0x5766a0`) | a árvore **do próprio Sim**, stack object = ele | logo depois de um goal check que passou (`DoWalkingWaitingForGoalCheckTree`, BV `0x576970`), no mesmo tile, se o temporizador ainda permite; ou direto quando não há goal check | 0 = ID do alvo, 1 = índice do slot, 2 = `+0x14` do objetivo, 3/4 = dois valores da rota (vtable `0xf0`, padrão 0 e −1), 5 = vtable `0x1d0` da rota, 6 = distância restante × 100 | código 16 "interrupted by callback" (estado 0x1E → `DoWaitingForAlongRouteTree`, BV `0x56db30`) |
 
 Os testes de "sem árvore" valem para os três: sem rota/alvo (`0x118`) ou
@@ -1709,18 +1709,171 @@ Dynamic w/Lead in", os Sims seguindo alvos que andam, com os desvios pelos
 pisos), Lot11 177 → 650 (456 numa só semente, o topo da escada; as outras
 13: 163 → 194); paradas com clipe 80 → 16, bloqueios por passo 1.321 → 255.
 
+## 9.2 Rodada n18b (rotas, laços): o que foi lido e o que mudou
+
+Leitura de 2026-10-15, **Ghidra MCP** (só leitura). Rodada de correção
+depois da n18: as falhas de rota subiram (14 sementes × 12.000 ticks,
+`OS2_SEED` 0–13, `s2pkg autonomy` com `OS2_ROUTE_FAILS=1`): `N001_Lot68`
+258 → 337 e `N001_Lot11` 177 → 650 (456 numa semente só). Medido de novo
+no começo desta rodada: 356 e 647.
+
+### Onde o Sim vai estar (`GlobalLocationEstimate`, BV `0x6af398`)
+
+O `EstimateWhenPathWillBeBlocked` (BV `0x6b3574`) pede ao locomotor onde
+cada um estará em cada instante: a vtable `0x3e8` do `cLocomotable` é
+`GlobalLocationEstimate`: sem caminho (`+0x18c`, o caminho da locomoção) ou
+com comprimento 0, o lugar atual; senão o ponto do caminho (vtable `0x54`
+do caminho) na distância `DistanceCompletedEstimate` (vtable `0x470`) desse
+instante. A direção do "ponto 0,35 à frente" é a `GlobalDirectionEstimate`
+(vtable `0x468` → `0x488`, BV `0x6aea88`): a tangente do caminho nessa
+distância, a direção do Sim (vtable `0x1e4`) sem caminho, e durante uma
+virada a direção interpolada pelo tempo. O outro Sim igual (vtables
+`0x2b0`/`0x2b8` do seu `cILocomotable`). Ou seja, **a previsão segue o
+caminho cúbico que o quadro percorre** (o `LocoCurve`), não as retas entre
+os pontos da rota: o VM usava as retas, e o quadro corta por dentro nas
+curvas. No `N001_Lot11` (semente 2) um Sim que virava ao passar por outro
+parado a 0,33 da sua reta chegava a 0,28 dele sem a previsão ver; o teste
+por passo (0,283) o barrava, e os dois ficaram se barrando o resto do jogo
+(1.303 "step into" na n14, 456 falhas de rota na n18).
+
+**O teste por passo** (`LocoPlaceFromSceneGraph`, BV `0x6b2ee0`): se o
+lugar novo falha no `TSObjectCanSetPosition` mas o lugar **atual** também
+falha (por qualquer motivo), o passo vai assim mesmo; só bloqueia (`0xc` =
+pessoa → `SetBlockingObjectID`) quando o lugar atual vale. O VM faz isso
+pessoa a pessoa (quem já está a < 0,283 não barra); a versão "qualquer
+motivo" não foi feita.
+
+### Quando roda o goal check (`DoAlongRouteCheckTest`, BV `0x470fe4`)
+
+`DoWalking` (BV `0x576acc`), **antes** do passo (`FollowOneStep`):
+
+```
+se DoAlongRouteCheckTest(andar do Sim, comprimento do caminho × porção feita, forçar = 0)
+   e o byte +0x20 do gerente de rotas (GRS_State +0x20 = cTSGlobals::GetRouteManager; 1 do construtor):
+      AlongRouteUpdate; goal check (estado 4) ou along route (0x1E)
+depois o passo
+```
+
+`DoAlongRouteCheckTest(nível, andado, forçar)` devolve 1 (e anota os quatro)
+quando `forçar`, ou o caminho mudou (`+0xd8` da rota ≠ `+0x50`: o caminho
+da rota, refeito a cada planejamento), ou a sala do Sim mudou
+(`GetRoomID`, vtable `0x204` do `cTSPerson`, ≠ `+0x54`), ou o andar mudou
+(`+0x4c`, que o `Construct` da rota põe em −999: **na primeira vez de toda
+rota**), ou o andado difere do anotado (`+0x48`) em mais de 1,0
+(`GetPathLength` × `GetPathPortionCompleted`, vtables `0x2c4` × `0x2c8` do
+`cILocomotable`, que fica em `+0x338` do `cLocomotable`). O VM rodava as
+árvores ao cruzar um tile, depois do passo.
+
+**Bloqueado** (`DoBlocked`, BV `0x5762a4`): com bloqueador e caminho de
+mais de um nó, chama `DoAlongRouteCheckTest` **forçado** (último argumento
+1) e o goal check (`DoBlockedWaitingForGoalCheckTree`, estado 0x19): falso
+→ 13; verdadeiro → `DoBlockedGoalStillAvailable` (0x1A). `DoFoundPath`
+(BV `0x575154`) → `DoBeginFollow` (BV `0x5745e0`) não testa colisão: a
+primeira vez de `DoWalking` sempre chega ao teste.
+
+**O 13 dos sociais é de propósito.** "Route - Dynamic w/Lead in" (social,
+semi-global `0x7FD90EDB` `0x204C`) só faz o Go To Routing Slot e devolve o
+resultado; o goal check do social ("Function - Goal Check", `0x2041`)
+chama "Goal Check - Continue?" (`0x2079`: falso a ≤ 3 tiles do outro) e
+"Goal Check - Update Dynamic Route?" (`0x2055`), que, quando o outro
+andou, roda "Route - Refresh route" (`0x2066`) → "Route - Dynamic w/Lead
+in" **de dentro do goal check** (uma rota dentro da outra). Quem chamou
+("Route to Person X", `0x202A`) lê o dado de pessoa 62 = 13 como "perto o
+bastante" e faz o lead-in. Com o goal check na primeira vez da rota, cada
+social que começa a ≤ 3 tiles acaba logo com 13: esses 13 não são falhas.
+
+### A pilha de rotas (`ProcessGoto`, BV `0x57b500`)
+
+O roteador tem uma **pilha de rotas** (`cTSRoutingObjectAggregate`
+`+0x14..+0x24`, a corrente pela vtable `0x68`; `DoNeedFailureFeedback`, BV
+`0x5774cc`, só toca a animação de falha com a pilha de tamanho 1). O VM
+tinha uma rota por objeto: a rota de dentro do goal check substituía a de
+fora, e de volta do goal check a instrução de fora não achava rota e
+tomava o falso da árvore pelo da pré-rota: **11 "pre-route failed"**, que o
+"Route to Person X" não lê como 13 (o social falhava). Feito: a rota de
+fora fica guardada (`Object::outerRoutes`) e volta quando a de dentro
+acaba; o falso do goal check dá 13.
+
+Mais lido: a rota de sair do caminho do `TryGetSelfOutOfWay` (BV
+`0x57e9ac`) é construída com o `+0x115` = 1 (vtable `0xcc`): sem animação
+de falha e sem gravar o dado 62; a contagem de saídas fica em `+0x11c`
+(vtables `0xd8`/`0xdc`, não `+0xd8`). "CT - Route Blocked" (semi-global
+da pessoa `0x7F01EC29` `0x20BE`) só devolve verdadeiro.
+
+### Os retângulos de custo 10 das escadas (lidos de novo, não feitos)
+
+`AddObjectRectangle` (vtable `0x5c` do gerente, BV `0x4f34b4`) recebe
+(a0, b0, a1, b1, andar, custo, estado…); com estado > 1 põe outro
+retângulo 0,12499 maior com custo `FLT_MAX` (a inflação). Pelo código das
+portas no mesmo `PortalAddToPathPlannerImpl`, a ordem do gerente é a
+**transposta** da do `cFootprint` (o retângulo `(r0, r1, r2, r3)` vai como
+`(r1, r0, r3, r2)`), o que, com o `cLocation` de x primeiro, dá (y0, x0, y1,
+x1). A caixa das escadas é a do `GetFootprint(lugar, direção)` (vtable
+`0x100`, BV `0xaca7d4` na pessoa): no mundo, girada. Então os retângulos
+(ponta de cima: x de `x0 − 0,325` a `x0`; de baixo: `x1` a `x1 + 0,325`;
+nos cantos de y conforme o tipo 2/3/4 da árvore 0x30) ficam sempre do
+mesmo lado em x, seja qual for a direção da escada; como a árvore 0x30
+pode depender da direção, não foi feito (inferido demais; não muda o
+impasse abaixo).
+
+### O que mudou no código (rodada n18b) e as medidas
+
+Um commit por parte, `ctest -j2` verde em cada um (55 testes no fim):
+
+1. **A previsão pelo caminho do quadro** (`routing_loco.cpp`, `WayAhead`):
+   `simAhead` amostra o `LocoCurve` do Sim (o que o `locoStep` mantém ou
+   faria) e o do outro. Teste: `test_routing` (um Sim dentro de uma curva,
+   a ≥ 0,29 das retas e < 0,283 da curva, é visto) e `stair_top.sh`
+   (`N001_Lot11`, semente 2, 3.000 ticks: no máximo 2 falhas no patamar e 2
+   bloqueios por passo; a build da n18 dá 33 e 36).
+2. **O goal check pelo `DoAlongRouteCheckTest`** (`routing_walk.cpp`
+   `advance`, `Route::plans`/`check*`, estado salvo versão 5), antes do
+   passo; não durante o sair do caminho (inferido: no binário é outra rota).
+3. **A pilha de rotas** (`Object::outerRoutes`, `keepOuterRoute`/`endRoute`);
+   se o Sim andou, a rota de fora planeja de novo de onde ele está quando a
+   árvore a deixa seguir (inferido). Teste: `test_routing` (um goal check que
+   roteia: a de fora falha com 13, não 11).
+4. **O goal check no bloqueio** (`DoBlocked` forçado).
+
+Medidas (14 sementes × 12.000 ticks; "resto" = sem os 13 de propósito do
+"Route - Dynamic w/Lead in"/"Route - Refresh route"):
+
+| | Lot68 total | Lot68 resto | Lot11 total | Lot11 resto | interações autônomas que acabam falsas (68/11) |
+|---|---|---|---|---|---|
+| main (n18) | 356 | 205 | 647 | 588 | 28 / 33 |
+| 1. curva | 349 | 218 | 483 | 409 | 33 / 27 |
+| 2. goal check | 734 | 366 | 806 | 492 | 14 / 29 |
+| 3. pilha de rotas | 637 | 28 | 666 | 171 | 19 / 4 |
+| 4. goal check no bloqueio | 636 | 35 | 650 | 161 | 18 / 4 |
+
+O total sobe porque cada social que começa perto (ou cujo alvo andou)
+acaba com o 13 de propósito, duas vezes quando o goal check refaz a rota
+(a de dentro e a de fora): o que o binário faz. O resto (as falhas de
+verdade: 14, 15, 9, 10, 3) caiu de 205/588 para 35/161, e as interações
+"feitas" subiram (750 → 770 no Lot68, 489 → 505 no Lot11). Dos 161 do
+Lot11, 117 são da semente 4: o impasse do alpendre (§10).
+
 ## 10. O que falta
 
 - Os retângulos de custo 10 junto das pontas das escadas reta e modular
-  (§9.1: `TSObjectGetModelType` = árvore 0x30, a ordem dos eixos) e os
-  portais dinâmicos dos dados de objeto `0x58`–`0x61` (só no BV).
+  (§9.1, §9.2: a ordem do gerente lida, a caixa do `GetFootprint` no mundo;
+  falta a árvore 0x30 de `TSObjectGetModelType` por direção) e os portais
+  dinâmicos dos dados de objeto `0x58`–`0x61` (só no BV).
 - O `+10` do `WorldOutsideSupport` e o estado 7 no custo do piso (§9.1).
-- O impasse no topo da escada reta do `N001_Lot11` (8,67; 12,19; 2): um Sim
-  chega pelo portal (Snap no osso de cima de uma faixa) e outro, indo para a
-  outra faixa (0,33 ao lado), passa a 0,28 dele; os dois se bloqueiam e
-  falham rotas sem fim (rodada n18, `OS2_SEED=2`/`12`). Ver como o jogo
-  ocupa o portal das duas faixas (od `0x3E` das peças) e a continuação no
-  fim do portal (RS `0x400000`/`0x800000`).
+- O impasse do alpendre do `N001_Lot11` (rodada n18b, §9.2): o de dois Sims
+  a 0,28 (semente 2) acabou com a previsão pela curva; fica o da semente 4:
+  o alpendre é um tile só (8, 12, 2) entre o topo da escada do deck ("Stair
+  Modular - Deck - Hi Stub") e a abertura da porta em x = 9. A Cassandra
+  sobe e o Alexander sai pela porta; ele sai do caminho dela (o
+  `TryGetSelfOutOfWay`) e para em cima da ponta do portal da porta (o meio
+  do tile, inferido), por onde ela precisa passar; todo lugar de "sair do
+  caminho" no tile é recusado (`EvalTileForGoal` 9/10) e os dois falham rotas
+  o resto do jogo (117 em 12.000 ticks). Suspeitos: as pontas do portal da
+  porta (aqui os meios dos tiles; no binário os slots da porta,
+  `PortalGetLocationOfSlot`), a escolha na fileira do
+  `CreateMoveOutOfWayDestination` tipo 0 (aqui o primeiro ponto livre) e o
+  teste por passo do "lugar atual também inválido" por qualquer motivo
+  (§9.2).
 - A escala de x,y por 1/16 do `cTSSlotDescriptor::Read` até a "versão"
   `0x46` (os SLOT `0x43`–`0x46` do jogo base já estão em tiles: qual versão
   ele compara?).
