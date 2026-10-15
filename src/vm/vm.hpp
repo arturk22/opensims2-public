@@ -1039,6 +1039,12 @@ public:
     void refreshObjectPortals();
     // Objects placed on a tile (in the world and not in a slot), by ID.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
+    // objectsOnTile of each of the (2r + 1)^2 tiles round `at`, in one walk
+    // over the objects: [(dx + r) * (2r + 1) + dy + r].
+    std::vector<std::vector<ObjectId>> objectsAround(TilePos at, int r) const;
+    // How many times VM::run ran a tree: lists of objects taken before are
+    // out of date once a tree may have moved something.
+    uint64_t treeRuns = 0;
     // The tile's objects as above, each followed by what is in its slots (by
     // slot number, depth first): the walk of the binary's tile iterator
     // (Set to Next 8; FUN_00e1e484 in the Mac BV).

@@ -209,6 +209,16 @@ static void testSetToNextTiles() {
     vm.run(t);
     check(t.status == Thread::Status::Finished && t.result && t.temps[0] == east2.id && t.temps[1] == west.id,
           "Set to Next 9: the last object of a side; a target on the anchor's tile ends it");
+    // The tiles round a point in one walk: each tile's list is objectsOnTile's.
+    bool sameAround = true;
+    for (const TilePos at : {TilePos{3, 3, 1}, TilePos{0, 0, 1}, TilePos{5, 5, 1}}) {
+        const auto around = vm.objectsAround(at, 1);
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                sameAround = sameAround && around[size_t(dx + 1) * 3 + size_t(dy + 1)] ==
+                                               vm.objectsOnTile({at.x + dx, at.y + dy, at.level});
+    }
+    check(sameAround, "objectsAround: the tiles' objects as objectsOnTile has them");
 
     check(VM::blocksRouting(a) && !VM::blocksRouting(held), "objects in slots do not block");
     a.data[objdata::Flags] = 0x10;

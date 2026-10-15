@@ -392,10 +392,11 @@ Exit setToNext(Context& c) {
             if (!advance())
                 return none();
         }
+        const auto around = c.vm.objectsAround(at, 1); // the four sides' objects in one walk
         for (;;) {
             const TilePos t{at.x + dx, at.y + dy, at.level};
             if (!c.vm.world || c.vm.world->contains(t)) {
-                const auto ids = c.vm.objectsOnTile(t);
+                const auto& ids = around[size_t(dx + 1) * 3 + size_t(dy + 1)];
                 if (!ids.empty() && (!c.vm.world || c.vm.world->room(t) == room))
                     return found(ids.back());
             }

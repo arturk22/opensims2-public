@@ -1115,12 +1115,19 @@ ObjectId footprintBlocker(VM& vm, const Object& me, const Object::Route& r, floa
     static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
     const TilePos at{int(std::floor(x)), int(std::floor(y)), level};
     constexpr float kHalf = 0.1f;
+    // The 3x3 tiles' objects in one walk; once an object's "allow
+    // intersection" tree has run (it could move something), the next tiles'
+    // are taken again, as before.
+    const auto around = vm.objectsAround(at, 1);
+    const uint64_t runs = vm.treeRuns;
     for (int dx = -1; dx <= 1; ++dx)
         for (int dy = -1; dy <= 1; ++dy) {
             if (wholeTiles && (dx || dy))
                 continue;
             const TilePos t{at.x + dx, at.y + dy, level};
-            for (ObjectId id : vm.objectsOnTile(t)) {
+            const std::vector<ObjectId> on =
+                vm.treeRuns == runs ? around[size_t(dx + 1) * 3 + size_t(dy + 1)] : vm.objectsOnTile(t);
+            for (ObjectId id : on) {
                 const Object* o = vm.object(id);
                 if (!o || id == me.id || o->person || !VM::blocksRouting(*o) || skip.count(multiTileGroup(*o)) ||
                     intersectionAllowed(vm, *o, me))

@@ -166,6 +166,19 @@ std::vector<ObjectId> VM::objectsOnTile(TilePos t) const {
     return out;
 }
 
+std::vector<std::vector<ObjectId>> VM::objectsAround(TilePos at, int r) const {
+    const int side = 2 * r + 1;
+    std::vector<std::vector<ObjectId>> out(size_t(side) * size_t(side));
+    for (const Object* o : byId_) { // by ID, as objects_ is
+        if (!o || !o->position.inWorld() || o->data[objdata::ContainerId] != 0)
+            continue;
+        const TilePos t = tileOf(*o);
+        if (t.level == at.level && std::abs(t.x - at.x) <= r && std::abs(t.y - at.y) <= r)
+            out[size_t(t.x - at.x + r) * size_t(side) + size_t(t.y - at.y + r)].push_back(o->id);
+    }
+    return out;
+}
+
 } // namespace os2::vm
 
 namespace os2::vm {
