@@ -128,7 +128,11 @@ Escolhas nossas **[inferido]**, conferidas com `s2pkg effect-sim` e capturas:
   emissão (os componentes da fumaça do fogão têm rotação de 90° em X: sai pela
   frente e sobe).
 - Bits 0/1 das flags: partículas presas ao efeito (balões, brilho do
-  PlumbBob); bit 20: passeio aleatório ligado (todos os efeitos com passeio
+  PlumbBob; inferido). **[bin]** (fix-plumbob) o que o jogo faz com eles é a
+  emissão: `GenerateNewParticles` (`0xeb8c90`) testa o bitset de flags
+  (`std::bitset<38>` em +0x158 da descrição): bit 1 → `MaintainParticles`
+  (`0xeb822c`), bit 0 → `InjectParticles` (`0xeb83f4`), nenhum →
+  `AddRateCurveParticles`. Ver §4d; bit 20: passeio aleatório ligado (todos os efeitos com passeio
   real; o valor padrão sem ele é 5/50); bit 24: a textura é o ícone do balão.
 - Pre-roll só nos emissores contínuos (ciclos 0): os balões têm vida 4 e
   pre-roll 4 e sumiriam.
@@ -260,6 +264,47 @@ Captura: `docs/screenshots/r8-effects-balloon.jpg` (`--lot N001_Lot11
   `uieffects-headlines-motives-dream-02`. Ficam brancas (o quadrado do
   componente com a cor e o alfa dele); trocar por nomes parecidos seria
   invenção.
+
+## 4d. fix-plumbob: a "luz estranha no meio" do PlumbBob **[bin]**
+
+O brilho é o `fxPlumbobGlow_<humor>` (`_00`, `_25`, `_50`, `_75`, `_100`,
+`_platinum`) no `slot_plumbob_0_fx`: 5 componentes aditivos (tipo de
+desenho 4) com a textura `plumbBobGlow`/`plumbBobShine`, todos com flags
+`0x800002`, taxa 1, vida 2,5 (os três `glow`) ou 4 (os dois `shine`):
+`large` 1,5 m alfa 0,25 verde, `med` 0,75 m alfa 0,45 verde, **`small`
+0,33 m alfa 0,8 branco**, e dois `shiner` 0,95 m alfa 0,15 girando ±0,5.
+
+- **A causa**: tratávamos a taxa como partículas por segundo; com vida 2,5–4
+  ficavam 2–4 cópias de cada componente somando por cima (aditivo), e o
+  `small` branco estourava numa mancha branca do tamanho do diamante.
+- **O jogo**: o bit 1 das flags manda para `MaintainParticles`, que mantém
+  vivas `round(curva de taxa)` partículas (o primeiro valor da curva,
+  `FUN_01c2a6ac(0, desc+0x10)`), repondo as mortas na hora e já passando
+  a física nelas. Então é **uma** partícula por componente. 151 partículas
+  do jogo base têm o bit 1: o brilho do PlumbBob, os postes do cursor do
+  modo construir (vida 0,1: com a taxa por segundo apareciam 10% do tempo),
+  as setas do terreno, o OVNI e as estrelas da abdução (100 e 300 vivas).
+  Feito em `EffectSystem::stepEmitter` (`kMaintain`), depois da física,
+  como o jogo. O bit 0 (`InjectParticles`: rajadas de `taxa × escala` por
+  ciclo, 524 partículas: balões, ícones de aspiração) segue como antes.
+- **Material das partículas** (`cTSParticlesRenderable::SetupTextureParticle`
+  `0xeb3254`): `StandardParticlesMaterial` com `stdParticleTexture`; tipo de
+  desenho 1 `stdPMInvertDepth`, 2 `stdPMDoDepthTest false`, 3
+  `stdPMDoDepthWrite`, 4 `stdPMAdditive`, 5 aditivo + invertido, 6 aditivo
+  sem teste de profundidade, 7 `stdPMModulate`; `stdPMLayer` = camada × 8 +
+  7 (com o bit 31 das flags, a camada crua). O `particles.matShad`
+  (`Materials.package`) põe a partícula na camada 7 por padrão, sem escrever
+  profundidade e com teste: **a mesma camada dos materiais com blend**
+  (`plumbbob_corecolor*` é StandardMaterial com `blend alpha`, alfa 1,
+  camada 7). O `AddElementsToDisplayList` (`0xeba5cc`) passa à display list
+  a flag `bit 23 das flags | 0x40` (o brilho tem o bit 23). **Não lido**: a
+  ordem dentro da camada 7 entre o diamante e as partículas; o app desenha
+  as partículas depois de tudo, então o ponto branco pequeno fica por cima
+  do diamante (inferido; `TESTAR.md`).
+- Capturas: `docs/screenshots/fix-plumbob-brilho.jpg` (antes, depois,
+  depois à noite) e `fix-plumbob-giro.jpg` (o giro entre 4,4 e 5,0 s, depois
+  da primeira volta). O giro e o dono estão em `primitives-mac.md`, seção
+  0x69/0x6A/0x6B (Animate Object com temp 1 = −1; Generic Sims Call 25).
 
 ## 5. Uso
 

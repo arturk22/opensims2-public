@@ -1324,6 +1324,31 @@ blend (0 ou fora de 0–1 = 1,0). Animate Object/Overlay devolvem 1 logo depois
 de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → erro
 0x70). Sem animador: 0x41; sem pessoa (Sim): 0x42.
 
+**Animate Object com temp 1 = −1 (fix-plumbob).** O −1 (o único valor < 1
+que o erro 0x70 deixa passar) é "até parar" **em laço**: o "PlumbBob -
+Start" (`0x7F4C04B9:0x1007`) toca `o-plumbob-spin` assim, e o jogo salva o
+pedido com loops `0xFFFFFFFF` (o PlumbBob do `N001_Lot11`; o do
+`N001_Lot68` também `o-plumbob-poses-default-0`). Antes a VM segurava o
+último quadro depois de uma volta (o diamante parava). Agora
+`Overlay::forever`: o tempo da VM dá a volta (`played` mod duração), o app
+toca em laço, e o save grava `0xFFFFFFFF`. 49 usos do jogo base têm a flag
+0x20 no Animate Object (alarmes, velas, pia, luzes). Um número N > 0 ainda
+toca uma vez e segura (inferido).
+
+**Generic Sims Call 25 (selecionar Sim, fix-plumbob).** `TryGenericSimCall`
+(`0xe36834`, caso 0x19): temp 0 = 0 seleciona ninguém; senão o objeto tem
+que ser pessoa (erro 0x1C) e vai para `SetSelectedPerson` (vtable +0xA0;
+`cEdithObjectModule::SetSelectedPerson` `0x52a55c` troca o bit 2 do Sim
+antigo e do novo e manda a mensagem 0x93 à UI). Os roteiros da história
+usam isso ("Script - Pleasantville - Goth" → "Simulation - Select/Activate
+Sim" `0x7F63E3F2:0x2031` seleciona a Cassandra no tick 27 do `N001_Lot11`,
+e um roteiro do `N001_Lot68` seleciona o Daniel). O app agora segue o
+global 3 quando a VM o muda (`followVmSelection`): pie, painel, câmera e o
+PlumbBob, cujo "Main - Update My Owner" (`0x100F`) põe o PlumbBob no slot 0
+do "Head Slots Holder" do Sim do global 3 (Snap Into #13). Antes o app
+ficava com o Sim do `--sim-id`, o PlumbBob do jogo seguia o global 3 e o
+app desenhava um segundo PlumbBob.
+
 **Rodada 13: as regras de postura inferidas na rodada 11, conferidas** (BV:
 `try_animate_sim` `0x69d634`, `try_animate_stop` `0x6a0554`,
 `AddChoreoAnimRequest` `0x696644`, `CreateTransitionBlend` `0x68b4c4`,
