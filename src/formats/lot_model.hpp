@@ -75,12 +75,15 @@ private:
 // with its own shaders), with each terrain paint blended over the base by its
 // mask. Fences (see lotFencePieces), stairs and objects are not included.
 //
-// Walls are drawn as in the game's wall modes (docs/ui-live-mac.md 8c): up,
+// Walls are built as the game's cWallGeometryNode does (mitred corners,
+// three columns a side, caps, tops and junctions: docs/walls-floors-mac.md)
+// and drawn as in the game's wall modes (docs/ui-live-mac.md 8c): up,
 // cutaway (every inside wall of the level cut down, outside walls only when
 // their outside face looks at the camera's position, `camera`, or without
 // it along `viewDirection`, a horizontal vector from the camera into the
-// scene; walls alone in the yard stay up: lotCutawayWalls) or down (all
-// walls cut down). Only partition styles that allow
+// scene; walls alone in the yard stay up: lotCutawayWalls; the walls' ends
+// at the cut walls' end points go down with them, so a wall meeting a cut
+// one ramps down to it) or down (all walls cut down). Only partition styles that allow
 // cutaway are cut (normal and attic walls; not fences, foundations, pool
 // sides or deck skirts).
 //
@@ -159,9 +162,10 @@ int lotTopLevel(const Lot& lot);
 // Inferred from the lots' data.
 bool storyOverGround(const Lot& lot, int level, int x, int y);
 //
-// Walls, floors, wall tops and the terrain get light-map coordinates
-// (MeshGroup::uvs2) into the atlas that `lightMap`, when given, describes
-// (see lot_lightmap.hpp). The atlas does not depend on the view: walls cut
+// Walls, floors and the terrain get light-map coordinates (MeshGroup::uvs2)
+// into the atlas that `lightMap`, when given, describes (see
+// lot_lightmap.hpp); wall tops have none (the game draws them unlit,
+// docs/walls-floors-mac.md §2.2). The atlas does not depend on the view: walls cut
 // down or not drawn keep their full-height cells, so that light maps made for
 // one view serve all.
 //

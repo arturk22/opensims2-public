@@ -17,6 +17,7 @@
 #include <cctype>
 #include <cmath>
 #include <optional>
+#include <set>
 
 namespace os2 {
 
@@ -25,9 +26,6 @@ namespace {
 constexpr uint32_t kTypeTxmt = 0x49596978, kTypeTxtr = 0x1C4A276C, kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogRoof = 0xACA8EA06,
                    kTypeCatalogFence = 0x2CB230B8;
 
-// Wall slab half thickness, in tiles: the game's walls are 0.15 thick
-// (cWallGeometryNode's default, Mac BV 0x74ab40).
-constexpr float kWallHalfThickness = 0.075f;
 // Ground floors sit on the terrain; lift them so they win the depth test
 // against the terrain paints drawn after them.
 constexpr float kGroundFloorLift = 0.005f;
@@ -36,12 +34,67 @@ constexpr float kGroundFloorLift = 0.005f;
 // paintDetailTextureScale); terrainMatDiffCoef 0.9.
 constexpr float kTerrainTextureTiles = 20.0f, kTerrainDetailTiles = 4.0f;
 constexpr float kStoryHeight = 3.0f;
-// Attic walls stop this far below the roof surface (OpenTS2: 2.5 x the wall's
-// half thickness), half walls under a fence this far above their floor.
-constexpr float kAtticRoofOffset = 0.1875f;
-constexpr float kHalfWallHeight = 1.0f;
-// Height of walls cut down by the wall modes (OpenTS2's WallsDownHeight).
+// Height of walls cut down by the wall modes (cWallGeometryNode's
+// SetWallDownHeight default, Mac BV 0x74ab40).
 constexpr float kWallsDownHeight = 0.2f;
+// The wall tops' material: wall_top's texture twice over, unlit (their
+// subset has no light-map page, docs/walls-floors-mac.md §2.2; built in
+// buildLotModel from the wall_top TXMT).
+constexpr const char* kWallTopMaterial = "wall_top 2x";
+
+// The wall geometry nodes (nTSSG::cWallManager::CreateWallNodesOnLevel, Mac
+// BV 0x6c2744; docs/walls-floors-mac.md §1): each level has one per
+// tWallTypeIndex, and AddWallImpl (0x6c64c8) puts a partition in the one of
+// its vertical span. The node's thickness, height offset (all z), span and
+// whether the wall modes reach it; and the style's requiresFlatTop
+// (walls.txt / fences.txt), which hangs the wallpaper from the wall's top.
+// Walls mitre only with the walls of their own node (its wall graph).
+// Vertical spans (cITSProductPartition::tVerticalSpanType, the verticalSpan
+// key, table 0x28660e0).
+constexpr int kSpanFixedHeight = 0, kSpanFloorToFloor = 1, kSpanFloorToRoof = 2, kSpanFloorToFloorBasedCeiling = 4;
+struct WallNode {
+    int index = 0;
+    float thickness = 0.15f, offset = -0.01f;
+    int span = kSpanFloorToFloor;
+    bool flatTop = true;
+    bool followsMode = true;
+};
+// Deck skirts (walls.txt walls 16 and 24, "wallThickness none",
+// floorToFloorBasedCeiling).
+constexpr uint32_t kDeckSkirtRedwood = 16, kDeckSkirtMinimal = 24;
+WallNode wallNode(const Lot::Wall& w) {
+    // A fence with a covering is a half wall: node 3 (fixedHeight, not
+    // flat-topped; node 5, raised 0.75 and 0.1 thick on a "type 4" floor,
+    // is not told apart: inferred, as the fences' +0.75).
+    if (Lot::isFence(w.type))
+        return {3, 0.15f, -0.01f, kSpanFixedHeight, false, true};
+    if (w.type == Lot::Attic)
+        return {2, 0.15f, -0.01f, kSpanFloorToRoof, false, true};
+    if (w.type == kDeckSkirtRedwood || w.type == kDeckSkirtMinimal)
+        return {1, 0.0f, 0.0f, kSpanFloorToFloorBasedCeiling, true, false};
+    return {}; // floorToFloor: walls, foundations, pool walls
+}
+// nTSSG::WallTopElevation (Mac BV 0x743ab0): the top of a wall of `span` at
+// (x, y) of `level`. Fixed height: 1.025 over the floor; floor to floor: the
+// next level's floor (on the top level the floor plus a story); floor to
+// roof: the roofs of the level over the point (RoofHeightAtLocation, the
+// next floor without one) less 0.25, not under the floor; based ceiling:
+// the next floor less 0.15 (the floor's thickness).
+float wallTopElevation(const Lot& lot, const LotRoofs& roofs, int level, float x, float y, int span) {
+    x = std::clamp(x, 0.0f, float(lot.width)), y = std::clamp(y, 0.0f, float(lot.height));
+    const float floor = lot.elevationAt(level, x, y);
+    const float above = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : floor + kStoryHeight;
+    switch (span) {
+    case kSpanFixedHeight:
+        return floor + 1.025f;
+    case kSpanFloorToRoof:
+        return std::max(roofs.heightAt(x, y, level, above) - 0.25f, floor);
+    case kSpanFloorToFloorBasedCeiling:
+        return above - 0.15f;
+    default:
+        return above;
+    }
+}
 
 // Room of the quarter tile on the `normal` side of a wall through `mid`, the
 // quarter (west, north, east, south) that faces the wall; diagonal walls look
@@ -374,15 +427,21 @@ bool wallModeLevel(const LotViewOptions& view, int level) {
 }
 
 
-// Walls as slabs: one face per side with that side's covering, plus a top.
-// Each slab is stretched by its half thickness at both ends to close corners;
-// texture coordinates follow world position, so overlaps line up. Attic walls
-// (gables) rise to the roof above them, half walls under a fence to 1 tile.
+// Walls as the game's cWallGeometryNode builds them (docs/walls-floors-mac.md
+// §2-3): each side of a wall is a face of three columns (start, middle, end:
+// cWallPiece::ComputeSegmentVertices, Mac BV 0x744520) whose end corners are
+// mitred by the walls of the same node meeting there (ComputeMetaData,
+// 0x749138), an end with no other wall gets a cap, each wall a top of six
+// points, and each vertex where three or more walls meet a polygon over the
+// junction (cWallVertexPiece, 0x74a40c). Walls cut down by the wall modes
+// lower the top of their columns to kWallsDownHeight; in cutaway by end
+// points, as cWallCutawayManager::UpdateSceneGraph (0xc8cd90) does.
 void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
               bool roofShown, const std::vector<WallHole>& holes, LotLightMapLayout& lm,
               std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings,
               std::vector<std::array<float, 5>>* cut, ResourceIndex& index, LotModelCache* cache,
               std::vector<ObjectModel::AlphaMask>& masks, std::map<std::string, int>& maskedParts) {
+    using V2 = std::array<float, 2>;
     // Walls above the view's level are built into this and dropped: their
     // light-map cells stay, so the atlas is the same for every view.
     std::map<std::string, MeshBuilder> hidden;
@@ -391,89 +450,35 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         materials[ref] = patterns.wallMaterial(pattern);
     size_t unknownFences = 0;
     const std::vector<bool> cutaway = lotCutawayWalls(lot, view);
+    auto keyOf = [](int level, float x, float y) {
+        return std::make_tuple(level, std::lround(x * 8), std::lround(y * 8));
+    };
+    using VKey = std::tuple<int, long, long>;
+
+    // The walls drawn, with their node.
+    struct W {
+        const Lot::Wall* wall = nullptr;
+        WallNode node;
+        bool shown = false, offFoundation = false;
+        std::array<bool, 3> down{}; // columns start, middle, end
+        // Filled below: the ends' corner offsets (A: right of a -> b, B: left)
+        // and whether an end has no other wall of the node (a cap).
+        V2 a0{}, b0{}, a1{}, b1{};
+        bool capA = false, capB = false;
+    };
+    std::vector<W> ws;
     for (const auto& w : lot.walls) {
         // The column deck's skirt (walls.txt "wall 4": notRendered) is not drawn.
         if (w.type == Lot::DeckSkirt)
             continue;
-        const bool fence = Lot::isFence(w.type);
-        if (fence) {
+        if (Lot::isFence(w.type)) {
             if (!patterns.fence(w.type))
                 ++unknownFences;
             if (w.patterns == std::array<uint16_t, 2>{0xFFFF, 0xFFFF})
                 continue; // rails only: see lotFencePieces
         }
-        float dx = w.b.x - w.a.x, dy = w.b.y - w.a.y;
-        const float len = std::sqrt(dx * dx + dy * dy);
-        if (len == 0)
+        if (w.a.x == w.b.x && w.a.y == w.b.y)
             continue;
-        dx /= len, dy /= len;
-        const int level = w.a.level;
-        const bool attic = w.type == Lot::Attic;
-        const float nx = dy, ny = -dx; // right of a -> b
-        // Attic walls (the gables) stand on the level over the roof's walls
-        // and show with the roof, from the top floor.
-        // A view showing its level with the one below (a house on
-        // foundations) leaves out that level's walls of the next story of a
-        // building on the ground (storyOverGround; attic walls also over a
-        // dip: the sawtooth gables across N002_Lot31's pool pit). Not the
-        // fences: railings stand on decks over any ground.
-        bool offFoundation = false;
-        if (level == view.level && view.lowestCut < view.level && !fence && !(attic && roofShown)) {
-            const float mx = std::clamp((w.a.x + w.b.x) / 2, 0.0f, float(lot.width)),
-                        my = std::clamp((w.a.y + w.b.y) / 2, 0.0f, float(lot.height));
-            // The tiles on its two sides.
-            auto side = [&](float s) {
-                return storyOverGround(lot, level, int(std::floor((w.a.x + w.b.x) / 2 + s * nx * 0.5f)),
-                                       int(std::floor((w.a.y + w.b.y) / 2 + s * ny * 0.5f)));
-            };
-            offFoundation = (side(1) && side(-1)) ||
-                            (attic && lot.elevationAt(level, mx, my) - lot.elevationAt(level - 1, mx, my) > kStoryHeight);
-        }
-        const bool shown = (level <= view.level && !offFoundation) || (attic && roofShown && level == view.level + 1);
-        auto& out = shown ? drawn : hidden;
-        // The wall mode applies to the view's level (lower levels keep their
-        // walls up), to the walls whose partition style allows it (lotCutawayWalls).
-        const bool current = wallModeLevel(view, level);
-        bool lowered = false;
-        if (view.walls == LotViewOptions::Walls::Down)
-            lowered = current && (w.type == Lot::Normal || attic);
-        else if (view.walls == LotViewOptions::Walls::Cutaway)
-            lowered = cutaway[size_t(&w - lot.walls.data())];
-        // (A wall of the next story left out too: what hangs on it goes with it.)
-        if ((lowered || offFoundation) && cut && level <= view.level)
-            cut->push_back({w.a.x, w.a.y, w.b.x, w.b.y, float(level)});
-        // Bottom and top of the wall at a point along it (grid points or the middle).
-        auto bottom = [&](float x, float y) { return lot.elevationAt(level, x, y); };
-        auto top = [&](float x, float y, bool cut = true) {
-            const float z0 = bottom(x, y);
-            float z1 = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : z0 + kStoryHeight;
-            if (attic)
-                z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
-            else if (fence)
-                z1 = std::min(z1, z0 + kHalfWallHeight);
-            if (lowered && cut)
-                z1 = std::min(z1, z0 + kWallsDownHeight);
-            return z1;
-        };
-        const float t = kWallHalfThickness;
-        // Attic walls follow the roof through their middle too.
-        std::vector<std::array<float, 2>> points{{w.a.x - dx * t, w.a.y - dy * t}};
-        if (attic)
-            points.push_back({(w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2});
-        points.push_back({w.b.x + dx * t, w.b.y + dy * t});
-        auto clampXY = [&](std::array<float, 2> p) {
-            return std::array<float, 2>{std::clamp(p[0], 0.0f, float(lot.width)),
-                                        std::clamp(p[1], 0.0f, float(lot.height))};
-        };
-        std::vector<float> zb, zt, full; // full: the uncut top (the light-map cells)
-        for (size_t i = 0; i < points.size(); ++i) {
-            // Heights at the wall's own ends, not at the stretched corners.
-            const auto q = clampXY(i == 0 ? std::array<float, 2>{w.a.x, w.a.y}
-                                   : i + 1 == points.size() ? std::array<float, 2>{w.b.x, w.b.y} : points[i]);
-            zb.push_back(bottom(q[0], q[1]));
-            zt.push_back(top(q[0], q[1]));
-            full.push_back(top(q[0], q[1], false));
-        }
         // A partition with no covering on either side has nothing to draw
         // (its top alone floated as dark strips over the lawn; on N002_Lot10
         // those were walls read from the wrong wall graph, fixed in Lot::load).
@@ -483,196 +488,467 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 covered = true;
         if (!covered)
             continue;
+        W r;
+        r.wall = &w;
+        r.node = wallNode(w);
+        ws.push_back(r);
+    }
 
-        for (size_t seg = 0; seg + 1 < points.size(); ++seg) {
-            const float ax = points[seg][0], ay = points[seg][1], bx = points[seg + 1][0], by = points[seg + 1][1];
-            const float za0 = zb[seg], zb0 = zb[seg + 1], za1 = zt[seg], zb1 = zt[seg + 1];
-            // Doors and windows on this stretch: intervals along it (from
-            // (ax, ay)) and heights cut out of both faces.
-            const float segLen = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
-            std::vector<Cut> cuts;
-            // Attic walls too: the sawtooth roofs of N002_Lot31 have their
-            // row of windows in the attic walls between the roofs.
-            if ((w.type == Lot::Normal || attic) && !fence)
-                cuts = wallCuts(holes, ax, ay, dx, dy, segLen, std::min(za0, zb0), std::max(za1, zb1));
-            // A door or window with a wall mask for this stretch cuts its
-            // own shape: the faces get the mask (alpha tested in the wall
-            // shader) instead of the box cut. The mask spans the tile the
-            // stretch covers, u along the object's -x (u = 0 on the tile's
-            // edge toward the object's +x) and v from a story above the
-            // wall's floor down to it (inferred from the textures: a two-tile
-            // arch's halves "0" and "1e", the second one tile along +x, are
-            // open up to their shared edge only with u running along -x; u
-            // along +x opened them at the outer edges and left a strip of
-            // wall in the middle of N001_Lot82's front arches).
-            int maskIndex = -1;
-            const float base = std::min(za0, zb0);
-            for (auto c = cuts.begin(); c != cuts.end() && maskIndex < 0; ++c) {
-                const WallHole& h = holes[c->hole];
-                if (h.cutout.empty())
-                    continue;
-                // Straight: the wall runs along the object's +x. Diagonal:
-                // the "...diagonal" models stand square and their wall runs
-                // along +x + local north (rotated +90°) (the lots' diagonal
-                // windows all do), its faces "nw" and "se"; the stretch is
-                // sqrt 2 long and the next tile along is one east and one
-                // north of the object's (doorclub2diagonal_1e_1n_0_nw).
-                const float along = dx * h.east[0] + dy * h.east[1];
-                const bool diag = std::abs(std::abs(along) - 0.7071f) < 0.05f && (h.east[0] == 0 || h.east[1] == 0);
-                if (!diag && std::abs(along) < 0.99f)
-                    continue;
-                std::array<float, 2> axis{h.east[0], h.east[1]};
-                if (diag) {
-                    const float r = 1.0f / std::sqrt(2.0f);
-                    axis = {(h.east[0] - h.east[1]) * r, (h.east[1] + h.east[0]) * r};
-                }
-                const float span = diag ? std::sqrt(2.0f) : 1.0f;
-                const float mx = (w.a.x + w.b.x) / 2 - h.origin[0], my = (w.a.y + w.b.y) / 2 - h.origin[1];
-                const int k = int(std::lround((mx * axis[0] + my * axis[1]) / span));
-                const int storey = std::max(0, int(std::lround((base - h.origin[2]) / kStoryHeight)));
-                auto values = diag ? wallMaskValues(index, h.cutout, k, storey, cache, true, k)
-                                   : wallMaskValues(index, h.cutout, k, storey, cache);
-                if (!values)
-                    continue;
-                values->planar = true;
-                values->planeU = {-axis[0] / span, -axis[1] / span, 0,
-                                  0.5f + float(k) + (h.origin[0] * axis[0] + h.origin[1] * axis[1]) / span};
-                values->planeV = {0, 0, -1.0f / kStoryHeight, (base + kStoryHeight) / kStoryHeight};
-                maskIndex = int(masks.size());
-                masks.push_back(std::move(*values));
-                cuts.erase(c);
-                break;
+    // Which columns are down. Walls down: every wall of the level's nodes
+    // the mode reaches (SetLevelUpDownState 0x6c4e10: nodes 0, 2, 3 and 5;
+    // foundations and pool walls, in node 0, inferred kept up: which levels
+    // the game lowers was not read). Cutaway: the end points of the walls cut
+    // (lotCutawayWalls) are down; in every wall of nodes 0 and 2 an end at a
+    // point down is down (SetVertexUpDownState 0x7487d8) and so is its middle
+    // (SetSegmentUpDownState 0x748668), so a wall with both ends down is down
+    // whole and one with a single end down ramps down to it.
+    std::set<VKey> downPoints;
+    if (view.walls == LotViewOptions::Walls::Cutaway)
+        for (size_t i = 0; i < lot.walls.size(); ++i)
+            if (cutaway[i]) {
+                const auto& w = lot.walls[i];
+                downPoints.insert(keyOf(w.a.level, w.a.x, w.a.y));
+                downPoints.insert(keyOf(w.a.level, w.b.x, w.b.y));
             }
-            auto lerp = [&](float a, float b, float f) { return a + (b - a) * f; };
-            for (int side = 0; side < 2; ++side) {
-                auto it = materials.find(w.patterns[size_t(side)]);
-                if (it == materials.end() || it->second.empty())
-                    continue;
-                std::string key = "wall:" + it->second;
-                if (maskIndex >= 0) {
-                    key += "#mask" + std::to_string(maskIndex);
-                    maskedParts[key] = maskIndex;
-                }
-                const float s = side == 0 ? 1.0f : -1.0f;
-                // A pool wall's face toward the earth (no pool floor on that
-                // side) is under the ground: drawn, it showed past the lot's
-                // edge as a cyan box under the pool.
-                if (w.type == Lot::Pool) {
-                    const int tx = int(std::floor((ax + bx) / 2 + nx * s * 0.5f));
-                    const int ty = int(std::floor((ay + by) / 2 + ny * s * 0.5f));
-                    if (tx < 0 || ty < 0 || tx >= int(lot.width) || ty >= int(lot.height) ||
-                        lot.floor(level, uint32_t(tx), uint32_t(ty)) == std::array<uint16_t, 4>{})
-                        continue;
-                }
-                MeshBuilder& b = out[key];
-                const Vec3f n{nx * s, ny * s, 0};
-                const float ox = nx * t * s, oy = ny * t * s;
-                // The face's light-map cell, lit as the room it faces.
-                LotLightMapLayout::WallFace face;
-                face.origin = {ax + ox, ay + oy};
-                face.along = {dx, dy};
-                face.normal = {n[0], n[1]};
-                face.length = segLen;
-                face.base = std::min(za0, zb0);
-                face.top = std::max(full[seg], full[seg + 1]);
-                face.level = level;
-                face.wallA = {w.a.x, w.a.y}, face.wallB = {w.b.x, w.b.y};
-                face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1], true);
-                // An attic wall standing over the roof on its side (the tall
-                // face of a sawtooth roof, N002_Lot31) is outside there,
-                // though the room map puts the attic under that roof beside
-                // it: lit as outside (inferred; it was drawn dark).
-                if (attic && face.room) {
-                    const float mx = (ax + bx) / 2 + n[0] * 0.05f, my = (ay + by) / 2 + n[1] * 0.05f;
-                    const float under = roofs.heightAt(std::clamp(mx, 0.0f, float(lot.width)),
-                                                       std::clamp(my, 0.0f, float(lot.height)), level, -1e9f);
-                    if (under > -1e8f && under < face.top - 0.5f)
-                        face.room = 0;
-                }
-                face.material = lm.materialIndex(it->second);
-                const size_t cell = lm.addWall(face);
-                auto lmAt = [&](const Vec3f& p) {
-                    return lm.wallTexel(cell, (p[0] - face.origin[0]) * dx + (p[1] - face.origin[1]) * dy, p[2]);
-                };
-                // u runs along the wall in world units (right to left as seen from the face).
-                auto u = [&](const Vec3f& p) { return s * (p[0] * dx + p[1] * dy); };
-                // v: 0 at the top of a full wall; attic and half walls keep the
-                // texture's bottom at their base, as OpenTS2 does.
-                auto vv = [&](float z, float base, float top) {
-                    return attic || fence ? 1.0f - (z - base) / kStoryHeight : (top - z) / kStoryHeight;
-                };
-                // Pieces between the cut intervals, each split around the holes over it.
-                std::vector<float> breaks{0, segLen};
-                for (const auto& c : cuts)
-                    breaks.insert(breaks.end(), {c.u0, c.u1});
-                std::sort(breaks.begin(), breaks.end());
-                for (size_t k = 0; k + 1 < breaks.size(); ++k) {
-                    const float s0 = breaks[k], s1 = breaks[k + 1];
-                    if (s1 - s0 < 1e-4f)
-                        continue;
-                    const float f0 = s0 / segLen, f1 = s1 / segLen;
-                    const float bot0 = lerp(za0, zb0, f0), bot1 = lerp(za0, zb0, f1), top0 = lerp(za1, zb1, f0),
-                                top1 = lerp(za1, zb1, f1);
-                    std::vector<std::pair<float, float>> gaps; // z ranges cut out of this piece
-                    for (const auto& c : cuts)
-                        if (c.u0 <= s0 + 1e-4f && c.u1 >= s1 - 1e-4f)
-                            gaps.push_back({c.z0, c.z1});
-                    std::sort(gaps.begin(), gaps.end());
-                    // Solid bands: from the bottom (or a gap's top) to the next gap's bottom (or the top).
-                    std::vector<std::array<float, 4>> bands; // z at s0 low/high, z at s1 low/high
-                    std::array<float, 2> low{bot0, bot1};
-                    for (const auto& [g0, g1] : gaps) {
-                        bands.push_back({low[0], std::min(g0, top0), low[1], std::min(g0, top1)});
-                        low = {std::max(g1, bot0), std::max(g1, bot1)};
-                    }
-                    bands.push_back({low[0], top0, low[1], top1});
-                    const float x0 = ax + dx * s0 + ox, y0 = ay + dy * s0 + oy, x1 = ax + dx * s1 + ox,
-                                y1 = ay + dy * s1 + oy;
-                    for (const auto& band : bands) {
-                        if (band[1] - band[0] < 1e-4f && band[3] - band[2] < 1e-4f)
-                            continue;
-                        const Vec3f pa0{x0, y0, band[0]}, pb0{x1, y1, band[2]}, pb1{x1, y1, band[3]},
-                            pa1{x0, y0, band[1]};
-                        const uint32_t i0 = b.vertex(pa0, n, u(pa0), vv(band[0], bot0, top0), lmAt(pa0)),
-                                       i1 = b.vertex(pb0, n, u(pb0), vv(band[2], bot1, top1), lmAt(pb0)),
-                                       i2 = b.vertex(pb1, n, u(pb1), vv(band[3], bot1, top1), lmAt(pb1)),
-                                       i3 = b.vertex(pa1, n, u(pa1), vv(band[1], bot0, top0), lmAt(pa1));
-                        if (side == 0)
-                            b.quad(i0, i1, i2, i3);
-                        else
-                            b.quad(i1, i0, i3, i2);
-                    }
-                }
-            }
-            // The holes' sides through the wall: jambs (where the hole ends
-            // inside this stretch), sill and head, in the wall top's material.
-            for (const auto& c : cuts) {
-                MeshBuilder& rev = out["walltop:wall_top"];
-                auto at = [&](float along, float side, float z) {
-                    return Vec3f{ax + dx * along + nx * t * side, ay + dy * along + ny * t * side, z};
-                };
-                auto face = [&](Vec3f p0, Vec3f p1, Vec3f p2, Vec3f p3) {
-                    const Vec3f nn = normalOf(p0, p1, p2);
-                    auto vtx = [&](const Vec3f& p) {
-                        return rev.vertex(p, nn, p[0] + p[2], p[1] + p[2], lm.floorTexel(level, p[0], p[1]));
-                    };
-                    rev.quad(vtx(p0), vtx(p1), vtx(p2), vtx(p3));
-                };
-                if (c.u0 > t + 1e-3f) // jamb at u0, facing +along
-                    face(at(c.u0, -1, c.z0), at(c.u0, 1, c.z0), at(c.u0, 1, c.z1), at(c.u0, -1, c.z1));
-                if (c.u1 < segLen - t - 1e-3f) // jamb at u1, facing -along
-                    face(at(c.u1, 1, c.z0), at(c.u1, -1, c.z0), at(c.u1, -1, c.z1), at(c.u1, 1, c.z1));
-                face(at(c.u0, 1, c.z0), at(c.u0, -1, c.z0), at(c.u1, -1, c.z0), at(c.u1, 1, c.z0)); // sill, up
-                face(at(c.u0, -1, c.z1), at(c.u0, 1, c.z1), at(c.u1, 1, c.z1), at(c.u1, -1, c.z1)); // head, down
-            }
-            MeshBuilder& cap = out["walltop:wall_top"];
-            const Vec3f r0{ax + nx * t, ay + ny * t, za1}, r1{bx + nx * t, by + ny * t, zb1},
-                l1{bx - nx * t, by - ny * t, zb1}, l0{ax - nx * t, ay - ny * t, za1};
-            const Vec3f up = normalOf(r0, r1, l1);
-            // Wall tops take the floor light map of their level (inferred).
-            auto vtx = [&](const Vec3f& p) { return cap.vertex(p, up, p[0], p[1], lm.floorTexel(level, p[0], p[1])); };
-            cap.quad(vtx(r0), vtx(r1), vtx(l1), vtx(l0));
+    for (auto& r : ws) {
+        const auto& w = *r.wall;
+        const int level = w.a.level;
+        if (!r.node.followsMode || !wallModeLevel(view, level))
+            continue;
+        if (view.walls == LotViewOptions::Walls::Down) {
+            const bool lowers = r.node.index == 2 || r.node.index == 3 || (r.node.index == 0 && w.type == Lot::Normal);
+            r.down = {lowers, lowers, lowers};
+        } else if (view.walls == LotViewOptions::Walls::Cutaway && (r.node.index == 0 || r.node.index == 2)) {
+            const bool da = downPoints.count(keyOf(level, w.a.x, w.a.y)) > 0;
+            const bool db = downPoints.count(keyOf(level, w.b.x, w.b.y)) > 0;
+            r.down = {da, da || db, db};
         }
+    }
+
+    // Visibility. Attic walls (the gables) stand on the level over the
+    // roof's walls and show with the roof, from the top floor. A view showing
+    // its level with the one below (a house on foundations) leaves out that
+    // level's walls of the next story of a building on the ground
+    // (storyOverGround; attic walls also over a dip: the sawtooth gables
+    // across N002_Lot31's pool pit). Not the fences: railings stand on decks
+    // over any ground.
+    for (auto& r : ws) {
+        const auto& w = *r.wall;
+        const int level = w.a.level;
+        const bool attic = w.type == Lot::Attic, fence = Lot::isFence(w.type);
+        if (level == view.level && view.lowestCut < view.level && !fence && !(attic && roofShown)) {
+            const float len = std::hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+            const float nx = (w.b.y - w.a.y) / len, ny = -(w.b.x - w.a.x) / len;
+            const float mx = std::clamp((w.a.x + w.b.x) / 2, 0.0f, float(lot.width)),
+                        my = std::clamp((w.a.y + w.b.y) / 2, 0.0f, float(lot.height));
+            auto side = [&](float s) {
+                return storyOverGround(lot, level, int(std::floor((w.a.x + w.b.x) / 2 + s * nx * 0.5f)),
+                                       int(std::floor((w.a.y + w.b.y) / 2 + s * ny * 0.5f)));
+            };
+            r.offFoundation = (side(1) && side(-1)) ||
+                              (attic && lot.elevationAt(level, mx, my) - lot.elevationAt(level - 1, mx, my) > kStoryHeight);
+        }
+        r.shown = (level <= view.level && !r.offFoundation) || (attic && roofShown && level == view.level + 1);
+        // (A wall of the next story left out too: what hangs on it goes with it.)
+        if (cut && level <= view.level && ((r.down[0] && r.down[2]) || r.offFoundation))
+            cut->push_back({w.a.x, w.a.y, w.b.x, w.b.y, float(level)});
+    }
+
+    // The mitred corners (ComputeMetaData): at each end, the face on each
+    // side of the wall meets the wall of its node turning first toward that
+    // side, whose face looks at the same angle; the corner moves to
+    // h m / (m . n) with m = normalize(n + n') (n, n' the two faces'
+    // normals, h half the thickness). No other wall there: h n, and a cap.
+    std::map<std::pair<int, VKey>, std::vector<std::pair<size_t, int>>> atPoint; // (node, point) -> (wall, end)
+    for (size_t i = 0; i < ws.size(); ++i) {
+        const auto& w = *ws[i].wall;
+        atPoint[{ws[i].node.index, keyOf(w.a.level, w.a.x, w.a.y)}].push_back({i, 0});
+        atPoint[{ws[i].node.index, keyOf(w.a.level, w.b.x, w.b.y)}].push_back({i, 1});
+    }
+    auto unit = [](V2 v) {
+        const float n = std::hypot(v[0], v[1]);
+        return n > 0 ? V2{v[0] / n, v[1] / n} : V2{1, 0};
+    };
+    auto rightOf = [](V2 d) { return V2{d[1], -d[0]}; };
+    // The way out of wall i's end e.
+    auto outOf = [&](size_t i, int e) {
+        const auto& w = *ws[i].wall;
+        return e == 0 ? unit({w.b.x - w.a.x, w.b.y - w.a.y}) : unit({w.a.x - w.b.x, w.a.y - w.b.y});
+    };
+    constexpr float kTwoPi = 6.28318530718f;
+    // Clockwise angle from u to v in (0, 2 pi]: the way rightOf turns.
+    auto clockwise = [&](V2 u, V2 v) {
+        float a = -std::atan2(u[0] * v[1] - u[1] * v[0], u[0] * v[0] + u[1] * v[1]);
+        if (a <= 1e-5f)
+            a += kTwoPi;
+        return a;
+    };
+    for (auto& [key, ends] : atPoint)
+        for (const auto& [i, e] : ends) {
+            const V2 out = outOf(i, e);
+            const float h = ws[i].node.thickness / 2;
+            // right: the face right of the way out; left: the other.
+            V2 offset[2];
+            for (int side = 0; side < 2; ++side) {
+                const V2 nf = side == 0 ? rightOf(out) : V2{-rightOf(out)[0], -rightOf(out)[1]};
+                offset[side] = {nf[0] * h, nf[1] * h};
+                float best = 1e9f;
+                V2 ng{};
+                for (const auto& [j, f] : ends) {
+                    if (j == i)
+                        continue;
+                    const V2 dj = outOf(j, f);
+                    const float a = side == 0 ? clockwise(out, dj) : clockwise(dj, out);
+                    if (a < best) {
+                        best = a;
+                        // The neighbour's face toward the angle between them.
+                        ng = side == 0 ? V2{-rightOf(dj)[0], -rightOf(dj)[1]} : rightOf(dj);
+                    }
+                }
+                if (best > 1e8f)
+                    continue;
+                const V2 m{nf[0] + ng[0], nf[1] + ng[1]};
+                const float len = std::hypot(m[0], m[1]);
+                if (len <= 1e-6f)
+                    continue;
+                const V2 mu{m[0] / len, m[1] / len};
+                const float dot = mu[0] * nf[0] + mu[1] * nf[1];
+                if (dot > 1e-4f)
+                    offset[side] = {h * mu[0] / dot, h * mu[1] / dot};
+            }
+            W& r = ws[i];
+            // At the start the way out is a -> b: its right is side A; at the
+            // end it is b -> a, whose right is side B.
+            if (e == 0)
+                r.a0 = offset[0], r.b0 = offset[1], r.capA = ends.size() == 1;
+            else
+                r.b1 = offset[0], r.a1 = offset[1], r.capB = ends.size() == 1;
+        }
+
+    // The top of each wall's columns (start, middle, end), as drawn.
+    struct Built {
+        std::array<float, 3> floorZ{}, fullTop{}, top{}; // floor, uncut top and drawn top per column
+        std::array<V2, 6> q{};                            // Q0..Q5 (ComputeSegmentVertices)
+    };
+    std::vector<Built> built(ws.size());
+    for (size_t i = 0; i < ws.size(); ++i) {
+        const auto& r = ws[i];
+        const auto& w = *r.wall;
+        const int level = w.a.level;
+        const V2 pa{w.a.x, w.a.y}, pb{w.b.x, w.b.y}, pm{(w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2};
+        const V2 d = unit({pb[0] - pa[0], pb[1] - pa[1]}), n = rightOf(d);
+        const float h = r.node.thickness / 2;
+        Built& b = built[i];
+        const std::array<V2, 3> col{pa, pm, pb};
+        for (size_t c = 0; c < 3; ++c) {
+            const float x = std::clamp(col[c][0], 0.0f, float(lot.width)), y = std::clamp(col[c][1], 0.0f, float(lot.height));
+            b.floorZ[c] = lot.elevationAt(level, x, y);
+            b.fullTop[c] = wallTopElevation(lot, roofs, level, x, y, r.node.span);
+            const float height = r.down[c] ? kWallsDownHeight : b.fullTop[c] - b.floorZ[c];
+            b.top[c] = b.floorZ[c] + height;
+        }
+        b.q = {V2{pa[0] + r.a0[0], pa[1] + r.a0[1]}, V2{pm[0] + n[0] * h, pm[1] + n[1] * h},
+               V2{pb[0] + r.a1[0], pb[1] + r.a1[1]}, V2{pb[0] + r.b1[0], pb[1] + r.b1[1]},
+               V2{pm[0] - n[0] * h, pm[1] - n[1] * h}, V2{pa[0] + r.b0[0], pa[1] + r.b0[1]}};
+    }
+
+    const std::string topKey = "walltop:" + std::string(kWallTopMaterial);
+    for (size_t i = 0; i < ws.size(); ++i) {
+        const auto& r = ws[i];
+        const auto& w = *r.wall;
+        const Built& b = built[i];
+        const int level = w.a.level;
+        const bool attic = w.type == Lot::Attic, fence = Lot::isFence(w.type);
+        auto& out = r.shown ? drawn : hidden;
+        const float off = r.node.offset;
+        const float len = std::hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+        const V2 d = unit({w.b.x - w.a.x, w.b.y - w.a.y}), n = rightOf(d);
+        const float h = r.node.thickness / 2;
+
+        // Doors and windows on this wall: intervals along it (from a) and
+        // heights cut out of both faces.
+        std::vector<Cut> cuts;
+        // Attic walls too: the sawtooth roofs of N002_Lot31 have their row
+        // of windows in the attic walls between the roofs.
+        if ((w.type == Lot::Normal || attic) && !fence)
+            cuts = wallCuts(holes, w.a.x, w.a.y, d[0], d[1], len, std::min(b.floorZ[0], b.floorZ[2]),
+                            std::max({b.top[0], b.top[1], b.top[2]}));
+        // A door or window with a wall mask for this wall cuts its own shape:
+        // the faces get the mask (alpha tested in the wall shader) instead of
+        // the box cut. The mask spans the tile the wall covers, u along the
+        // object's -x (u = 0 on the tile's edge toward the object's +x) and v
+        // from a story above the wall's floor down to it, as the game's UV1
+        // (inferred from the textures: a two-tile arch's halves "0" and "1e",
+        // the second one tile along +x, are open up to their shared edge only
+        // with u running along -x; u along +x opened them at the outer edges
+        // and left a strip of wall in the middle of N001_Lot82's front
+        // arches).
+        int maskIndex = -1;
+        const float base = std::min(b.floorZ[0], b.floorZ[2]);
+        for (auto c = cuts.begin(); c != cuts.end() && maskIndex < 0; ++c) {
+            const WallHole& hole = holes[c->hole];
+            if (hole.cutout.empty())
+                continue;
+            // Straight: the wall runs along the object's +x. Diagonal: the
+            // "...diagonal" models stand square and their wall runs along
+            // +x + local north (rotated +90°) (the lots' diagonal windows all
+            // do), its faces "nw" and "se"; the wall is sqrt 2 long and the
+            // next tile along is one east and one north of the object's
+            // (doorclub2diagonal_1e_1n_0_nw).
+            const float along = d[0] * hole.east[0] + d[1] * hole.east[1];
+            const bool diag = std::abs(std::abs(along) - 0.7071f) < 0.05f && (hole.east[0] == 0 || hole.east[1] == 0);
+            if (!diag && std::abs(along) < 0.99f)
+                continue;
+            std::array<float, 2> axis{hole.east[0], hole.east[1]};
+            if (diag) {
+                const float rr = 1.0f / std::sqrt(2.0f);
+                axis = {(hole.east[0] - hole.east[1]) * rr, (hole.east[1] + hole.east[0]) * rr};
+            }
+            const float span = diag ? std::sqrt(2.0f) : 1.0f;
+            const float mx = (w.a.x + w.b.x) / 2 - hole.origin[0], my = (w.a.y + w.b.y) / 2 - hole.origin[1];
+            const int k = int(std::lround((mx * axis[0] + my * axis[1]) / span));
+            const int storey = std::max(0, int(std::lround((base - hole.origin[2]) / kStoryHeight)));
+            auto values = diag ? wallMaskValues(index, hole.cutout, k, storey, cache, true, k)
+                               : wallMaskValues(index, hole.cutout, k, storey, cache);
+            if (!values)
+                continue;
+            values->planar = true;
+            values->planeU = {-axis[0] / span, -axis[1] / span, 0,
+                              0.5f + float(k) + (hole.origin[0] * axis[0] + hole.origin[1] * axis[1]) / span};
+            values->planeV = {0, 0, -1.0f / kStoryHeight, (base + kStoryHeight) / kStoryHeight};
+            maskIndex = int(masks.size());
+            masks.push_back(std::move(*values));
+            cuts.erase(c);
+            break;
+        }
+
+        // The two faces: side 0 is a -> b's (A, the right: patterns[0]),
+        // side 1 the opposite locator's (B). Each face runs from its own
+        // locator's start: columns start, middle, end.
+        for (int side = 0; side < 2; ++side) {
+            auto it = materials.find(w.patterns[size_t(side)]);
+            if (it == materials.end() || it->second.empty())
+                continue;
+            const float s = side == 0 ? 1.0f : -1.0f;
+            // A pool wall's face toward the earth (no pool floor on that side)
+            // is under the ground: drawn, it showed past the lot's edge as a
+            // cyan box under the pool.
+            if (w.type == Lot::Pool) {
+                const int tx = int(std::floor((w.a.x + w.b.x) / 2 + n[0] * s * 0.5f));
+                const int ty = int(std::floor((w.a.y + w.b.y) / 2 + n[1] * s * 0.5f));
+                if (tx < 0 || ty < 0 || tx >= int(lot.width) || ty >= int(lot.height) ||
+                    lot.floor(level, uint32_t(tx), uint32_t(ty)) == std::array<uint16_t, 4>{})
+                    continue;
+            }
+            std::string key = "wall:" + it->second;
+            if (maskIndex >= 0) {
+                key += "#mask" + std::to_string(maskIndex);
+                maskedParts[key] = maskIndex;
+            }
+            MeshBuilder& mb = out[key];
+            const Vec3f nrm{n[0] * s, n[1] * s, 0};
+            // The face's columns in its locator's order, `t` along a -> b from a.
+            struct Col {
+                float t, z0, z1, full;
+                V2 p;
+                float u;
+            };
+            const std::array<int, 3> order = side == 0 ? std::array<int, 3>{0, 1, 2} : std::array<int, 3>{2, 1, 0};
+            const std::array<V2, 3> face = side == 0 ? std::array<V2, 3>{b.q[0], b.q[1], b.q[2]}
+                                                     : std::array<V2, 3>{b.q[3], b.q[4], b.q[5]};
+            std::array<Col, 3> cols;
+            for (int c = 0; c < 3; ++c) {
+                const int k = order[size_t(c)];
+                const V2 p = face[size_t(c)];
+                cols[size_t(c)] = {(p[0] - w.a.x) * d[0] + (p[1] - w.a.y) * d[1], b.floorZ[size_t(k)], b.top[size_t(k)],
+                                   b.fullTop[size_t(k)], p, 0.5f * float(c)};
+            }
+            // The face's light-map cell, lit as the room it faces: the face's
+            // line from its least to its farthest point along a -> b.
+            const float t0 = std::min({0.0f, cols[0].t, cols[2].t}), t1 = std::max({len, cols[0].t, cols[2].t});
+            LotLightMapLayout::WallFace lf;
+            lf.origin = {w.a.x + n[0] * h * s + d[0] * t0, w.a.y + n[1] * h * s + d[1] * t0};
+            lf.along = {d[0], d[1]};
+            lf.normal = {nrm[0], nrm[1]};
+            lf.length = t1 - t0;
+            lf.base = std::min(b.floorZ[0], b.floorZ[2]);
+            lf.top = std::max({b.fullTop[0], b.fullTop[1], b.fullTop[2]});
+            lf.level = level;
+            lf.wallA = {w.a.x, w.a.y}, lf.wallB = {w.b.x, w.b.y};
+            lf.room = roomBeside(lot, level, (w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, nrm[0], nrm[1], true);
+            // An attic wall standing over the roof on its side (the tall face
+            // of a sawtooth roof, N002_Lot31) is outside there, though the
+            // room map puts the attic under that roof beside it: lit as
+            // outside (inferred; it was drawn dark).
+            if (attic && lf.room) {
+                const float mx = (w.a.x + w.b.x) / 2 + nrm[0] * 0.05f, my = (w.a.y + w.b.y) / 2 + nrm[1] * 0.05f;
+                const float under = roofs.heightAt(std::clamp(mx, 0.0f, float(lot.width)),
+                                                   std::clamp(my, 0.0f, float(lot.height)), level, -1e9f);
+                if (under > -1e8f && under < lf.top - 0.5f)
+                    lf.room = 0;
+            }
+            lf.material = lm.materialIndex(it->second);
+            const size_t cell = lm.addWall(lf);
+            auto lmAt = [&](const Vec3f& p) {
+                return lm.wallTexel(cell, (p[0] - lf.origin[0]) * d[0] + (p[1] - lf.origin[1]) * d[1], p[2]);
+            };
+            // Wallpaper (UV0): u 0, 0.5, 1 over the three columns, whatever
+            // the mitre; v from the wall's top down, a story to the texture
+            // (D / 3 at the floor, D the full height, so a wall cut down
+            // shows the foot of its paper), or from 1 at the floor for the
+            // styles that do not require a flat top (attic and half walls);
+            // + 0.05 on deck skirts (span 4).
+            auto vFloor = [&](const Col& c) {
+                float v = r.node.flatTop ? (c.full - c.z0) / kStoryHeight : 1.0f;
+                if (r.node.flatTop && r.node.span == kSpanFloorToFloorBasedCeiling)
+                    v += 0.05f;
+                return v;
+            };
+            // Pieces between the columns and the holes' edges, each split
+            // around the holes over it.
+            std::vector<float> breaks{cols[0].t, cols[1].t, cols[2].t};
+            const bool rising = cols[2].t >= cols[0].t;
+            for (const auto& c : cuts)
+                for (float x : {c.u0, c.u1})
+                    if (rising ? (x > cols[0].t && x < cols[2].t) : (x < cols[0].t && x > cols[2].t))
+                        breaks.push_back(x);
+            std::sort(breaks.begin(), breaks.end());
+            if (!rising)
+                std::reverse(breaks.begin(), breaks.end());
+            // A point of the face at `t` (interpolated between its columns).
+            struct At {
+                V2 p;
+                float z0, z1, u, v0;
+            };
+            auto at = [&](float t) {
+                const bool first = rising ? t <= cols[1].t : t >= cols[1].t;
+                const Col& c0 = first ? cols[0] : cols[1];
+                const Col& c1 = first ? cols[1] : cols[2];
+                const float f = std::abs(c1.t - c0.t) > 1e-6f ? std::clamp((t - c0.t) / (c1.t - c0.t), 0.0f, 1.0f) : 0.0f;
+                auto lerp = [&](float x, float y) { return x + (y - x) * f; };
+                return At{V2{lerp(c0.p[0], c1.p[0]), lerp(c0.p[1], c1.p[1])}, lerp(c0.z0, c1.z0), lerp(c0.z1, c1.z1),
+                          lerp(c0.u, c1.u), lerp(vFloor(c0), vFloor(c1))};
+            };
+            for (size_t k = 0; k + 1 < breaks.size(); ++k) {
+                const float s0 = breaks[k], s1 = breaks[k + 1];
+                if (std::abs(s1 - s0) < 1e-4f)
+                    continue;
+                const At p0 = at(s0), p1 = at(s1);
+                std::vector<std::pair<float, float>> gaps; // z ranges cut out of this piece
+                for (const auto& c : cuts)
+                    if (c.u0 <= std::min(s0, s1) + 1e-4f && c.u1 >= std::max(s0, s1) - 1e-4f)
+                        gaps.push_back({c.z0, c.z1});
+                std::sort(gaps.begin(), gaps.end());
+                // Solid bands: from the bottom (or a gap's top) to the next gap's bottom (or the top).
+                std::vector<std::array<float, 4>> bands; // z at s0 low/high, z at s1 low/high
+                std::array<float, 2> low{p0.z0, p1.z0};
+                for (const auto& [g0, g1] : gaps) {
+                    bands.push_back({low[0], std::min(g0, p0.z1), low[1], std::min(g0, p1.z1)});
+                    low = {std::max(g1, p0.z0), std::max(g1, p1.z0)};
+                }
+                bands.push_back({low[0], p0.z1, low[1], p1.z1});
+                for (const auto& band : bands) {
+                    if (band[1] - band[0] < 1e-4f && band[3] - band[2] < 1e-4f)
+                        continue;
+                    // v runs down a story per 3 up from the column's floor.
+                    auto vtx = [&](const At& p, float z) {
+                        const Vec3f pos{p.p[0], p.p[1], z + off};
+                        return mb.vertex(pos, nrm, p.u, p.v0 - (z - p.z0) / kStoryHeight, lmAt({p.p[0], p.p[1], z}));
+                    };
+                    const uint32_t i0 = vtx(p0, band[0]), i1 = vtx(p1, band[2]), i2 = vtx(p1, band[3]), i3 = vtx(p0, band[1]);
+                    // Counter-clockwise seen from the face's side (each
+                    // face runs along its own locator).
+                    mb.quad(i0, i1, i2, i3);
+                }
+            }
+            // The cap of the face's locator's start when no other wall of the
+            // node meets it (cWallSide::InsertVertices 0x745ec4): from this
+            // face's corner across the wall to the other face's, normal back
+            // along the wall, the paper from u = 1 - thickness to 1.
+            if (side == 0 ? r.capA : r.capB) {
+                const int k = side == 0 ? 0 : 2;
+                const V2 qa = side == 0 ? b.q[0] : b.q[3], qb = side == 0 ? b.q[5] : b.q[2];
+                const Vec3f cn{-d[0] * s, -d[1] * s, 0};
+                const float z0 = b.floorZ[size_t(k)], z1 = b.top[size_t(k)];
+                const Col& c = cols[0];
+                const float v0 = vFloor(c), v1 = v0 - (z1 - z0) / kStoryHeight;
+                // Light map: the first `thickness` of the face's cell.
+                auto lmCap = [&](float t, float z) {
+                    return lm.wallTexel(cell, (c.p[0] - lf.origin[0]) * d[0] + (c.p[1] - lf.origin[1]) * d[1] + t * s, z);
+                };
+                const uint32_t i0 = mb.vertex({qb[0], qb[1], z0 + off}, cn, 1 - r.node.thickness, v0, lmCap(r.node.thickness, z0)),
+                               i1 = mb.vertex({qa[0], qa[1], z0 + off}, cn, 1, v0, lmCap(0, z0)),
+                               i2 = mb.vertex({qa[0], qa[1], z1 + off}, cn, 1, v1, lmCap(0, z1)),
+                               i3 = mb.vertex({qb[0], qb[1], z1 + off}, cn, 1 - r.node.thickness, v1, lmCap(r.node.thickness, z1));
+                // Facing away from the face's locator: counter-clockwise from there.
+                mb.quad(i0, i1, i2, i3);
+            }
+        }
+        // The holes' sides through the wall: jambs (where the hole ends
+        // inside the wall), sill and head, in the wall top's material (the
+        // game has none: its masks cut the faces and the frames cover the
+        // edges; these close the box cuts of objects without a mask).
+        for (const auto& c : cuts) {
+            MeshBuilder& rev = out[topKey];
+            auto pt = [&](float along, float sd, float z) {
+                return Vec3f{w.a.x + d[0] * along + n[0] * h * sd, w.a.y + d[1] * along + n[1] * h * sd, z};
+            };
+            auto quadFace = [&](Vec3f p0, Vec3f p1, Vec3f p2, Vec3f p3) {
+                const Vec3f nn = normalOf(p0, p1, p2);
+                auto vtx = [&](const Vec3f& p) { return rev.vertex(p, nn, p[0] + p[2], p[1] + p[2]); };
+                rev.quad(vtx(p0), vtx(p1), vtx(p2), vtx(p3));
+            };
+            if (c.u0 > 1e-3f) // jamb at u0, facing +along
+                quadFace(pt(c.u0, -1, c.z0), pt(c.u0, 1, c.z0), pt(c.u0, 1, c.z1), pt(c.u0, -1, c.z1));
+            if (c.u1 < len - 1e-3f) // jamb at u1, facing -along
+                quadFace(pt(c.u1, 1, c.z0), pt(c.u1, -1, c.z0), pt(c.u1, -1, c.z1), pt(c.u1, 1, c.z1));
+            quadFace(pt(c.u0, 1, c.z0), pt(c.u0, -1, c.z0), pt(c.u1, -1, c.z0), pt(c.u1, 1, c.z0)); // sill, up
+            quadFace(pt(c.u0, -1, c.z1), pt(c.u0, 1, c.z1), pt(c.u1, 1, c.z1), pt(c.u1, -1, c.z1)); // head, down
+        }
+        // The top (cWallTop::InsertVertices 0x745cfc): Q0..Q5 at the top of
+        // their columns, normal up, the texture by the point's (x, y) in the
+        // world; no light map (its subset has no light-map page: 2 x the
+        // texture, kWallTopMaterial).
+        {
+            MeshBuilder& top = out[topKey];
+            const Vec3f up{0, 0, 1};
+            const std::array<size_t, 6> colOf{0, 1, 2, 2, 1, 0};
+            std::array<uint32_t, 6> id{};
+            for (size_t k = 0; k < 6; ++k)
+                id[k] = top.vertex({b.q[k][0], b.q[k][1], b.top[colOf[k]] + off}, up, b.q[k][0], b.q[k][1]);
+            top.triangle(id[0], id[1], id[4]);
+            top.triangle(id[4], id[5], id[0]);
+            top.triangle(id[1], id[2], id[3]);
+            top.triangle(id[3], id[4], id[1]);
+        }
+    }
+
+    // Where three or more walls of a node meet (cWallVertexPiece), the
+    // polygon of their corners: of each wall the top corner right of its way
+    // out of the point (Q0 if it starts there, Q3 if it ends there), going
+    // round the point; normal up, the texture by (x, y), at the wall's top
+    // there (down with the point).
+    for (const auto& [key, ends] : atPoint) {
+        if (ends.size() < 3)
+            continue;
+        std::vector<std::pair<float, std::array<float, 3>>> corners;
+        bool shown = false;
+        for (const auto& [i, e] : ends) {
+            const V2 out = outOf(i, e);
+            const Built& b = built[i];
+            const V2 q = e == 0 ? b.q[0] : b.q[3];
+            const float z = (e == 0 ? b.top[0] : b.top[2]) + ws[i].node.offset;
+            corners.push_back({std::atan2(out[1], out[0]), {q[0], q[1], z}});
+            shown = shown || ws[i].shown;
+        }
+        std::sort(corners.begin(), corners.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+        MeshBuilder& poly = (shown ? drawn : hidden)[topKey];
+        const Vec3f up{0, 0, 1};
+        std::vector<uint32_t> id;
+        for (const auto& [angle, p] : corners)
+            id.push_back(poly.vertex(p, up, p[0], p[1]));
+        for (size_t k = 1; k + 1 < id.size(); ++k)
+            poly.triangle(id[0], id[k], id[k + 1]);
     }
     if (unknownFences)
         warnings.push_back(std::to_string(unknownFences) + " fence segments of unknown fences");
@@ -1237,10 +1513,10 @@ int lotTopLevel(const Lot& lot) {
 // is added when the light maps are made); FillFromRooves the roofs' height
 // over their rectangles; FillFromWalls each wall's top at its two ends,
 // drawn along the wall for the sun's direction (computeLotLightMap). A
-// wall's top: on the top level the wall's height over the floor, below it
-// the next level's floor (attic walls: the roof less its offset, half walls
-// and fences their own height; the binary's fence heights per style are
-// inferred as the half wall's; rails cast none, FenceStyleHasNoShadow).
+// wall's top: the drawn one (wallTopElevation: on the top level a story
+// over the floor, below it the next level's floor, attic walls the roof
+// less 0.25, half walls 1.025 over their floor; that FillFromWalls takes the
+// same is inferred; rails cast none, FenceStyleHasNoShadow).
 void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& lm) {
     constexpr int k = LotLightMapLayout::kTexelsPerTile;
     const long w = long(lot.width) * k, h = long(lot.height) * k;
@@ -1259,15 +1535,9 @@ void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& 
         const int level = wl.a.level;
         if (wl.a.x == wl.b.x && wl.a.y == wl.b.y)
             continue;
-        auto topAt = [&](float x, float y) {
-            const float z0 = lot.elevationAt(level, x, y);
-            float z1 = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : z0 + kStoryHeight;
-            if (wl.type == Lot::Attic)
-                z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
-            else if (fence)
-                z1 = std::min(z1, z0 + kHalfWallHeight);
-            return z1;
-        };
+        // The wall's top as drawn (WallTopElevation, the node's span).
+        const int span = wallNode(wl).span;
+        auto topAt = [&](float x, float y) { return wallTopElevation(lot, roofs, level, x, y, span); };
         LotLightMapLayout::SunWall sw;
         sw.a = {wl.a.x, wl.a.y};
         sw.b = {wl.b.x, wl.b.y};
@@ -1475,6 +1745,32 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         model.parts.push_back(std::move(part));
     }
 
+    // The wall tops: CombinedWallMaterial("wall_top", "wallSolid_mask") with
+    // no light-map page, which the WallpaperAndMask shader draws as 2 x the
+    // wallpaper (docs/shaders-mac.md §5): an unlit material with wall_top's
+    // texture and a diffuse of 2.
+    if (std::any_of(model.parts.begin(), model.parts.end(),
+                    [](const ObjectModel::Part& p) { return p.material == kWallTopMaterial; })) {
+        std::string texture = "wall-top";
+        try {
+            if (auto loc = index.findByName("wall_top_txmt", kTypeTxmt)) {
+                const auto bytes = index.read(*loc);
+                Rcol rc(bytes);
+                if (const auto* block = rc.find("cMaterialDefinition"))
+                    if (auto t = MaterialDefinition::parse(block->body).property("stdMatBaseTextureName"); !t.empty())
+                        texture = t;
+            }
+        } catch (const std::exception& e) {
+            model.warnings.push_back(std::string("wall_top: ") + e.what());
+        }
+        MaterialDefinition m;
+        m.materialType = "StandardMaterial";
+        m.properties = {{"stdMatBaseTextureName", texture},
+                        {"stdMatDiffCoef", "2,2,2,1"},
+                        {"stdMatLightingEnabled", "false"},
+                        {"stdMatSpecPower", "0"}};
+        model.materials[kWallTopMaterial] = m;
+    }
     for (const auto& part : model.parts) {
         if (part.material.empty() || model.materials.count(part.material))
             continue;

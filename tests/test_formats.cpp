@@ -520,13 +520,17 @@ static void testLotModel() {
         check(upAndCcw, "floor triangles face up, counter-clockwise");
         check(northEast, "floor quarters are the north and east ones");
     }
-    // Pattern 0 is the right side of a -> b: +X for a wall running +Y.
-    check(wall && wall->mesh.triangles.size() == 6 && wall->mesh.normals[0][0] == 1.0f, "wall right side faces +X");
+    // Pattern 0 is the right side of a -> b: +X for a wall running +Y; the
+    // face is two quads (start, middle, end columns) and, the wall's start
+    // meeting no other wall, a cap there (the end's cap belongs to the left
+    // face, which has no covering here).
+    check(wall && wall->mesh.triangles.size() == 18 && wall->mesh.normals[0][0] == 1.0f, "wall right side faces +X");
     if (wall) {
         float top = 0;
         for (const auto& p : wall->mesh.positions)
             top = std::max(top, p[2]);
-        check(top == 3.0f, "wall reaches the next level");
+        // The node's height offset, -0.01 (cWallGeometryNode, Mac BV 0x74ab40).
+        check(std::abs(top - 2.99f) < 1e-5f, "wall reaches the next level (less the node's offset)");
     }
     check(wall && wall->mesh.uvs2.size() == wall->mesh.positions.size(), "walls get light-map coordinates");
     check(floor && floor->mesh.uvs2.size() == floor->mesh.positions.size(), "floors get light-map coordinates");
@@ -576,7 +580,8 @@ static void testLotModel() {
     down.level = 0;
     check(wallTop(buildLotModel(lot, index, patterns, down, nullptr, &cache)) < 0.5f, "walls down on the wall's level");
     down.level = 1; // looking at the level above: this level's walls stay up
-    check(wallTop(buildLotModel(lot, index, patterns, down, nullptr, &cache)) == 3.0f, "lower levels keep their walls up");
+    check(std::abs(wallTop(buildLotModel(lot, index, patterns, down, nullptr, &cache)) - 2.99f) < 1e-5f,
+          "lower levels keep their walls up");
     down.level = -1;
     check(wallTop(buildLotModel(lot, index, patterns, down, &hiddenLayout, &cache)) < 0, "levels above the view are hidden");
     check(upLayout.walls.size() == downLayout.walls.size() && downLayout.walls.size() == hiddenLayout.walls.size() &&
@@ -1145,6 +1150,166 @@ static void testNakedOutfitKeepsHair() {
 // to the edge the two tiles share and keeps the wall at its outer edges. The
 // wall masks' u ran the other way: open at the outer edges with a strip of
 // wall in the middle, which looked like two leaves swung open.
+// Walls as cWallGeometryNode builds them (docs/walls-floors-mac.md §2-3):
+// mitred corners, caps on free ends, junction polygons, the tops' world
+// (x, y) texture with no light map, cut walls showing the foot of the
+// paper, ramps toward a cut end, half walls 1.025 high.
+static void testWallGeometry() {
+    const auto empty = std::filesystem::temp_directory_path() / "os2_test_empty_res";
+    std::filesystem::create_directories(empty);
+    ResourceIndex index(empty);
+    const PatternCatalog patterns(index, empty);
+    Lot lot;
+    lot.width = 3, lot.height = 3, lot.levelCount = 2;
+    lot.elevations.assign(2 * 4 * 4, 0.0f);
+    for (size_t i = 16; i < 32; ++i)
+        lot.elevations[i] = 3.0f;
+    lot.floors.assign(2 * 3 * 3, {});
+    lot.wallPatterns[1] = "paper";
+    auto add = [&](Lot& l, float ax, float ay, float bx, float by, uint32_t type = Lot::Normal) {
+        Lot::Wall w;
+        w.a = {ax, ay, 0}, w.b = {bx, by, 0};
+        w.type = type;
+        w.patterns = {1, 1};
+        l.walls.push_back(w);
+    };
+    add(lot, 1, 1, 2, 1); // east
+    add(lot, 1, 1, 1, 2); // north: an L at (1, 1)
+    constexpr float h = 0.075f;
+    auto part = [](const ObjectModel& m, const std::string& node) -> const ObjectModel::Part* {
+        for (const auto& p : m.parts)
+            if (p.node == node)
+                return &p;
+        return nullptr;
+    };
+    auto near = [](float a, float b) { return std::abs(a - b) < 1e-4f; };
+    {
+        const ObjectModel m = buildLotModel(lot, index, patterns);
+        const auto* wall = part(m, "wall:paper");
+        // The east wall's south face reaches the outer corner (1 - h, 1 - h);
+        // its north face starts at the inner one (1 + h, 1 + h).
+        float southMin = 9, northMin = 9;
+        size_t caps = 0;
+        for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i) {
+            const auto& p = wall->mesh.positions[i];
+            const auto& n = wall->mesh.normals[i];
+            if (near(n[1], -1) && near(p[1], 1 - h))
+                southMin = std::min(southMin, p[0]);
+            if (near(n[1], 1) && near(p[1], 1 + h))
+                northMin = std::min(northMin, p[0]);
+            if ((near(n[0], 1) && near(p[0], 2)) || (near(n[1], 1) && near(p[1], 2)))
+                ++caps;
+        }
+        check(near(southMin, 1 - h) && near(northMin, 1 + h), "walls mitre at an L corner");
+        check(caps == 8, "a cap on each free end, none at the corner");
+        const auto* top = part(m, "walltop:wall_top 2x");
+        bool worldUv = top && top->mesh.uvs2.empty() && !top->mesh.positions.empty();
+        for (size_t i = 0; top && i < top->mesh.positions.size(); ++i)
+            worldUv = worldUv && top->mesh.uvs[i][0] == top->mesh.positions[i][0] &&
+                      top->mesh.uvs[i][1] == top->mesh.positions[i][1] && top->mesh.normals[i][2] == 1.0f;
+        check(worldUv, "wall tops: texture by world (x, y), normal up, no light map");
+        auto mat = m.materials.find("wall_top 2x");
+        check(mat != m.materials.end() && mat->second.property("stdMatDiffCoef") == "2,2,2,1" &&
+                  mat->second.property("stdMatLightingEnabled") == "false",
+              "wall tops: 2 x the texture, unlit");
+        // The wallpaper: u 0, 0.5, 1 along each face, v 0 at the top of a
+        // full wall and 1 at its floor.
+        bool paper = wall != nullptr;
+        for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i) {
+            const auto& p = wall->mesh.positions[i];
+            const auto& n = wall->mesh.normals[i];
+            if (!near(n[1], -1)) // the east wall's south face
+                continue;
+            const float u = wall->mesh.uvs[i][0], v = wall->mesh.uvs[i][1];
+            paper = paper && near(u, std::clamp(p[0] - 1, 0.0f, 1.0f) < 0.25f ? 0.0f : p[0] > 1.75f ? 1.0f : 0.5f) &&
+                    near(v, (2.99f - p[2]) / 3.0f);
+        }
+        check(paper, "wallpaper: u 0/0.5/1 per wall, v a story from the top");
+    }
+    {
+        // A T: the junction polygon over (1, 1).
+        Lot t = lot;
+        add(t, 1, 1, 0, 1); // west
+        const ObjectModel m = buildLotModel(t, index, patterns);
+        const auto* top = part(m, "walltop:wall_top 2x");
+        bool junction = false;
+        for (size_t k = 0; top && k < top->mesh.triangles.size(); k += 3) {
+            bool all = true;
+            for (int j = 0; j < 3; ++j) {
+                const auto& p = top->mesh.positions[top->mesh.triangles[k + size_t(j)]];
+                all = all && std::abs(p[0] - 1) < 0.11f && std::abs(p[1] - 1) < 0.11f && near(p[2], 2.99f);
+            }
+            junction = junction || all;
+        }
+        check(junction, "three walls: a polygon over their junction");
+    }
+    {
+        // Walls down: the face shows the foot of its paper (v 1 at the
+        // floor, 1 - 0.2 / 3 at the cut top).
+        LotViewOptions down;
+        down.walls = LotViewOptions::Walls::Down;
+        const ObjectModel m = buildLotModel(lot, index, patterns, down);
+        const auto* wall = part(m, "wall:paper");
+        float vMin = 9, vMax = -9, zMax = -9;
+        for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i) {
+            if (std::abs(wall->mesh.normals[i][2]) > 0.5f)
+                continue;
+            vMin = std::min(vMin, wall->mesh.uvs[i][1]);
+            vMax = std::max(vMax, wall->mesh.uvs[i][1]);
+            zMax = std::max(zMax, wall->mesh.positions[i][2]);
+        }
+        check(near(vMax, 1) && near(vMin, 1 - 0.2f / 3) && near(zMax, 0.19f), "walls down show the foot of the paper");
+    }
+    {
+        // Cutaway by end points: the inside wall at x = 1 (rooms 1 | 2) is
+        // cut; the outside wall along y = 1 from its top end (1, 1) keeps
+        // its far end up and ramps down from the middle.
+        Lot c;
+        c.width = 3, c.height = 1, c.levelCount = 1;
+        c.elevations.assign(4 * 2, 0.0f);
+        c.floors.assign(3, {});
+        c.rooms.assign(3, {});
+        c.rooms[0] = {1, 1, 1, 1};
+        c.rooms[1] = {2, 2, 2, 2};
+        c.wallPatterns[1] = "paper";
+        add(c, 1, 0, 1, 1);
+        add(c, 1, 1, 2, 1);
+        LotViewOptions v;
+        v.walls = LotViewOptions::Walls::Cutaway;
+        v.level = 0;
+        v.viewDirection = {0, 1}; // looking +y: the y = 1 wall's outside face looks away
+        const auto set = lotCutawayWalls(c, v);
+        check(set.size() == 2 && set[0] && !set[1], "cutaway: the inside wall only");
+        LotModelCache k;
+        const ObjectModel m = buildLotModel(c, index, patterns, v, nullptr, &k);
+        const auto* wall = part(m, "wall:paper");
+        float midTop = -9, farTop = -9;
+        for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i) {
+            const auto& p = wall->mesh.positions[i];
+            if (std::abs(std::abs(wall->mesh.normals[i][1]) - 1) > 1e-3f)
+                continue;
+            if (near(p[0], 1.5f))
+                midTop = std::max(midTop, p[2]);
+            if (std::abs(p[0] - 2) < 0.1f)
+                farTop = std::max(farTop, p[2]);
+        }
+        check(near(midTop, 0.19f) && near(farTop, 2.99f), "a wall touching a cut wall's end ramps down to it");
+        check(k.cut.size() == 1 && k.cut[0][0] == 1 && k.cut[0][2] == 1, "only walls down at both ends hide what hangs on them");
+    }
+    {
+        // A half wall (a fence with a covering): 1.025 over its floor.
+        Lot f = lot;
+        f.walls.clear();
+        add(f, 0, 0, 1, 0, 0x1234ABCD);
+        const ObjectModel m = buildLotModel(f, index, patterns);
+        const auto* wall = part(m, "wall:paper");
+        float top = -9;
+        for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i)
+            top = std::max(top, wall->mesh.positions[i][2]);
+        check(near(top, 1.025f - 0.01f), "half walls: 1.025 over the floor");
+    }
+}
+
 static void testTwoTileArchMask() {
     const char* data = std::getenv("OS2_DATA");
     if (!data)
@@ -1459,6 +1624,7 @@ int main() {
     testStandardMaterial();
     testPropertySet();
     testLotModel();
+    testWallGeometry();
     testLotLightMap();
     testLotWater();
     testGameRoofs();
