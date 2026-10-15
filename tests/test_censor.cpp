@@ -136,6 +136,18 @@ static void testScreenRect() {
     check(direct && mirrored && direct->x0 == 55 && direct->x1 == 75 && mirrored->x0 == 25 && mirrored->x1 == 45 &&
               mirrored->y0 == direct->y0 && mirrored->y1 == direct->y1,
           "the reflected view's rectangle is the mirrored one");
+    // A mirror's rectangle (its viewer's cropped projection): snapped
+    // outwards, held in the view, the whole view when it reaches behind the
+    // eye, none under a pixel.
+    auto m = Renderer::mirrorRect(simd_make_float3(-0.5f, -0.5f, 0), simd_make_float3(0.5f, 0.25f, 0), vp, 100, 100);
+    check(m && m->x0 == 25 && m->x1 == 75 && m->y0 == 37 && m->y1 == 75, "mirror rectangle in pixels");
+    auto mo = Renderer::mirrorRect(simd_make_float3(0.5f, -0.5f, 0), simd_make_float3(3, 0.5f, 0), vp, 100, 100);
+    check(mo && mo->x0 == 75 && mo->x1 == 100 && near(mo->nx1, 1), "mirror rectangle held in the view");
+    auto mb = Renderer::mirrorRect(simd_make_float3(-0.5f, -0.5f, 0), simd_make_float3(0.5f, 0.25f, 0), behind, 100, 100);
+    check(mb && mb->x0 == 0 && mb->x1 == 100 && mb->y0 == 0 && mb->y1 == 100, "a mirror reaching behind the eye: the whole view");
+    check(!Renderer::mirrorRect(simd_make_float3(2, 2, 0), simd_make_float3(3, 3, 0), vp, 100, 100), "a mirror off screen: none");
+    check(!Renderer::mirrorRect(simd_make_float3(0.5f, 0.5f, 0), simd_make_float3(0.5f, 0.6f, 0), vp, 100, 100),
+          "a mirror under a pixel wide: none");
 }
 
 // With the game's data (OS2_DATA): the tutorial's Joe, naked, gets one box

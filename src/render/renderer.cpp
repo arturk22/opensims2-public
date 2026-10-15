@@ -130,8 +130,15 @@ struct Frame {
     simd_float4 environment; // rgb: the environment light (env cubes)
     simd_float4 clip;        // a plane (xyz normal, w offset) that keeps what is on its positive side, when viewport.z is 1
     simd_float4 viewport;    // xy: the target's size in pixels, z: clip on, w: ground clip height
+    simd_float4x4 screen;    // the view's viewProj (a mirror's pixel reads the reflection there)
 };
-constexpr size_t kFrameStride = 256; // the frame buffer holds the frame, then the reflected one at this offset
+constexpr size_t kFrameStride = 512; // the frame buffer holds Frames this far apart (slots)
+static_assert(sizeof(Frame) <= kFrameStride);
+// The slots: 0 the view, 1 + m mirror m's reflected view, then the
+// censor's tiles of the view and of each mirror's (kMaxCensorBoxes each).
+constexpr size_t kSlotCensorView = 1 + size_t(Renderer::kMaxMirrors);
+constexpr size_t kFrameSlots = kSlotCensorView + size_t(Renderer::kMaxCensorBoxes) * (1 + size_t(Renderer::kMaxMirrors));
+size_t mirrorCensorSlot(int m) { return kSlotCensorView + size_t(Renderer::kMaxCensorBoxes) * size_t(1 + m); }
 
 simd_float4x4 identity() { return matrix_identity_float4x4; }
 
@@ -318,34 +325,34 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     }
     MTL::Function* vs = library->newFunction(str("vertex_main"));
     MTL::Function* fs = library->newFunction(str("fragment_main"));
-    {
-        MTL::Function* cvs = library->newFunction(str("censor_vs"));
-        MTL::Function* cfs = library->newFunction(str("censor_fs"));
+    MTL::Function* cvs = library->newFunction(str("censor_vs"));
+    MTL::Function* cfs = library->newFunction(str("censor_fs"));
+    // The reflection target's depth also holds the mirrors' stencil.
+    const MTL::PixelFormat stencilDepth = MTL::PixelFormatDepth32Float_Stencil8;
+
+    auto censorPipeline = [&](MTL::PixelFormat depth, MTL::PixelFormat stencil) {
         MTL::RenderPipelineDescriptor* desc = MTL::RenderPipelineDescriptor::alloc()->init();
         desc->setVertexFunction(cvs);
         desc->setFragmentFunction(cfs);
         desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat(colorFormat));
-        desc->setDepthAttachmentPixelFormat(MTL::PixelFormat(depthFormat));
-        censor_ = device_->newRenderPipelineState(desc, &error);
+        desc->setDepthAttachmentPixelFormat(depth);
+        desc->setStencilAttachmentPixelFormat(stencil);
+        MTL::RenderPipelineState* state = device_->newRenderPipelineState(desc, &error);
         desc->release();
-        cvs->release();
-        cfs->release();
-        if (!censor_) {
-            std::string msg = "censor pipeline creation failed: " + errorText(error);
-            vs->release();
-            fs->release();
-            library->release();
-            pool->release();
-            throw std::runtime_error(msg);
-        }
-    }
-
-    auto pipeline = [&](StandardMaterial::Blend blend) {
+        if (!state)
+            throw std::runtime_error("censor pipeline creation failed: " + errorText(error));
+        return state;
+    };
+    // `mark`: the mirror quads into the stencil (no colour written).
+    auto pipeline = [&](StandardMaterial::Blend blend, MTL::PixelFormat depth = MTL::PixelFormatInvalid,
+                        MTL::PixelFormat stencil = MTL::PixelFormatInvalid, bool mark = false) {
         MTL::RenderPipelineDescriptor* desc = MTL::RenderPipelineDescriptor::alloc()->init();
         desc->setVertexFunction(vs);
         desc->setFragmentFunction(fs);
         auto* color = desc->colorAttachments()->object(0);
         color->setPixelFormat(MTL::PixelFormat(colorFormat));
+        if (mark)
+            color->setWriteMask(MTL::ColorWriteMaskNone);
         if (blend != StandardMaterial::Blend::None) {
             color->setBlendingEnabled(true);
             const auto src = blend == StandardMaterial::Blend::AddNoSrcAlpha || blend == StandardMaterial::Blend::Premultiplied
@@ -364,7 +371,8 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
             // under every lot, which a screenshot (RGBA) shows as white.
             color->setDestinationAlphaBlendFactor(blend == StandardMaterial::Blend::Multiply ? MTL::BlendFactorOne : dst);
         }
-        desc->setDepthAttachmentPixelFormat(MTL::PixelFormat(depthFormat));
+        desc->setDepthAttachmentPixelFormat(depth == MTL::PixelFormatInvalid ? MTL::PixelFormat(depthFormat) : depth);
+        desc->setStencilAttachmentPixelFormat(stencil);
         MTL::RenderPipelineState* state = device_->newRenderPipelineState(desc, &error);
         desc->release();
         if (!state)
@@ -372,21 +380,30 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         return state;
     };
     try {
+        censor_ = censorPipeline(MTL::PixelFormat(depthFormat), MTL::PixelFormatInvalid);
+        mirrorCensor_ = censorPipeline(stencilDepth, stencilDepth);
         opaque_ = pipeline(StandardMaterial::Blend::None);
         alphaBlend_ = pipeline(StandardMaterial::Blend::Alpha);
         additive_ = pipeline(StandardMaterial::Blend::Additive);
         addOne_ = pipeline(StandardMaterial::Blend::AddNoSrcAlpha);
         premultiplied_ = pipeline(StandardMaterial::Blend::Premultiplied);
         multiply_ = pipeline(StandardMaterial::Blend::Multiply);
+        for (size_t b = 0; b < mirrorPipelines_.size(); ++b)
+            mirrorPipelines_[b] = pipeline(StandardMaterial::Blend(b), stencilDepth, stencilDepth);
+        mirrorMark_ = pipeline(StandardMaterial::Blend::None, stencilDepth, stencilDepth, true);
     } catch (...) { // any type: the Metal objects are released, then it goes on (throw;)
         vs->release();
         fs->release();
+        cvs->release();
+        cfs->release();
         library->release();
         pool->release();
         throw;
     }
     vs->release();
     fs->release();
+    cvs->release();
+    cfs->release();
     library->release();
 
     MTL::DepthStencilDescriptor* dsd = MTL::DepthStencilDescriptor::alloc()->init();
@@ -395,6 +412,27 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     depthWrite_ = device_->newDepthStencilState(dsd);
     dsd->setDepthWriteEnabled(false);
     depthRead_ = device_->newDepthStencilState(dsd);
+    // The reflection target (docs/shaders-mac.md 13.1): the scene seen in a
+    // mirror passes where the stencil is 1 (defaultState kRenderTypeMirror:
+    // acceptIfEqual 1, noWrite); the mirror quads write the reference where
+    // their depth test passes (cApplyStencilStateForOverlappingReflections:
+    // 1 for the viewer's own mirror, 0 for the others).
+    MTL::StencilDescriptor* sd0 = MTL::StencilDescriptor::alloc()->init();
+    sd0->setStencilCompareFunction(MTL::CompareFunctionEqual);
+    sd0->setStencilFailureOperation(MTL::StencilOperationKeep);
+    sd0->setDepthFailureOperation(MTL::StencilOperationKeep);
+    sd0->setDepthStencilPassOperation(MTL::StencilOperationKeep);
+    dsd->setFrontFaceStencil(sd0);
+    dsd->setBackFaceStencil(sd0);
+    mirrorDepthRead_ = device_->newDepthStencilState(dsd);
+    dsd->setDepthWriteEnabled(true);
+    mirrorDepthWrite_ = device_->newDepthStencilState(dsd);
+    sd0->setStencilCompareFunction(MTL::CompareFunctionAlways);
+    sd0->setDepthStencilPassOperation(MTL::StencilOperationReplace);
+    dsd->setFrontFaceStencil(sd0);
+    dsd->setBackFaceStencil(sd0);
+    mirrorMarkState_ = device_->newDepthStencilState(dsd);
+    sd0->release();
     dsd->release();
 
     MTL::SamplerDescriptor* sd = MTL::SamplerDescriptor::alloc()->init();
@@ -423,7 +461,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     whiteCube_ = whiteCubeTexture(device_);
     grey_ = rgbaTexture(RgbaImage{1, 1, {128, 128, 128, 255}});
     for (auto& f : frames_)
-        f = device_->newBuffer((2 + 2 * kMaxCensorBoxes) * kFrameStride, MTL::ResourceStorageModeShared);
+        f = device_->newBuffer(kFrameSlots * kFrameStride, MTL::ResourceStorageModeShared);
     for (auto& b : lightBuffers_)
         b = device_->newBuffer(sizeof(GpuLightSet) * kMaxLightSets, MTL::ResourceStorageModeShared);
 
@@ -465,6 +503,13 @@ Renderer::~Renderer() {
     if (censorDepth_)
         censorDepth_->release();
     censor_->release();
+    mirrorCensor_->release();
+    mirrorMark_->release();
+    for (auto* p : mirrorPipelines_)
+        p->release();
+    mirrorDepthWrite_->release();
+    mirrorDepthRead_->release();
+    mirrorMarkState_->release();
     for (auto& [name, tex] : textures_)
         if (tex)
             tex->release();
@@ -971,6 +1016,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
 
     auto* f = static_cast<Frame*>(frames_[frame_]->contents());
     f->viewProj = simd_mul(view.projection, view.view);
+    f->screen = f->viewProj;
     f->view = view.view;
     f->eye = simd_inverse(view.view).columns[3];
     auto* sets = static_cast<GpuLightSet*>(lightBuffers_[size_t(frame_)]->contents());
@@ -1028,6 +1074,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         const Instance* inst;
         const Part* part;
         int external = -1;
+        bool reflects = false; // a mirror reflecting this frame (kMirror in the view)
     };
     std::vector<Item> items;
     const simd_float3 eye = simd_make_float3(f->eye); // (the mirror below)
@@ -1078,27 +1125,63 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     f->viewport = simd_make_float4(float(targetW), float(targetH), 0, ground);
     f->clip = simd_make_float4(0, 0, 1, 0);
 
-    // The mirror that reflects this frame: the nearest one in view, its
-    // plane turned towards the eye (MirrorReflectionMaterial's camera is
-    // reflected in it and clipped to its front).
-    const Item* mirror = nullptr;
-    simd_float4 plane{0, 0, 1, 0};
+    // The mirrors that reflect this frame (docs/shaders-mac.md 13.1: each
+    // mirror's viewer, cViewerRefNodeRecursiveImpl::ImplAddElementsToDisplayList):
+    // every mirror quad in view, its plane facing the eye, its box projected
+    // and held in the view as the rectangle it reflects into (none under a
+    // pixel); the nearest kMaxMirrors (ours).
+    struct MirrorView {
+        size_t item;           // in items
+        simd_float4 plane;     // what is in front of it is reflected
+        MTL::ScissorRect rect; // pixels
+        simd_float4x4 crop;    // the view's clip space -> the rectangle's (culling)
+        float d2;
+    };
+    std::vector<MirrorView> mirrors;
+    std::vector<size_t> mirrorQuads; // every mirror in view: their stencil marks
     if (reflections_ && target) {
-        float best = INFINITY;
-        for (const auto& item : items) {
+        for (size_t i = 0; i < items.size(); ++i) {
+            const Item& item = items[i];
             if (!item.part || !item.part->material.mirror)
                 continue;
+            const Part& part = *item.part;
             const simd_float4x4& m = item.inst->transform;
-            const simd_float3 c = simd_make_float3(simd_mul(m, simd_make_float4(item.part->center, 1)));
-            const simd_float4 clipC = simd_mul(f->viewProj, simd_make_float4(c, 1));
-            if (clipC.w <= 0 || std::abs(clipC.x) > clipC.w * 1.3f || std::abs(clipC.y) > clipC.w * 1.3f)
+            if (outsideFrustum(f->viewProj, m, part.lo, part.hi))
                 continue;
-            simd_float3 n = simd_normalize(simd_make_float3(simd_mul(m, simd_make_float4(item.part->normal, 0))));
-            if (simd_dot(n, eye - c) < 0)
+            mirrorQuads.push_back(i);
+            const simd_float3 c = simd_make_float3(simd_mul(m, simd_make_float4(part.center, 1)));
+            simd_float3 n = simd_normalize(simd_make_float3(simd_mul(m, simd_make_float4(part.normal, 0))));
+            if (simd_dot(n, eye - c) <= 0) {
+                if (part.material.cull != MTL::CullModeNone)
+                    continue; // seen from behind: its quad is not drawn
                 n = -n;
-            const float d2 = simd_length_squared(c - eye);
-            if (d2 < best)
-                best = d2, mirror = &item, plane = simd_make_float4(n, -simd_dot(n, c));
+            }
+            const auto rect = mirrorRect(part.lo, part.hi, simd_mul(f->viewProj, m), targetW, targetH);
+            if (!rect)
+                continue;
+            // The rectangle's clip space, as the game's cropped projection.
+            simd_float4x4 crop = matrix_identity_float4x4;
+            crop.columns[0][0] = 2 / (rect->nx1 - rect->nx0);
+            crop.columns[1][1] = 2 / (rect->ny1 - rect->ny0);
+            crop.columns[3][0] = -(rect->nx1 + rect->nx0) / (rect->nx1 - rect->nx0);
+            crop.columns[3][1] = -(rect->ny1 + rect->ny0) / (rect->ny1 - rect->ny0);
+            const int px0 = rect->x0, py0 = rect->y0, px1 = rect->x1, py1 = rect->y1;
+            mirrors.push_back({i, simd_make_float4(n, -simd_dot(n, c)),
+                               MTL::ScissorRect{NS::UInteger(px0), NS::UInteger(py0), NS::UInteger(px1 - px0), NS::UInteger(py1 - py0)},
+                               crop, simd_length_squared(c - eye)});
+        }
+        std::stable_sort(mirrors.begin(), mirrors.end(), [](const MirrorView& a, const MirrorView& b) { return a.d2 < b.d2; });
+        if (mirrors.size() > size_t(kMaxMirrors))
+            mirrors.resize(size_t(kMaxMirrors));
+        for (const auto& mv : mirrors)
+            items[mv.item].reflects = true;
+        static const bool debug = std::getenv("OS2_DEBUG_MIRRORS") != nullptr;
+        if (debug) {
+            std::fprintf(stderr, "opensims2: mirrors: %zu in view, %zu reflecting:", mirrorQuads.size(), mirrors.size());
+            for (const auto& mv : mirrors)
+                std::fprintf(stderr, " [%lu,%lu %lux%lu]", (unsigned long)mv.rect.x, (unsigned long)mv.rect.y,
+                             (unsigned long)mv.rect.width, (unsigned long)mv.rect.height);
+            std::fprintf(stderr, "\n");
         }
     }
 
@@ -1220,10 +1303,9 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     f->params.z = float(shadowCount);
 
     const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
-    // `reflected`: the pass into the reflection texture (mirrors left out).
-    // `frameSlot`: the Frame used (0 the view, 1 the reflected view, 2 + i
-    // the censor's box i); off the view (slot > 0) no mirror reflects.
-    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected, const simd_float4x4& passViewProj, size_t frameSlot) {
+    // What every draw of a pass reads: the Frame of `frameSlot`, lights,
+    // samplers, light maps, the reflection (only in the view) and shadows.
+    auto bindPass = [&](MTL::RenderCommandEncoder* enc, bool reflected, size_t frameSlot) {
         enc->setVertexBuffer(frames_[frame_], frameSlot * kFrameStride, 2);
         enc->setFragmentBuffer(frames_[frame_], frameSlot * kFrameStride, 2);
         enc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
@@ -1233,12 +1315,50 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentSamplerState(pointSampler_, 3);
         enc->setFragmentTexture(lightMap0, 10);
         enc->setFragmentTexture(lightMap1, 11);
-        enc->setFragmentTexture(mirror && !reflected ? reflectionColor_ : white_, 18);
+        enc->setFragmentTexture(!mirrors.empty() && !reflected ? reflectionColor_ : white_, 18);
         enc->setFragmentTexture(shadowCount ? shadowAtlas_ : white_, 19);
         enc->setFragmentBuffer(shadowCount ? shadowBuffers_[size_t(frame_)] : lightBuffers_[size_t(frame_)], 0, 4);
+    };
+    // One item's draw (its material's textures and Draw), `flags` for its own.
+    auto drawItem = [&](MTL::RenderCommandEncoder* enc, const Item& item, uint32_t flags) {
+        const Part& part = *item.part;
+        const Material& m = part.material;
+        auto [uv0, uv1] = uvTransform(m.anim, t);
+        uv0 *= m.uvScale, uv1 *= m.uvScale;
+        const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
+        simd_float4 color = m.color;
+        color.w *= item.inst->alpha;
+        Draw d{item.inst->transform, color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
+               m.maskV, m.alphaRef, flags, uint32_t(set)};
+        enc->setVertexBytes(&d, sizeof d, 1);
+        enc->setFragmentBytes(&d, sizeof d, 1);
+        enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
+        enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
+        enc->setFragmentTexture(m.texture, 0);
+        enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
+        for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9, overlays 4-8 at 13-17
+            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : l == 3 ? 9 : 9 + l));
+        enc->setFragmentTexture(m.height ? m.height : white_, 5);
+        enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
+        enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
+        enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
+        enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
+        enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
+                                   part.indices, NS::UInteger(0));
+    };
+    // `reflected`: a mirror's view (mirrors left out); `stencil`: into the
+    // reflection target, drawn where its stencil is 1. `frameSlot`: the Frame
+    // used (0 the view, 1 + m mirror m's, then the censor's tiles); the
+    // reflecting mirrors show their reflection in the view and its censor
+    // tiles. `passViewProj` culls.
+    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected, bool stencil, const simd_float4x4& passViewProj,
+                         size_t frameSlot) {
+        bindPass(enc, reflected, frameSlot);
+        if (stencil)
+            enc->setStencilReferenceValue(1);
         for (const auto& item : items) {
             if (item.external >= 0) {
-                // A particle group: only in the view itself (not the mirror's
+                // A particle group: only in the view itself (not the mirrors'
                 // nor the censor's renders).
                 if (frameSlot == 0 && externalDraw_)
                     externalDraw_(enc, item.external);
@@ -1251,45 +1371,25 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             if (part.cullable && outsideFrustum(passViewProj, item.inst->transform, part.lo, part.hi))
                 continue;
             const bool faded = item.inst->alpha < 1;
-            enc->setDepthStencilState((m.blend == StandardMaterial::Blend::None && !faded) || m.depthWrite ? depthWrite_ : depthRead_);
-            enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha || (faded && m.blend == StandardMaterial::Blend::None)
-                                            ? alphaBlend_
-                                        : m.blend == StandardMaterial::Blend::Additive ? additive_
-                                        : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
-                                        : m.blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
-                                        : m.blend == StandardMaterial::Blend::Multiply ? multiply_
-                                                                                       : opaque_);
+            const bool write = (m.blend == StandardMaterial::Blend::None && !faded) || m.depthWrite;
+            enc->setDepthStencilState(stencil ? (write ? mirrorDepthWrite_ : mirrorDepthRead_) : write ? depthWrite_ : depthRead_);
+            const auto blend = faded && m.blend == StandardMaterial::Blend::None ? StandardMaterial::Blend::Alpha : m.blend;
+            enc->setRenderPipelineState(stencil ? mirrorPipelines_[size_t(blend)]
+                                        : blend == StandardMaterial::Blend::Alpha ? alphaBlend_
+                                        : blend == StandardMaterial::Blend::Additive ? additive_
+                                        : blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
+                                        : blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
+                                        : blend == StandardMaterial::Blend::Multiply ? multiply_
+                                                                                     : opaque_);
             enc->setCullMode(m.cull);
-            auto [uv0, uv1] = uvTransform(m.anim, t);
-            uv0 *= m.uvScale, uv1 *= m.uvScale;
-            const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
-            const uint32_t flags = m.flags | (frameSlot == 0 && &item == mirror ? uint32_t(kMirror) : 0u);
-            simd_float4 color = m.color;
-            color.w *= item.inst->alpha;
-            Draw d{item.inst->transform, color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
-                   m.maskV, m.alphaRef, flags, uint32_t(set)};
-            enc->setVertexBytes(&d, sizeof d, 1);
-            enc->setFragmentBytes(&d, sizeof d, 1);
-            enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
-            enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
-            enc->setFragmentTexture(m.texture, 0);
-            enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
-            for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9, overlays 4-8 at 13-17
-                enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : l == 3 ? 9 : 9 + l));
-            enc->setFragmentTexture(m.height ? m.height : white_, 5);
-            enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
-            enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
-            enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
-            enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
-            enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
-                                       part.indices, NS::UInteger(0));
+            drawItem(enc, item, m.flags | (!reflected && item.reflects ? uint32_t(kMirror) : 0u));
         }
     };
 
     // The censor: each box's rectangle rendered again into its tile of
     // kCensorBlocks x kCensorBlocks texels (RenderPartPtrs ->
     // SelectAndClearSurfaces, RenderGeometryForCensor). Run for the view and,
-    // when a mirror reflects, for the reflected view too (kRenderTypeCensorInMirror:
+    // for every mirror that reflects, for its view too (kRenderTypeCensorInMirror:
     // the mirror's reflection of a nude Sim is pixelated the same way).
     using Censored = std::vector<std::pair<CensorRect, int>>;
     auto censorRects = [&](const simd_float4x4& viewProj) {
@@ -1303,7 +1403,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             }
         return out;
     };
-    // `src`: the Frame of the view (0 or 1); the tiles use frame slots from `firstSlot`.
+    // `src`: the Frame of the view; the tiles use frame slots from `firstSlot`.
     auto censorTiles = [&](const Censored& list, const Frame& src, size_t firstSlot, MTL::Winding winding) {
         if (list.empty())
             return;
@@ -1344,15 +1444,18 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             cf->viewProj = simd_mul(crop, src.viewProj);
             cf->viewport = simd_make_float4(kCensorBlocks, kCensorBlocks, src.viewport.z, src.viewport.w);
             cenc->setViewport(MTL::Viewport{double(i * kCensorBlocks), 0.0, double(kCensorBlocks), double(kCensorBlocks), 0.0, 1.0});
-            drawItems(cenc, src.viewport.z > 0.5f, cf->viewProj, firstSlot + size_t(i));
+            drawItems(cenc, src.viewport.z > 0.5f, false, cf->viewProj, firstSlot + size_t(i));
         }
         cenc->endEncoding();
     };
     // The compositing quads (CensorMaterial, after the transparent parts;
-    // layer -1 keeps it out of its own render).
-    auto censorComposite = [&](MTL::RenderCommandEncoder* e, const Censored& list) {
-        e->setRenderPipelineState(censor_);
-        e->setDepthStencilState(depthRead_);
+    // layer -1 keeps it out of its own render). In a mirror's view only
+    // where its stencil is 1.
+    auto censorComposite = [&](MTL::RenderCommandEncoder* e, const Censored& list, bool stencil) {
+        e->setRenderPipelineState(stencil ? mirrorCensor_ : censor_);
+        e->setDepthStencilState(stencil ? mirrorDepthRead_ : depthRead_);
+        if (stencil)
+            e->setStencilReferenceValue(1);
         e->setCullMode(MTL::CullModeNone);
         e->setFragmentTexture(censorColor_, 0);
         e->setFragmentSamplerState(pointSampler_, 0);
@@ -1368,22 +1471,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         }
     };
 
-    if (mirror) {
-        // The reflected frame: world -> mirrored world -> the camera.
-        const simd_float3 n = simd_make_float3(plane);
-        const float dd = plane.w;
-        simd_float4x4 r = matrix_identity_float4x4;
-        for (int c = 0; c < 3; ++c)
-            for (int k = 0; k < 3; ++k)
-                r.columns[c][k] -= 2 * n[k] * n[c];
-        r.columns[3] = simd_make_float4(-2 * dd * n, 1);
-        auto* rf = reinterpret_cast<Frame*>(static_cast<char*>(frames_[frame_]->contents()) + kFrameStride);
-        *rf = *f;
-        rf->view = simd_mul(view.view, r);
-        rf->viewProj = simd_mul(view.projection, rf->view);
-        rf->eye = simd_mul(r, f->eye);
-        rf->clip = plane;
-        rf->viewport.z = 1;
+    if (!mirrors.empty()) {
         if (!reflectionColor_ || reflectionColor_->width() != targetW || reflectionColor_->height() != targetH) {
             if (reflectionColor_)
                 retired_.push_back({reflectionColor_, kFramesInFlight + 1});
@@ -1395,57 +1483,142 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             cd->setStorageMode(MTL::StorageModePrivate);
             reflectionColor_ = device_->newTexture(cd);
             MTL::TextureDescriptor* dd2 =
-                MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormat(depthFormat_), targetW, targetH, false);
+                MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatDepth32Float_Stencil8, targetW, targetH, false);
             dd2->setUsage(MTL::TextureUsageRenderTarget);
             dd2->setStorageMode(MTL::StorageModePrivate);
             reflectionDepth_ = device_->newTexture(dd2);
         }
-        MTL::RenderPassDescriptor* rp = MTL::RenderPassDescriptor::renderPassDescriptor();
-        auto* ca = rp->colorAttachments()->object(0);
-        ca->setTexture(reflectionColor_);
-        ca->setLoadAction(MTL::LoadActionClear);
-        ca->setStoreAction(MTL::StoreActionStore);
-        ca->setClearColor(pass->colorAttachments()->object(0)->clearColor());
-        rp->depthAttachment()->setTexture(reflectionDepth_);
-        rp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
-        rp->depthAttachment()->setStoreAction(censorBoxes_.empty() ? MTL::StoreActionDontCare : MTL::StoreActionStore);
-        rp->depthAttachment()->setClearDepth(1.0);
-        MTL::RenderCommandEncoder* renc = cmd->renderCommandEncoder(rp);
-        renc->setFrontFacingWinding(MTL::WindingClockwise); // the reflection turns the windings around
-        drawItems(renc, true, rf->viewProj, 1);
-        renc->endEncoding();
-        // The reflection of a nude Sim is censored in the reflected view.
-        const Censored inMirror = std::getenv("OS2_NO_MIRROR_CENSOR") ? Censored{} : censorRects(rf->viewProj);
-        if (!inMirror.empty()) {
-            censorTiles(inMirror, *rf, size_t(2 + kMaxCensorBoxes), MTL::WindingClockwise);
+        for (size_t mi = 0; mi < mirrors.size(); ++mi) {
+            const MirrorView& mv = mirrors[mi];
+            // Its reflected frame: world -> mirrored world -> the camera,
+            // clipped to what is in front of the mirror.
+            const simd_float3 n = simd_make_float3(mv.plane);
+            simd_float4x4 r = matrix_identity_float4x4;
+            for (int c = 0; c < 3; ++c)
+                for (int k = 0; k < 3; ++k)
+                    r.columns[c][k] -= 2 * n[k] * n[c];
+            r.columns[3] = simd_make_float4(-2 * mv.plane.w * n, 1);
+            auto* rf = reinterpret_cast<Frame*>(static_cast<char*>(frames_[frame_]->contents()) + (1 + mi) * kFrameStride);
+            *rf = *f;
+            rf->view = simd_mul(view.view, r);
+            rf->viewProj = simd_mul(view.projection, rf->view);
+            rf->eye = simd_mul(r, f->eye);
+            rf->clip = mv.plane;
+            rf->viewport.z = 1;
+
+            // RenderGeometryForMirror(true): the mirror quads seen from the
+            // view, depth tested, write the stencil: 1 where this one is the
+            // nearest, 0 under another (no colour; z and stencil cleared).
             MTL::RenderPassDescriptor* mp = MTL::RenderPassDescriptor::renderPassDescriptor();
-            auto* mc = mp->colorAttachments()->object(0);
-            mc->setTexture(reflectionColor_);
-            mc->setLoadAction(MTL::LoadActionLoad);
-            mc->setStoreAction(MTL::StoreActionStore);
+            auto* ma = mp->colorAttachments()->object(0);
+            ma->setTexture(reflectionColor_);
+            ma->setLoadAction(mi == 0 ? MTL::LoadActionClear : MTL::LoadActionLoad);
+            ma->setStoreAction(MTL::StoreActionStore);
+            ma->setClearColor(pass->colorAttachments()->object(0)->clearColor());
             mp->depthAttachment()->setTexture(reflectionDepth_);
-            mp->depthAttachment()->setLoadAction(MTL::LoadActionLoad);
+            mp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
             mp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+            mp->depthAttachment()->setClearDepth(1.0);
+            mp->stencilAttachment()->setTexture(reflectionDepth_);
+            mp->stencilAttachment()->setLoadAction(MTL::LoadActionClear);
+            mp->stencilAttachment()->setStoreAction(MTL::StoreActionStore);
+            mp->stencilAttachment()->setClearStencil(0);
             MTL::RenderCommandEncoder* menc = cmd->renderCommandEncoder(mp);
-            censorComposite(menc, inMirror);
+            bindPass(menc, true, 0);
+            menc->setRenderPipelineState(mirrorMark_);
+            menc->setDepthStencilState(mirrorMarkState_);
+            menc->setCullMode(MTL::CullModeNone);
+            for (size_t q : mirrorQuads) {
+                menc->setStencilReferenceValue(q == mv.item ? 1 : 0);
+                drawItem(menc, items[q], 0);
+            }
             menc->endEncoding();
+
+            // RenderGeometryForMirror(false): z cleared, the reflected scene
+            // in the mirror's rectangle where the stencil is 1.
+            const bool censor = !censorBoxes_.empty();
+            MTL::RenderPassDescriptor* rp = MTL::RenderPassDescriptor::renderPassDescriptor();
+            auto* ca = rp->colorAttachments()->object(0);
+            ca->setTexture(reflectionColor_);
+            ca->setLoadAction(MTL::LoadActionLoad);
+            ca->setStoreAction(MTL::StoreActionStore);
+            rp->depthAttachment()->setTexture(reflectionDepth_);
+            rp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+            rp->depthAttachment()->setStoreAction(censor ? MTL::StoreActionStore : MTL::StoreActionDontCare);
+            rp->depthAttachment()->setClearDepth(1.0);
+            rp->stencilAttachment()->setTexture(reflectionDepth_);
+            rp->stencilAttachment()->setLoadAction(MTL::LoadActionLoad);
+            rp->stencilAttachment()->setStoreAction(censor ? MTL::StoreActionStore : MTL::StoreActionDontCare);
+            MTL::RenderCommandEncoder* renc = cmd->renderCommandEncoder(rp);
+            renc->setFrontFacingWinding(MTL::WindingClockwise); // the reflection turns the windings around
+            renc->setScissorRect(mv.rect);
+            drawItems(renc, true, true, simd_mul(mv.crop, rf->viewProj), 1 + mi);
+            renc->endEncoding();
+
+            // The reflection of a nude Sim is censored in the reflected view.
+            const Censored inMirror = std::getenv("OS2_NO_MIRROR_CENSOR") ? Censored{} : censorRects(rf->viewProj);
+            if (!inMirror.empty()) {
+                censorTiles(inMirror, *rf, mirrorCensorSlot(int(mi)), MTL::WindingClockwise);
+                MTL::RenderPassDescriptor* cp = MTL::RenderPassDescriptor::renderPassDescriptor();
+                auto* cc = cp->colorAttachments()->object(0);
+                cc->setTexture(reflectionColor_);
+                cc->setLoadAction(MTL::LoadActionLoad);
+                cc->setStoreAction(MTL::StoreActionStore);
+                cp->depthAttachment()->setTexture(reflectionDepth_);
+                cp->depthAttachment()->setLoadAction(MTL::LoadActionLoad);
+                cp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+                cp->stencilAttachment()->setTexture(reflectionDepth_);
+                cp->stencilAttachment()->setLoadAction(MTL::LoadActionLoad);
+                cp->stencilAttachment()->setStoreAction(MTL::StoreActionDontCare);
+                MTL::RenderCommandEncoder* cenc = cmd->renderCommandEncoder(cp);
+                cenc->setScissorRect(mv.rect);
+                censorComposite(cenc, inMirror, true);
+                cenc->endEncoding();
+            }
         }
     }
 
     const Censored censored = censorRects(f->viewProj);
-    censorTiles(censored, *f, 2, MTL::WindingCounterClockwise);
+    censorTiles(censored, *f, kSlotCensorView, MTL::WindingCounterClockwise);
 
     MTL::RenderCommandEncoder* enc = cmd->renderCommandEncoder(pass);
     enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
-    drawItems(enc, false, f->viewProj, 0);
+    drawItems(enc, false, false, f->viewProj, 0);
     if (!censored.empty())
-        censorComposite(enc, censored);
+        censorComposite(enc, censored, false);
     if (sceneHook_)
         sceneHook_(enc, view.view, f->viewProj);
     if (overlay_ && target)
         overlay_(enc, targetW, targetH);
     enc->endEncoding();
     return cmd;
+}
+
+std::optional<Renderer::CensorRect> Renderer::mirrorRect(simd_float3 lo, simd_float3 hi, const simd_float4x4& mvp, uint32_t width,
+                                                        uint32_t height) {
+    if (width == 0 || height == 0)
+        return std::nullopt;
+    float x0 = 1, y0 = 1, x1 = -1, y1 = -1;
+    for (int k = 0; k < 8; ++k) {
+        const simd_float4 p = simd_mul(mvp, simd_make_float4(k & 1 ? hi.x : lo.x, k & 2 ? hi.y : lo.y, k & 4 ? hi.z : lo.z, 1));
+        if (p.w <= 1e-5f) { // reaches behind the eye: the whole view
+            x0 = y0 = -1, x1 = y1 = 1;
+            break;
+        }
+        x0 = std::min(x0, p.x / p.w), x1 = std::max(x1, p.x / p.w);
+        y0 = std::min(y0, p.y / p.w), y1 = std::max(y1, p.y / p.w);
+    }
+    x0 = std::max(x0, -1.0f), y0 = std::max(y0, -1.0f), x1 = std::min(x1, 1.0f), y1 = std::min(y1, 1.0f);
+    CensorRect r;
+    r.x0 = std::max(0, int(std::floor((x0 * 0.5f + 0.5f) * float(width))));
+    r.x1 = std::min(int(width), int(std::ceil((x1 * 0.5f + 0.5f) * float(width))));
+    r.y0 = std::max(0, int(std::floor((0.5f - y1 * 0.5f) * float(height))));
+    r.y1 = std::min(int(height), int(std::ceil((0.5f - y0 * 0.5f) * float(height))));
+    if (r.x1 - r.x0 < 1 || r.y1 - r.y0 < 1)
+        return std::nullopt;
+    r.nx0 = float(r.x0) / float(width) * 2 - 1, r.nx1 = float(r.x1) / float(width) * 2 - 1;
+    r.ny0 = 1 - float(r.y1) / float(height) * 2, r.ny1 = 1 - float(r.y0) / float(height) * 2;
+    return r;
 }
 
 std::optional<Renderer::CensorRect> Renderer::censorRect(const CensorBox& box, const simd_float4x4& viewProj, uint32_t width,

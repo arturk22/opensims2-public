@@ -508,9 +508,9 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   (`view · R`, R = I − 2nnᵀ com a translação −2dn; enrolamento invertido;
   `clip_distance` corta o que está atrás do espelho; os espelhos ficam de
   fora) e no passo normal o quad do espelho mostra essa textura no próprio
-  pixel (o stencil do jogo vira "só os pixels do quad"). Só um espelho
-  reflete por quadro; os outros ficam com a cor do `BlankMirrorMaterial`
-  (simplificação nossa). Partículas e o overlay não entram no reflexo.
+  pixel (o stencil do jogo vira "só os pixels do quad"). Partículas e o
+  overlay não entram no reflexo. Rodada n22: todos os espelhos em vista
+  refletem, cada um com o stencil do jogo (§13.1).
   `r13-espelho-cas-reflexo.jpg` (CAS desligado/ligado),
   `r13-espelho-lote-reflexo.jpg` (`N001_Lot82`, a porta vermelha no
   espelho do banheiro).
@@ -625,6 +625,28 @@ Lido com o Ghidra MCP no BV (`sims2_bv.ppc`, só leitura) e no texto dos
   descarta nós pela máscara `0x07440100` e pelos grupos de render (bits não
   resolvidos). O app segue deixando de fora os espelhos e as partículas.
 - Censura no espelho: §"Censura" do `cas-mac.md` (rodada 22).
+- **No app** (rodada n22, `Renderer::encodeFrame`): para cada espelho em
+  vista, de frente para o olho e com retângulo de pelo menos 1 pixel
+  (`Renderer::mirrorRect`; os 8 mais perto, limite nosso): um passe desenha
+  os quads de **todos** os espelhos em vista com a câmera da vista, sem cor,
+  z testado e gravado, e o stencil = 1 no quad dele, 0 nos outros
+  (`mirrorMarkState_`, alvo `Depth32Float_Stencil8`); o passe seguinte limpa
+  só o z, recorta no retângulo (scissor; o jogo recorta a projeção, dá os
+  mesmos pixels) e desenha a cena refletida onde o stencil é 1, com a
+  censura do espelho por cima no mesmo stencil. A cor do alvo só é limpa no
+  primeiro espelho do quadro. No passo normal cada espelho que refletiu lê o
+  alvo no próprio pixel — também nos ladrilhos da censura da vista: o
+  mosaico de um Sim na frente de um espelho mostrava o azul do
+  `BlankMirrorMaterial` (o quadrado azul do `r22-censor-espelho.jpg`), agora
+  mostra o reflexo (o `Frame` leva a `viewProj` da vista em `screen`).
+  `OS2_DEBUG_MIRRORS=1` lista os espelhos e retângulos de cada quadro.
+  Testes: `censor` (o retângulo) e `render` (dois espelhos lado a lado
+  refletem o chão vermelho; desligado, a cor do espelho).
+  `docs/screenshots/n22-shaders-dois-espelhos.jpg` (`N003_Lot46`, antes: só
+  o espelho de pé reflete, o de parede fica azul; depois: os dois),
+  `n22-shaders-censura-espelho.jpg` (`N001_Lot68`, Daniel no espelho de pé
+  com `OS2_FORCE_CENSOR=3`: antes o mosaico tinha o azul do espelho, depois
+  o reflexo).
 
 ### 13.2 Normal map no caminho DX8
 

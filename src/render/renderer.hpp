@@ -156,9 +156,14 @@ public:
     // reflectionWithExtraViewer -> mirrorReflectionsEnabled): mirrors
     // (StandardMaterial::mirror) show the scene from a camera reflected in
     // their plane, rendered first into a screen-sized texture (the game's
-    // ScreenReflection target) and seen through the mirror's own pixels
-    // (its stencil); off, they keep the blank mirror colour. One mirror a
-    // frame reflects (the nearest in view; the others stay blank).
+    // ScreenReflection target) and seen through the mirror's own pixels;
+    // off, they keep the blank mirror colour. As the game's mirror viewers
+    // (docs/shaders-mac.md 13.1): every mirror in view reflects into its
+    // screen rectangle of the one target, where the stencil its quad wrote
+    // (1 where it is the nearest mirror, 0 where another one is in front)
+    // lets the reflected scene through. Up to kMaxMirrors a frame, the
+    // nearest first (the cap is ours).
+    static constexpr int kMaxMirrors = 8;
     void setReflections(bool on) { reflections_ = on; }
     // Everything below this height (world z) is clipped: the lot's earth
     // skirt ends there, so what the game leaves under the ground (deck
@@ -211,6 +216,12 @@ public:
         float nx0 = 0, ny0 = 0, nx1 = 0, ny1 = 0; // the rectangle in clip space (y up)
     };
     static std::optional<CensorRect> censorRect(const CensorBox& box, const simd_float4x4& viewProj, uint32_t width, uint32_t height);
+    // The screen rectangle a mirror reflects into (cViewerRefNodeRecursiveImpl::
+    // ImplAddElementsToDisplayList): its model box `lo`..`hi` through `mvp`,
+    // held in the view (a box reaching behind the eye: the whole view),
+    // snapped outwards to pixels; nothing under a pixel either way. `depth`
+    // is unused.
+    static std::optional<CensorRect> mirrorRect(simd_float3 lo, simd_float3 hi, const simd_float4x4& mvp, uint32_t width, uint32_t height);
     // The transform an instance is drawn with.
     simd_float4x4 instanceTransform(int instance) const;
     int instanceModel(int instance) const; // -1: no such instance
@@ -328,7 +339,16 @@ private:
     MTL::Texture* censorColor_ = nullptr;        // owned: kMaxCensorBoxes tiles of kCensorBlocks^2 texels in a row
     MTL::Texture* censorDepth_ = nullptr;
     MTL::Texture* reflectionColor_ = nullptr; // owned, the size of the last target
-    MTL::Texture* reflectionDepth_ = nullptr;
+    MTL::Texture* reflectionDepth_ = nullptr; // depth and stencil (the mirrors' marks)
+    // The reflection target's pipelines (a depth and stencil attachment): the
+    // blends' (by StandardMaterial::Blend), the censor's quad, and the
+    // mirror quads' mark (no colour written).
+    std::array<MTL::RenderPipelineState*, 6> mirrorPipelines_{};
+    MTL::RenderPipelineState* mirrorCensor_ = nullptr;
+    MTL::RenderPipelineState* mirrorMark_ = nullptr;
+    MTL::DepthStencilState* mirrorDepthWrite_ = nullptr; // as depthWrite_/depthRead_, drawn where the stencil is 1
+    MTL::DepthStencilState* mirrorDepthRead_ = nullptr;
+    MTL::DepthStencilState* mirrorMarkState_ = nullptr; // depth <= written, the stencil replaced by the reference
 };
 
 } // namespace os2

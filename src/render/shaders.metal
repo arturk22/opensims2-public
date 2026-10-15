@@ -98,6 +98,7 @@ struct Frame {
     float4 environment; // rgb: the environment light, scaling env cube reflections
     float4 clip;        // a plane (xyz normal, w offset): what is behind it is clipped when viewport.z is 1
     float4 viewport;    // xy: the target's size in pixels, z: clip on, w: ground clip height (world z)
+    float4x4 screen;    // the view's viewProj: where a mirror's pixel reads the reflection (also in the censor's tiles)
 };
 
 #define VERTEX_OUT_FIELDS \
@@ -233,8 +234,12 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
                               sampler pointSmp [[sampler(3)]]) {
-    if (draw.flags & kMirror) // MirrorReflectionMaterial: the reflected scene seen through the mirror's pixels
-        return float4(reflection.sample(maskSmp, in.position.xy / frame.viewport.xy).rgb, 1.0);
+    if (draw.flags & kMirror) {
+        // MirrorReflectionMaterial: the reflected scene at the mirror's pixel
+        // of the view (clip space -> 0..1, v down), wherever this pass draws.
+        const float4 c = frame.screen * float4(in.world, 1.0);
+        return float4(reflection.sample(maskSmp, float2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5)).rgb, 1.0);
+    }
     float4 tex = base.sample(smp, in.baseUv);
     if (draw.flags & kWater) {
         // SinglePassWater: the texture scaled 1 -> 2 (sawtooth) at phases 0

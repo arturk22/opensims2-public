@@ -169,6 +169,60 @@ int main() {
         check(near(p[0], 64) && near(p[1], 128) && near(p[2], 64), "blended parts sorted back to front");
     }
 
+    // Mirrors (docs/shaders-mac.md 13.1): two side by side both reflect the
+    // red ground in front of them (each its own viewer, one target, the
+    // stencil of its quad); with reflections off, the blank mirror colour.
+    {
+        Renderer mr(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+        mr.hideTestScene();
+        ObjectModel ground;
+        ground.name = "ground";
+        ground.parts.push_back({"n", "s", "red", quad(0)});
+        ground.materials["red"] = material("1,0,0", "none", "1");
+        mr.addInstance(mr.addObject(ground, index), matrix_identity_float4x4);
+        ObjectModel mirrors;
+        mirrors.name = "mirrors";
+        for (float x : {-3.5f, 1.0f}) { // upright in y = 0, facing -y (the eye)
+            MeshGroup g;
+            g.name = "mirror";
+            g.positions = {{x, 0, 0.5f}, {x + 2.5f, 0, 0.5f}, {x + 2.5f, 0, 3}, {x, 0, 3}};
+            g.normals = {{0, -1, 0}, {0, -1, 0}, {0, -1, 0}, {0, -1, 0}};
+            g.uvs = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+            g.triangles = {0, 1, 2, 0, 2, 3};
+            mirrors.parts.push_back({"n", "s", "glass", g});
+        }
+        MaterialDefinition glass;
+        glass.materialType = "SimpleMirrorReflection";
+        mirrors.materials["glass"] = glass;
+        mr.addInstance(mr.addObject(mirrors, index), matrix_identity_float4x4);
+        // An eye in front of the mirrors, looking at them.
+        const simd_float3 eye = simd_make_float3(0, -8, 4), at = simd_make_float3(0, 0, 1.5f);
+        const simd_float3 fwd = simd_normalize(at - eye), right = simd_normalize(simd_cross(fwd, simd_make_float3(0, 0, 1))),
+                          up = simd_cross(right, fwd);
+        simd_float4x4 lookAt = matrix_identity_float4x4;
+        lookAt.columns[0] = simd_make_float4(right.x, up.x, -fwd.x, 0);
+        lookAt.columns[1] = simd_make_float4(right.y, up.y, -fwd.y, 0);
+        lookAt.columns[2] = simd_make_float4(right.z, up.z, -fwd.z, 0);
+        lookAt.columns[3] = simd_make_float4(-simd_dot(right, eye), -simd_dot(up, eye), simd_dot(fwd, eye), 1);
+        const FrameView mv{lookAt, cam.projection(1.0f)};
+        auto pixelAt = [&](const RgbaImage& im, simd_float3 w) {
+            const simd_float4 c = simd_mul(simd_mul(mv.projection, mv.view), simd_make_float4(w, 1));
+            const int px = int((c.x / c.w * 0.5f + 0.5f) * float(im.width)), py = int((0.5f - c.y / c.w * 0.5f) * float(im.height));
+            return &im.pixels[(size_t(py) * im.width + size_t(px)) * 4];
+        };
+        const simd_float3 left = simd_make_float3(-2.25f, 0, 1.2f), right2 = simd_make_float3(2.25f, 0, 1.2f);
+        mr.setReflections(false);
+        img = mr.capture(64, 64, mv, clear);
+        p = pixelAt(img, left);
+        check(near(p[0], 128) && near(p[1], 153) && near(p[2], 191), "mirror off: the blank mirror colour");
+        mr.setReflections(true);
+        img = mr.capture(64, 64, mv, clear);
+        p = pixelAt(img, left);
+        const uint8_t* q = pixelAt(img, right2);
+        check(p[0] > 200 && p[1] < 40 && p[2] < 40, "left mirror reflects the red ground");
+        check(q[0] > 200 && q[1] < 40 && q[2] < 40, "right mirror reflects the red ground too");
+    }
+
     device->release();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
