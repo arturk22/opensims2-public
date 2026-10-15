@@ -606,7 +606,7 @@ sobram:
 |---|---|---|
 | terreno e pisos fora | difusão de fora menos o ambiente de fora, **mais** `E(n)·terrainStrength·0,5`, com o sol tirado na sombra do height map (§5.3) | igual; a luz fria puxada para o cinza no chão (escolha visual, rodada 12) |
 | quem é "fora" | sala 0 do mundo (§5.3) | sala 0 do mapa de luz (3ARY `0x0B`); lote sem esse mapa: sala em que metade dos quartos não tem piso (inferido) |
-| portais | lista de portais de cada sala (não lida), luz da parede pelo `LookupWallDiffusion` (§10.6) | um portal por luz de janela/porta, para o lado para onde a luz aponta, na parede que bloqueia a luz mais perto; `L` = a amostra da parede do lado de onde a luz vem, das lâmpadas; janela sobre andar sem piso semeia o piso de baixo (inferidos); sem a supressão entre janelas, sem `doorOrArchDirectMultiplier` (padrão não lido) e sem as práticas das janelas |
+| portais | um `cPortalLight` por luz de janela/porta, para a sala para onde a luz aponta, no meio do quarto de parede + `spillPlaneOffset`, `L` = `LookupWallDiffusion` do lado de onde vem (§10.6) | igual, achando a parede como a parede que bloqueia a luz mais perto e com `L` das lâmpadas (o jogo usa o quadro anterior); inferidos: a sala da fonte (a do lado de destino) e a janela sobre andar sem piso semeando o piso de baixo; sem a supressão entre janelas, sem `doorOrArchDirectMultiplier` (padrão não lido) e sem as práticas das janelas |
 | lâmpadas nos objetos | luz prática direta (`insideObjects`/`outsideObjects` *practical*) além da luz do cômodo (inferido) | `LightSet::points`: até 12 por sala (as mais fortes), `I/(1 + C·d²)` até o alcance de §6, por pixel |
 | hora → estado | `UpdateLightingState` a cada hora (§2) | pelo relógio da VM, também durante os ticks das capturas `--run-vm` |
 | difusão, `I[k]`, Delta, `unlitRoomColor` | §4, §6.1, §10 | segue o binário; a luz das paredes que o jogo junta por quarto de tile, aqui por meia amostra (`GatherFloorLighting`) |
@@ -1038,6 +1038,22 @@ segmento, menos o ambiente de fora numa parede de fora), rateado pela
 normal. `FindPortalLightValues` (BV `0x70a884`, conferido): o `L` é esse
 mesmo `LookupWallDiffusion` na posição do portal (`+0x18`), sem a luz
 direta do estado.
+
+**Quem monta os portais** (BV `0x715cb0` → `0x7149fc`): para cada quarto
+de parede com um portal (`PortalInWall`, na peça ou na oposta), cada luz
+do objeto (os `cLightRefNode` do modelo) vira um `cPortalLight` (0xcc
+bytes): a luz projetada na aresta da parede (`WallEdge`); as salas dos
+dois lados (`RoomForTilePart` de cada localizador); pelo sinal de
+`direção da luz · normal do lado A` o portal vai para a lista da sala **de
+onde a luz vem** e o `+8` é a sala **para onde ela aponta** (a luz prática
+recebe o grupo dessa sala); `+0xc/+0x10` = a normal do lado de destino;
+`+0x18` = o localizador do lado **de onde a luz vem** (o que o
+`LookupWallDiffusion` lê); a posição = o meio do quarto de parede +
+normal · `spillPlaneOffset` (0,1, `+0x88` do gerenciador), a altura no meio
+dos pisos; `+0x3c` = objeto do tipo 8 (porta/arco); a fonte de difusão
+(`+0x60`) sai do `BuildLightFromObjectLight` da própria luz. Não lido: a
+sala que essa fonte recebe (a da posição da luz, que fica no meio do tile
+da janela) e o que acontece numa janela sobre um andar sem piso.
 
 ### 10.7 No código (rodada n16)
 

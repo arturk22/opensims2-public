@@ -249,6 +249,7 @@ LightMapGlobals LightMapGlobals::from(const LightingConfig& config) {
     one("brightWallFloorContribution", g.brightWallFloor);
     one("darkWallFloorContribution", g.darkWallFloor);
     one("hmSunLightTransitionZone", g.sunTransitionZone);
+    one("spillPlaneOffset", g.spillPlaneOffset);
     float steps = float(g.propagationSteps);
     one("wallPropagationSteps", steps);
     g.propagationSteps = std::max(0, int(steps));
@@ -614,7 +615,12 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         p.color = dl * f + spill * fs;
         portals.push_back(p);
         const V3 lc{l.color[0], l.color[1], l.color[2]};
-        const float cx = (float(to[0]) + 0.5f) / 2, cy = (float(to[1]) + 0.5f) / 2;
+        // The portal's place (the portal builder, Mac BV 0x7149fc): the
+        // middle of the wall's tile, spillPlaneOffset into the side the light
+        // goes to.
+        const float tileMid = std::floor(ax == 0 ? ly : lx) + 0.5f;
+        const float cx = ax == 0 ? line + sgn * globals.spillPlaneOffset : tileMid;
+        const float cy = ax == 1 ? line + sgn * globals.spillPlaneOffset : tileMid;
         // A window over a level without floor on its inner side (the attic
         // windows over a tall room) lights the floor below, as that room's
         // (inferred: the game's portal list, which gives the source its

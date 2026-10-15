@@ -145,6 +145,7 @@ struct LightMapGlobals {
     float roomSaturation = 0.5f, roomCeilingStrength = 1, roomPortalStrength = 0.75f;
     float brightWallFloor = 1, darkWallFloor = 0.5f; // bright/darkWallFloorContribution
     int propagationSteps = 50;                       // wallPropagationSteps (both grids)
+    float spillPlaneOffset = 0.1f;                   // a portal's place in front of its wall
     static LightMapGlobals from(const LightingConfig& config);
 };
 
