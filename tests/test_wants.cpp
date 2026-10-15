@@ -3,10 +3,15 @@
 // src/vm/wants).
 
 #include "formats/wants.hpp"
+#include "vm/gnu_sort.hpp"
 #include "vm/wants.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <initializer_list>
+#include <random>
+#include <utility>
+#include <vector>
 
 using namespace os2;
 using namespace os2::vm;
@@ -240,10 +245,45 @@ static void testSimulator() {
     check(wantRecordChanged(vm, 1), "a Sim without a SWAF whose state changed gets one");
 }
 
+// The game's std::sort (vm/gnu_sort.hpp): a sort, whatever the ties; with
+// 16 elements or fewer it is an insertion sort, so ties keep their order.
+static void testGnuSort() {
+    std::mt19937 rng(7);
+    bool sorted = true, permutation = true, stableSmall = true;
+    for (int n : {0, 1, 2, 5, 16, 17, 33, 100, 1000}) {
+        for (int range : {3, 1000}) {
+            std::vector<std::pair<int, int>> v;
+            for (int i = 0; i < n; ++i)
+                v.push_back({int(rng() % unsigned(range)), i});
+            auto w = v;
+            gnu::sort(w.begin(), w.end(), [](const auto& a, const auto& b) { return b.first < a.first; });
+            sorted &= std::is_sorted(w.begin(), w.end(), [](const auto& a, const auto& b) { return b.first < a.first; });
+            auto x = w;
+            std::sort(x.begin(), x.end());
+            std::sort(v.begin(), v.end());
+            permutation &= x == v;
+            if (n <= 16)
+                for (size_t i = 1; i < w.size(); ++i)
+                    stableSmall &= w[i - 1].first != w[i].first || w[i - 1].second < w[i].second;
+        }
+    }
+    check(sorted && permutation, "gnu::sort sorts");
+    check(stableSmall, "gnu::sort keeps ties in order up to 16 elements");
+
+    // The roots go by tree id, one per id (cTSWantTreeManager's map).
+    wants::Library lib;
+    lib.addTree(kFearTree); // tree 2
+    lib.addTree(kTree);     // tree 1
+    lib.addTree(kTree);
+    check(lib.roots.size() == 2 && lib.nodes[size_t(lib.roots[0])].tree == 1 && lib.nodes[size_t(lib.roots[1])].tree == 2,
+          "roots in increasing tree id, a repeated id left out");
+}
+
 int main() {
     testRecord();
     testTuningAndMeter();
     testSimulator();
+    testGnuSort();
     if (failures)
         std::fprintf(stderr, "%d failures\n", failures);
     return failures ? 1 : 0;

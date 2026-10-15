@@ -1,6 +1,9 @@
 // The want simulator (wants.hpp). Addresses are of the BV 1.10 ppc binary.
 
 #include "wants.hpp"
+
+#include "gnu_sort.hpp"
+#include "motives.hpp"
 #include "formats/log_once.hpp"
 
 #include "engine.hpp"
@@ -439,9 +442,10 @@ float priority(VM& vm, WantSystem& ws, const Meta& m, const WantInstance& c) {
         f[kRelationship] = ramp(relationshipLtr(vm, m.id, int16_t(c.data.subjectValue)), n->relationshipRange);
     if (f[kRelationship] <= 0 && n->superZero[kRelationship])
         zero = true;
-    // Mood (motive 3) of the Sim on the lot.
+    // Mood (motive 3) of the Sim on the lot: its float, truncated
+    // (CalculateWantPriority, BV 0x509c54).
     if (n->useFactor(kMood) && Node::hasRange(n->moodRange)) {
-        const int mood = m.sim && m.sim->person ? m.sim->person->motives[kMood] : 0;
+        const int mood = m.sim && m.sim->person ? int(motiveNow(*m.sim, kMood)) : 0;
         f[kMood] = ramp(mood, n->moodRange);
     }
     if (f[kMood] <= 0 && n->superZero[kMood])
@@ -582,7 +586,9 @@ void notifyScore(VM& vm, WantSystem& ws, const Meta& m, const WantInstance& w, b
     std::copy(p8.begin(), p8.end(), params.begin());
     params[8] = achieved;
     params[9] = int16_t(points);
-    params[10] = int16_t(d->level); // the definition's vtable 0x24 (inferred: the level)
+    // The definition's vtable 0x24 (0xe4e1e0): the level as its reader
+    // numbers it, Power 2, Memorable 1, else 0.
+    params[10] = d->level == wants::Level::Power ? 2 : d->level == wants::Level::Memorable ? 1 : 0;
     params[11] = int16_t(oldRaw / 10);
     params[12] = normalizedAspirationScore(*ws.library, age, oldRaw);
     params[13] = objectParam;
@@ -635,11 +641,11 @@ void prioritize(VM& vm, WantSystem& ws, int16_t id) {
     const Meta m = meta(vm, id);
     for (auto& c : ws.candidates)
         c->priority = priority(vm, ws, m, *c);
-    // std::sort with a "higher priority first" predicate; stable here, so
-    // ties keep the search order (inferred: the game's order of ties is its
-    // sort's).
-    std::stable_sort(ws.candidates.begin(), ws.candidates.end(),
-                     [](const WantPtr& a, const WantPtr& b) { return a->priority > b->priority; });
+    // std::sort with the predicate 0x5042fc (higher priority first), as the
+    // game's libstdc++ sorts: ties end up where the game's do (gnu_sort.hpp;
+    // docs/wants-mac.md §9).
+    gnu::sort(ws.candidates.begin(), ws.candidates.end(),
+              [](const WantPtr& a, const WantPtr& b) { return b->priority < a->priority; });
 }
 
 int indexOf(const std::vector<WantPtr>& v, const WantInstance* w) {

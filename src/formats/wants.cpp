@@ -315,7 +315,13 @@ void readTree(Library& lib, std::string_view xml) {
         lib.errors.push_back("want tree " + std::to_string(tree.id) + ": version " + std::to_string(tree.version));
     if (const Xml* root = t->child("wantNode")) {
         tree.root = readNode(lib, *root, tree.id, -1, 0);
-        lib.roots.push_back(tree.root);
+        // cTSWantTreeManager keeps the roots in a map by tree id (unsigned;
+        // BV 0x00aece14: a second tree of the same id is not added), and
+        // WorkOnFindingGoals walks that map: the roots stay in that order.
+        const auto at = std::lower_bound(lib.roots.begin(), lib.roots.end(), tree.id,
+                                         [&](int r, uint32_t id) { return lib.nodes[size_t(r)].tree < id; });
+        if (at == lib.roots.end() || lib.nodes[size_t(*at)].tree != tree.id)
+            lib.roots.insert(at, tree.root);
     }
     lib.trees.push_back(std::move(tree));
 }

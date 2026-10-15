@@ -134,7 +134,7 @@ struct Library {
     std::map<uint32_t, Definition> definitions;
     std::vector<Node> nodes;
     std::vector<Tree> trees;
-    std::vector<int> roots; // node indices, in tree order
+    std::vector<int> roots; // node indices of the trees' roots, by increasing tree id (one per id)
     Tuning tuning;
     std::map<uint16_t, StringTable> texts; // Text/Wants.package STR# by instance
     std::vector<std::string> errors;
