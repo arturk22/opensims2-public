@@ -350,9 +350,12 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
             if (cnt.empty())
                 continue;
             for (int k = 0; k < std::atoi(cnt.c_str()); ++k) {
+                // "<family>," as the game writes it ("%s,").
                 std::string f = md.property("cafOverlay" + std::to_string(k));
                 for (auto& c : f)
                     c = char(std::tolower(static_cast<unsigned char>(c)));
+                while (!f.empty() && (f.back() == ',' || f.back() == ' '))
+                    f.pop_back();
                 if (f.empty() || f == spec.eyes ||
                     std::find(spec.overlays.begin(), spec.overlays.end(), f) != spec.overlays.end())
                     continue;
@@ -727,25 +730,46 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
     const std::string skinFamily = spec.skinFamily.empty() ? toneFamily(spec.skinTone) : spec.skinFamily, hairFamily = toneFamily(spec.hairTone);
     const std::string prefix = agePrefix(spec.age, spec.gender, true);
 
-    // The overlays drawn over the face skin, in layer order (eyes first).
+    // The overlays drawn over the face skin, as cTSCASBodyPartSystem::
+    // GetMaterialLayersToBeComposited (Mac BV 0x80d5e8) lays them: the
+    // overlay operations in order (the eye colour, then the choices), one
+    // overlay per bin (the XML's "bin": a later choice in a bin takes the
+    // place of the earlier one), then stably sorted by "layer"
+    // (docs/cas-mac.md, round n21). cafOverlay<i> lists every choice in
+    // order, as the game writes them.
     struct Layer {
         const SimPart* entry;
-        uint32_t layer;
-        int order;
+        uint32_t layer, bin;
     };
     std::vector<Layer> layers;
-    if (const SimPart* e = catalog.byFamily(catalog.textureOverlays, spec.eyes))
-        layers.push_back({e, 0, 0});
+    std::vector<std::string> chosen;
+    auto addLayer = [&](const SimPart* o) {
+        const uint32_t bin = o->number("bin");
+        for (auto& l : layers)
+            if (l.bin == bin) {
+                l = {o, o->number("layer"), bin};
+                return;
+            }
+        layers.push_back({o, o->number("layer"), bin});
+    };
+    if (const SimPart* e = catalog.byFamily(catalog.textureOverlays, spec.eyes)) {
+        addLayer(e);
+        chosen.push_back(family(*e));
+    }
     for (size_t i = 0; i < spec.overlays.size(); ++i) {
         const SimPart* o = catalog.byFamily(catalog.textureOverlays, spec.overlays[i]);
         if (!o) {
             res.warnings.push_back("no overlay " + spec.overlays[i]);
             continue;
         }
+        // The brows and stubble come in the hair's colour; an elder's only
+        // in grey (the game's query with the hair tone finds none and falls
+        // back to 00000005).
         const uint32_t sub = o->number("subtype");
         if (sub == overlay::Brows || sub == overlay::FacialHair)
             o = catalog.recolor(*o, spec.age == age::Elder ? toneFamily(5) : hairFamily);
-        layers.push_back({o, o->number("layer"), int(i) + 1});
+        addLayer(o);
+        chosen.push_back(family(*o));
     }
     std::stable_sort(layers.begin(), layers.end(), [](const Layer& a, const Layer& b) { return a.layer < b.layer; });
 
@@ -861,12 +885,9 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         setProperty(m, "stdMatBaseTextureName", skinTex);
         setProperty(m, "cafSkinTone", skinFamily);
         setProperty(m, "cafHairTone", hairFamily);
-        std::vector<const SimPart*> byChoice;
-        for (const auto& l : layers)
-            byChoice.push_back(l.entry);
-        setProperty(m, "cafNumOverlays", std::to_string(byChoice.size()));
-        for (size_t i = 0; i < byChoice.size(); ++i)
-            setProperty(m, "cafOverlay" + std::to_string(i), family(*byChoice[i]) + ",");
+        setProperty(m, "cafNumOverlays", std::to_string(chosen.size()));
+        for (size_t i = 0; i < chosen.size(); ++i)
+            setProperty(m, "cafOverlay" + std::to_string(i), chosen[i] + ",");
         setProperty(m, "paramAge", std::to_string(editorAgeIndex(a)));
         setProperty(m, "paramGender", spec.gender == gender::Female ? "1" : "0");
         setProperty(m, "eyeGizmoEnable", "true");

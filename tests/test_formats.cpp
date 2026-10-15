@@ -1189,6 +1189,70 @@ static void testBlendFaces() {
     check(differ > va->size() / 3, "the second parent's regions give another face");
 }
 
+// The face's composited layers as GetMaterialLayersToBeComposited lays
+// them (Mac BV 0x80d5e8, docs/cas-mac.md round n21): one overlay per bin
+// (two costume makeups share bin 20: the later one stays), stably sorted by
+// layer; cafOverlay<i> lists every choice in order, "<family>," as the game
+// writes them, and reading the character back gets them all again.
+static void testFaceOverlayLayers() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+    cas::FaceBaker baker(index, catalog);
+    auto fam = [&](const char* name) {
+        for (const auto& e : catalog.textureOverlays)
+            if (e.name() == name)
+                return cas::family(e);
+        return std::string();
+    };
+    cas::CharacterSpec s;
+    s.age = cas::age::Adult;
+    s.gender = cas::gender::Female;
+    s.hairTone = 1;
+    s.eyes = fam("uuface_eye_green");
+    s.overlays = {fam("uuface_browbushy_black"), fam("uuface_lip_classicred"), fam("uuface_mime"), fam("uuface_tiger")};
+    cas::completeSpec(catalog, s, 7);
+    const auto dir = std::filesystem::temp_directory_path() / "os2_test_face_layers";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "face_layers.package";
+    cas::writeCharacter(index, catalog, baker, s, "Face Layers", file, false);
+    DbpfPackage pkg(file);
+    std::vector<std::string> textures;
+    int cafCount = -1;
+    std::string caf0;
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type != 0x49596978 || e.tgi.group != 0xFFFFFFFF)
+            continue;
+        const auto bytes = pkg.read(e);
+        Rcol rc(bytes);
+        const auto* b = rc.find("cMaterialDefinition");
+        if (!b)
+            continue;
+        const auto md = MaterialDefinition::parse(b->body);
+        if (md.property("cafNumOverlays").empty())
+            continue;
+        const int n = std::atoi(md.property("numTexturesToComposite").c_str());
+        for (int i = 0; i < n; ++i)
+            textures.push_back(md.property("baseTexture" + std::to_string(i)));
+        cafCount = std::atoi(md.property("cafNumOverlays").c_str());
+        caf0 = md.property("cafOverlay0");
+        break;
+    }
+    check(textures.size() == 5, "face layers: the skin, the eyes, the lipstick, one costume makeup, the brows");
+    if (textures.size() == 5) {
+        check(textures[1].find("eye-green") != std::string::npos && textures[2].find("lip-classicred") != std::string::npos,
+              "face layers: layer 0 in choice order (the eyes, then the lipstick)");
+        check(textures[3].find("tiger") != std::string::npos, "face layers: the later costume makeup of bin 20 stays");
+        check(textures[4].find("browbushy") != std::string::npos, "face layers: the brows (layer 80) on top");
+    }
+    check(cafCount == 5 && caf0 == s.eyes + ",", "cafOverlay: every choice, the eyes first, \"<family>,\"");
+    const cas::CharacterSpec back = cas::readCharacterSpec(pkg, 0xFFFFFFFF, catalog);
+    check(back.eyes == s.eyes && back.overlays.size() == 4, "reading the character back gets its overlays again");
+    std::filesystem::remove_all(dir);
+}
+
 // The naked outfit (shower, bath, getting changed) keeps the Sim's hair and
 // face: SetupShapesPrivate takes the naked category's hair and face from
 // swimwear, never the bald "<p>hairbald_skin" its list names (playtest 35:
@@ -1753,6 +1817,7 @@ int main() {
     testCasRandomize();
     testFaceRegionMasks();
     testBlendFaces();
+    testFaceOverlayLayers();
     testNakedOutfitKeepsHair();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
