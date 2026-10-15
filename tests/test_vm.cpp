@@ -673,6 +673,10 @@ static void testArrays() {
                       arr(0, 2, Temp, 0, Temp, 0, go(19), E),    // clear
                       arr(1, 2, Temp, 5, Temp, 5, go(20), E),    // temp5 := 0
                       arr(7, 2, Temp, 0, Temp, 0, T, E)}));      // empty: error 0x6D
+    // An iterator is -1 until a tree sets it (as in the game's saves); the
+    // search starts where it is.
+    check(fx.obj().arrays[2].iterator == -1, "an array's iterator starts at -1");
+    fx.obj().arrays[2].iterator = 0;
     Thread t = fx.run(0x1000);
     check(t.status == Thread::Status::Failed && t.error.find("iterator that does not exist") != std::string::npos &&
               t.temps[1] == 20 && t.temps[3] == 3 && t.temps[6] == 10 && t.temps[7] == 20 && t.temps[2] == 3 &&

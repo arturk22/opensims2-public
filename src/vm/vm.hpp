@@ -534,10 +534,12 @@ struct Object {
     // On Timer's timers, in the order they were set.
     std::vector<ObjectTimer> timers;
     std::optional<Person> person;
-    // Object arrays, each with an iterator index.
+    // Object arrays, each with an iterator index (data owner 0x29; saved
+    // after the arrays, cTSObject +0x194: -1 in every array of the game's
+    // lots never walked, so -1 before a tree sets it).
     struct Array {
         std::vector<int16_t> values;
-        int16_t iterator = 0;
+        int16_t iterator = -1;
     };
     std::vector<Array> arrays;
     Array& array(int idx); // error 0x6C past the object's arrays

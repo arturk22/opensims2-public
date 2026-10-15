@@ -75,7 +75,7 @@ void restoreState(Object& o, const LotObjects::State& s) {
     for (auto& a : o.arrays)
         a = {};
     for (size_t i = 0; i < s.arrays.size() && i < o.arrays.size(); ++i)
-        o.arrays[i] = {s.arrays[i], 0};
+        o.arrays[i] = {s.arrays[i], i < s.arrayIterators.size() ? s.arrayIterators[i] : int16_t(-1)};
     // The temporary token: its fields as data owner 0x27 numbers them (kind,
     // inventory ID, counted, index, GUID, flags, count) and the token itself.
     const auto& f = s.tempTokenFields;

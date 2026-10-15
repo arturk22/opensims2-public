@@ -207,8 +207,11 @@ void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects:
         s.data.resize(o.data.size(), 0);
     std::copy(o.data.begin(), o.data.end(), s.data.begin());
     s.arrays.clear();
-    for (const auto& a : o.arrays)
+    s.arrayIterators.clear();
+    for (const auto& a : o.arrays) {
         s.arrays.push_back(a.values);
+        s.arrayIterators.push_back(a.iterator);
+    }
     const TempToken& t = o.tempToken;
     s.tempTokenFields[0] = int16_t(t.kind);
     s.tempTokenFields[1] = t.inventoryId;
@@ -528,7 +531,7 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
             diff(at + "array count");
         else
             for (size_t i = 0; i < x.arrays.size(); ++i)
-                if (x.arrays[i].values != y->arrays[i].values)
+                if (x.arrays[i].values != y->arrays[i].values || x.arrays[i].iterator != y->arrays[i].iterator)
                     diff(at + "array " + std::to_string(i));
         if (x.tempToken.token.guid != y->tempToken.token.guid ||
             x.tempToken.token.properties != y->tempToken.token.properties || x.tempToken.index != y->tempToken.index)
