@@ -12,8 +12,8 @@
 // until the worker has finished (BackgroundJob::collect joins it, which
 // orders its writes before the main thread's reads).
 //
-// Progress: the load reports named phases (the OS2_PERF lap names of
-// main.mm) as fractions, so the loading screen can pace its animation. Plain
+// Progress: the load reports named phases (the OS2_PERF lap names of the
+// app shell's perfLap) as fractions, so the loading screen can pace its animation. Plain
 // C++.
 
 #include <exception>
@@ -53,7 +53,7 @@ namespace loading {
 
 // Starts counting a new load (progress 0).
 void begin();
-// A phase of the load ended: a known phase name (main.mm's perf laps:
+// A phase of the load ended: a known phase name (the shell's perf laps:
 // "Lot::load", "loadLotObjects", "  Sim to the GPU", ...) moves the progress
 // to its share of a typical load. Unknown names are ignored. Any thread.
 void phase(std::string_view name);

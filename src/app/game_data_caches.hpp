@@ -5,10 +5,10 @@
 // app's life because it means the same thing in every scene (keyed by GUID,
 // resource or texture name, CRES, or a file of TSData). They were function
 // statics in main.mm, pie_menu.cpp and wants_panel.cpp; now they live in
-// one object, next to the scene's (SceneState gScene in main.mm), with one
+// one object, next to the scene's (SceneState gScene in app_state.hpp), with one
 // place that frees them:
 //
-// - On quit, releaseAppState() (main.mm) clears them right after the scene,
+// - On quit, releaseAppState() (app_state.cpp) clears them right after the scene,
 //   in the order of clear() below, while the resource index, the game's
 //   audio and the window's Metal device are still alive. As function
 //   statics they were destroyed by the C++ runtime at exit, in the reverse
@@ -64,7 +64,7 @@ struct GameDataCaches {
 
     // Decoded pictures (the "images" of sizes(); trim() drops them).
     // The vanity's overlay previews by "face texture|overlay texture"
-    // (setupWardrobe in main.mm; cas::overlayPreview, 96x96).
+    // (setupWardrobe in live_dialogs.cpp; cas::overlayPreview, 96x96).
     std::map<std::string, std::unique_ptr<RgbaImage>> casPreviews;
     // The memories' icons by the memory object's GUID (wants_panel.cpp).
     std::map<uint32_t, std::unique_ptr<RgbaImage>> memoryIcons;
@@ -75,7 +75,7 @@ struct GameDataCaches {
     std::map<std::string, std::optional<PickMesh::Mask>> pickMasks;
 
     // ObjectThumbnails.package and its entries by instance (the dialogs'
-    // pictures of objects, main.mm dialogThumbnail).
+    // pictures of objects, live_dialogs.cpp dialogThumbnail).
     std::map<uint32_t, const DbpfEntry*> objectThumbIndex;
     std::unique_ptr<DbpfPackage> objectThumbs;
 

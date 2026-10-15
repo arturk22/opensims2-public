@@ -35,7 +35,7 @@
 // it on the panel's bottom left, which hid half of Apply Changes): the art's lower
 // left tab is as tall as the panel and rises from it, behind the puck; the window's
 // body takes every click it covers (nothing reaches the panels or the world,
-// main.mm's pressOptions) and the tab column does not; the sliders
+// flow_host.mm's pressOptions) and the tab column does not; the sliders
 // are drawn as their thumb on a flat track (GZWinScrollbar2 is not drawn by
 // the UI layer yet). Plain C++.
 

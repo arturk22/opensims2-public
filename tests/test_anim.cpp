@@ -763,7 +763,7 @@ static void testSavedPose() {
 }
 
 // A two-tile door's leaves, as the host plays what the VM plays on an object
-// (app/main.mm onObjectOverlay): the open animation on the right leaf and
+// (app/lot_vm_setup.mm onObjectOverlay): the open animation on the right leaf and
 // the same one flipped on the left, each its own layer (priority and level
 // 1 + the overlay's id), both open at once; taken off when the VM takes
 // them off, the leaves stay open (held); the close of one leaf closes it
@@ -838,7 +838,7 @@ static void testDiningChairSeat() {
     check(getIn && getOut, "dining chair: its animations");
     if (!getIn || !getOut)
         return;
-    // As the host cues the VM's overlay on the chair (main.mm onObjectOverlay).
+    // As the host cues the VM's overlay on the chair (lot_vm_setup.mm onObjectOverlay).
     chair.cue(0, *getIn, {.fade = 0.1f, .loop = false, .priority = 2, .mirror = true, .level = 2});
     const auto seat = chair.bonePlacement("slot_chairDining_0", 5.0);
     check(seat.has_value(), "dining chair: seat bone");
@@ -938,7 +938,7 @@ static void testDiningChairCycle() {
         }
         check(square == 4, "chair cycle: N001_Lot68's dining chairs load pushed in, square");
     }
-    // Overlays as main.mm's onObjectOverlay cues them: each its own layer
+    // Overlays as lot_vm_setup.mm's onObjectOverlay cues them: each its own layer
     // (level 1 + the overlay's id), flipped, never taken off.
     {
         auto chair = makeChair();
@@ -1023,7 +1023,7 @@ static void testHeldLayersSettle() {
 }
 
 // With the game's data (OS2_DATA): N001_Lot68's dining chair through 60
-// sits and get-ups as main.mm cues them (level and priority 1 + the overlay
+// sits and get-ups as lot_vm_setup.mm cues them (level and priority 1 + the overlay
 // id, flipped, never taken off), plain and "leaveOut" in turn: the layers
 // stay few, the chair is pulled out and turned while seated after a
 // leaveOut get-in and pushed in square after every get-out.

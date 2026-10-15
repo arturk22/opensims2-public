@@ -707,7 +707,7 @@ objeto tem o dado 68 = 3 (só 0, e 1 nas alianças e no PlumbBob): o estilo
 4 não aparece no jogo base, e o app não o desenha.
 
 **Sims sem a VM** (rodada 16): as vistas de lote sem `--vm` também
-desenham a sombra dos Sims (`poseActors` em `main.mm`), dentro ou fora pela
+desenham a sombra dos Sims (`poseActors` em `lot_actors.cpp`), dentro ou fora pela
 sala do light map sob os pés, com a cor e a direção do estado de
 `--lighting` (`simShadowLight`, a mesma conta do `LotLighting`). O bairro
 não tem Sims; o CAS já tinha. `docs/screenshots/r16-sombra-sim-sem-vm.jpg`.

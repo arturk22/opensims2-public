@@ -90,7 +90,7 @@ de destino diferente do atual. Capturas `r12-carregamento-*.jpg`.
 A imagem do lote comunitário: a miniatura 320x320 do jogo vem da câmera de
 miniaturas; aqui é a imagem de 128x128 do catálogo
 (`ObjectThumbnails.package`, `Catalog::thumbnail`), achada pela carga: depois
-do `Lot::load`, `offerCommunityLotImage` (main.mm) percorre os objetos do
+do `Lot::load`, `offerCommunityLotImage` (`lot_loading.mm`) percorre os objetos do
 lote e oferece (`offerLoadingIcon`) o primeiro cujo catálogo tem o bit
 `0x20` do campo `0x5E` do OBJD (= o "function subsort", 0x5E = (0xFC-0x40)/2;
 leitura nossa do "campo 0x5E" do doc). A tela de carregamento troca o ícone

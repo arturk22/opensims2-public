@@ -371,7 +371,7 @@ em laço:
 
 No app (`PieMenuHost::pick`): o mais perto entre os Sims (triângulos
 posados) e os objetos (triângulos do modelo, com a máscara de alfa), e
-`floorHit` (`main.mm` `floorUnderRay`: o primeiro piso dos andares
+`floorHit` (`lot_view.mm` `floorUnderRay`: o primeiro piso dos andares
 mostrados, de cima para baixo, onde o tile tem piso) corta o raio (5 cm de
 folga para o que está deitado no piso). Antes os Sims vinham antes de tudo
 e o raio atravessava o piso: clicar no piso de cima pegava o Sim de baixo.
@@ -435,7 +435,7 @@ cursor do mouse fica a seta. Não achei no binário quem escolhe `liveperson`,
 setas de borda (`left`...`downleft`; `DoWindowEdgeScrolling` não os põe por
 literal): esses mapeamentos abaixo são **inferidos** pelos nomes.
 
-**No app** (`app/game_cursors.*`: leitor de `.cur` e escolha; `main.mm`
+**No app** (`app/game_cursors.*`: leitor de `.cur` e escolha; `app_view.mm`
 cria os `NSCursor` com o hotspot do arquivo e troca o cursor a cada evento
 do mouse; os ids de `gameCursorId` são os da tabela acima):
 

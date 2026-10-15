@@ -22,7 +22,7 @@ do APFS, cópia comum. Copia para `<nome>.copying` e renomeia. Dali em diante
 o bairro e os lotes carregam da cópia e o save escreve nela; um caminho
 dentro de `data/game` é recusado (`UserData::inGameData`, `saveGame`).
 
-## 2. Cenas (`src/app/game_flow.*`, `main_menu.*`, `main.mm`)
+## 2. Cenas (`src/app/game_flow.*`, `main_menu.*`, `main.mm`, `scene_setup.mm`, `scene_lot.mm`, `flow_host.mm`)
 
 Uma cena é escolhida pelos argumentos, então as mesmas flags servem na
 partida e numa troca:
@@ -164,7 +164,7 @@ no chamador. Teste `scene_cycle` (`N002_Lot10` → bairro → `N002_Lot3` → ba
 também num build com AddressSanitizer.
 
 Rodada 23 (`r23-scenestate`): todo o estado
-da cena fica num objeto só, `SceneState gScene` (topo do `app/main.mm`); os
+da cena fica num objeto só, `SceneState gScene` (`app/app_state.hpp`/`.cpp`); os
 globais de antes (`gBuild`, `gLotSims`, `gEffects`...) são referências para
 os membros dele. `resetSceneState()` troca o objeto por um novo (atribuição
 por movimento: os membros são zerados **na ordem em que estão declarados**,
@@ -412,7 +412,7 @@ SetUCPVisible`) aparece nesses modos. Lote comunitário sem família: a mesma
 regra (não há exceção por tipo no `ApplySavedUIState`).
 
 No app: `os2::lotStartMode` (`app/game_flow.*`) dá `"buy"` para o lote do bairro
-sem família (`hood::Lot::families` vazio) e `--mode` ganha; o `main.mm` usa isso
+sem família (`hood::Lot::families` vazio) e `--mode` ganha; o `app_args.mm` (`startMode`) usa isso
 no lugar de `--mode` ao entrar (Enter do bairro ou `--hood-lot`) e
 `LiveUi::setLiveEnabled(false)` apaga o botão Viver (estado 0) e ignora o clique.
 Mudar uma família para o lote antes de entrar o deixa ocupado (abre em Viver).

@@ -35,7 +35,7 @@
 //      the standing idle (the app's stand-in for the idle system) between
 //      the chair's idles.
 //   5. IK in the same frame: the objects the VM animates are posed and
-//      placed before the Sims (app/main.mm poseActors), so a contained Sim's
+//      placed before the Sims (app/lot_actors.cpp poseActors), so a contained Sim's
 //      slot and its hands' goals on the object's bones are of the same
 //      moment, and an IK chain weighs by its layer's share of the bones
 //      (AnimPlayer::pose).

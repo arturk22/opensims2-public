@@ -96,7 +96,7 @@ void raise(float f) {
 }
 
 // Share of a typical lot load (N001 lot 11, docs/performance.md) at the end
-// of each phase main.mm laps.
+// of each phase the app shell laps (perfLap, app_args.mm).
 struct Phase {
     const char* name;
     float at;

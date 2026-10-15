@@ -1549,7 +1549,7 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   **rodada 21: substituído** — quando todas acabam, a pose vira a base;
   regra do app, **inferida**: a VM fica igual). A VM nunca tira os overlays
   de uma cadeira de jantar: cada sentar e levantar põe duas camadas de uma vez
-  só (nível e prioridade 1 + id do overlay, `main.mm onObjectOverlay`), que
+  só (nível e prioridade 1 + id do overlay, `lot_vm_setup.mm onObjectOverlay`), que
   ficavam no ator para sempre (N001_Lot11, 3 dias: até 8 camadas numa cadeira,
   129 nos atores de objeto). Num ator que mantém a pose (`setHoldPose`), quando
   toda camada já tocou uma vez e está parada no último quadro há 1 s (sem

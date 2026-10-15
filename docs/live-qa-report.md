@@ -27,7 +27,7 @@ selecionar o processo pelo pid.
 - O painel de Opções flutua sobre o painel de Construir/Comprar, mas o clique ia antes para o fundo
   do painel de baixo (mesma classe do bug do puck): Salvar, Vizinhança e Sair não respondiam quando
   as Opções eram abertas a partir de Construir ou Comprar. Agora as Opções recebem o clique primeiro
-  (`main.mm`, `mouseDown` e o caminho `--click`). Checagem sem tela:
+  (`app_view.mm` `mouseDown` e o caminho `--click` em `scene_lot.mm`). Checagem sem tela:
   `--lot N001_Lot11 --vm --ui live --click 170,612 --click 138,692 --click 208,682` mostra `live UI: save`.
 - A dica de recusa do modo construção ("cannot: ...") saía pela borda direita da janela; agora fica
   dentro dela.
