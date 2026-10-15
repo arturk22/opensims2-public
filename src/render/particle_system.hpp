@@ -105,6 +105,12 @@ public:
     // 0xF = 0..3): the meta particles of a behaviour chain go to that step
     // (the aquarium's fish: 0 swimming, 1 feeding, 2 dead).
     void setState(int handle, int state);
+    // The camera (its position and up axis): effects that face it
+    // (vflag::ViewRelative / CameraFacing) turn towards it.
+    void setView(const V3& eye, const V3& up) {
+        eye_ = eye, up_ = up;
+        hasView_ = true;
+    }
     // True while the instance emits or has particles alive.
     bool alive(int handle) const;
     size_t instanceCount() const { return instances_.size(); }
@@ -175,36 +181,49 @@ private:
         float delay = 0, stopAt = -1, age = 0;
     };
     struct Instance;
-    // A meta particle: a whole effect (its own instance) moving as a
-    // particle of a behaviour chain (see MetaChain).
+    // cTSMetaParticle: a whole effect (its own instance) moving as a
+    // particle, in its chain's particles' frame (the world, or the
+    // instance's with a rigid effect).
     struct MetaParticle {
-        V3 position{}, velocity{}; // in the chain's frame
+        V3 position{}, velocity{};
         float age = 0, life = 1;
         float sizeScale = 1;
-        size_t step = 0;           // which of the chain's meta particle systems it is in
-        float walkTimer = 0;
-        float yaw = 0, pitch = 0;  // facing (alignments 2/3), turned smoothly
-        bool faced = false;
+        float rotate = 1;          // the rotation curve's multiplier
+        size_t step = 0;           // which of the chain's descriptions it is in
+        // cTSRWState: timer, vertical and horizontal strength, heading and
+        // elevation (radians), for each of the two random walks.
+        struct Walk {
+            float timer = 0, vertical = 0, horizontal = 0, heading = 0, pitch = 0;
+        };
+        std::array<Walk, 2> walks{};
+        float heading = -999;      // the damped heading (turns), -999 before the first
         std::unique_ptr<Instance> child;
     };
-    // Meta particle systems (Block::MetaParticles). A component whose meta
-    // flags have 0x18 in the top byte continues the meta component before
-    // it (inferred from the data): the cockroaches go stand -> mill -> walk
-    // -> scurry -> run as each step's life ends, and the aquarium's fish
-    // are swimming / feeding / dead, picked by the effect's state. New meta
-    // particles are born in the first step (with top-byte bit 0x01 its rate
-    // is the number kept alive), and only in state 0.
+    // A meta particle component (cTSMetaParticlesEffect) and the
+    // descriptions it goes through: a chain (component flag cflag::Chain:
+    // each one's particles go to the next when their life ends, and only the
+    // first emits) or a state chain (cflag::StateChain: the effect's state
+    // picks the description, the aquarium's swimming / feeding / dead fish).
     struct MetaChain {
         std::vector<const MetaParticles*> steps;
         std::vector<int> bases; // each step's carried effect (-1: none)
+        bool byState = false;
         Placement local;        // relative to the instance
+        bool rigid = false;
         float emitScale = 1, sizeScale = 1, alphaScale = 1, timeScale = 1;
-        float time = 0, pending = 0, startDelay = 0, stopAt = -1;
+        float time = 0, startDelay = 0, stopAt = -1;
         int orderBase = 0;
+        // Start / GenerateNewParticles state, as the particles' (Emitter).
+        bool started = false, stopping = false, preRollPending = false;
+        double cycleTime = 0;
+        int cycleIndex = 0;
+        float rateRemainder = 0, delayLeft = 0;
         std::vector<MetaParticle> particles;
     };
     struct Instance {
-        Placement where;  // the effect's transform (its node's)
+        Placement where;  // the effect's transform (its node's), turned to the camera if it faces it
+        Placement placed; // as it was placed (start / move)
+        uint32_t flags = 0; // the effect's vflag bits
         // The source transform (t2) of the emitters that are not rigid: the
         // world for an effect started here, the frame of the meta particles
         // that carry it for a meta particle's effect.
@@ -228,9 +247,14 @@ private:
                    float alphaScale, float timeScale, float delay, float stopAt, int depth, bool rigid);
     void stepInstance(Instance& inst, float dt, bool emit);
     void stepChain(Instance& inst, MetaChain& m, float dt, bool emit);
-    void spawnMeta(Instance& inst, MetaChain& m);
+    void startChain(MetaChain& m, bool hard);
+    void generateMeta(Instance& inst, MetaChain& m, float dt);
+    void spawnMeta(Instance& inst, MetaChain& m, float age);
     void enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth);
+    void updateWalk(MetaParticle::Walk& w, const MetaParticles::Walk& d);
+    bool stepMetaPhysics(const Instance& inst, const MetaChain& m, MetaParticle& p, float dt);
     void placeMeta(const Instance& inst, const MetaChain& m, MetaParticle& p) const;
+    Placement chainFrame(const Instance& inst, const MetaChain& m) const;
     static bool busy(const Instance& inst);
     void collectInstance(const Instance& inst, int& group, std::vector<ParticleQuad>& out) const;
     void collectModelsOf(int handle, const Instance& inst, std::vector<EffectModel>& out) const;
@@ -252,8 +276,15 @@ private:
     static Placement particleFrame(const Instance& inst, const Emitter& e);
     float random(float a, float b);
 
+    // The instance's transform as it is used: turned to the camera for a
+    // view-relative or camera-facing effect (cTSVisualEffect::SetTransforms
+    // BV 0xeb1760, flags 0 and 1), without the node's turn with ignoreOrientation.
+    Placement facing(const Instance& inst) const;
+
     const EffectsLibrary& lib_;
     SwarmRandom rng_;
+    V3 eye_{}, up_{0, 0, 1};
+    bool hasView_ = false;
     std::unordered_map<int, Instance> instances_;
     int next_ = 1;
     int nextId_ = 1;

@@ -193,6 +193,11 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
         for (const auto* a : gCinematic->createdActors())
             animated.push_back(a);
     gEffects->animationEffects(animated, seconds);
+    if (gCamera) { // the camera, for the effects that face it (balloons)
+        const simd_float3 eye = gCamera->eye();
+        const simd_float4x4 v = gCamera->view();
+        gEffects->setView({eye.x, eye.y, eye.z}, {v.columns[0].y, v.columns[1].y, v.columns[2].y});
+    }
     gEffects->update(seconds, gSimulation ? &gSimulation->machine() : nullptr, gObjectView.get(),
                      [](int16_t id) -> const os2::SimActor* {
                          for (const auto& s : gLotSims)

@@ -46,19 +46,22 @@ std::vector<Wiggle> wiggles(BinReader& r) {
 // Collider records: flags, name, three vectors, four floats, two names (the
 // base game has no optional byte/float that OpenTS2 reads for later
 // versions). Only the first name is kept.
-std::string colliders(BinReader& r) {
+std::vector<ColliderInfo> colliders(BinReader& r) {
     const uint32_t n = r.u32();
-    std::string first;
-    for (uint32_t i = 0; i < n; ++i) {
-        r.u32();
-        auto name = str32(r);
-        if (i == 0)
-            first = name;
-        r.skip(9 * 4 + 4 * 4);
-        str32(r);
-        str32(r);
+    if (n > 256)
+        throw FormatError("effects: too many colliders");
+    std::vector<ColliderInfo> out(n);
+    for (auto& c : out) {
+        c.flags = r.u32();
+        c.name = str32(r);
+        for (auto& v : c.v)
+            v = v3(r);
+        for (auto& f : c.f)
+            f = r.f32();
+        c.effect1 = str32(r);
+        c.effect2 = str32(r);
     }
-    return first;
+    return out;
 }
 
 struct Emission {
@@ -146,7 +149,8 @@ Particles readParticles(BinReader& r) {
     p.wiggles = wiggles(r);
     for (auto& b : p.bloom)
         b = r.u8();
-    p.colliderName = colliders(r);
+    p.colliders = colliders(r);
+    p.colliderName = p.colliders.empty() ? std::string() : p.colliders[0].name;
     str32(r);
     p.terrainBounce = r.f32();
     r.skip(4 * 4);
@@ -188,8 +192,9 @@ MetaParticles readMeta(BinReader& r) {
     m.sizeVary = r.f32();
     m.aspectCurve = curve(r);
     m.aspectVary = r.f32();
-    curve(r);   // rotate
-    r.skip(8);  // rotate vary, offset
+    m.rotateCurve = curve(r);
+    m.rotateVary = r.f32();
+    m.rotateOffset = r.f32();
     m.colors = vectors(r);
     v3(r);
     m.alphaCurve = curve(r);
@@ -204,7 +209,8 @@ MetaParticles readMeta(BinReader& r) {
     m.screw = r.f32();
     m.wiggles = wiggles(r);
     r.skip(4);  // bloom
-    m.colliderName = colliders(r);
+    m.colliders = colliders(r);
+    m.colliderName = m.colliders.empty() ? std::string() : m.colliders[0].name;
     r.skip(8 * 4); // terrain
     v2(r);
     for (auto& w : m.walks) {

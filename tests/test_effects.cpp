@@ -264,10 +264,11 @@ static EffectsLibrary metaLibrary() {
         lib.names[name] = uint32_t(lib.visuals.size());
         lib.visuals.push_back(std::move(v));
     };
-    auto comp = [](Block type, int index) {
+    auto comp = [](Block type, int index, uint32_t flags = 0) {
         Component c;
         c.type = type;
         c.index = index;
+        c.flags = flags;
         return c;
     };
     visual("fishmodel", {comp(Block::Model, 0)});
@@ -282,7 +283,22 @@ static EffectsLibrary metaLibrary() {
     swim.alignment = 2;
     swim.walks[0].delay = {-0.25f, 0.75f};
     swim.walks[0].strength = {0.0625f, 0.1875f};
-    swim.walks[0].turn[0] = 0.02f, swim.walks[0].turn[2] = 0.1f;
+    swim.walks[0].turn[0] = 0.02f, swim.walks[0].turn[1] = 0.2f, swim.walks[0].turn[2] = 0.1f;
+    // The tank's six walls: plane colliders (corner, two edges, the normal
+    // e1 x e2 inwards), bounce 0.7, radius 0.08.
+    auto plane = [](V3 o, V3 e1, V3 e2) {
+        ColliderInfo c;
+        c.name = "plane";
+        c.v = {o, e1, e2};
+        c.f = {0.7f, 0, 0.08f, 0};
+        return c;
+    };
+    swim.colliders = {plane({-0.4f, -0.2f, -0.15f}, {0.8f, 0, 0}, {0, 0.4f, 0}),
+                      plane({-0.4f, -0.2f, 0.15f}, {0, 0.4f, 0}, {0.8f, 0, 0}),
+                      plane({-0.4f, -0.2f, -0.15f}, {0, 0.4f, 0}, {0, 0, 0.3f}),
+                      plane({0.4f, -0.2f, -0.15f}, {0, 0, 0.3f}, {0, 0.4f, 0}),
+                      plane({-0.4f, -0.2f, -0.15f}, {0, 0, 0.3f}, {0.8f, 0, 0}),
+                      plane({-0.4f, 0.2f, -0.15f}, {0.8f, 0, 0}, {0, 0, 0.3f})};
     MetaParticles feed = swim;
     feed.flags = 0x19000022ull;
     MetaParticles die = swim;
@@ -290,7 +306,8 @@ static EffectsLibrary metaLibrary() {
     die.life = {2, 2};
     die.baseEffect = "deadmodel";
     lib.metaParticles = {swim, feed, die};
-    visual("tank", {comp(Block::MetaParticles, 0), comp(Block::MetaParticles, 1), comp(Block::MetaParticles, 2)});
+    // A state chain (component flag 0x8): swimming, feeding, dead.
+    visual("tank", {comp(Block::MetaParticles, 0, 0x8), comp(Block::MetaParticles, 1, 0x8), comp(Block::MetaParticles, 2, 0x8)});
     MetaParticles stand = swim, run = swim;
     stand.flags = 0x01000021ull;
     stand.life = {0.5f, 0.5f};
@@ -299,7 +316,8 @@ static EffectsLibrary metaLibrary() {
     run.baseEffect = "deadmodel";
     lib.metaParticles.push_back(stand);
     lib.metaParticles.push_back(run);
-    visual("roach", {comp(Block::MetaParticles, 3), comp(Block::MetaParticles, 4)});
+    // A chain (component flag 0x2): each one's particles go to the next.
+    visual("roach", {comp(Block::MetaParticles, 3, 0x2), comp(Block::MetaParticles, 4, 0x2)});
     return lib;
 }
 
@@ -311,7 +329,7 @@ static void testMetaParticles() {
     const int h = sys.start("tank", where);
     std::vector<EffectModel> m;
     sys.collectModels(m);
-    check(m.size() == 1 && *m[0].model == "fishParticle1_cres", "one swimming fish (the rate is the count kept)");
+    check(m.size() == 1 && *m[0].model == "fishParticle1_cres", "one swimming fish (maintain: the rate is the count kept)");
     const V3 first = m.empty() ? V3{} : m[0].where.position;
     bool inside = true;
     for (int i = 0; i < 300; ++i) {
@@ -323,7 +341,7 @@ static void testMetaParticles() {
                      std::fabs(e.where.position[2] - 1) < 0.2f;
     }
     check(m.size() == 1, "still one fish after 30 s");
-    check(inside, "the fish stays in the tank's volume");
+    check(inside, "the fish stays in the tank (its plane colliders)");
     const V3 later = m.empty() ? V3{} : m[0].where.position;
     check(std::fabs(later[0] - first[0]) + std::fabs(later[1] - first[1]) > 1e-3f, "the fish swims");
     if (!m.empty()) {

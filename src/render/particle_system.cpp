@@ -8,17 +8,12 @@ namespace os2::fx {
 namespace {
 
 constexpr float kTwoPi = 6.28318530718f;
-constexpr float kMaxStep = 0.1f;      // meta particles' physics sub-step (seconds; inferred)
 constexpr float kTimeStep = 1.0f / 15; // the particles' longest physics step and emission slice (BV 0x3d888889)
 constexpr float kFastDrag = 0.05f;    // dt x drag above this takes the time-stepped physics (BV 0x3d4ccccd)
 constexpr size_t kMaxParticles = 512; // per emitter (a guard of ours)
 
-// Meta particle flags (MetaParticles::flags, the binary's numbering; what
-// they meant here was inferred from the data).
-constexpr uint64_t kMetaKeepCount = mflag::RandomWalk;           // the rate is how many are kept alive (fish, cockroaches)
-constexpr uint64_t kMetaContinues = mflag::Attractor | (1ull << 28); // continues the meta component before it
-constexpr uint64_t kMetaBounded = mflag::Maintain;               // kept inside the first step's emit volume (the fish, not the cockroaches)
-constexpr size_t kMaxMetaParticles = 64;          // per chain
+constexpr size_t kMaxMetaParticles = 64;          // per chain (a guard of ours)
+constexpr float kCollideAway = -1e-5f;            // the plane collider's "moving towards it" (BV 0x274bc04)
 
 V3 add(V3 a, V3 b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V3 mul(V3 a, float s) { return {a[0] * s, a[1] * s, a[2] * s}; }
@@ -99,7 +94,11 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
             }
         chosen[g] = pick;
     }
-    MetaChain* chain = nullptr; // the meta component just added (a continuation joins it)
+    // The open chain (cTSEffectsManager::CreateComponentFromDescription BV
+    // 0xc042e4: a cflag::Chain component is the chain target of the one
+    // before; UpdateVisualEffect 0xc04544: after a cflag::StateChain one the
+    // following state-chain components are its descriptions).
+    MetaChain* chain = nullptr;
     for (size_t i = 0; i < comps.size(); ++i) {
         const Component& c = comps[i];
         if (c.selectionGroup && chosen[c.selectionGroup] != int(i))
@@ -138,14 +137,19 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
             if (c.index >= 0 && size_t(c.index) < lib_.metaParticles.size()) {
                 const MetaParticles& m = lib_.metaParticles[size_t(c.index)];
                 const auto base = lib_.indexOf(m.baseEffect);
-                if (chain && (m.flags & kMetaContinues)) {
+                const bool joins = chain && (chain->byState ? (c.flags & cflag::StateChain) != 0 : (c.flags & cflag::Chain) != 0);
+                if (joins) {
                     chain->steps.push_back(&m);
                     chain->bases.push_back(base ? int(*base) : -1);
+                    if (c.flags & (chain->byState ? cflag::StateChainEnd : cflag::ChainEnd))
+                        chain = nullptr;
                     break;
                 }
                 MetaChain mc;
                 mc.steps.push_back(&m);
                 mc.bases.push_back(base ? int(*base) : -1);
+                mc.byState = (c.flags & cflag::StateChain) != 0;
+                mc.rigid = rigid;
                 mc.local = here;
                 mc.emitScale = es, mc.sizeScale = ss, mc.alphaScale = as, mc.timeScale = ts;
                 mc.startDelay = delay;
@@ -153,7 +157,8 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                 mc.orderBase = inst.orderNext;
                 inst.orderNext += 16;
                 inst.metas.push_back(std::move(mc));
-                chain = &inst.metas.back();
+                chain = (c.flags & (cflag::StateChain | cflag::Chain)) && !(c.flags & cflag::ChainEnd)
+                            ? &inst.metas.back() : nullptr;
                 (void)depth;
             }
             break;
@@ -196,7 +201,9 @@ int EffectSystem::start(std::string_view name, const Placement& where, bool hard
     if (!visual)
         return -1;
     Instance inst;
-    inst.where = where;
+    inst.placed = where;
+    inst.flags = lib_.visuals[*visual].flags;
+    inst.where = facing(inst);
     inst.id = nextId_++;
     addEffect(inst, *visual, Placement{}, 1, 1, 1, 1, 0, -1, 0, false);
     // cTSVisualEffect::Start starts every component with the same
@@ -208,20 +215,11 @@ int EffectSystem::start(std::string_view name, const Placement& where, bool hard
             startEmitter(inst, e, hard);
             applyEmitter(inst, e, 0);
         }
-    // Steady meta emitters likewise (the fish are swimming already); the
-    // others get their first ones now.
-    for (auto& m : inst.metas) {
-        if (m.startDelay > 0 || m.steps[0]->rateCurveCycles != 0 || m.steps[0]->preRoll <= 0) {
+    for (auto& m : inst.metas)
+        if (m.startDelay <= 0) {
+            startChain(m, hard);
             stepChain(inst, m, 0, true);
-            continue;
         }
-        float left = std::min(m.steps[0]->preRoll, 12.0f);
-        while (left > 0) {
-            const float dt = std::min(left, kMaxStep);
-            stepChain(inst, m, dt, true);
-            left -= dt;
-        }
-    }
     const int h = next_++;
     instances_.emplace(h, std::move(inst));
     return h;
@@ -245,8 +243,38 @@ void EffectSystem::stop(int handle, bool hard) {
 }
 
 void EffectSystem::move(int handle, const Placement& where) {
-    if (auto it = instances_.find(handle); it != instances_.end())
-        it->second.where = where;
+    if (auto it = instances_.find(handle); it != instances_.end()) {
+        it->second.placed = where;
+        it->second.where = facing(it->second);
+    }
+}
+
+Placement EffectSystem::facing(const Instance& inst) const {
+    Placement p = inst.placed;
+    if (!(inst.flags & (vflag::ViewRelative | vflag::CameraFacing | vflag::IgnoreOrientation)))
+        return p;
+    const std::array<float, 9> identity{1, 0, 0, 0, 1, 0, 0, 0, 1};
+    p.rotation = identity;
+    if (!hasView_ || !(inst.flags & (vflag::ViewRelative | vflag::CameraFacing)))
+        return p;
+    V3 x = sub(eye_, p.position);
+    if (!(inst.flags & vflag::CameraFacing))
+        x[2] = 0; // view-relative: only the heading
+    const float l = len(x);
+    if (l < 1e-6f)
+        return p;
+    x = mul(x, 1 / l);
+    // +X towards the camera, Z up as the camera's up (inferred: the axes
+    // after X are read only roughly).
+    const V3 up = (inst.flags & vflag::CameraFacing) ? up_ : V3{0, 0, 1};
+    V3 y{up[1] * x[2] - up[2] * x[1], up[2] * x[0] - up[0] * x[2], up[0] * x[1] - up[1] * x[0]};
+    const float ly = len(y);
+    if (ly < 1e-6f)
+        return p;
+    y = mul(y, 1 / ly);
+    const V3 z{x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]};
+    p.rotation = {x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]};
+    return p;
 }
 
 void EffectSystem::setIcon(int handle, std::string texture, int frame) {
@@ -596,15 +624,65 @@ void EffectSystem::applyEmitter(const Instance& inst, Emitter& e, float dt) {
     e.lastPosition = at;
 }
 
+// The chain's emitter transform in its particles' frame (t1).
+Placement EffectSystem::chainFrame(const Instance& inst, const MetaChain& m) const {
+    if (m.rigid)
+        return m.local;
+    return compose(inverse(inst.source), compose(inst.where, m.local));
+}
+
+// cTSMetaParticlesEffect::Start (BV 0xf61028; read as the particles' Start,
+// which it mirrors: the hard start's pre-roll and finite bursts, the waits).
+void EffectSystem::startChain(MetaChain& m, bool hard) {
+    const MetaParticles& d = *m.steps[0];
+    if (hard && d.rateCurveCycles != 0 && !(d.flags & mflag::Sustain))
+        return;
+    m.started = true;
+    m.stopping = false;
+    m.cycleTime = 0;
+    m.cycleIndex = 0;
+    m.rateRemainder = 0;
+    if (d.rateDelay[0] >= 0)
+        m.delayLeft = rng_.range(d.rateDelay);
+    else if (d.rateTrigger[0] >= 0)
+        m.delayLeft = rng_.range(d.rateTrigger);
+    else
+        m.delayLeft = 0;
+    m.preRollPending = hard;
+}
+
+// cTSRWState::Update (BV 0xf60d9c): a new wait, strength, and heading and
+// elevation turned by up to turn[0] turns plus turn[1] in the same sense;
+// turn[2] mixes the vertical in.
+void EffectSystem::updateWalk(MetaParticle::Walk& w, const MetaParticles::Walk& d) {
+    w.timer += rng_.range(d.delay);
+    const float strength = rng_.range(d.strength);
+    const float mix = d.turn[2];
+    if (mix >= 0.5f) {
+        w.vertical = strength;
+        w.horizontal = 2 * strength * (1 - mix);
+    } else {
+        w.horizontal = strength;
+        w.vertical = 2 * strength * mix;
+    }
+    auto turn = [&](float& angle) {
+        const float a = random(-(d.turn[0] + 1e-5f), d.turn[0] + 1e-5f);
+        angle += a * kTwoPi;
+        angle += (a >= 0 ? d.turn[1] : -d.turn[1]) * kTwoPi;
+    };
+    if (mix < 1)
+        turn(w.heading);
+    if (mix > 0)
+        turn(w.pitch);
+}
+
 void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth) {
     const MetaParticles& d = *m.steps[step];
     p.step = step;
     p.age = 0;
-    p.life = std::max(0.01f, random(d.life[0], d.life[1]));
-    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary);
-    p.walkTimer = 0;
-    // Its carried effect (a new one when the step carries another, the
-    // fish's dead model).
+    p.life = std::max(0.01f, rng_.range(d.life));
+    // Its carried effect: a new one when the step carries another (the
+    // fish's dead model; HandOffParticleToChainSystem BV 0xf63d30).
     const int base = m.bases[step];
     if (!p.child || step == 0 || base != m.bases[step - 1]) {
         p.child = std::make_unique<Instance>();
@@ -616,52 +694,362 @@ void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int dep
         for (auto& e : p.child->emitters)
             if (e.startDelay <= 0)
                 startEmitter(*p.child, e, false);
+        for (auto& c : p.child->metas)
+            if (c.startDelay <= 0)
+                startChain(c, false);
     }
 }
 
-void EffectSystem::spawnMeta(Instance& inst, MetaChain& m) {
+// cTSMetaParticlesEffect::InitParticle (BV 0xf63310).
+void EffectSystem::spawnMeta(Instance& inst, MetaChain& m, float age) {
     if (m.particles.size() >= kMaxMetaParticles)
         return;
     const MetaParticles& d = *m.steps[0];
     MetaParticle p;
-    V3 u;
-    for (int k = 0; k < 3; ++k)
-        u[size_t(k)] = random(d.emitVolume.lo[size_t(k)], d.emitVolume.hi[size_t(k)]);
-    p.position = u;
-    V3 dir;
-    for (int k = 0; k < 3; ++k)
-        dir[size_t(k)] = random(d.emitDirection.lo[size_t(k)], d.emitDirection.hi[size_t(k)]);
-    const float l = len(dir), speed = random(d.emitSpeed[0], d.emitSpeed[1]);
-    p.velocity = l > 1e-6f ? mul(dir, speed / l) : V3{0, 0, 0};
-    p.yaw = random(0, kTwoPi);
-    enterStep(m, p, std::min<size_t>(size_t(inst.state), m.steps.size() - 1), 0);
+    const Placement t1 = chainFrame(inst, m);
+    V3 dir{0, 0, 1};
+    if ((d.flags & mflag::Path) && !d.path.empty() && d.path[0].time == 0) {
+        // On a path: its first point.
+        p.position = d.path[0].position;
+        p.velocity = d.path[0].velocity;
+    } else {
+        V3 u;
+        if (d.flags & mflag::Ellipsoid) {
+            do
+                u = {random(-1, 1), random(-1, 1), random(-1, 1)};
+            while (sqrlen(u) > 1);
+            for (int k = 0; k < 3; ++k)
+                u[k] = (d.emitVolume.lo[k] + d.emitVolume.hi[k]) * 0.5f + u[k] * (d.emitVolume.hi[k] - d.emitVolume.lo[k]) * 0.5f;
+        } else {
+            for (int k = 0; k < 3; ++k)
+                u[k] = random(d.emitVolume.lo[k], d.emitVolume.hi[k]);
+        }
+        for (int k = 0; k < 3; ++k)
+            dir[k] = random(d.emitDirection.lo[k], d.emitDirection.hi[k]);
+        const float speed = rng_.range(d.emitSpeed);
+        const float l = len(dir);
+        p.position = u;
+        p.velocity = l > 1e-6f ? mul(dir, speed / l) : V3{0, 0, 0};
+        if (d.bomb > 0) {
+            const V3 away = sub(u, d.bombCenter);
+            if (sqrlen(away) > 1e-12f)
+                p.velocity = add(p.velocity, mul(away, d.bomb / len(away)));
+        }
+    }
+    p.position = transformPoint(t1, p.position);
+    p.velocity = rotate(t1, p.velocity);
+    // (Its first step: the state's for a state chain.)
+    const size_t step = m.byState ? std::min<size_t>(size_t(inst.state), m.steps.size() - 1) : 0;
+    enterStep(m, p, step, 0);
+    if ((d.flags & mflag::Path) && !d.path.empty() && d.path.back().time > 0)
+        p.life = d.path.back().time;
+    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary) * t1.scale;
+    p.rotate = d.rotateVary > 0 ? random(-d.rotateVary, d.rotateVary) : 1;
+    if (d.flags & mflag::RandomWalk) {
+        // cTSRWState::Init: the heading and elevation of the birth direction;
+        // with -wait the first walk only after its delay.
+        const float horizontal = std::hypot(dir[0], dir[1]);
+        for (size_t k = 0; k < 2; ++k) {
+            auto& w = p.walks[k];
+            w.heading = std::atan2(dir[1], dir[0]);
+            w.pitch = std::atan2(dir[2], horizontal);
+            if (d.flags & mflag::RandomWalkWait) {
+                w.timer = rng_.range(d.walks[k].delay);
+                const float strength = rng_.range(d.walks[k].strength), mix = d.walks[k].turn[2];
+                w.vertical = mix >= 0.5f ? strength : 2 * strength * mix;
+                w.horizontal = mix >= 0.5f ? 2 * strength * (1 - mix) : strength;
+            } else {
+                w.timer = 0;
+                updateWalk(w, d.walks[k]);
+            }
+        }
+    }
+    p.age = age;
     m.particles.push_back(std::move(p));
 }
 
-// A meta particle's placement in the world, for its carried effect.
+// GenerateNewParticles (meta, BV 0xf64f1c): the waits, then maintain
+// (0xf64694: the missing ones made, not moved), inject or the rate curve
+// (read as the particles', which they mirror; the rate's new ones are not
+// set back along the emitter's way here).
+void EffectSystem::generateMeta(Instance& inst, MetaChain& m, float dt) {
+    const MetaParticles& d = *m.steps[0];
+    if (m.stopping)
+        return;
+    if (m.delayLeft > 0) {
+        m.delayLeft -= dt;
+        if (m.delayLeft > 0)
+            return;
+        dt = -m.delayLeft;
+    }
+    if (d.preRoll > 0)
+        dt = std::min(dt, d.preRoll - 0.01f);
+    const float period = std::max(d.rateCurveTime, 1e-6f);
+    if (d.flags & mflag::Maintain) {
+        m.cycleTime += dt / period;
+        const size_t want = size_t(std::max(0.0f, std::ceil(sampleCurve(d.rateCurve, 0, 0))));
+        while (m.particles.size() < std::min(want, kMaxMetaParticles))
+            spawnMeta(inst, m, 0);
+        return;
+    }
+    if (d.flags & mflag::Inject) {
+        m.cycleTime += dt / period;
+        const float first = sampleCurve(d.rateCurve, 0, 0);
+        const int count = int(std::ceil(first * (first > 20 ? m.emitScale : 1)));
+        for (int guard = 0; guard < 1000 && m.cycleTime >= m.cycleIndex; ++guard) {
+            const float age = float((m.cycleTime - m.cycleIndex) * period);
+            if (age < d.life[1])
+                for (int i = 0; i < count; ++i)
+                    spawnMeta(inst, m, age);
+            ++m.cycleIndex;
+            if (d.rateCurveCycles != 0 && int(d.rateCurveCycles) <= m.cycleIndex) {
+                m.stopping = true;
+                return;
+            }
+            if (d.rateTrigger[0] >= 0) {
+                m.cycleTime -= rng_.range(d.rateTrigger) / period;
+                if (m.cycleTime < m.cycleIndex) {
+                    m.delayLeft = float((m.cycleIndex - m.cycleTime) * period);
+                    m.cycleTime = m.cycleIndex;
+                    return;
+                }
+            }
+        }
+        return;
+    }
+    float left = dt;
+    for (int guard = 0; guard < 10000 && left > 0; ++guard) {
+        float slice = left > kTimeStep ? kTimeStep : left;
+        const int next = m.cycleIndex + 1;
+        m.cycleTime += slice / period;
+        if (m.cycleTime > next) {
+            m.cycleIndex = next;
+            if (d.rateCurveCycles != 0 && int(d.rateCurveCycles) == m.cycleIndex) {
+                if (!(d.flags & mflag::Sustain)) {
+                    m.stopping = true;
+                    return;
+                }
+                m.cycleIndex = int(d.rateCurveCycles) - 1;
+                m.cycleTime = double(float(d.rateCurveCycles) - 1e-6f);
+            }
+        }
+        const float wanted = m.emitScale * slice * sampleCurve(d.rateCurve, float(m.cycleTime - m.cycleIndex), 0) + m.rateRemainder;
+        const int n = std::max(0, int(std::floor(wanted)));
+        m.rateRemainder = wanted - float(n);
+        for (int i = 0; i < n; ++i)
+            spawnMeta(inst, m, 0);
+        left -= slice;
+    }
+}
+
+// cTSMetaParticlesEffect::UpdateParticlePhysicsTimeStep (BV 0xf62d10) in
+// steps of 1/15 s, or the path (SnapParticleToPath 0xf5fb18): false when
+// the particle is gone (past its path's end, or killed by a collider).
+bool EffectSystem::stepMetaPhysics(const Instance& inst, const MetaChain& m, MetaParticle& p, float dt) {
+    const MetaParticles& d = *m.steps[p.step];
+    const Placement t1 = chainFrame(inst, m);
+    if ((d.flags & mflag::Path) && !d.path.empty()) {
+        // Hermite between the path's points (position, velocity, time) in
+        // the emitter's frame; the start is the emit box's centre with the
+        // direction box's centre at the first speed.
+        size_t k = 0;
+        while (k < d.path.size() && !(p.age < d.path[k].time))
+            ++k;
+        if (k == d.path.size())
+            k = d.path.size() - 1;
+        float t1end = d.path[k].time;
+        if (t1end == 0)
+            t1end = p.life;
+        else if (t1end < p.age)
+            return false;
+        V3 p0, v0;
+        float t0 = 0;
+        if (k > 0) {
+            p0 = d.path[k - 1].position, v0 = d.path[k - 1].velocity, t0 = d.path[k - 1].time;
+        } else {
+            for (int a = 0; a < 3; ++a) {
+                p0[a] = (d.emitVolume.lo[a] + d.emitVolume.hi[a]) * 0.5f;
+                v0[a] = (d.emitDirection.lo[a] + d.emitDirection.hi[a]) * 0.5f * d.emitSpeed[0];
+            }
+        }
+        const float span = t1end - t0;
+        if (span > 1e-6f) {
+            const float u = (p.age - t0) / span, u2 = u * u, u3 = u2 * u;
+            const V3& p1 = d.path[k].position;
+            const V3& v1 = d.path[k].velocity;
+            const float h00 = 2 * u3 - 3 * u2 + 1, h01 = -2 * u3 + 3 * u2, h10 = (u3 - 2 * u2 + u) * span,
+                        h11 = (u3 - u2) * span;
+            const float d00 = (6 * u2 - 6 * u) / span, d01 = (6 * u - 6 * u2) / span, d10 = 3 * u2 - 4 * u + 1,
+                        d11 = 3 * u2 - 2 * u;
+            V3 pos, vel;
+            for (int a = 0; a < 3; ++a) {
+                pos[a] = h00 * p0[a] + h01 * p1[a] + h10 * v0[a] + h11 * v1[a];
+                vel[a] = d00 * p0[a] + d01 * p1[a] + d10 * v0[a] + d11 * v1[a];
+            }
+            p.position = transformPoint(t1, pos);
+            p.velocity = rotate(t1, vel);
+        }
+        return true;
+    }
+    const float radius = p.sizeScale * sampleCurve(d.sizeCurve, std::min(1.0f, p.age / p.life), 1);
+    float left = dt;
+    do {
+        const float step = left > kTimeStep ? kTimeStep : left;
+        const V3 before = p.position;
+        p.position = add(p.position, mul(p.velocity, step));
+        p.velocity = add(p.velocity, mul(d.force, step));
+        if (d.flags & mflag::RandomWalk) {
+            V3 pull{0, 0, 0};
+            for (size_t k = 0; k < 2; ++k) {
+                auto& w = p.walks[k];
+                w.timer -= step;
+                if (w.timer < 0)
+                    updateWalk(w, d.walks[k]);
+                // Its force (BV 0xf5e5bc).
+                if (w.vertical == 0) {
+                    if (w.horizontal != 0)
+                        pull = add(pull, {w.horizontal * std::cos(w.heading), w.horizontal * std::sin(w.heading), 0});
+                } else if (w.horizontal == 0) {
+                    pull[2] += w.vertical * std::sin(w.pitch);
+                } else {
+                    pull = add(pull, {w.horizontal * std::cos(w.heading) * std::cos(w.pitch),
+                                      w.horizontal * std::sin(w.heading) * std::cos(w.pitch), w.vertical * std::sin(w.pitch)});
+                }
+            }
+            p.velocity = add(p.velocity, mul(pull, step));
+        }
+        // The attractor: towards its point (with bit 28 its own, in the
+        // emitter's frame), the strength over distance / range.
+        if ((d.flags & mflag::Attractor) && (d.flags & (1ull << 28)) && !d.attractorStrength.empty()) {
+            const V3 to = sub(transformPoint(t1, d.attractor), p.position);
+            const float dist = len(to);
+            if (dist > 0)
+                p.velocity = add(p.velocity, mul(to, step * sampleCurve(d.attractorStrength, std::min(dist / std::max(d.attractorRange, 1e-6f), 1.0f), 0) / dist));
+        }
+        p.velocity = mul(p.velocity, 1 - step * d.drag);
+        // Plane colliders (cTSPlaneCollider BV 0xebce60, the response
+        // 0xebdb5c): a rectangle (corner, two edges) in the emitter's frame,
+        // met moving against its normal within the radius: the particle
+        // stops on it, the normal velocity bounces back x bounce, the rest
+        // x slide; death kills (1) or kills by chance.
+        for (const auto& c : d.colliders) {
+            if (c.name != "plane")
+                continue;
+            const V3 o = transformPoint(t1, c.v[0]);
+            const V3 e1 = mul(rotate(t1, c.v[1]), t1.scale), e2 = mul(rotate(t1, c.v[2]), t1.scale);
+            V3 n{e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+            const float nl = len(n);
+            if (nl < 1e-9f)
+                continue;
+            n = mul(n, 1 / nl);
+            const V3 seg = sub(p.position, before);
+            const float denom = seg[0] * n[0] + seg[1] * n[1] + seg[2] * n[2];
+            if (!(denom < kCollideAway))
+                continue;
+            const float dist0 = -((before[0] - o[0]) * n[0] + (before[1] - o[1]) * n[1] + (before[2] - o[2]) * n[2]);
+            const float t = (radius * c.f[2] + dist0) / denom;
+            if (!(t <= 1 && (t >= 0 || dist0 / denom >= 0)))
+                continue;
+            const V3 q = add(before, mul(seg, t));
+            const V3 r = sub(q, o);
+            const float a11 = e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2], a12 = e1[0] * e2[0] + e1[1] * e2[1] + e1[2] * e2[2],
+                        a22 = e2[0] * e2[0] + e2[1] * e2[1] + e2[2] * e2[2];
+            const float b1 = r[0] * e1[0] + r[1] * e1[1] + r[2] * e1[2], b2 = r[0] * e2[0] + r[1] * e2[1] + r[2] * e2[2];
+            const float det = a11 * a22 - a12 * a12;
+            if (std::fabs(det) < 1e-12f)
+                continue;
+            const float ua = (b1 * a22 - b2 * a12) / det, ub = (b2 * a11 - b1 * a12) / det;
+            if (ua < 0 || ua > 1 || ub < 0 || ub > 1)
+                continue;
+            if (c.f[3] == 1 || (c.f[3] > 0 && random(0, 1) <= c.f[3]))
+                return false;
+            p.position = q;
+            const float vn = p.velocity[0] * n[0] + p.velocity[1] * n[1] + p.velocity[2] * n[2];
+            if (vn < 0) {
+                const V3 normal = mul(n, vn), tangent = sub(p.velocity, normal);
+                p.velocity = sub(p.velocity, add(mul(normal, 1 + c.f[0]), mul(tangent, 1 - c.f[1])));
+            }
+        }
+        left -= step;
+    } while (left > 0);
+    return true;
+}
+
+// A meta particle in the world for its carried effect (ProcessMetaParticle
+// BV 0xf5f1a4): its position, the facing of its alignment, its size.
 void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParticle& p) const {
     const MetaParticles& d = *m.steps[p.step];
     const float t = std::min(1.0f, p.age / p.life);
     Placement local;
     local.position = p.position;
-    if (d.alignment == 2 || d.alignment == 3) {
-        // Facing its motion: the model's +X along the velocity (alignment
-        // 2 also pitches, 3 stays level; inferred from the fish, whose
-        // models are long in X, and the cockroaches).
-        const float cy = std::cos(p.yaw), sy = std::sin(p.yaw);
-        const float pitch = d.alignment == 2 ? p.pitch : 0;
-        const float cp = std::cos(pitch), sp = std::sin(pitch);
-        // Rz(yaw) * Ry(-pitch): columns are the local axes.
-        local.rotation = {cy * cp, -sy, -cy * sp, sy * cp, cy, -sy * sp, sp, 0, cp};
+    auto rz = [](float turns) {
+        const float c = std::cos(turns * kTwoPi), s = std::sin(turns * kTwoPi);
+        return std::array<float, 9>{c, -s, 0, s, c, 0, 0, 0, 1};
+    };
+    if (d.alignment >= 2 && d.alignment <= 4 && len(p.velocity) > 1e-6f) {
+        // The axis along the velocity: X (2), Y (3) or Z (4); the others
+        // from the vertical.
+        const V3 f = mul(p.velocity, 1 / len(p.velocity));
+        V3 x, y, z;
+        auto norm = [](V3 v) { const float l = len(v); return l > 1e-6f ? mul(v, 1 / l) : V3{0, 0, 0}; };
+        auto cross = [](V3 a, V3 b) { return V3{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]}; };
+        if (d.alignment == 2) {
+            x = f, y = norm(cross({0, 0, 1}, f));
+            if (len(y) == 0)
+                y = {0, 1, 0};
+            z = cross(x, y);
+        } else if (d.alignment == 3) {
+            y = f, x = norm(cross(f, {0, 0, 1}));
+            if (len(x) == 0)
+                x = {1, 0, 0};
+            z = cross(x, y);
+        } else {
+            z = f;
+            x = std::fabs(f[0]) <= std::fabs(f[1]) ? norm(cross({0, 1, 0}, z)) : norm(cross({1, 0, 0}, z));
+            if (std::fabs(f[0]) > std::fabs(f[1]))
+                x = mul(x, -1);
+            y = cross(z, x);
+        }
+        if (d.alignDamp <= 0) {
+            local.rotation = {x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]};
+        } else {
+            // Damped: only the heading, turned towards the motion by (1/15) /
+            // damp of the way each frame (inferred: each step here).
+            float want = std::atan2(x[1], x[0]) / kTwoPi;
+            float h = p.heading;
+            if (h != -999) {
+                if (want > h + 0.5f)
+                    h += 1;
+                else if (want < h - 0.5f)
+                    h -= 1;
+                h = (kTimeStep / d.alignDamp) * (want - h) + h;
+                if (h < -0.5f)
+                    h += 1;
+                else if (h > 0.5f)
+                    h -= 1;
+            } else {
+                h = want;
+            }
+            p.heading = h;
+            local.rotation = rz(h);
+        }
+    } else if (d.alignment >= 2 && d.alignment <= 4 && p.heading != -999) {
+        local.rotation = rz(p.heading);
+    }
+    // Its own rotation about Z over its life.
+    if (!d.rotateCurve.empty()) {
+        const auto r = rz(p.rotate * sampleCurve(d.rotateCurve, t, 0));
+        Placement spin;
+        spin.rotation = r;
+        local.rotation = compose(local, spin).rotation;
     }
     local.scale = std::max(0.0f, sampleCurve(d.sizeCurve, t, 1) * p.sizeScale);
     if (p.child) {
-        p.child->where = compose(inst.where, compose(m.local, local));
-        // The meta particles here move with their instance: their effects'
-        // source is the instance's frame (UpdateActiveParticles BV 0xf5f5b0
-        // hands the meta's source to them).
-        p.child->source = inst.where;
-        p.child->alpha = inst.alpha * std::clamp(sampleCurve(d.alphaCurve, t, 1), 0.0f, 1.0f);
+        const Placement frame = m.rigid ? inst.where : inst.source;
+        p.child->where = compose(frame, local);
+        // The carried effect's source is the meta's (UpdateActiveParticles BV 0xf5f5b0).
+        p.child->source = frame;
+        p.child->alpha = inst.alpha * std::clamp(sampleCurve(d.alphaCurve, t, 1), 0.0f, 1.0f) * m.alphaScale;
         p.child->icon = inst.icon;
         p.child->iconFrame = inst.iconFrame;
         p.child->stopped = inst.stopped;
@@ -671,106 +1059,47 @@ void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParti
 void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) {
     dt *= m.timeScale;
     m.time += dt;
-    const MetaParticles& root = *m.steps[0];
-    const float active = m.time - m.startDelay;
-    // Births, in the first step and in state 0 only.
-    if (emit && inst.state == 0 && active >= 0 && (m.stopAt < 0 || m.time < m.stopAt)) {
-        const float period = root.rateCurveTime > 0 ? root.rateCurveTime : 1;
-        const bool done = root.rateCurveCycles > 0 && active >= period * float(root.rateCurveCycles);
-        const float rate = sampleCurve(root.rateCurve, std::fmod(std::max(active, 0.0f), period) / period, 0) * m.emitScale;
-        if (root.flags & kMetaKeepCount) {
-            // Kept alive: the rate is the count (one fish per fish chain).
-            const size_t want = size_t(std::lround(std::max(rate, 0.0f)));
-            while (!done && m.particles.size() < std::min(want, kMaxMetaParticles))
-                spawnMeta(inst, m);
-        } else if (!done) {
-            m.pending += rate * dt;
-            if (root.rateCurveCycles > 0 && active - dt <= 0 && m.pending < 1 && rate > 0)
-                m.pending = 1; // a burst's first one at once (the balloons)
-            while (m.pending >= 1) {
-                spawnMeta(inst, m);
-                m.pending -= 1;
-            }
-        }
+    if (!m.started && m.startDelay > 0 && m.time >= m.startDelay && !inst.stopped && (m.stopAt < 0 || m.time < m.stopAt))
+        startChain(m, false);
+    if (m.preRollPending) {
+        m.preRollPending = false;
+        dt += m.steps[0]->preRoll;
     }
-    const V3 lo = root.emitVolume.lo, hi = root.emitVolume.hi;
     for (auto& p : m.particles) {
-        // The effect's state moves its particles to that step of the chain.
-        const size_t want = std::min<size_t>(size_t(inst.state), m.steps.size() - 1);
-        if (inst.state > 0 && p.step != want)
-            enterStep(m, p, want, 0);
-        else if (inst.state == 0 && p.step != 0 && m.steps[p.step]->life[1] > 1000)
-            enterStep(m, p, 0, 0); // back to swimming after feeding (steps with an endless life)
+        // A state chain: the effect's state picks the description
+        // (SelectDescriptionState BV 0xeb04f4 -> SwitchDescription).
+        if (m.byState) {
+            const size_t want = std::min<size_t>(size_t(inst.state), m.steps.size() - 1);
+            if (p.step != want)
+                enterStep(m, p, want, 0);
+        }
         p.age += dt;
         if (p.age >= p.life) {
-            // Its life in this step is over: the next step, if any.
-            if (p.step + 1 < m.steps.size() && inst.state == 0)
+            // Its life over: a chain hands it to the next description
+            // (HandOffParticleToChainSystem BV 0xf63d30), else it is gone.
+            if (!m.byState && p.step + 1 < m.steps.size()) {
                 enterStep(m, p, p.step + 1, 0);
-            else {
+            } else {
                 p.child.reset();
                 continue;
             }
         }
-        const MetaParticles& d = *m.steps[p.step];
-        const float t = std::min(1.0f, p.age / p.life);
-        // The random walk: every delay a new heading, turned from the last by
-        // up to turn[0] of a full turn, climbing by up to turn[2] (slope), at a
-        // speed in the strength range (inferred: fish meander slowly, the
-        // cockroaches dash; turn[1] is not used).
-        const auto& w = d.walks[0];
-        if (w.strength[1] > 0 && (p.walkTimer -= dt) <= 0) {
-            p.walkTimer = std::max(0.05f, random(w.delay[0], w.delay[1]));
-            const float speed = random(w.strength[0], w.strength[1]);
-            float heading = std::atan2(p.velocity[1], p.velocity[0]);
-            if (std::hypot(p.velocity[0], p.velocity[1]) < 1e-5f)
-                heading = p.yaw;
-            heading += random(-w.turn[0], w.turn[0]) * kTwoPi;
-            const float slope = random(-w.turn[2], w.turn[2]);
-            V3 v{std::cos(heading), std::sin(heading), slope};
-            const float lv = len(v);
-            p.velocity = mul(v, speed / lv);
-        }
-        // Attractor: pulled towards its point (in the chain's frame) by the
-        // strength over the life, within its range.
-        if (!d.attractorStrength.empty()) {
-            const V3 to = sub(d.attractor, p.position);
-            const float dist = len(to);
-            const float range = d.attractorRange > 0 ? d.attractorRange : 1e9f;
-            if (dist > 1e-4f && dist < range)
-                p.velocity = add(p.velocity, mul(to, sampleCurve(d.attractorStrength, t, 0) * dt / dist));
-        }
-        p.velocity = add(p.velocity, mul(d.force, dt));
-        p.velocity = mul(p.velocity, std::max(0.0f, 1 - d.drag * dt));
-        p.position = add(p.position, mul(p.velocity, dt));
-        // Kept inside the first step's volume: turned back at its sides.
-        if (root.flags & kMetaBounded)
-            for (size_t k = 0; k < 3; ++k) {
-                if (p.position[k] < lo[k] && p.velocity[k] < 0)
-                    p.velocity[k] = -p.velocity[k];
-                if (p.position[k] > hi[k] && p.velocity[k] > 0)
-                    p.velocity[k] = -p.velocity[k];
-                p.position[k] = std::clamp(p.position[k], lo[k] - 0.02f, hi[k] + 0.02f);
-            }
-        // Facing, turned smoothly towards the motion (the damping: turns per
-        // second, default 1; inferred).
-        const float horiz = std::hypot(p.velocity[0], p.velocity[1]);
-        if (horiz > 1e-4f || std::abs(p.velocity[2]) > 1e-4f) {
-            const float yaw = std::atan2(p.velocity[1], p.velocity[0]);
-            const float pitch = std::atan2(p.velocity[2], horiz);
-            if (!p.faced) {
-                p.yaw = yaw, p.pitch = pitch, p.faced = true;
-            } else {
-                const float rate = (d.alignDamp > 0 ? d.alignDamp : 1.0f) * kTwoPi * dt;
-                const float dy = std::remainder(yaw - p.yaw, kTwoPi);
-                p.yaw += std::clamp(dy, -rate, rate);
-                p.pitch += std::clamp(pitch - p.pitch, -rate, rate);
-            }
+        if (!stepMetaPhysics(inst, m, p, dt)) {
+            p.child.reset();
+            continue;
         }
         placeMeta(inst, m, p);
         if (p.child)
             stepInstance(*p.child, dt, emit);
     }
     std::erase_if(m.particles, [](const MetaParticle& p) { return !p.child; });
+    // New ones from the first description (state chains only in state 0,
+    // inferred: SwitchDescription not followed).
+    const bool window = m.stopAt < 0 || m.time < m.stopAt;
+    if (m.started && emit && !inst.stopped && window && (!m.byState || inst.state == 0))
+        generateMeta(inst, m, dt);
+    else if (!window || inst.stopped)
+        m.stopping = true;
 }
 
 void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
@@ -790,15 +1119,8 @@ void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
         mp.age += dt;
     for (auto& sp : inst.sounds)
         sp.age += dt;
-    // Meta particles in steps (theirs are not read yet).
-    for (auto& m : inst.metas) {
-        float left = dt;
-        do {
-            const float step = std::min(left, kMaxStep);
-            stepChain(inst, m, step, !inst.stopped);
-            left -= step;
-        } while (left > 0);
-    }
+    for (auto& m : inst.metas)
+        stepChain(inst, m, dt, !inst.stopped);
 }
 
 bool EffectSystem::busy(const Instance& inst) {
@@ -828,10 +1150,11 @@ bool EffectSystem::busy(const Instance& inst) {
         for (const auto& p : m.particles)
             if (p.child && busy(*p.child))
                 return true;
-        const auto& d = *m.steps[0];
-        const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
-        if (!inst.stopped && (m.stopAt < 0 || m.time < m.stopAt) &&
-            (d.rateCurveCycles == 0 || m.time - m.startDelay < period * float(d.rateCurveCycles)))
+        if (inst.stopped)
+            continue;
+        if (m.started && !m.stopping)
+            return true;
+        if (!m.started && m.startDelay > 0 && (m.stopAt < 0 || m.time < m.stopAt))
             return true;
     }
     return false;
@@ -843,6 +1166,7 @@ void EffectSystem::update(float seconds) {
     seconds = std::min(seconds, 1.0f);
     for (auto it = instances_.begin(); it != instances_.end();) {
         Instance& inst = it->second;
+        inst.where = facing(inst);
         stepInstance(inst, seconds, !inst.stopped);
         if (!busy(inst))
             it = instances_.erase(it);

@@ -44,6 +44,17 @@ enum class DrawType : uint8_t {
     Modulate = 7,
 };
 
+// A collider record of a particle block (cTSColliderInfo): its flags, the
+// collider's name (a plane, the lot's walls, the terrain), three vectors
+// and four numbers, and two effect names.
+struct ColliderInfo {
+    uint32_t flags = 0;
+    std::string name;
+    std::array<V3, 3> v{};
+    std::array<float, 4> f{};
+    std::string effect1, effect2;
+};
+
 struct Wiggle {
     float timeRate = 0;
     V3 rateDirection{}, wiggleDirection{};
@@ -95,9 +106,11 @@ constexpr uint64_t ResetIncoming = 1ull << 32;
 // Flag bits of a visual effect (the "effect" block's options, parser BV
 // 0x1a7e510) and of its components (CreateComponentFromDescription 0xc042e4).
 namespace vflag {
+constexpr uint32_t ViewRelative = 1u << 0;
 constexpr uint32_t CameraFacing = 1u << 1;
 constexpr uint32_t HardStop = 1u << 4;
 constexpr uint32_t Rigid = 1u << 5;           // the particles live in the effect's frame and move with it
+constexpr uint32_t IgnoreOrientation = 1u << 9;
 constexpr uint32_t RealTime = 1u << 12;
 } // namespace vflag
 namespace cflag {
@@ -154,6 +167,7 @@ struct Particles {
     std::vector<Wiggle> wiggles;
     std::array<uint8_t, 4> bloom{};
     std::string colliderName;
+    std::vector<ColliderInfo> colliders;
     float terrainBounce = 0, killHeight = 0;
     V2 randomWalkDelay{}, randomWalkStrength{};
     float randomWalkTurnX = 0, randomWalkTurnY = 0;
@@ -183,6 +197,8 @@ struct MetaParticles {
     float sizeVary = 0;
     Curve aspectCurve;
     float aspectVary = 0;
+    Curve rotateCurve;           // turns about Z over life (x a multiplier in [-vary, vary], else 1)
+    float rotateVary = 0, rotateOffset = 0;
     std::vector<V3> colors;
     Curve alphaCurve;
     std::string baseEffect;      // the visual effect each meta particle carries
@@ -200,6 +216,7 @@ struct MetaParticles {
         float turn[3]{};
     };
     std::string colliderName;
+    std::vector<ColliderInfo> colliders;
     std::array<Walk, 2> walks{};
     V3 walkPreferDirection{};
     float alignDamp = 0, alignBankWind = 0, alignBank = 0;

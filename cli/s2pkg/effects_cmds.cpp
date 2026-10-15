@@ -116,6 +116,10 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
                 for (const auto& w : m.wiggles)
                     std::printf(" (%g [%g %g %g] [%g %g %g])", w.timeRate, w.rateDirection[0], w.rateDirection[1],
                                 w.rateDirection[2], w.wiggleDirection[0], w.wiggleDirection[1], w.wiggleDirection[2]);
+                for (const auto& c : m.colliders)
+                    std::printf(" collider{%x %s [%g %g %g] [%g %g %g] [%g %g %g] %g %g %g %g %s %s}", c.flags,
+                                c.name.c_str(), c.v[0][0], c.v[0][1], c.v[0][2], c.v[1][0], c.v[1][1], c.v[1][2], c.v[2][0],
+                                c.v[2][1], c.v[2][2], c.f[0], c.f[1], c.f[2], c.f[3], c.effect1.c_str(), c.effect2.c_str());
                 for (const auto& w : m.walks)
                     std::printf(" walk=%g..%g/%g..%g turn %g %g %g", w.delay[0], w.delay[1], w.strength[0],
                                 w.strength[1], w.turn[0], w.turn[1], w.turn[2]);
