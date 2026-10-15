@@ -410,3 +410,32 @@ Ordem: as linhas 28 e 29 passam na frente das 24–27 (pedido do usuário, 2026-
 Limites: algumas linhas dependem de valores que só existem com o jogo
 rodando (UV da parede da piscina, flags do pincel de terreno); nesses
 casos a rodada lê o que der e deixa a linha "inferido" com o motivo.
+
+## 7. Plano de rodadas 30 em diante (bugs achados e sobras das rodadas)
+
+Feito em 2026-10-15, com a §6 quase toda feita (índice 82–83%). Primeiro os
+bugs que aparecem jogando ou nos soaks; depois as sobras de cada rodada
+(listadas no `TODO.md` com o nome da rodada). Mesmas regras da §6: até 3 em
+paralelo, áreas diferentes, Opus com Ghidra só leitura.
+
+| # | Rodada | De onde | Área |
+|---|---|---|---|
+| 30 | **Impasse na varanda do N001_Lot11** (sementes 2/4/6: dois Sims no degrau de um tile entre a escada do deck e a porta) e **voltar `stair_top` e `glides` à forma estrita** (afrouxados na n23): `CreateMoveOutOfWayDestination`, a regra "posição atual também inválida" do teste de passo, tempo das pausas | n18b, n23 | rotas |
+| 31 | **Visitantes em laço de "Leave"** no N003_Lot192 (Tybalt e Juliette, ~327 vezes a partir das 02:00; na v0.2.0 saíam) | fix-noite | VM/sociais |
+| 32 | **Fogo sem bombeiros** no N001_Lot68 (fogão às 17:29, dois Sims morrem): conferir no binário quem chama os bombeiros sem detector e se é só a semente | fix-noite, `TODO.md` incêndios | VM |
+| 33 | **Ambiente (motivo 13)**: `cTSEnvironmentScoreManager` (BV `0x5805a0`, `GetEnvironmentRoomID` `0x57ffa8`), refeito a cada 60 ticks; e o tique do primeiro passo de 60 depois de carregar | n17 | motivos |
+| 34 | **Olhar e eventos, resto**: portar o `AnimUpdate` do look-at (BV `0xd41e04`), eixo dos spots, chave de evento 6 contra 3, evento por volta, velocidade das cinemáticas | n23 | animação |
+| 35 | **Luz, resto**: sala da fonte do portal, `doorOrArchDirectMultiplier`, supressão janela-janela, luzes diretas das janelas, grafos de parede 3/8/10/11, passe incremental, `LM_sunHM` e `AddBlobToHeightMap` dos objetos; conferir o brilho dos objetos à noite (geladeira quase branca) | n16 | luz |
+| 36 | **Lote, resto**: borda de espessura do piso (`cFloorThicknessGeometryNode`), UV e espelhamento das máscaras de porta/janela, tirar o recorte retangular sem máscara (o jogo não tem), meia parede pelo `PartitionType` 3 | n19, n20, n25 | lote |
+| 37 | **Construção, resto**: nivelar fundação e piscina (`MayPlaceQuadrilateral`), bit 7 do teste de vértice, o Construir gravar os marcadores 3ARY `0x14`, `SetRoomsPostAttach`, quem devolve o dinheiro no desfazer, ferramenta da lareira | n20, n25 | construção |
+| 38 | **Partículas, resto**: iluminação (bit 23), LOD pela distância, colisores e terreno, wiggle/screw, tractor, `cTSSequenceEffect`, efeitos de colisão/morte | n15 | efeitos |
+| 39 | **Câmera, resto**: órbita (Shift+WASD, `PickOrbitCenter`), `CameraManNH` no bairro, fade das cinemáticas, fórmula do pan pelo teclado, direção do zoom do CAS | n11, n21 | câmera |
+| 40 | **Sombras**: `nTSSG::cShadow`, height map do sol, sombras de parede recalculadas ao mover objetos | §3.12 | sombras |
+| 41 | **VM, resto** (a 24 da §6) e **Salvar, resto** (a 26 da §6), quando a 28 (desempenho) entrar | §6 | VM / salvar |
+
+Ordem: 30 a 32 primeiro (bugs). A 30 e a 31/32 esperam a 28 (desempenho, que
+mexe nas rotas e na VM). As outras podem rodar já, em áreas livres.
+
+**Precisam de análise dinâmica** (o jogo rodando; não gastar rodadas lendo):
+UV da parede da piscina, o `+0x194` de início das cinemáticas, o valor
+inicial de alguns globais que nada no binário escreve.
