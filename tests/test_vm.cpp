@@ -1317,6 +1317,23 @@ static void testOnTimer() {
     check(fx.obj().timers.size() == 2, "two timers of the same tree");
     fx.vm.tick();
     check(fx.obj().attributes[0] == 14 && fx.obj().timers.empty(), "ticks from temp 1");
+
+    // As the binary (docs/save-mac.md §8): the ID comes from global 36, the
+    // interactions' counter; the setter is saved as the event tree's stack
+    // object; a repeating timer starts over only while its tree returns true.
+    fx.vm.globals[vm::global::InteractionGuid] = 500;
+    // Event: attribute 2 += 1; true while attribute 2 < 2.
+    fx.code.add(kObjGroup, 0x1006, tree({expr(Attr, 2, Add, Lit, 1, go(1), E), expr(Attr, 2, Lt, Lit, 2, T, F)}));
+    fx.code.add(kObjGroup, 0x1007, tree({instr(0x7A, T, E, {1, 0, 0, 0x06, 0x10, 0x02})}));
+    const Thread rep = fx.run(0x1007);
+    check(rep.temps[0] == 500 && fx.vm.globals[vm::global::InteractionGuid] == 501 && fx.obj().timers.size() == 1 &&
+              fx.obj().timers[0].object == fx.obj().id && fx.obj().timers[0].repeats(),
+          "a timer's ID comes from global 36; the setter is kept");
+    fx.vm.tick();
+    check(fx.obj().attributes[2] == 1 && fx.obj().timers.size() == 1 && fx.obj().timers[0].ticks == 1,
+          "a repeating timer whose tree returned true starts over");
+    fx.vm.tick();
+    check(fx.obj().attributes[2] == 2 && fx.obj().timers.empty(), "a repeating timer whose tree returned false goes");
 }
 
 // Set to Next 24: objects in front of me within temp 0 tiles, with no wall
@@ -1388,7 +1405,7 @@ static void testResumeSavedLot() {
     f.params = {3};
     st.stack.push_back(f);
     LotObjects::State::Timer timer;
-    timer.b = 0x1000, timer.e = 30, timer.f = 2;
+    timer.tree = 0x1000, timer.period = 30, timer.ticksLeft = 2;
     st.timers.push_back(timer);
     saved.objects.push_back(st);
     LotLoad load;
@@ -1508,7 +1525,7 @@ static void testSavedObjectState() {
               t.stack[0].params == std::vector<int16_t>{77} && t.stack[0].locals == std::vector<int16_t>{66} &&
               t.stack[0].runningObject == 1,
           "saved tree stack");
-    check(t.timers.size() == 1 && t.timers[0].a == 0x2001 && t.timers[0].params[7] == 8 && t.rest.empty(),
+    check(t.timers.size() == 1 && t.timers[0].id == 0x2001 && t.timers[0].params[7] == 8 && t.rest.empty(),
           "saved timers");
     check(LotObjects::writeState(t, 0xAD) == tail, "a state writes back the bytes it was read from");
     check(LotObjects::writeState(s, 0xAD) == b, "a state that does not read through keeps its tail");

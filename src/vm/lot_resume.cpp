@@ -88,18 +88,18 @@ void restoreState(Object& o, const LotObjects::State& s) {
     t.token.flags = int16_t(s.token.flags);
     t.token.properties = s.token.properties;
     t.loaded = s.token.guid != 0;
-    // Timers: (sequence, tree, owner, flags, ticks, ticks left, parameters);
-    // flags 0 in every saved timer, taken as "looping" in bit 0 (inferred).
+    // Timers (cTSObject::ReadTimers; docs/save-mac.md §8).
     o.timers.clear();
     for (const auto& st : s.timers) {
         if (o.timers.size() >= kMaxTimersPerObject)
             break;
         ObjectTimer x;
-        x.id = int16_t(st.a);
-        x.tree = uint16_t(st.b);
-        x.period = st.e;
-        x.ticks = std::max(st.f, 1);
-        x.looping = st.d & 1;
+        x.id = int16_t(st.id);
+        x.tree = uint16_t(st.tree);
+        x.period = st.period;
+        x.ticks = st.ticksLeft;
+        x.flags = st.flags;
+        x.object = ObjectId(st.object);
         x.params = st.params;
         o.timers.push_back(x);
     }

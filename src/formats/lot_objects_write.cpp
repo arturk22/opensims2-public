@@ -218,12 +218,12 @@ std::vector<uint8_t> LotObjects::writeState(const State& s, uint32_t v) {
     if (v > 0x95) {
         w.u32(uint32_t(s.timers.size()));
         for (const auto& t : s.timers) {
-            w.u32(t.a);
-            w.u32(t.b);
-            w.u16(t.c);
-            w.u32(t.d);
-            w.i32(t.e);
-            w.i32(t.f);
+            w.u32(t.id);
+            w.u32(t.tree);
+            w.u16(t.object);
+            w.u32(t.flags);
+            w.i32(t.period);
+            w.i32(t.ticksLeft);
             w.shorts(t.params);
         }
     }

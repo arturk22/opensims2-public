@@ -158,13 +158,18 @@ struct LotObjects {
             std::array<uint8_t, 8> data{};
         };
         std::vector<Effect> effects;
-        // Timers set by On Timer (cTSObject::WriteTimers): seven raw fields
-        // and the eight parameters the event tree gets.
+        // Timers set by On Timer (cTSObject::cObjectTimerDetail, written by
+        // cTSObject::WriteTimers BV 0xb042b8 in this order; docs/save-mac.md
+        // §8): the timer's ID (+0x10: from the simulator's GUID counter,
+        // global 36), the event tree (+4), the object that set it (+0x14:
+        // the event tree's stack object), flags (+0xC: bit 0 repeat), the
+        // period (+8), the ticks left (+0) and the eight parameters (+0x16).
         struct Timer {
-            uint32_t a = 0, b = 0;
-            uint16_t c = 0;
-            uint32_t d = 0;
-            int32_t e = 0, f = 0;
+            uint32_t id = 0;
+            uint32_t tree = 0;
+            uint16_t object = 0;
+            uint32_t flags = 0;
+            int32_t period = 0, ticksLeft = 0;
             std::array<int16_t, 8> params{};
         };
         std::vector<Timer> timers;

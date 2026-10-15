@@ -190,16 +190,15 @@ void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects:
     s.token.guid = t.token.guid;
     s.token.flags = uint16_t(t.token.flags);
     s.token.properties = t.token.properties;
-    const auto timersBefore = s.timers;
     s.timers.clear();
-    for (size_t i = 0; i < o.timers.size(); ++i) {
-        const ObjectTimer& x = o.timers[i];
-        LotObjects::State::Timer st = i < timersBefore.size() ? timersBefore[i] : LotObjects::State::Timer{};
-        st.a = uint32_t(x.id);
-        st.b = x.tree;
-        st.e = x.period;
-        st.f = x.ticks;
-        st.d = (st.d & ~1u) | (x.looping ? 1u : 0u);
+    for (const ObjectTimer& x : o.timers) {
+        LotObjects::State::Timer st;
+        st.id = uint32_t(uint16_t(x.id));
+        st.tree = x.tree;
+        st.object = uint16_t(x.object);
+        st.flags = x.flags;
+        st.period = x.period;
+        st.ticksLeft = x.ticks;
         st.params = x.params;
         s.timers.push_back(st);
     }
@@ -510,7 +509,9 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         else
             for (size_t i = 0; i < x.timers.size(); ++i)
                 if (x.timers[i].id != y->timers[i].id || x.timers[i].tree != y->timers[i].tree ||
-                    x.timers[i].ticks != y->timers[i].ticks || x.timers[i].params != y->timers[i].params)
+                    x.timers[i].ticks != y->timers[i].ticks || x.timers[i].period != y->timers[i].period ||
+                    x.timers[i].flags != y->timers[i].flags || x.timers[i].object != y->timers[i].object ||
+                    x.timers[i].params != y->timers[i].params)
                     diff(at + "timer " + std::to_string(i));
         if (mainFailed) {
         } else if (x.queue.size() != y->queue.size()) {

@@ -482,17 +482,20 @@ struct Position {
     bool hasHeight() const { return height > kNoHeight; }
 };
 
-// A timer On Timer (0x7A) set on an object (cTSObject::AddTimer; the saved
-// state keeps them, cTSObject::WriteTimers): after `ticks` ticks the event
-// tree runs on the object, with these parameters. Looping timers start
-// over with `period`.
+// A timer On Timer (0x7A) set on an object (cTSObject::cObjectTimerDetail,
+// set by cTSObject::AddTimer BV 0xb05448, saved by WriteTimers; timer.cpp,
+// docs/save-mac.md §8): when `ticks` runs out the event tree runs on the
+// object with the setter as stack object; a repeating timer whose tree
+// returned true starts over with `period`, any other is removed.
 struct ObjectTimer {
-    int16_t id = 0;    // On Timer's timer ID (the saved state's sequence number)
-    uint16_t tree = 0; // call opcode, resolved against the object's code
-    int32_t ticks = 0; // left
+    int16_t id = 0;     // from the simulator's GUID counter (global 36, as the interactions' IDs)
+    uint16_t tree = 0;  // call opcode, resolved against the object's code
+    int32_t ticks = 0;  // left
     int32_t period = 0;
-    bool looping = false;
+    uint32_t flags = 0; // bit 0 repeat, bit 1 "reset timer ticks" of the last Modify
+    ObjectId object = 0; // the object whose thread set it: the event tree's stack object
     std::array<int16_t, 8> params{};
+    bool repeats() const { return flags & 1; }
 };
 constexpr size_t kMaxTimersPerObject = 64;
 

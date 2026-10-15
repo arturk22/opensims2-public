@@ -65,7 +65,8 @@ void printState(const LotObjects::State& s, bool hex) {
         std::printf("\n");
     }
     for (const auto& t : s.timers) {
-        std::printf("    timer: %08X %08X %04X %08X %d %d params", t.a, t.b, t.c, t.d, t.e, t.f);
+        std::printf("    timer %u: tree %04X set by %u flags %X period %d ticks left %d params", t.id, t.tree, t.object,
+                    t.flags, t.period, t.ticksLeft);
         for (int16_t p : t.params)
             std::printf(" %d", p);
         std::printf("\n");

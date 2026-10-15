@@ -396,12 +396,12 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
                 throw FormatError(std::to_string(timers) + " timers");
             for (uint32_t i = 0; i < timers; ++i) {
                 State::Timer t;
-                t.a = r.u32();
-                t.b = r.u32();
-                t.c = r.u16();
-                t.d = r.u32();
-                t.e = r.i32();
-                t.f = r.i32();
+                t.id = r.u32();
+                t.tree = r.u32();
+                t.object = r.u16();
+                t.flags = r.u32();
+                t.period = r.i32();
+                t.ticksLeft = r.i32();
                 for (auto& p : t.params)
                     p = r.i16();
                 s.timers.push_back(t);
