@@ -83,10 +83,10 @@ palavra.
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 4 / 5 = **80%** | 12 / 6 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% | 5 / 7 = **71%** | 40 / 45 |
-| CAS | 89 (23) | 87 / 1.534 = 5,7% | 5,5 / 8 = **69%** | 36 / 27 |
+| CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 7,5 / 9 = **83%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **76,5 / 105 = 73%** | **517 em src** |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **77 / 105 = 73%** | **517 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -289,8 +289,8 @@ Código: `src/app/cas_*.{hpp,cpp}`, `src/formats/cas_*.{hpp,cpp}`,
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
 | Telas: `cTSUISimEditor` (105, 8), `nTSUICAS::cTSUICASComponent*` | `app/cas_mode*.cpp` | inferido | Falta a biografia da família. |
-| Corpo e roupas: `nTSCASCore::cTSSimOutfitData` (133, 12), `cTSCASBodyPartSystem` (141, 7), `cTSBinCatalog` | `formats/cas_catalog.*`, `app/cas_mode_panels.cpp` | inferido | O corpo gordo sai igual ao magro; "random clothing" (`MatchHairStyle`…) aberto. |
-| Rosto: arquétipos, modificadores, LxNR, `BlendDeltas` | `formats/cas_face.*` | inferido | A mistura exata não foi lida. |
+| Corpo e roupas: `nTSCASCore::cTSSimOutfitData` (133, 12), `cTSCASBodyPartSystem` (141, 7), `cTSBinCatalog` | `formats/cas_catalog.*`, `formats/character_write.*`, `app/cas_mode*.cpp` | fiel | Rodada n10: corpo gordo = morph `fattop`/`fatbot` do fitness 2 (`0x8141c4`, `SetFitnessLevel`), botão aleatório (`HandleButtonGlobalRandomize`, `SetDefaultClothing`, `RandomizeForHumans`) e flags das categorias (`CheckInit`). Inferidos: o gerador de números, os tons 1–4, o cabelo de bebê; `MatchHairStyle`… do pedido de NPC não lido. |
+| Rosto: arquétipos, modificadores, LxNR, `BlendDeltas` | `formats/cas_face.*` | inferido | Rodada n10: peso das máscaras (`BuildRegionMask`: byte de cima da cor) e `hairneck` parado (`BlendArchetype`). Faltam a compensação do modificador do arquétipo e o `BlendFaces` da genética. |
 | Pele, maquiagem, overlays: `cTSSkinTextureCompositor` (27, 0) | `formats/cas_face.*`, `sim_character.*` | inferido | O compositor do jogo não foi lido. |
 | Genética: `nTSGenetics`, `cTSSimDNA` | `vm/genetics.*` | fiel | |
 | Personalidade, signo, aspiração | `formats/cas_personality.*` | fiel | Tabelas não conferidas no base 1.0. |
@@ -364,7 +364,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 7 | **Construção: suporte, telhado e terreno** (`HasSupport`, `SupportedUnderneath`, leveler, `cTSUserToolRoof`, piscinas) — **feita** (n07): suporte pelas salas de carga, colunas, paredes de carga e topo de mansarda (`IsFloorable`, paredes `0x48`), `IsRoofValid` (`0x10`/`0x7E`/`0x7F`/`0x1C`), códigos das piscinas; conferido nos 63 lotes (`s2pkg lot-save --check-build`: 14.071 de 14.098 pisos); o teste de vértice do terreno lido mas não aplicado (flags desconhecidas) | Erros de colocação no modo Construção. | 1 Opus | sim |
 | 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias — **feita** (n08): tabelas de relacionamento do XOBJ e do SDSC, SREL como o jogo grava, motor das memórias e pontuação, painel de memórias com os scripts do jogo (`docs/relationships-mac.md`). | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |
 | 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro — **feita** (n09): cabeçalho, token temporário (campos 4–7 como cópias), iteradores dos arrays, timers (ID, quem pôs, repetir), XMTO (deslocamentos) e NGBH (dados do bairro) com nome e pelo sentido (`docs/save-mac.md` §8); `lot-save --check` byte a byte igual nos 69 lotes, `hood-save --check` 68 de 68. | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
-| 10 | **CAS: corpo gordo, `BlendDeltas`, roupa aleatória** | O corpo gordo é um bug visível no CAS. | 1 Opus | sim |
+| 10 | **CAS: corpo gordo, `BlendDeltas`, roupa aleatória** — **feita** (n10): corpo gordo como morph `fattop`/`fatbot` (não há roupa gorda nos dados), botão aleatório como o `RandomizeForHumans` (cabelo sem chapéu por categoria, 49 % roupa inteira, flags 1\|8 fora, "default" de reserva), peso das máscaras de região e `hairneck` do `BlendArchetype` (`docs/cas-mac.md`, fim). | O corpo gordo é um bug visível no CAS. | 1 Opus | sim |
 | 11 | **Câmera: seguir o Sim, Tab, fade, vista de cima** | Conforto; os valores já estão nos dados. | 1 Sonnet | não |
 | 12 | **Bairro: imposters e terreno** (desbotar, mapa alfa, `nhoodLightMap`) | Pouco visível. | 1 Opus | sim |
 

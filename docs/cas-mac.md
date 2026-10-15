@@ -66,8 +66,8 @@ foi achado nesta função.
 - **Forma física** (person data 82 "Fatness [0-1000]" e 81 "Body Flags"):
   normal = 500/0, magro = 0/0x10, gordo = 1000/1 (criação aleatória, estado 2).
   `SetFitnessLevel` (BV `0x1b5b24`): dado 82 = valor, dado 81 = 1 se ≥ 502
-  (`0x1F6`), e troca as roupas para a versão gorda (`fitness` 2 do GZPS)
-  ou normal (0).
+  (`0x1F6`), e põe fitness 2 (gordo) ou 0 nas roupas; o corpo gordo é o
+  morph `fattop`/`fatbot`, não uma roupa (rodada n10, fim do arquivo).
 - **Tom de pele**: `skintone` do GZPS/`skincolor` do AGED = família do
   catálogo de pele, `00000001-…` Light, `…02` Medium, `…03` Medium-Dark,
   `…04` Dark (os IDs `sN` de 1 a 4; ver §5). Criação aleatória: 1–4 do
@@ -444,14 +444,19 @@ achado (a fábrica usa uma vtable importada).
 
 ## 10. Aberto
 
-- A mistura exata de arquétipos e modificadores (`BlendDeltas`). (A ordem
-  dos cantos do LxNR no nível alto foi resolvida na rodada 12, §13.)
+- A mistura exata de arquétipos e modificadores. Rodada n10: o peso das
+  máscaras e o `hairneck` lidos (`BuildRegionMask`, `BlendArchetype`); falta
+  a compensação do modificador do arquétipo e o `BlendFaces` da genética.
+  O `BlendDeltas` do `cTSUICASComponentArchetypes` é a animação da troca na
+  interface (não lido). (A ordem dos cantos do LxNR no nível alto foi
+  resolvida na rodada 12, §13.)
 - As chaves das miniaturas de tons de pele/olhos e de roupas salvas (§9b;
   olhos e maquiagem o jogo renderiza na hora, §12).
 - Como o tom de pele "do meio" (tipo 6) vira o tom expressado; o uso da
   aspiração sugerida por signo.
-- As categorias de roupa de cada passo e o "random clothing" do CAS
-  (`MatchHairStyle`, `MatchJewelry`, `GetMatchingHair`, BV `0x55cf50`…).
+- As categorias de roupa de cada passo. O "random clothing" do botão
+  aleatório foi lido na rodada n10 (fim do arquivo); o `MatchHairStyle`,
+  `MatchJewelry`, `GetMatchingHair` (BV `0x55cf50`…) do pedido de NPC não.
 - Base 1.0: as tabelas de signo e de regiões não foram conferidas no base
   (sem símbolos), só a existência das strings.
 
@@ -1163,3 +1168,55 @@ não sorteia roupa); `0x800` → 3. Cotidiano, formal e gestante: 0.
 Nos dados as roupas de gestante têm flags 9 menos
 `afbodymaternityshirtpants_navyrust` (13 = 9|4, "default"): é ela que
 o aleatório veste na gestante.
+
+### As máscaras de região (`BuildRegionMask`, BV `0x804d0c`)
+
+`cTSCASBodyPartSystem::BuildRegionMask` → `FUN_007f9368`: para cada
+vértice da máscara (`faceregion`, malha parcial da cabeça) lê a coordenada
+de textura (elemento `0xBB8307AB`) e a cor (`0xDB830795`); **peso = um byte
+da cor / 255**, e com peso ≥ 0,0001 grava o peso em todo vértice do molde
+com a mesma coordenada de textura (±0,0001). Nos dados as cores das
+máscaras são `0x00000000`, `0x3f000000`, `0x7f000000`, `0xc0000000` e
+`0xff000000` (como lemos o u32): o byte é o de cima. O nosso código usava
+o maior dos canais RGB, que é 0 em quase toda máscara (só o
+`uuMaskMouth` tem um `ff7f7f7f`): trocar o nariz ou a boca por outro
+arquétipo quase não mexia no rosto.
+
+`BlendArchetype` (BV `0x80a380`), por vértice: se a máscara `"hairneck"`
+tem peso > 0 o vértice **fica** (a costura com o cabelo e o pescoço);
+senão `w = máscara[v] × peso da operação` (1,0 fora da máscara) e
+`pos += w × (arquétipo − pos)` (a mesma interpolação que já fazíamos).
+Quando o arquétipo tem um modificador ativo com valor ≠ 0, soma também
+`−(escala × valor) × w × delta do modificador` (não implementado). O
+`BlendFaces` (BV `0x80748c`, genética) mede pares de regiões depois de
+misturar e corrige com as máscaras `…Up`/`…Down` por uma tabela de
+limites por idade e sexo (não implementado; `FaceBaker::descendant` segue
+inferido).
+
+### O que mudou no código (rodada n10)
+
+- **Corpo gordo**: `os2::outfitFitnessMorphs` (`formats/sim_actor.*`) dá
+  `fattop`/`fatbot` = 1 para fitness 2; o CAS põe nos atores do estúdio e
+  dos retratos (`CasMode::rebuild`, `portrait`). Os botões chamam
+  `CasMode::setFitnessLevel(500/1000)`, que só muda o fitness. O
+  `CasCatalog::outfitParts` não tem mais o filtro "gordo" (e deixa fora as
+  variantes nuas com fitness ≠ 0). No lote o morph já vinha do dado 81
+  (`bodyShapeMorphs`, BV `0x94c318`, que lê o bit 1 direto). Capturas:
+  `n10-cas-gordo-antes.jpg` (o botão gordo não mudava nada) e
+  `n10-cas-gordo-depois.jpg` (normal × gordo, de frente e de lado).
+  Auxílio de teste: `--cas-fitness fat|normal`.
+- **Aleatório**: `cas::randomizeLook` e `cas::randomizeOutfits`
+  (`formats/character_write.*`), usados pelo `CasMode::randomize` e pelo
+  envelhecer (`ageSpec`, só as roupas). `cas::categoryFlags` = o mapa do
+  `CheckInit`. Ficam **inferidos**: o gerador de números (o nosso
+  `mt19937`, não o `cRZRandom` do jogo), tom de pele e de cabelo de 1 a 4
+  (o jogo sorteia nas listas do catálogo sem as flags 9), o cabelo de bebê
+  (fica com o `completeSpec`) e a ordem das listas (a do catálogo do
+  jogo não foi lida). Capturas: `n10-cas-aleatorio-antes.jpg` /
+  `-depois.jpg` (sementes 3, 11, 21, 42).
+- **Máscaras**: peso = byte de cima da cor, `hairneck` parado
+  (`formats/cas_face.cpp`); `s2pkg cas-make --region máscaras=arquétipo`.
+  Captura `n10-cas-regiao-mascara.jpg`: base, base com nariz e boca do
+  `amarcheafr` antes, depois, e o `amarcheafr` inteiro.
+- Testes: `test_anim` (morphs do fitness), `test_formats`
+  (`testCasRandomize`, `testFaceRegionMasks`, com `OS2_DATA`).
