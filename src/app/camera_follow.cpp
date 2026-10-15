@@ -19,37 +19,49 @@ void LotCameraFollow::follow(vm::VM& vm, vm::ObjectId sim) {
     const vm::Object* o = sim ? vm.object(sim) : nullptr;
     if (!o || !o->position.inWorld())
         return;
+    adoptLevel(*o, sim, false);
+    // Subject tracking (BV 0x0086ffb8): while tracking is on, the screen
+    // points of the pivot's *target* and of the subject's floor point; past
+    // the dead zone the subject becomes the pivot's target (vtable 0xfc).
+    // The player's own camera moves end it (HandleRequest -> SetTracking(false)).
+    if (tracked_ && camera_->userMoves() != moveMark_)
+        tracked_ = 0;
+    if (const vm::Object* t = tracked_ ? vm.object(tracked_) : nullptr; t && t->position.inWorld()) {
+        const float dead = camera_->definition().param("subjecttrackingdeadzonemagnitude", 30);
+        const simd_float3 target = camera_->pivotTarget();
+        const int lotLevel = std::max(t->position.level - 1, lot_->hasLevel(0) ? 0 : lot_->minLevel);
+        const float x = std::clamp(t->position.x, 0.0f, float(lot_->width)), y = std::clamp(t->position.y, 0.0f, float(lot_->height));
+        const simd_float3 at = simd_make_float3(
+            t->position.x, t->position.y, lot_->hasLevel(lotLevel) ? lot_->elevationAt(lotLevel, x, y) : target.z);
+        const auto a = camera_->project(target), b = camera_->project(at);
+        if (a && b && simd_distance(*a, *b) > dead)
+            camera_->trackTo(at);
+    }
+}
+
+void LotCameraFollow::adoptLevel(const vm::Object& o, vm::ObjectId sim, bool force) {
     // The VM counts the ground as 1. The pool's level (-1, below the
     // ground) is not a floor the player can show (the floor buttons stop at
     // the ground): a swimming Sim keeps the view on the ground, with the
     // house and the water (inferred: the binary's level setter, a service's
     // vtable 0x68, was not read; live QA round 16 saw the house vanish).
-    const int level = std::max(o->position.level - 1, lot_->hasLevel(0) ? 0 : lot_->minLevel);
+    const int level = std::max(o.position.level - 1, lot_->hasLevel(0) ? 0 : lot_->minLevel);
     // A floor chosen by hand holds until the Sim moves to another one.
     // cCameraLive::Update (BV 0x6a5450): the view goes up to the Sim's
     // floor always, down to it only when the Sim's location is in a room
     // (cPartitionManager::RoomContaining(location, definition 0), vtable
     // 0x13c, non-zero): a Sim walking down outdoor stairs leaves the view
-    // where it is until it steps into a room.
+    // where it is until it steps into a room. CenterOnSim (BV 0x1acbfc)
+    // applies the same rule once for the Sim it centres on.
     const bool down = level < *level_;
-    const bool inRoom = o->data[vm::objdata::Room] != 0;
-    if (level != simLevel_ || sim != followedSim_) {
+    const bool inRoom = o.data[vm::objdata::Room] != 0;
+    if (force || level != simLevel_ || sim != followedSim_) {
         if (!lot_->hasLevel(level) || !down || inRoom) {
             if (lot_->hasLevel(level))
                 *level_ = level;
             simLevel_ = level; // else asked again next time (the Sim may walk into a room)
         }
         followedSim_ = sim;
-    }
-    // Subject tracking (BV 0x0086ffb8): the pivot's and the subject's screen
-    // points; past the dead zone the subject becomes the pivot's target.
-    if (const vm::Object* t = tracked_ ? vm.object(tracked_) : nullptr; t && t->position.inWorld()) {
-        const float dead = camera_->definition().param("subjecttrackingdeadzonemagnitude", 30);
-        const simd_float3 pivot = camera_->pivot();
-        const simd_float3 at = simd_make_float3(t->position.x, t->position.y, pivot.z);
-        const auto a = camera_->project(pivot), b = camera_->project(at);
-        if (a && b && simd_distance(*a, *b) > dead)
-            camera_->moveTo(at);
     }
 }
 
@@ -86,9 +98,12 @@ int LotCameraFollow::highestLevel() const { return lot_->minLevel + lot_->levelC
 
 bool LotCameraFollow::centre(vm::VM& vm, vm::ObjectId sim) {
     const auto p = simPoint(vm, sim);
-    if (p)
-        camera_->moveTo(*p);
-    return p.has_value();
+    if (!p)
+        return false;
+    if (const vm::Object* o = vm.object(sim))
+        adoptLevel(*o, sim, true);
+    camera_->moveTo(*p);
+    return true;
 }
 
 std::optional<simd_float3> LotCameraFollow::simPoint(vm::VM& vm, vm::ObjectId sim) const {

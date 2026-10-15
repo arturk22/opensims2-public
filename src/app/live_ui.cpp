@@ -1341,10 +1341,17 @@ bool LiveUi::press(simd_float2 p, bool right) {
                     onSelectSim(vm::ObjectId(t.value));
                 setSim(vm::ObjectId(t.value));
             } else {
-                // The selected Sim's thumbnail centres the camera on it.
+                // The selected Sim's thumbnail centres the camera on it and stops
+                // following a Sim (cTSWinProcSimChooserThumbnail::onBtnClickedID, BV
+                // 0x298a44: CenterOnSim, then AutotrackSim(null, false)).
                 std::printf("opensims2: live UI: centre on Sim %d\n", t.value);
                 if (onCentreSim)
                     onCentreSim(sim_);
+                if (followed_ != 0) {
+                    followed_ = 0;
+                    if (onFollowSim)
+                        onFollowSim(0);
+                }
             }
             break;
         case Action::Cancel:

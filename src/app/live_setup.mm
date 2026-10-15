@@ -110,9 +110,13 @@ void setupLiveUi(os2::ResourceIndex& index) {
             }
             return std::nullopt;
         };
+    // AutotrackSim (BV 0x1ad1f0): centre on the Sim, then track it; no Sim: stop.
     gLive->onFollowSim = [](os2::vm::ObjectId id) {
-        if (gCameraFollow)
-            gCameraFollow->setTracked(id);
+        if (!gCameraFollow)
+            return;
+        if (id)
+            gCameraFollow->centre(gSimulation->machine(), id);
+        gCameraFollow->setTracked(id);
     };
     if (![sceneArgs() containsObject:@"--debug-queue"])
         gPie->setShowQueue(false);

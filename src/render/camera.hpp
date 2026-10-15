@@ -85,7 +85,16 @@ public:
     void pan(float right, float forward, double dt); // axes in [-1, 1] at the keyboard translation speed
     void reset();                    // default zoom, orientation and pitch
     void setPivot(simd_float3 floorPoint); // immediate (also the target)
-    void moveTo(simd_float3 floorPoint);   // smoothed (Return: centre on the active Sim)
+    // Centre on a point, smoothed (Return: centre on the active Sim; the HandleRequest
+    // 0xbb661105): as every move the player asks for, it first stops the
+    // camera following a Sim (SetTracking(false), BV 0x870cb0), see userMoves().
+    void moveTo(simd_float3 floorPoint);
+    // A new pivot target without that (the controller's SetSubjectTarget, vtable
+    // 0xfc): what following a Sim does each time the Sim leaves the dead zone.
+    void trackTo(simd_float3 floorPoint);
+    // How many moves the player asked for (keys, the window's edge, the
+    // right-button drag, moveTo): in the game each of them ends the following of a Sim.
+    unsigned userMoves() const { return userMoves_; }
 
     // Camera positions 0-5 (Control 4-9 saves, 4-9 restores smoothly,
     // Shift 4-9 jumps).
@@ -166,6 +175,7 @@ private:
     std::function<float(float, float)> floor_;
 
     simd_float3 pivot_{0, 0, 0}, pivotTarget_{0, 0, 0};
+    unsigned userMoves_ = 0;
     int pivotSteps_ = 1;
     float pivotMin_ = 0.001f;
     float lift_ = 0; // extra pivot height so the eye stays over the floor

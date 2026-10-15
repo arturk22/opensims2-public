@@ -324,10 +324,9 @@ using namespace os2app;
     case kPageDown: changeFloor(-1); break;
     case kZ: case kPadPlus: _camera->zoomBy(1); break;
     case kX: case kPadMinus: _camera->zoomBy(-1); break;
-    case kReturn: case kEnter:
+    case kReturn: case kEnter: // "Center on active Sim": CenterOnSelectedSim
         if (gCameraFollow && gSimulation && gPie)
-            if (auto p = gCameraFollow->simPoint(gSimulation->machine(), gPie->sim()))
-                _camera->moveTo(*p);
+            gCameraFollow->centre(gSimulation->machine(), gPie->sim());
         break;
     case kEscape:
         if (gBuild && gBuild->active() && gBuild->tool() != os2::BuildMode::Tool::None) {

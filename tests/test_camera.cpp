@@ -346,6 +346,60 @@ int main() {
               "the glide arrives, zoom back to 0");
     }
     {
+        // Following a Sim (cTSCameraSmoothSims1Controller::Update, BV 0x86ffb8): the
+        // pivot's target moves to the Sim once their floor points are more than
+        // 30 pixels apart on the screen; the pivot's target, not where the pivot
+        // is on its way there. The player's own moves end it (SetTracking(false)).
+        Lot lot;
+        lot.width = lot.height = 60;
+        lot.minLevel = 0, lot.levelCount = 1;
+        lot.elevations.assign(size_t(61 * 61), 0.0f);
+        LotCamera c(liveCamera());
+        LotCameraFollow f(c, lot);
+        c.setViewport(1024, 768);
+        c.setPivot(simd_make_float3(30, 30, 0));
+        settle(c);
+        vm::CodeLibrary code;
+        vm::VM machine(code);
+        vm::Object& other = machine.createObject(0x7FD46CD0);
+        other.position = {1.5f, 1.5f, 1};
+        other.data[vm::objdata::Room] = 1;
+        vm::Object& sim = machine.createObject(0x7FD46CD0);
+        sim.position = {30.0f, 30.0f, 1};
+        sim.data[vm::objdata::Room] = 1;
+        f.setTracked(sim.id);
+        f.follow(machine, other.id);
+        check(near(c.pivotTarget().x, 30) && near(c.pivotTarget().y, 30), "a Sim inside the dead zone leaves the target");
+        sim.position.x = 30.2f; // a few pixels away
+        f.follow(machine, other.id);
+        check(near(c.pivotTarget().x, 30), "inside the 30-pixel dead zone: no retarget");
+        sim.position.x = 36;
+        f.follow(machine, other.id);
+        check(near(c.pivotTarget().x, 36) && near(c.pivotTarget().y, 30), "past the dead zone: the Sim is the target");
+        // The pivot is still on its way (target 36), the Sim moves a little: the target, not the
+        // pivot, is what the dead zone is measured from.
+        check(c.pivot().x < 35, "the pivot has not caught up yet");
+        sim.position.x = 36.2f;
+        f.follow(machine, other.id);
+        check(near(c.pivotTarget().x, 36), "measured from the target: 0.2 tiles from it is inside the dead zone");
+        // The player pans: tracking ends.
+        c.pan(1, 0, 0.05);
+        sim.position.x = 50;
+        f.follow(machine, other.id);
+        check(f.tracked() == 0 && c.pivotTarget().x < 49, "a move the player asked for ends the following");
+        // Centring on a Sim (the right-click on its thumbnail starts with it, then tracks).
+        check(f.centre(machine, sim.id) && near(c.pivotTarget().x, 50), "centre on a Sim");
+        f.setTracked(sim.id);
+        f.follow(machine, other.id);
+        check(f.tracked() == sim.id, "centring first does not end the following it starts");
+        sim.position.x = 60;
+        f.follow(machine, other.id);
+        check(near(c.pivotTarget().x, 60), "and it follows");
+        c.moveTo(simd_make_float3(10, 10, 0)); // Return: centre on the active Sim
+        f.follow(machine, other.id);
+        check(f.tracked() == 0, "centring (Return) stops it");
+    }
+    {
         // The top-down view: "Build" takes over "Live" with the pivot, the
         // heading, the 3D distance and the pitch fraction as numbers
         // (cCameraLive::SetActive, BV 0x6a56e0), the tables of BuildCamera.txt.

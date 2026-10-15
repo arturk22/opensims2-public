@@ -20,13 +20,25 @@ public:
     // The selected Sim's level becomes the camera's (no Sim, or out of the
     // world: unchanged); a tracked Sim out of the dead zone moves the pivot.
     void follow(vm::VM& vm, vm::ObjectId sim);
-    // Tracking (the live panel: right click on a family thumbnail): the
-    // camera keeps a Sim in view as cTSCameraSmoothSims1Controller::Update
-    // does, moving the pivot to it once its screen point is farther than
-    // `subjecttrackingdeadzonemagnitude` (30) pixels from the pivot's. 0 stops.
-    void setTracked(vm::ObjectId sim) { tracked_ = sim; }
+    // Tracking (the live panel: right click on a family thumbnail,
+    // cTSMainToolbar::AutotrackSim): the camera keeps a Sim in view as
+    // cTSCameraSmoothSims1Controller::Update (BV 0x86ffb8) does, making the
+    // Sim the pivot's new target once its floor point's screen point is
+    // farther than `subjecttrackingdeadzonemagnitude` (30) pixels from that of
+    // the pivot's *target* (the target, not where the pivot is on its way
+    // there). 0 stops. The game turns it on after centring on the Sim, so call
+    // centre() first; a move the player asks for (LotCamera::userMoves:
+    // keys, the window's edge, the drag, centring) ends it, as every
+    // HandleRequest case that moves the pivot calls SetTracking(false).
+    void setTracked(vm::ObjectId sim) {
+        tracked_ = sim;
+        moveMark_ = camera_->userMoves();
+    }
     vm::ObjectId tracked() const { return tracked_; }
-    // Centre on a Sim (smoothed); false if it is not in the world.
+    // Centre on a Sim (smoothed; cTSMainToolbar::CenterOnSim, BV 0x1acbfc):
+    // the camera's floor goes to the Sim's by the same rule as following it
+    // (up always, down only into a room), and tracking stops (moveTo);
+    // false if it is not in the world.
     bool centre(vm::VM& vm, vm::ObjectId sim);
     // Floor point of a Sim (for "Center on active Sim"), if it is in the world.
     std::optional<simd_float3> simPoint(vm::VM& vm, vm::ObjectId sim) const;
@@ -42,10 +54,13 @@ public:
     static int startLevel(const Lot& lot);
 
 private:
+    // The level the camera shows for a Sim standing at `o` (a floor change applies at once when `force`).
+    void adoptLevel(const vm::Object& o, vm::ObjectId sim, bool force);
     LotCamera* camera_;
     std::shared_ptr<const Lot> lot_;
     std::shared_ptr<int> level_;
     vm::ObjectId tracked_ = 0;
+    unsigned moveMark_ = 0; // LotCamera::userMoves() when tracking began
     vm::ObjectId followedSim_ = 0;
     int simLevel_ = -1000; // the followed Sim's level when last seen
 };

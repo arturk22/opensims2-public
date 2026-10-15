@@ -213,11 +213,8 @@ duração em ticks de 30 Hz.
   **10 tiles para fora** das bordas do lote. `SetEdgeConstraints(l, t, r,
   b)` só aceita margens com soma < 1.
 - `subjecttrackingdeadzonemagnitude` 30 (`+0x438`) /
-  `centerTrackingDeadZoneMagnitude` (30 por padrão): seguindo um Sim
-  (`cTSCameraSmoothSims1Controller::Update`, BV `0x86ffb8`), a câmera
-  projeta na tela o pivô atual e o Sim (menos um deslocamento `+0x1d4`,
-  zero aqui) e, se a distância entre os dois pontos (pixels, sem o z) passa
-  da zona morta, o Sim vira o alvo do pivô (vtable `0xfc`, suavizado).
+  `centerTrackingDeadZoneMagnitude` (30 por padrão): seguir um Sim, ver §1.8
+  (rodada n11: é o alvo do pivô que se compara, não o pivô atual).
 - `defaultcamerapitch`: padrão 0,15 (t ao entrar no lote).
 
 ### 1.4 Entrada (dados + binário)
@@ -321,6 +318,68 @@ No app: `LotCamera::setDefinition`, `applyCameraSelection` (`live_setup.mm`),
 a tecla T (`app_view.mm`), os botões de vista de cima dos painéis de Comprar
 e Construir (pressionados enquanto a vista está ligada) e o passo
 headless `--key t`.
+
+### 1.8 Seguir o Sim (autotrack) e centrar (binário, rodada n11)
+
+**Quem liga.** O botão **direito** da miniatura de um Sim da família
+(`cTSWinProcSimChooserThumbnail::onBtnRightClickedID`, BV `0x298940`; botões
+`0x2000`/`0x3000`): se o GUID da miniatura é o que a barra guarda como
+"Sim seguido" (`GetAutotrackSimGUID`, `cTSMainToolbar+0xb0`), chama
+`AutotrackSim(nulo, false)`; senão, se o Sim está no mundo,
+`AutotrackSim(Sim, true)`. O botão **esquerdo** numa miniatura já selecionada
+(`onBtnClickedID`, `0x298a44`) faz `CenterOnSim` e depois
+`AutotrackSim(nulo, false)`; o de uma não selecionada só seleciona.
+
+**`cTSMainToolbar::AutotrackSim(pessoa, bool)`** (BV `0x1ad1f0`): ligando,
+chama `CenterOnSim(pessoa)` (vtable `0xbc`), guarda o GUID da pessoa em
+`+0xb0` (desligando, zero) e manda ao controlador de câmera atual
+(`cITSCameraSmoothSims1Controller`, IID `0xeaf75329`) `SetTracking(bool)`
+(`0x86ac2c`: guarda o bool em `+0x1f6`; desligando, esquece o sujeito
+atual `+0x1c8`). `AutotrackSelectedSim` (`0x1ad394`) é o mesmo para o Sim
+selecionado. O GUID **não** é zerado quando um movimento do jogador acaba
+com o seguimento (abaixo), então depois de arrastar a câmera o primeiro
+clique direito na mesma miniatura "desliga" (sem efeito) e só o segundo liga.
+
+**`CenterOnSim(pessoa)`** (`cTSMainToolbar`, BV `0x1acbfc`; Return e
+`CenterOnSelectedSim`, `0x1a9198`, chamam com o Sim selecionado): se a pessoa
+está no mundo, pega o nível do Sim e o cômodo do local
+(`RoomContaining`): com cômodo, o andar mostrado passa a ser o do Sim se o
+nível dele for > 0; sem cômodo, só se o andar mostrado for menor que o do Sim
+(a mesma regra do `cCameraLive::Update`, §1.3). Depois
+`SetSubject(nó, "root_trans", 0xf)` no controlador e o pedido `0xbb661105`
+com a posição do osso `root_trans`.
+
+**`HandleRequest`** (`cTSCameraSmoothSims1Controller`, BV `0x870cb0`): os
+pedidos que movem o pivô chamam antes `SetTracking(false)` (vtable `0x80`):
+`0xbb661105` (centrar; depois `0xfc` = o novo alvo do pivô, suavizado),
+`0xbb661106` (pular para o ponto: atual, alvo e snap), `0x9b66110a` (arrastar
+com o botão direito: ver §2.5) e os dois da movimentação por teclado
+(`0x3b6c780f` e `0xbb6c7808`). Girar (`0xbc17e41c`), a roda e o zoom
+**não** param o seguimento.
+
+**`Update`** (`0x86ffb8`), com o seguimento ligado, um sujeito e o viewer:
+projeta na tela (`cIViewerRefNode` vtable `0x238`) o **alvo** do pivô
+(`+0x180..0x188`; o pivô tem atual `+0x174..` e alvo `+0x180..`, pares do
+`FUN_008c760c`/`FUN_008c7c64`) e a posição do osso do sujeito menos o
+deslocamento do pivô (`+0x1d4..0x1dc`, (0, 0, `pivotheightabovefloor`):
+o ponto do piso sob o Sim); zerando o z de ambos, se a distância passa de
+`+0x438` (`subjecttrackingdeadzonemagnitude` 30) chama `0xfc` com o ponto do
+Sim. Como o que se compara é o alvo, e não o pivô a caminho dele, a câmera
+anda em saltos: fica parada até o Sim se afastar 30 pixels do último alvo e
+então vai (em `zoomSmoothing` quadros) até onde o Sim está.
+
+No app: `LotCameraFollow` (`setTracked`, `follow`, `centre`) e
+`LotCamera::userMoves`/`trackTo`/`moveTo`: o seguimento acaba quando o
+contador de movimentos do jogador muda (teclas, borda da janela, arrasto,
+centrar); o clique direito centra e depois segue; o esquerdo na miniatura
+selecionada centra e para (`live_ui.cpp`); Return centra com a regra de
+andar. A comparação usa o ponto do piso do Sim no andar dele
+(`Lot::elevationAt`) e o tamanho real da janela em pixels (o jogo, em
+800×600: a zona morta de 30 pixels vale mais, relativamente, aqui).
+**Inferido:** o osso `root_trans` é a posição lógica do Sim na VM; a
+velocidade do teclado (`0x3b6c780f`: `sqrt(largura·30) · eixo · distância ·
+constante · aceleração por repetição`) é outra fórmula que a do app
+(§1.4/TODO), não tocada nesta rodada.
 
 ---
 

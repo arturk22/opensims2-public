@@ -195,6 +195,7 @@ void LotCamera::movePixels(float dx, float dy) {
     if (len > most)
         delta *= most / len;
     pivotTarget_ = constrain(pivotTarget_ + delta);
+    ++userMoves_;
     pivotSteps_ = int(def_.param("keyboardtranslationlerpsteps", 1));
     pivotMin_ = def_.param("keyboardtranslationlerpminchange", 0.001f);
 }
@@ -255,6 +256,11 @@ void LotCamera::setPivot(simd_float3 p) {
 }
 
 void LotCamera::moveTo(simd_float3 p) {
+    ++userMoves_;
+    trackTo(p);
+}
+
+void LotCamera::trackTo(simd_float3 p) {
     pivotTarget_ = constrain(p);
     pivotSteps_ = def_.zoomSmoothing;
     pivotMin_ = minChange_;
