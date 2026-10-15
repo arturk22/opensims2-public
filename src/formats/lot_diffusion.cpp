@@ -531,6 +531,24 @@ void FloorColorGrid::copy(std::vector<uint8_t>& rgb, std::vector<uint8_t>& writt
         }
 }
 
+std::array<float, 3> FloorColorGrid::lookup(float x, float y) const {
+    const int tx = std::clamp(int(std::floor(x)), 0, std::max(width - 1, 0));
+    const int ty = std::clamp(int(std::floor(y)), 0, std::max(height - 1, 0));
+    if (width <= 0 || height <= 0 || !tileExists[size_t(ty * width + tx)])
+        return {0, 0, 0};
+    const float fx = x - float(tx) - 0.5f, fy = y - float(ty) - 0.5f;
+    const int diag = tileDiag[size_t(ty * width + tx)];
+    const bool half1 = (diag == 1 && !(fy < -fx)) || (diag == 2 && !(fy < fx));
+    const Half& h = at(2 * tx + (fx >= 0), 2 * ty + (fy >= 0)).h[half1 ? 1 : 0];
+    if (!h.exists)
+        return {0, 0, 0};
+    V3 c = h.c;
+    if (h.outside) // the grid's flag +0x40, on in every grid
+        for (size_t ch = 0; ch < 3; ++ch)
+            c[ch] -= outsideAmbient[ch];
+    return {2 * c[0], 2 * c[1], 2 * c[2]};
+}
+
 std::vector<FloorColorGrid> diffuseFloors(const LotLightMapLayout& layout, const std::vector<DiffusionSource>& sources,
                                           const DiffusionParams& params) {
     std::vector<FloorColorGrid> grids(size_t(std::max(layout.levels, 0)));
@@ -575,8 +593,9 @@ struct Run {
 
 class WallDiffusion {
 public:
-    WallDiffusion(const LotLightMapLayout& layout, const DiffusionParams& params, const std::vector<std::vector<uint8_t>>& floorPages)
-        : l_(layout), p_(params), floorPages_(floorPages) {}
+    WallDiffusion(const LotLightMapLayout& layout, const DiffusionParams& params, const std::vector<FloorColorGrid>& floors,
+                  const std::vector<std::vector<uint8_t>>& floorPages)
+        : l_(layout), p_(params), floors_(floors), floorPages_(floorPages) {}
 
     // LookupWallDiffusion (BV 0xeef45c) of each face.
     std::vector<V3> lookups() const {
@@ -619,6 +638,7 @@ public:
 private:
     const LotLightMapLayout& l_;
     const DiffusionParams& p_;
+    const std::vector<FloorColorGrid>& floors_;
     const std::vector<std::vector<uint8_t>>& floorPages_;
     std::vector<Seg> segs_;
     std::vector<Run> runs_;
@@ -864,11 +884,18 @@ private:
                 setLit(segs_[size_t(u)].run);
     }
 
-    // The floor light map's texel under a point (LookupFloorLightMap, BV
-    // 0x6f6a24): its byte / 255 x 2; black outside the map.
+    // The floor under a point: in the optimized pass the grid's
+    // LookupFloorDiffusion (FUN_00ef07d0 -> the diffusion manager's vtable
+    // 0x5c), in the full one the floor light map's texel
+    // (LookupFloorLightMap, BV 0x6f6a24: its byte / 255 x 2); black outside.
     V3 floorAt(int level, float x, float y) const {
         constexpr int kT = LotLightMapLayout::kTexelsPerTile;
         const int li = level - l_.minLevel;
+        if (p_.optimizedPass) {
+            if (li < 0 || size_t(li) >= floors_.size() || x < 0 || y < 0 || x >= float(l_.lotWidth) || y >= float(l_.lotHeight))
+                return {0, 0, 0};
+            return floors_[size_t(li)].lookup(x, y);
+        }
         const long i = long(std::floor(x * kT)), j = long(std::floor(y * kT));
         const long pw = long(l_.lotWidth) * kT, ph = long(l_.lotHeight) * kT;
         if (li < 0 || size_t(li) >= floorPages_.size() || i < 0 || j < 0 || i >= pw || j >= ph)
@@ -877,7 +904,8 @@ private:
         return {px[0] / 255.0f * 2, px[1] / 255.0f * 2, px[2] / 255.0f * 2};
     }
 
-    // FillWallsFromFloors (BV 0xef0e68 -> FillFromFloorTexture 0xef0b58).
+    // FillWallsFromFloors (BV 0xef0e68 -> FillFromFloorTexture 0xef0b58;
+    // the optimized pass 0xef0a48 -> 0xef07d0, the same from the grids).
     void fillFromFloors(std::set<int>& active) {
         for (size_t ri = 0; ri < runs_.size(); ++ri) {
             Run& r = runs_[ri];
@@ -1180,10 +1208,10 @@ private:
 std::vector<std::vector<std::array<uint8_t, 3>>> diffuseWalls(const LotLightMapLayout& layout,
                                                                const std::vector<DiffusionSource>& sources,
                                                                const DiffusionParams& params,
-                                                               const std::vector<FloorColorGrid>&,
+                                                               const std::vector<FloorColorGrid>& floors,
                                                                const std::vector<std::vector<uint8_t>>& floorPages,
                                                                std::vector<std::array<float, 3>>* lookup) {
-    WallDiffusion w(layout, params, floorPages);
+    WallDiffusion w(layout, params, floors, floorPages);
     auto cells = w.run(sources);
     if (lookup)
         *lookup = w.lookups();

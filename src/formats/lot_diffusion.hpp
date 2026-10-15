@@ -38,6 +38,11 @@ struct DiffusionParams {
     float brightWallFloor = 1, darkWallFloor = 0.5f;
     float scale = 0.5f;                                  // the light maps' scale (cLightMapManager +0x68 / +0x6C)
     bool darkCorners = true;                             // DarkenCornersNextToDarkWalls (global byte, on)
+    // The walls take the floor from the grids (DoDiffusionPassOptimized,
+    // the pass the game runs after the first one with Graphics Rules'
+    // useDirtyTiles: LookupFloorDiffusion) instead of the floor page's
+    // texels (DoDiffusionPass: LookupFloorLightMap); docs/lighting-mac.md 11.3.
+    bool optimizedPass = true;
 };
 
 // One level's cFloorColorGrid.
@@ -73,6 +78,11 @@ struct FloorColorGrid {
     // CopyToTexturePages: the level's page, 8 texels per tile, rows from the
     // tile's -y side, RGB bytes; `written` marks the texels a tile wrote.
     void copy(std::vector<uint8_t>& rgb, std::vector<uint8_t>& written) const;
+    // LookupFloorDiffusion (Mac BV 0xee88c4): 2 x the colour of the sample
+    // half under (x, y) (the tile's quarter by the offset from its centre,
+    // the half by the diagonal), less the outside ambient on an outside
+    // half; black where there is none.
+    std::array<float, 3> lookup(float x, float y) const;
 };
 
 // The floors: a grid per level (layout.levels), seeded and copied.
@@ -85,6 +95,8 @@ std::vector<FloorColorGrid> diffuseFloors(const LotLightMapLayout& layout, const
 // at the top as the atlas keeps them), light-map bytes (0.5 x (colour -
 // ambient), the outside ambient for walls facing out). `floorTexel(level,
 // x, y)` gives the floor page's diffusion (its byte / 255 x 2) at a point.
+// With params.optimizedPass the walls take the floor from `floors`
+// (LookupFloorDiffusion), else from `floorPages` (LookupFloorLightMap).
 // `lookup`, when given, gets each face's LookupWallDiffusion (Mac BV
 // 0xeef45c): its segment's sample of column 1, row 3, less the outside
 // ambient on walls facing out.

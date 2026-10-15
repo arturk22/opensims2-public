@@ -11,6 +11,7 @@
 #include "formats/lot.hpp"
 #include "formats/lot_edit.hpp"
 #include "formats/lot_model.hpp"
+#include "formats/lot_diffusion.hpp"
 #include "formats/lot_roof.hpp"
 #include "formats/lot_water.hpp"
 #include "formats/log_once.hpp"
@@ -896,6 +897,20 @@ end
     check(far < 0.8f && far > 0.1f, "lamp light spreads through the room");
     check(std::fabs(farther - 0.5f) < 0.01f, "lamp light stays in its room");
     check(lit.rooms.count({0, 2}) && lit.rooms.at({0, 2})[4][0] > dark.rooms.at({0, 2})[4][0], "room irradiance from the light map");
+    {
+        // LookupFloorDiffusion (the optimized pass's floor for the walls):
+        // 2 x the sample half under the point, less the outside ambient
+        // outdoors.
+        DiffusionParams dp;
+        dp.insideFloor = {0.1f, 0.1f, 0.1f}, dp.outsideFloor = {0.25f, 0.25f, 0.25f}, dp.floorThreshold = 0.5f;
+        DiffusionSource src;
+        src.position = {0.25f, 0.25f}, src.rect = {-0.25f, -0.25f, 0.75f, 0.75f}, src.room = 2, src.rgb = {0.8f, 0.8f, 0.8f};
+        const auto grids = diffuseFloors(layout, {src}, dp);
+        check(std::fabs(grids[0].lookup(0.2f, 0.3f)[0] - 2 * grids[0].at(0, 0).h[0].c[0]) < 1e-6f &&
+                  std::fabs(grids[0].lookup(0.2f, 0.3f)[0] - 1.6f) < 1e-5f,
+              "LookupFloorDiffusion: 2 x the sample under the point");
+        check(std::fabs(grids[0].lookup(3.6f, 3.6f)[0]) < 1e-6f, "LookupFloorDiffusion: less the outside ambient outdoors");
+    }
     // An outdoor lamp: a pool over the direct light (the outside ambient
     // 0.25 only shapes the falloff and is taken away again).
     LightMapLight garden;
