@@ -198,14 +198,14 @@ const SimPart* CasCatalog::recolor(const SimPart& e, std::string_view hairToneFa
 }
 
 std::vector<const SimPart*> CasCatalog::outfitParts(uint32_t partBit, uint32_t a, uint32_t g, uint32_t cat,
-                                                    bool fat, bool casOnly) const {
+                                                    bool casOnly) const {
     std::vector<const SimPart*> out;
     for (const auto& p : parts) {
         if (p.property("type") != "skin" || !(p.number("outfit") & partBit) || !fits(p, a, g))
             continue;
         if (cat && !(p.number("category") & cat))
             continue;
-        if ((p.number("fitness") == 2) != fat)
+        if (p.number("fitness") != 0) // the hidden nudecut/nudesoft naked variants
             continue;
         if (casOnly && (p.number("flags") & 1))
             continue;

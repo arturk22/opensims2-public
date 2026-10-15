@@ -276,6 +276,16 @@ void CasMode::randomize(uint32_t seed) {
     changed();
 }
 
+void CasMode::setFitnessLevel(int level, bool undo) {
+    if (undo)
+        pushUndo();
+    // cTSUISimEditor::SetFitnessLevel (Mac BV 0x1b5b24): fitness 2 at 502 and
+    // over, else 0, on the outfits; no part changes (the game has no fat
+    // outfits), the body takes the fattop/fatbot morphs.
+    edit_.spec.fitness = level >= 502 ? 2 : 0;
+    changed();
+}
+
 void CasMode::pushUndo() {
     undo_.push_back(edit_);
     if (undo_.size() > 50)
@@ -391,6 +401,7 @@ void CasMode::rebuild() {
                 std::fprintf(stderr, "cas: skeleton '%s'\n", actor->skin.skeleton.name.c_str());
             if (const auto* idle = findIdle(*actor, index_, sk, spec.gender == cas::gender::Male))
                 actor->cue(-0.3 * double(i), *idle);
+            actor->bodyMorphs = outfitFitnessMorphs(spec.fitness); // the fat body (Mac BV 0x8141c4)
             // The first member on the left of the screen (screen right is -X).
             const simd_float2 f = facing();
             const simd_float3 right = simd_make_float3(-f.y, f.x, 0);
@@ -507,6 +518,7 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size, flo
         const std::string sk = lower(actor.skin.skeleton.name);
         if (const auto* idle = findIdle(actor, index_, sk, spec.gender == cas::gender::Male))
             actor.cue(0, *idle);
+        actor.bodyMorphs = outfitFitnessMorphs(spec.fitness);
         // Alone, far from the studio, facing +Y.
         const simd_float3 at = simd_make_float3(1000, 1000, 0);
         actor.position = {at.x, at.y, at.z};
@@ -702,6 +714,8 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
         const std::string& v = args[i + 1];
         if (a == "--cas-random")
             randomize(uint32_t(std::stoul(v)));
+        else if (a == "--cas-fitness") // fat or normal, as the two body buttons
+            setFitnessLevel(v == "fat" ? 1000 : 500, false);
         else if (a == "--cas-name") {
             const auto comma = v.find(',');
             edit_.spec.firstName = v.substr(0, comma);

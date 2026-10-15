@@ -109,4 +109,9 @@ std::map<std::string, float> bodyShapeMorphs(int16_t bodyFlags, int16_t age) {
     return m;
 }
 
+std::map<std::string, float> outfitFitnessMorphs(int fitness) {
+    const float fat = fitness == 2 ? 1.0f : 0.0f;
+    return {{"fattop", fat}, {"fatbot", fat}};
+}
+
 } // namespace os2

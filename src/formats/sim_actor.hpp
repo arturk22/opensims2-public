@@ -80,8 +80,14 @@ struct SimActor {
 // (Mac BV 0x0094c318, the caller of the "fattop"/"fatbot" strings), from
 // person data 81 "Body Flags" and 58 (age: 19 adults, 16 teens, ...): for
 // ages over 2, "fattop"/"fatbot" = 1 with flag 0x1, else 0; for ages 19-50,
-// "pregtop"/"pregbot" = 1 with flag 0x2, 0.5 with 0x4, else 0. Fitness is
-// not a morph: fit and fat bodies are separate outfits (GZPS "fitness").
+// "pregtop"/"pregbot" = 1 with flag 0x2, 0.5 with 0x4, else 0. The game has
+// no fat outfits: the fat body is this morph on the same parts.
 std::map<std::string, float> bodyShapeMorphs(int16_t bodyFlags, int16_t age);
+
+// The body morphs of an outfit by its fitness (AGED/cTSSimOutfitData
+// "fitness": 0 normal, 1 fit, 2 fat), as the CAS draws a Sim (Mac BV
+// 0x8141c4, a cTSSimOutfitData virtual next to DetermineSkeleton):
+// "fattop"/"fatbot" = 1 when the fitness is 2, else 0. Fit has no morph.
+std::map<std::string, float> outfitFitnessMorphs(int fitness);
 
 } // namespace os2

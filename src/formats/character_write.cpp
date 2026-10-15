@@ -580,7 +580,7 @@ void completeSpec(const CasCatalog& c, CharacterSpec& spec, uint32_t seed) {
             continue;
         }
         const bool casOnly = cat != category::Maternity;
-        if (const SimPart* b = pick(c.outfitParts(part::Body, spec.age, spec.gender, cat, false, casOnly)))
+        if (const SimPart* b = pick(c.outfitParts(part::Body, spec.age, spec.gender, cat, casOnly)))
             o[part::Body] = b->name();
     }
 }

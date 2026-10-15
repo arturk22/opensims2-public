@@ -778,6 +778,12 @@ static void testBodyShape() {
     m = bodyShapeMorphs(0x3, 16);
     check(m["fatbot"] == 1 && !m.count("pregbot"), "teens: no pregnancy morph");
     check(bodyShapeMorphs(0x1, 2).empty(), "toddlers: no body morphs");
+    // The CAS's outfit fitness (BV 0x8141c4): only fitness 2 is fat.
+    m = outfitFitnessMorphs(2);
+    check(m["fattop"] == 1 && m["fatbot"] == 1, "outfit fitness 2: fat morphs at 1");
+    m = outfitFitnessMorphs(1);
+    check(m.count("fattop") && m["fattop"] == 0 && m["fatbot"] == 0, "outfit fitness 1 (fit): morphs at 0");
+    check(outfitFitnessMorphs(0)["fatbot"] == 0, "outfit fitness 0: morphs at 0");
 }
 
 // Mirroring: a left arm's motion lands on the right arm, reflected across

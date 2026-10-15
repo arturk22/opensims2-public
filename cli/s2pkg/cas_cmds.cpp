@@ -138,7 +138,7 @@ int cmdCasCatalog(const std::string& res, uint32_t ageBit, uint32_t genderBit, c
             {cas::part::Top, "tops"}, {cas::part::Bottom, "bottoms"}, {cas::part::Body, "outfits"}};
         for (const auto& [cat, cname] : cats)
             for (const auto& [p, pname] : partsList) {
-                const auto list = c.outfitParts(p, ageBit, genderBit, cat, false, cat != cas::category::Naked);
+                const auto list = c.outfitParts(p, ageBit, genderBit, cat, cat != cas::category::Naked);
                 if (list.empty())
                     continue;
                 std::printf("%s %s (%zu):", cname, pname, list.size());

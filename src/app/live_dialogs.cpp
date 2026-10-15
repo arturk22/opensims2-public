@@ -254,7 +254,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
                             candidates.push_back(p);
                     }
                 } else {
-                    candidates = c.catalog->outfitParts(parts[t], spec.age, spec.gender, category, spec.fitness == 2);
+                    candidates = c.catalog->outfitParts(parts[t], spec.age, spec.gender, category);
                 }
                 for (const os2::SimPart* p : candidates) {
                     const bool worn = wornParts.count(parts[t]) && strcasecmp(wornParts.at(parts[t]).c_str(), p->name().c_str()) == 0;
@@ -354,7 +354,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
             if (self && spec->outfits.count(category) && spec->outfits.at(category).count(partBit))
                 worn = spec->outfits.at(category).at(partBit);
             const std::vector<os2::Tgi>* bin = familyBin(sim, c.catalog.get());
-            for (const os2::SimPart* p : c.catalog->outfitParts(partBit, age, gender, category, self && spec->fitness == 2)) {
+            for (const os2::SimPart* p : c.catalog->outfitParts(partBit, age, gender, category)) {
                 os2::DialogWindow::ShopItem i;
                 i.part = p->name();
                 i.key = p->tgi;

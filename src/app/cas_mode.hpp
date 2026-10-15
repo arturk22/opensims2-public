@@ -180,6 +180,8 @@ private:
     void setStep(int step);
     void newSim();
     void randomize(uint32_t seed);
+    // The two body buttons (HandleTabFitness: 500 normal, 1000 fat).
+    void setFitnessLevel(int level, bool undo);
     // The gender buttons (0x401 female, 0x400 male) and --cas-gender: the
     // base head of the new gender, its outfits and overlays.
     void setGender(uint32_t gender, bool undo);

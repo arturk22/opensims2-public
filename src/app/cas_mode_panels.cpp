@@ -450,7 +450,7 @@ void CasMode::stepScreen(LayoutContext& L) {
         const uint32_t partBit = kClothesParts[clothesPart_];
         std::vector<Item> items;
         const auto& current = s.outfits[cat];
-        for (const SimPart* p : catalog_->outfitParts(partBit, s.age, s.gender, cat, s.fitness == 2)) {
+        for (const SimPart* p : catalog_->outfitParts(partBit, s.age, s.gender, cat)) {
             const std::string name = p->name();
             const bool sel = current.count(partBit) && lower(current.at(partBit)) == lower(name);
             items.push_back({label(name), sel, thumb(cas::entryThumbnailId(*p, s.age, s.gender)), [this, name, cat, partBit]() {
@@ -572,26 +572,8 @@ void CasMode::stepScreen(LayoutContext& L) {
                 cas::completeSpec(*catalog_, edit_.spec);
                 changed();
             });
-        target(find(panel, 0x2C720000), [this](simd_float2) {
-            pushUndo();
-            edit_.spec.fitness = 0;
-            changed();
-        });
-        target(find(panel, 0x2C720001), [this](simd_float2) {
-            pushUndo();
-            edit_.spec.fitness = 2;
-            // The fat versions of the outfits.
-            for (auto& [cat, parts] : edit_.spec.outfits)
-                for (auto& [bit, name] : parts) {
-                    if (bit == cas::part::Hair)
-                        continue;
-                    const auto fat = catalog_->outfitParts(bit, edit_.spec.age, edit_.spec.gender, cat, true, false);
-                    for (const SimPart* p : fat)
-                        if (lower(p->name()).starts_with(lower(name.substr(0, name.find('_')))))
-                            name = p->name();
-                }
-            changed();
-        });
+        target(find(panel, 0x2C720000), [this](simd_float2) { setFitnessLevel(500, true); });
+        target(find(panel, 0x2C720001), [this](simd_float2) { setFitnessLevel(1000, true); });
         target(find(panel, 0xAC3405DF), [this](simd_float2) { randomize(0); });
         target(find(panel, 0x8CB7C11F), [this](simd_float2) {
             bioOpen_ = !bioOpen_;

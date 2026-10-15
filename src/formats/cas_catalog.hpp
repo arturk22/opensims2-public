@@ -114,15 +114,16 @@ struct CasCatalog {
     // hair follow the hair), or `e` when there is none.
     const SimPart* recolor(const SimPart& e, std::string_view hairToneFamily) const;
     // Outfit parts (GZPS type "skin") with `partBit` in "outfit", the age,
-    // gender and category bit, normal fitness unless `fat`; the Body Shop
+    // gender and category bit and GZPS fitness 0 (the game has no fat
+    // outfits: a fat Sim wears the same parts with the fattop/fatbot morphs;
+    // only the hidden naked texture variants have fitness 1 or 2); the Body Shop
     // editor's own copies ("CASIE_" names) and parts without a mesh are
     // left out, and with `casOnly` those with flag 0x01 (career and NPC
     // uniforms, the alien and mannequin skins and the per-category copies
     // of the hair: what CAS does not offer; read from the data, every such
     // part has it). Sorted by name.
     std::vector<const SimPart*> outfitParts(uint32_t partBit, uint32_t ageBit, uint32_t genderBit,
-                                            uint32_t categoryBit = category::Everyday, bool fat = false,
-                                            bool casOnly = true) const;
+                                            uint32_t categoryBit = category::Everyday, bool casOnly = true) const;
     // Hair styles (one part per style family) and the colour variants of one.
     std::vector<const SimPart*> hairStyles(uint32_t ageBit, uint32_t genderBit, std::string_view hairToneFamily) const;
     const SimPart* hairInTone(const SimPart& hair, std::string_view hairToneFamily) const;
