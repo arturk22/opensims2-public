@@ -107,8 +107,8 @@ void callRouteTree(Context& c, ObjectId owner, uint16_t tree, ObjectId stackObje
     f.routeCallback = true;
 }
 
-// While walking, at each tile crossed (docs/routing-mac.md §6 and §8.3,
-// DoWalking BV 0x576acc): the goal check tree (OBJf entry 0x27, "goal
+// While walking, when DoAlongRouteCheckTest says so (docs/routing-mac.md §6
+// and §8.3, DoWalking BV 0x576acc; advance()): the goal check tree (OBJf entry 0x27, "goal
 // check" of STR# 0xC9; TriggerGoalCheckTree BV 0x575e34) of the object
 // whose code called the Go To, on the walker's thread with that frame's
 // stack object and the parameters 0 the routing
@@ -197,9 +197,10 @@ bool startAlongRoute(Context& c, Object& me, Object::Route& r) {
     return true;
 }
 
-// The walk checks at each tile crossed (DoAlongRouteCheckTest); the
-// binary also gates the callbacks by a timer (GRS_State +0x20) not decoded
-// here.
+// When the walk checks (DoAlongRouteCheckTest): advance(). The binary also
+// gates the callbacks by the route manager's byte +0x20 (GRS_State +0x20 is
+// cTSGlobals::GetRouteManager; its vtable 0x20 reads it), 1 from its
+// constructor on (BV 0x4f9294).
 
 // Runs a global tree (by name) on the walker's thread in the middle of the
 // walk: the instruction runs again when it returns.
@@ -322,7 +323,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             why = w;
             return Step::Failed;
         }
-        r.points = std::move(next.points);
+        r.points = std::move(next.points), r.plans = next.plans;
         // DoInitial and DoFoundPath are states of their own: the walk goes
         // on from the next tick, not in the pause's tick (where the same
         // blocker, not moved yet, counted the second try at once and failed
@@ -339,6 +340,30 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     // This tick's step over the floor and the Sim it would walk into (the
     // locomotor's per-step placement test), when the prediction sees none.
     const bool onFloor = !r.points.empty() && floorPoint(r.points.front()) && me.position.inWorld();
+    // DoWalking (BV 0x576acc), before the step: DoAlongRouteCheckTest (cTSRoute
+    // vtable 0x60, BV 0x470fe4) says whether the goal check and along route
+    // trees run now: when the path changed (planned again, +0xd8), the
+    // walker's room (GetRoomID, cTSPerson vtable 0x204) or level changed
+    // (a new route's level is -999: at its first step), or it walked more
+    // than 1 along its locomotion path since the last check (the path's
+    // length x the portion completed, cLocomotable vtable 0x2c4 x 0x2c8:
+    // GetPathLength, GetPathPortionCompleted); then it notes them. Before,
+    // the trees ran at each tile crossed, after the step: a Sim sent to
+    // another a step away was blocked by it before its goal check could end
+    // the walk ("Goal Check - Continue?": within 3 tiles the social's
+    // lead-in starts where it stands).
+    if (onFloor && !waitingForPerson && !r.aside) {
+        const auto& L = r.loco;
+        const float walked = L.moving && L.onCurve && L.curve ? L.curve->total() - L.curve->remaining(L.segment, L.arc) : 0;
+        const int room = me.data[objdata::Room];
+        if (r.plans != r.checkPlans || room != r.checkRoom || me.position.level != r.checkLevel ||
+            std::fabs(walked - r.checkWalked) > 1.0f) {
+            r.checkPlans = r.plans, r.checkRoom = room, r.checkLevel = me.position.level, r.checkWalked = walked;
+            r.lastCheck = vm.ticks;
+            if (startGoalCheck(c, me, r) || startAlongRoute(c, me, r))
+                return Step::Call;
+        }
+    }
     // The halt for a blocker is over: the walk stands, blocked by it.
     auto endHalt = [&] {
         r.loco.kind = Object::Route::Loco::None;
@@ -473,7 +498,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     why = w;
                     return Step::Failed;
                 }
-                r.points = std::move(next.points);
+                r.points = std::move(next.points), r.plans = next.plans;
                 return Step::Walking;
             };
             auto routeBlocked = [&]() {
@@ -494,7 +519,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     why = w;
                     return Step::Failed;
                 }
-                r.points = std::move(next.points);
+                r.points = std::move(next.points), r.plans = next.plans;
                 return Step::Walking;
             };
             // DoPause: "CT - Route Blocked Animation" (parameter 0 the
@@ -532,7 +557,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 RouteFail w;
                 if (!planRoute(vm, me, aside, w))
                     return false;
-                r.points = std::move(aside.points);
+                r.points = std::move(aside.points), r.plans = aside.plans;
                 r.aside = r.asideTried = true;
                 r.asideFrom = blocker.id;
                 r.blocker = 0, r.blockedTicks = 0;
@@ -622,7 +647,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 why = w;
                 return Step::Failed;
             }
-            r.points = std::move(next.points);
+            r.points = std::move(next.points), r.plans = next.plans;
             return Step::Walking;
         }
         if (r.blockedTicks >= limit) { // DoBlocked again
@@ -640,7 +665,6 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.blocker = 0, r.blockedTicks = 0;
     }
     r.waiting = false;
-    const TilePos tileBefore = VM::tileOf(me);
     if (!r.points.empty() && floorPoint(r.points.front())) {
         applyLocoStep(vm, me, r, pending ? *pending : locoStep(vm, me, r));
     } else if (!r.points.empty() && r.points.front().ticks > 0) {
@@ -666,14 +690,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         }
         return Step::Walking; // the tick is spent
     }
-    if (!r.points.empty()) {
-        if (!(VM::tileOf(me) == tileBefore)) {
-            r.lastCheck = vm.ticks;
-            if (startGoalCheck(c, me, r) || startAlongRoute(c, me, r))
-                return Step::Call;
-        }
+    if (!r.points.empty())
         return Step::Walking;
-    }
     // The turn to the final facing (BeginCachedEndTurnPath): in place when
     // more than 40 degrees off the way the walker came.
     if (!r.endTurned && !r.aside && r.facing >= 0) {
@@ -692,7 +710,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             why = w;
             return Step::Failed;
         }
-        r.points = std::move(next.points);
+        r.points = std::move(next.points), r.plans = next.plans;
         return Step::Walking;
     }
     setDirection(me, r.facing);

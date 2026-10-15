@@ -651,6 +651,14 @@ struct Object {
         // how many path points were walked by then.
         int check = 0;
         uint64_t lastCheck = 0;
+        // How many times the way was planned (the route's path changing,
+        // cTSRoute +0xd8), and what DoAlongRouteCheckTest (BV 0x470fe4)
+        // noted at the last check: that count (+0x50), the walker's room
+        // (+0x54), its level (+0x4c, -999 for a new route) and how far it had
+        // walked along its locomotion path (+0x48).
+        uint32_t plans = 0, checkPlans = 0;
+        int checkRoom = -1, checkLevel = -999;
+        float checkWalked = 0;
         struct Climb {
             std::string animation; // empty between phases
             uint32_t serial = 0;   // bumped as each phase starts
