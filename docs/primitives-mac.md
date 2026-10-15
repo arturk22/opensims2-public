@@ -3485,6 +3485,40 @@ byte alto dele: segmento 1 → `0x01`, 2 → `0x04`, 4 → `0x02`, 8 → `0x08`,
 tiles de cada lado da parede que mudou). A entrada 6 está em 158 OBJf
 (bancadas, cadeiras, fogões, geladeiras, lareiras, banheiras, escadas).
 
+**Que aresta é cada segmento** (dos dados): com os segmentos do mundo 1, 2,
+4, 8 = as paredes para −Y, −X, +Y, +X, o od 5 calculado bate com o salvo em
+**319 das 321 bancadas** de N001–N003 (`S2PKG_WALLADJ=Counter s2pkg
+autonomy <lote> --ticks 0`). No sentido do objeto: `0x01` = parede do lado
+anti-horário da frente (lado 3 do `sideStep`), `0x04` = na frente, `0x02` =
+do lado horário, `0x08` = atrás. Qual diagonal é `0x40` ficou inferido (não
+há diagonal ao lado de bancada nos lotes). Geladeiras, cadeiras, lareiras e
+escadas salvas têm od 5 = 0 mesmo encostadas na parede: o jogo só recalcula
+quando o objeto é posto ou a parede muda, e esses lotes vieram assim; por
+isso o opensims2 não recalcula ao carregar (o `PostLoad` só o faz com o bit
+2 de `+0x180`, não lido).
+
+**No opensims2** (rodada n04): `vm::onRoomChanged`/`finishMove`/
+`notifyRoomChanges` (`vm/rooms.*`: o aviso ao mover, ao pôr e no fim de cada
+tick; a porta portal é a parte líder do tipo 8 e as salas são a do tile
+dela e a do tile atrás, como os atributos salvos de `N001_Lot11` mostram:
+parte 0,0 = (frente, trás), parte 0,1 = (sala, −1)); o modo Construção
+chama `UpdateObjectsInRoom` e `UpdateObjectsAdjacentToWall`
+(`build_edit.cpp`); `vm::updateWallAdjacency` (`placement.*`); a entrada 2
+em todo objeto carregado (`lot_resume.cpp`; `VM::runLoadEntries` desliga só
+nas conferências de salvar do `s2pkg`).
+
+### `cTSPerson::SetCurrentAction` (BV `0xadc6d8`)
+
+Chamado pelo Idle for Input (próxima entrada da fila) e pelo Gosub Found
+Action (`try_gosub_action_found`, BV `0xade17c`, que depois chama
+`UpdateObjectOwnership`). Grava os dados de pessoa da ação: 21, 164 (flag do
+objeto da interação), 80, 33, 102/103 (cópias de 21/80), 166; com ação, **39
+:= 0**; **73** (o recorte da pegada) := 0 e marca a pegada suja; **71 := 0**;
+**110 := 0** ("Interactions Linked Deleted", que o global "Wait For
+Notify" lê; quem o liga é o `cTSInteraction::UnLinkInteractions`, BV
+`0x4c6a54`, no outro Sim de uma interação ligada: `vm/links.cpp`); `ClearSubActions`; `SetInteractionData`. No opensims2,
+`vm::setCurrentAction` (`queue.cpp`), menos o 164.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto

@@ -73,7 +73,7 @@ palavra.
 
 | Sistema | Classes (estudadas) | Cobertura de nomes | Índice de fidelidade | "inferido" em src / docs |
 |---|---|---|---|---|
-| VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 8,5 / 11 = **77%** | 125 / 80 |
+| VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 9,5 / 11 = **86%** | 125 / 80 |
 | Rotas | 27 (13) | 113 / 622 = 18,2% | 7 / 8 = **88%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 7,5 / 10 = **75%** | 10 / 8 |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (23) | 87 / 1.534 = 5,7% | 5,5 / 8 = **69%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 6,5 / 9 = **72%** | 43 / 52 |
-| **Total** | **816 (245)** | **1.357 / 13.977 = 9,7%** (só src: 699 = 5,0%) | **70 / 105 = 67%** | **519 em src** |
+| **Total** | **816 (245)** | **1.357 / 13.977 = 9,7%** (só src: 699 = 5,0%) | **71 / 105 = 68%** | **519 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -114,11 +114,11 @@ Docs: `primitives-mac.md`.
 | Donos de dados e contas: `cTSObject::InterpValue`, `TryExpression`, `TryArrayOperation` | `vm/vm.cpp`, `primitives.cpp` | fiel | Rodada 15. |
 | Pilha e chamadas: `cTSTreeSim`, `cTSTreeStack`, `cTSTreeStackElem`, `DoNodeAction`/`Gosub` | `vm/vm.cpp`, `thread_state.*` | fiel | Até 8 argumentos, 1000 quadros, 100000 nós (rodada 16). |
 | Primitivas lidas uma a uma: `TrySetToNext`, `TrySnap`, `try_new_reach`, `TryFindFunctionalObject`, `TryDialog`, `TryOnTimer`, `TryChangeMaterial`, `TryCreateObject`, `TryInventoryAction`, `TryGenericSimCall` | `vm/primitives.cpp`, `reach.cpp`, `timer.cpp`, `dialog.cpp` | fiel | Sobram itens "Confirmar" no `TODO.md` (Set to Next 13/33/37, tabelas 0x02/0x04 do Change Material). |
-| Fila de interações: `cTSInteraction` (77 métodos, 14 nomeados), `TryPushAction`, `cTSPerson::TryIdleForInput` | `vm/queue.cpp` | inferido | Sub-fila e interações aninhadas (erro 0x6F) faltam; a fila salva é lida por inferência. 11 marcadores. |
+| Fila de interações: `cTSInteraction` (77 métodos, 14 nomeados), `TryPushAction`, `cTSPerson::TryIdleForInput`, `SetCurrentAction` | `vm/queue.cpp`, `links.cpp` | inferido | Sub-fila e aninhadas (erro 0x6F) feitas; `SetCurrentAction` (dados de pessoa 39/71/73/110, sub-ações) também no Gosub Found Action (rodada n04). A fila salva é lida por inferência; falta o dado de pessoa 164. |
 | Relógio: `cTSSimulator::SimulateOneTick`, `Simulate` | `vm/vm.cpp` | fiel | 30 ticks por minuto, hora do dia, meia-noite. |
 | Erros: `cTSObject::HandleError`, `GetErrorString` | `vm/vm.cpp`, `errors.hpp` | fiel | Falta o reset do object data 7 (`GetDefaultNicenessMultiplier`). |
-| Módulo de objetos: `cEdithObjectModule` (120, 26 nomeados): `MakeNewOutOfWorldObject`, `FlushKillQueue`, pontos de entrada (load, cleanup, roomChanged, dynMultiTile) | `vm/vm.cpp`, `kill.cpp`, `app/vm_objects.cpp` | inferido | Os pontos de entrada além de Init/Main não rodam. |
-| Dados mantidos pelo motor: object data "room", campos de globais, `cTSGlobals` (58, 2 nomeados), `cTSDataTables` (39, 0) | `vm/world.*` | faltando | "Falta: a sala" está aberto no `TODO.md` desde a rodada 15. |
+| Módulo de objetos: `cEdithObjectModule` (120, 30 nomeados): `MakeNewOutOfWorldObject`, `FlushKillQueue`, `PostLoad`, `UpdateObjectsInRoom`, `UpdateObjectsAdjacentToWall`, pontos de entrada (load, cleanup, roomChanged, wallAdjacency) | `vm/vm.cpp`, `kill.cpp`, `lot_resume.cpp`, `rooms.cpp`, `placement.cpp`, `build_edit.cpp` | fiel | Rodada n04 (`primitives-mac.md` §4i): load em todo objeto carregado, roomChanged pelo `OnRoomChanged`, wallAdjacency pelo `UpdateWallAdjacency`. dynMultiTile (entrada 8): nenhum OBJf do jogo base a tem. |
+| Dados mantidos pelo motor: object data "room" (`SetLocation`/`SetRoom`), od 5 (wall adjacency), campos de globais, `cTSGlobals` (58, 2 nomeados), `cTSDataTables` (39, 0) | `vm/world.*`, `rooms.cpp`, `placement.cpp` | inferido | Sala e od 5 pelo binário (rodada n04; a sala é a do tile, o binário usa o quarto de tile do ponto). `cTSGlobals` e `cTSDataTables` não lidos. |
 | Som: `TryPlaySound` | `vm/sound.cpp` | inferido | Tabelas 10000/20000 divergem do doc; flag 0x40 inferida. |
 | Atributos de tipo: `cTSObjectTypeAttributeManager` | `vm/vm.cpp` | fiel | Rodada 16. |
 
@@ -358,7 +358,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 1 | **Sentar** (issue 001, linhas A–H) — **feita** (n01): objetivos de sentar, Snap Into/PlaceInSlot, direção do Snap e lista 0x92 do binário; E, G, I ficam para a rodada 2 (`docs/seat-mac.md`). | Sentar aparece em toda refeição, sofá e privada; 7 de 10 partes inferidas. | 3 Opus (1 leitura + 2 código) | sim |
 | 2 | **Corpo do Sim: coreografia, mistura e IK** (`cChoreoQueue`, `cChannelUber*`, `cActiveAnimIK`, `cIKChain`, transições de locomoção) — **feita** (n02): ordem da fila, expiração, peso dos canais e o solucionador de IK do binário; memória do osso; E, G, I da issue 001 (`docs/anim-mac.md`); transições de locomoção ficam no `TODO.md`. | Todo Sim, todo quadro. Junta com a parte G do sentar se rodar junto. | 2 Opus (1 leitura + 1 código) | sim |
 | 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) — **feita** (n03): escadas como portais dos slots (duas faixas de mão única, os Sims não se travam no patamar), bits do `cTSRoutingSlot`, `CollisionCheck` e o +20 "parado" do binário (`routing-mac.md` §6.1, §8.2, §8.6). | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
-| 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |
+| 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) — **feita** (n04): `OnRoomChanged` (entrada 7, portas com as duas salas), `UpdateObjectsInRoom`, load em todo objeto carregado (`PostLoad`), `UpdateWallAdjacency` (od 5 e entrada 6, 319/321 bancadas batem), `SetCurrentAction` (`primitives-mac.md` §4i). | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |
 | 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) | Visível em todo lote; rodada pequena. | 1 Opus | sim |
 | 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |
 | 7 | **Construção: suporte, telhado e terreno** (`HasSupport`, `SupportedUnderneath`, leveler, `cTSUserToolRoof`, piscinas) | Erros de colocação no modo Construção. | 1 Opus | sim |
