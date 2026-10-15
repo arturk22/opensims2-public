@@ -193,6 +193,48 @@ void sampleDrawnPlaces(double scene) {
             // under the pelvis), so she is not a glide.
             if (o->route && o->route->loco.animation.find("walk-reaper") != std::string::npos)
                 x.inWorld = false;
+            // The feet's slide while the locomotion plays: the slower foot's
+            // speed over the floor (the planted one; 0 when nothing slides),
+            // per locomotion phase, the mean printed at exit.
+            {
+                struct Feet {
+                    double time = -1;
+                    float l[2] = {0, 0}, r[2] = {0, 0};
+                };
+                static std::map<int16_t, Feet> last;
+                static double sum[4] = {0, 0, 0, 0};
+                static long frames[4] = {0, 0, 0, 0};
+                static bool skateRegistered = false;
+                if (!skateRegistered) {
+                    skateRegistered = true;
+                    std::atexit([] {
+                        static const char* names[] = {"none", "start", "walk", "stop"};
+                        double all = 0;
+                        long n = 0;
+                        for (int k = 0; k < 4; ++k)
+                            all += sum[k], n += frames[k];
+                        std::printf("opensims2: skate: %ld walking frames, planted foot %.3f tiles/s", n, n ? all / double(n) : 0.0);
+                        for (int k = 1; k < 4; ++k)
+                            std::printf(", %s %.3f (%ld)", names[k], frames[k] ? sum[k] / double(frames[k]) : 0.0, frames[k]);
+                        std::printf("\n");
+                        std::fflush(stdout);
+                    });
+                }
+                const os2::Vec3 lw = a.bones[size_t(lb)].t, rw = a.bones[size_t(rb)].t;
+                Feet& f = last[s.id];
+                const bool walking = x.inWorld && o->route && o->route->loco.moving &&
+                                     o->route->loco.kind != os2::vm::Object::Route::Loco::None;
+                if (walking && f.time >= 0 && scene - f.time > 1e-4 && scene - f.time < 0.2) {
+                    const double dt = scene - f.time;
+                    const double vl = std::hypot(lw[0] - f.l[0], lw[1] - f.l[1]) / dt;
+                    const double vr = std::hypot(rw[0] - f.r[0], rw[1] - f.r[1]) / dt;
+                    const int k = std::min<int>(o->route->loco.kind, 3);
+                    sum[k] += std::min(vl, vr);
+                    ++frames[k];
+                }
+                f.time = walking ? scene : -1;
+                f.l[0] = lw[0], f.l[1] = lw[1], f.r[0] = rw[0], f.r[1] = rw[1];
+            }
             for (const auto& e : detector.add(x)) {
                 std::string overlays;
                 for (const auto& ov : o->animation.overlays)
