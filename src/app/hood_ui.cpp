@@ -171,7 +171,7 @@ void HoodUi::refresh() {
     values_.clear();
     prices_.clear();
     pictures_.clear();
-    hover_ = dialog_ = nullptr;
+    hover_ = dialog_ = drawnDialog_ = nullptr;
     bins_->setNeighborhood(&view_->neighborhood());
     dirty_ = true;
 }
@@ -402,6 +402,7 @@ UiScreen HoodUi::screen(int width, int height) {
     UiScreen out;
     out.width = width, out.height = height;
     laidW_ = width, laidH_ = height;
+    uploaded_ = false;
     targets_.clear();
     solid_.clear();
     dialogRect_.reset();
@@ -768,7 +769,7 @@ void HoodUi::showErrorTooltip(uint32_t index, simd_float2 at) {
     dirty_ = true;
 }
 
-void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
+void HoodUi::prepareFrame(uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || !ok_)
         return;
     if (!errorTip_.empty() && steadySeconds() > errorTipUntil_)
@@ -777,11 +778,19 @@ void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t hei
     const int ch = int(std::lround(float(height) / std::max(scale, 0.01f)));
     if (cw != canvasW_ || ch != canvasH_)
         canvasW_ = cw, canvasH_ = ch, dirty_ = true;
-    if (dirty_ || bins_->dirty() || laidW_ != cw || laidH_ != ch) {
+    if (dirty_ || bins_->dirty() || !uploaded_ || laidW_ != cw || laidH_ != ch) {
         layer_ = (layer_ + 1) % layers_.size();
         const UiScreen sc = screen(cw, ch);
         layers_[layer_]->setScreen(sc);
+        uploaded_ = true;
+        drawnDialog_ = dialog_;
     }
+}
+
+void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
+    if (!layers_[0] || width == 0 || height == 0 || !ok_)
+        return;
+    prepareFrame(width, height, scale);
     options_->encode(enc, width, height, scale); // under the puck and its panel, which stay drawn over its tab
     layers_[layer_]->encode(enc, width, height);
 }

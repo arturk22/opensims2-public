@@ -129,6 +129,11 @@ public:
     UiScreen screen(int width, int height);
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+    // encode()'s first half: the layout for this frame put in the layer
+    // when it changed (headless steps call it between clicks as the frames
+    // would). drawnDialog() is the Lot Info Dialog the layer drawn shows.
+    void prepareFrame(uint32_t width, uint32_t height, float scale);
+    const HoodLot* drawnDialog() const { return drawnDialog_; }
 
 private:
     std::string errorTip_;
@@ -202,6 +207,13 @@ private:
     std::vector<std::array<float, 4>> solid_; // areas that take clicks
     int canvasW_ = 1024, canvasH_ = 768, laidW_ = 0, laidH_ = 0;
     bool dirty_ = true;
+    // The last layout reached the layer drawn. press() and covers() (the
+    // cursor, after every mouse event) lay the screen out too and clear
+    // dirty_: without this the frame kept the old picture (the hover popup
+    // over an open, invisible Lot Info Dialog) until a key, Esc, dirtied it
+    // again (playtest hood-esc).
+    bool uploaded_ = false;
+    const HoodLot* drawnDialog_ = nullptr;
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
     size_t layer_ = 0;
 };

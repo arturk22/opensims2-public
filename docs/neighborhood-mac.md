@@ -1469,3 +1469,39 @@ correções, só a confirmação de que o `cTSWinProcLotInfoDialog` existe.)
   sem ação nas famílias. Mudar uma família: escolher na bandeja e clicar num
   lote vazio (pergunta "Mudar família ... para este lote?").
   Teste: `tests/hood_family_bin.sh`.
+
+## 19. Playtest hood-esc: o clique só aparecia depois do Esc
+
+(`docs/screenshots/hood-esc-5.jpg`, `hood-esc-6.jpg`; depois:
+`hood-esc-dialogo.jpg`. Ghidra MCP só para o popup, abaixo.)
+
+- **Causa** (`app/hood_ui.cpp`, regressão do `01b8cd5c`, os cursores do
+  bairro): depois de cada evento do mouse a janela pede o cursor
+  (`OS2View refreshCursor` → `HoodMode::fillCursor` → `HoodUi::covers`), e o
+  `covers` (como o `press`) refaz o layout da UI quando ela está suja e limpa
+  o `dirty_` — mas só o `encode` do quadro manda o layout para a camada
+  desenhada. O quadro seguinte via `dirty_` falso e continuava desenhando a
+  imagem velha. Clicar numa casa abria o Diálogo de Informações do Lote (que
+  toma os cliques), mas a tela continuava mostrando o popup de passar o mouse
+  (sem botões, `hood-esc-5.jpg`); escolher uma família ou paginar a bandeja
+  mudava o estado sem mudar a tela (`hood-esc-6.jpg`). Uma tecla não pede o
+  cursor, então o Esc (que fecha o diálogo e suja a UI) fazia o quadro
+  seguinte enfim desenhar o estado. Sem tela o `--click` não pedia o cursor
+  nem desenhava quadros no meio, por isso a rodada hood-slow não reproduziu.
+- **Correção**: `HoodUi::uploaded_` — todo layout novo (de quem for) marca a
+  camada como velha e o `prepareFrame` (a primeira metade do `encode`) manda
+  de novo. Os passos sem tela (`--click`/`--hover` no bairro) agora seguem o
+  caminho da janela: `mouseMoved` antes do clique, o cursor depois de cada
+  evento e um quadro preparado entre os passos, e imprimem
+  `hood frame N: lot dialog <id|none>` (com `STALE` se o diálogo aberto não
+  está na camada). Teste: `tests/hood_family_bin.sh` (falha no código antigo).
+- **O popup do bairro** (`0x49001011`): no binário é a janela do
+  `cTSWinProcLotDescription` (`GetUIScriptID` BV `0x4525a0`), criada pelo
+  `cTSWinProcLotCatalog::ShowDescription` (BV `0x45871c`) para a bandeja de
+  Lotes & Casas; que o bairro use a mesma janela ao passar o mouse num lote é
+  **inferido**. `ConfigureForOccupiedLot` (BV `0x455edc`) põe a imagem do
+  lote (`entry+0x34`) reamostrada no tamanho da janela `0xA007` (308,31 –
+  554,277: 246×246), então a foto passar 41 px acima da arte da caixa (que
+  começa em y = 72) e a "aba" de baixo à direita (`0x0002`, 417,287) são do
+  próprio script; o app desenha igual. Se a imagem do jogo tem alfa (casa
+  recortada) não foi conferido (**inferido**: a foto JPEG `0x35CA0000`).

@@ -194,19 +194,42 @@ using namespace os2app;
                 std::printf("opensims2: lot %u \"%s\" at (%.0f, %.0f)\n", lot.id, lot.name.c_str(), x, y);
         }
         const auto steps = os2::flowSteps(processArguments());
+        // The steps go the way the window's events do: the view asks for the
+        // cursor after each mouse event (OS2View refreshCursor ->
+        // HoodMode::fillCursor, which lays the UI out) and a frame is drawn
+        // between events (the layer the window shows).
+        auto cursorAt = [&](simd_float2 p) {
+            os2::CursorContext c;
+            gHood->fillCursor(c, *view.camera, p, float(w), float(h));
+        };
+        gHood->ui().prepareFrame(w, h, 1.0f);
         for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
             gStepsUsed = k + 1;
+            const simd_float2 p = simd_make_float2(steps[k].x, steps[k].y);
             if (steps[k].kind == os2::FlowStep::Kind::Click)
             {
                 perfLap("hood: before click");
-                gHood->mouseDown(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
-                gHood->mouseUp(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+                gHood->mouseMoved(*view.camera, p, float(w), float(h));
+                cursorAt(p);
+                gHood->ui().prepareFrame(w, h, 1.0f);
+                gHood->mouseDown(*view.camera, p, float(w), float(h));
+                cursorAt(p);
+                gHood->mouseUp(*view.camera, p, float(w), float(h));
+                cursorAt(p);
                 perfLap("hood: click");
             }
             if (steps[k].kind == os2::FlowStep::Kind::Hover) {
                 perfLap("hood: before hover");
-                gHood->mouseMoved(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+                gHood->mouseMoved(*view.camera, p, float(w), float(h));
+                cursorAt(p);
                 perfLap("hood: hover");
+            }
+            if (gHood) {
+                gHood->ui().prepareFrame(w, h, 1.0f);
+                const os2::HoodLot* shown = gHood->ui().drawnDialog();
+                std::printf("opensims2: hood frame %zu: lot dialog %s%s\n", k + 1,
+                            shown ? std::to_string(shown->id).c_str() : "none",
+                            gHood->ui().dialogLot() != shown ? " (STALE: the dialog open is not drawn)" : "");
             }
             if (perfOn()) { // one frame's relayout
                 gHood->ui().screen(int(w), int(h));
