@@ -585,6 +585,135 @@ void completeSpec(const CasCatalog& c, CharacterSpec& spec, uint32_t seed) {
     }
 }
 
+uint32_t categoryFlags(uint32_t categoryBit) {
+    switch (categoryBit) {
+    case category::Swimwear:
+    case category::Pajamas:
+    case category::Underwear:
+    case category::Naked:
+    case category::Athletic:
+        return 1;
+    case category::TryOn:
+        return 2;
+    case 0x800:
+        return 3;
+    default:
+        return 0;
+    }
+}
+
+namespace {
+// The parts of a kind the skin catalog lists for an age, gender and category
+// (vtable 0x34 of the catalog; its lists have no fitness: the GZPS with
+// fitness 1 or 2 are the hidden naked texture variants). Parts without a
+// mesh are left out (nothing to draw).
+std::vector<const SimPart*> catalogParts(const CasCatalog& c, uint32_t partBit, uint32_t a, uint32_t g,
+                                         uint32_t cat) {
+    std::vector<const SimPart*> out;
+    for (const auto& p : c.parts)
+        if (p.property("type") == "skin" && (p.number("outfit") & partBit) && fits(p, a, g) &&
+            (p.number("category") & cat) && p.number("fitness") == 0 && p.reference("resourcekeyidx"))
+            out.push_back(&p);
+    return out;
+}
+
+// Randomize(4, 0) then Randomize(-1, 9): the second pass draws among the
+// parts neither hidden nor "no_random" and replaces what the first drew
+// among the "default" ones (flag 4) only when it finds something.
+std::vector<const SimPart*> drawable(const std::vector<const SimPart*>& all) {
+    std::vector<const SimPart*> open, defaults;
+    for (const SimPart* p : all) {
+        const uint32_t f = p->number("flags");
+        if (!(f & (flag::Hidden | flag::NoRandom)))
+            open.push_back(p);
+        if (f & flag::Default)
+            defaults.push_back(p);
+    }
+    return open.empty() ? defaults : open;
+}
+
+const SimPart* drawOne(const std::vector<const SimPart*>& list, std::mt19937& rng) {
+    return list.empty() ? nullptr : list[rng() % list.size()];
+}
+} // namespace
+
+void randomizeOutfits(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rng, bool hair) {
+    const auto cats = outfitCategories(spec.age, spec.gender);
+    if (hair && spec.age != age::Baby) {
+        // One everyday style of the hair tone (elders: grey), then per
+        // category (but naked) the hat-less one of the same family where
+        // the category takes no hat.
+        const std::string tone = toneFamily(spec.age == age::Elder ? 5 : spec.hairTone);
+        auto ofTone = [&](uint32_t cat) {
+            std::vector<const SimPart*> out;
+            for (const SimPart* p : catalogParts(c, part::Hair, spec.age, spec.gender, cat))
+                if (lower(p->property("hairtone")) == tone)
+                    out.push_back(p);
+            return out;
+        };
+        if (const SimPart* h = drawOne(drawable(ofTone(category::Everyday)), rng))
+            for (uint32_t cat : cats) {
+                if (cat == category::Naked)
+                    continue;
+                const SimPart* worn = h;
+                if ((h->number("flags") & flag::Hat) && (categoryFlags(cat) & 1))
+                    for (const SimPart* p : ofTone(cat))
+                        if (family(*p) == family(*h) && !(p->number("flags") & flag::Hat)) {
+                            worn = p;
+                            break;
+                        }
+                spec.outfits[cat][part::Hair] = worn->name();
+            }
+    }
+    for (uint32_t cat : cats) {
+        if (cat == category::Naked || (categoryFlags(cat) & 2))
+            continue;
+        auto& o = spec.outfits[cat];
+        auto list = [&](uint32_t partBit) { return drawable(catalogParts(c, partBit, spec.age, spec.gender, cat)); };
+        auto wearBody = [&](const SimPart* b) {
+            o.erase(part::Top);
+            o.erase(part::Bottom);
+            o[part::Body] = b->name();
+        };
+        if (rng() % 100 >= 51)
+            if (const SimPart* b = drawOne(list(part::Body), rng)) {
+                wearBody(b);
+                continue;
+            }
+        if (const SimPart* t = drawOne(list(part::Top), rng)) {
+            o.erase(part::Body);
+            o[part::Top] = t->name();
+        }
+        if (const SimPart* b = drawOne(list(part::Bottom), rng)) {
+            o.erase(part::Body);
+            o[part::Bottom] = b->name();
+        } else if (const SimPart* w = drawOne(list(part::Body), rng)) {
+            wearBody(w);
+        }
+    }
+}
+
+void randomizeLook(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rng) {
+    spec.fitness = 0; // SetFitnessLevel(500)
+    const auto arch = c.archetypesFor(spec.age, spec.gender, flag::Hidden | flag::NoRandom);
+    if (!arch.empty())
+        spec.face.archetype = family(*arch[rng() % arch.size()]);
+    spec.face.modifiers.clear();
+    spec.face.regions.clear();
+    spec.skinTone = int(rng() % 4) + 1;
+    spec.skinFamily.clear();
+    spec.hairTone = int(rng() % 4) + 1;
+    spec.overlays.clear();
+    if (const SimPart* e = drawOne(drawable(c.overlaysFor(overlay::Eyes, spec.age, spec.gender)), rng))
+        spec.eyes = family(*e);
+    if (spec.age != age::Baby)
+        if (const SimPart* b = drawOne(drawable(c.overlaysFor(overlay::Brows, spec.age, spec.gender)), rng))
+            spec.overlays.push_back(family(*c.recolor(*b, toneFamily(spec.age == age::Elder ? 5 : spec.hairTone))));
+    spec.outfits.clear();
+    randomizeOutfits(c, spec, rng);
+    completeSpec(c, spec, uint32_t(rng() | 1));
+}
+
 CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& catalog, FaceBaker& baker,
                                     const CharacterSpec& spec, const std::string& objectName,
                                     const std::filesystem::path& out, bool faceStructure) {
@@ -1050,8 +1179,10 @@ void ageSpec(const CasCatalog& c, CharacterSpec& spec, uint32_t newAge, uint32_t
         if (const SimPart* o = c.byFamily(c.textureOverlays, f); !o || o->number("subtype") != overlay::Brows)
             keep.push_back(f);
     spec.overlays = std::move(keep);
-    // The clothes drawn again (Randomize with only the clothes valid), the
-    // rest as a new Sim's (completeSpec).
+    // The clothes drawn again (Randomize(4, 0) and Randomize(-1, 9) with only
+    // the clothes invalid: randomizeOutfits), the rest as a new Sim's.
+    std::mt19937 rng(seed ? seed : 1);
+    randomizeOutfits(c, spec, rng, false);
     completeSpec(c, spec, seed ? seed : 1);
     for (uint32_t cat : outfitCategories(newAge, spec.gender))
         if (cat != category::Everyday && cat != category::Naked && spec.outfits[cat].count(part::Hair) == 0)

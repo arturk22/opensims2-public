@@ -250,20 +250,8 @@ void CasMode::newSim() {
 
 void CasMode::randomize(uint32_t seed) {
     std::mt19937 rng(seed ? seed : std::random_device{}());
-    cas::CharacterSpec& s = edit_.spec;
-    const auto arch = catalog_->archetypesFor(s.age, s.gender, cas::flag::Hidden | cas::flag::NoRandom);
-    if (!arch.empty())
-        s.face.archetype = cas::family(*arch[rng() % arch.size()]);
-    s.face.modifiers.clear();
-    s.face.regions.clear();
-    s.skinTone = int(rng() % 4) + 1;
-    s.hairTone = int(rng() % 4) + 1;
-    const auto eyes = catalog_->overlaysFor(cas::overlay::Eyes, s.age, s.gender);
-    if (!eyes.empty())
-        s.eyes = cas::family(*eyes[rng() % std::min<size_t>(eyes.size(), 5)]); // not the alien eyes (inferred)
-    s.overlays.clear();
-    s.outfits.clear();
-    cas::completeSpec(*catalog_, s, uint32_t(rng() | 1));
+    // HandleButtonGlobalRandomize (docs/cas-mac.md, round n10).
+    cas::randomizeLook(*catalog_, edit_.spec, rng);
     // Personality: 25 points at random, then the sign.
     edit_.personality = cas::Personality{0, 0, 0, 0, 0};
     for (int i = 0; i < cas::kPersonalityPoints; ++i) {

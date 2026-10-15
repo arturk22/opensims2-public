@@ -1,6 +1,7 @@
 #include <cmath>
 #include "formats/bhav.hpp"
 #include "formats/cas_catalog.hpp"
+#include "formats/character_write.hpp"
 #include "formats/sim_character.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/camera_config.hpp"
@@ -913,6 +914,72 @@ static void testFaceSkinMigration() {
         }
 }
 
+// The CAS randomize button (RandomizeForHumans, docs/cas-mac.md round n10),
+// with the game's data: normal fitness, every clothed category dressed
+// (a whole outfit, or a top with a bottom), only parts neither hidden nor
+// "no_random" (the gestante falls back to the one "default" maternity
+// outfit), the same hair family everywhere and no hat where the category
+// takes none; with both kinds drawn over a few seeds.
+static void testCasRandomize() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+    auto byName = [&](const std::string& n) -> const SimPart* {
+        for (const auto& p : catalog.parts)
+            if (p.name() == n)
+                return &p;
+        return nullptr;
+    };
+    bool sawBody = false, sawTopBottom = false, allOpen = true, maternity = true, dressed = true, hats = true,
+         sameHair = true;
+    for (uint32_t seed = 1; seed <= 12; ++seed) {
+        cas::CharacterSpec s;
+        s.age = cas::age::Adult;
+        s.gender = seed % 2 ? cas::gender::Female : cas::gender::Male;
+        s.fitness = 2;
+        std::mt19937 rng(seed);
+        cas::randomizeLook(catalog, s, rng);
+        check(s.fitness == 0, "randomize: the body back to normal (SetFitnessLevel(500))");
+        std::string hairFamily;
+        for (uint32_t cat : cas::outfitCategories(s.age, s.gender)) {
+            if (cat == cas::category::Naked || cat == cas::category::TryOn || !s.outfits.count(cat))
+                continue;
+            const auto& o = s.outfits.at(cat);
+            const bool body = o.count(cas::part::Body), top = o.count(cas::part::Top), bottom = o.count(cas::part::Bottom);
+            dressed = dressed && (body ? !top && !bottom : top && bottom);
+            if (cat == cas::category::Everyday) {
+                sawBody = sawBody || body;
+                sawTopBottom = sawTopBottom || (top && bottom);
+            }
+            for (const auto& [bit, name] : o) {
+                const SimPart* p = byName(name);
+                if (!p)
+                    continue;
+                if (bit == cas::part::Hair) {
+                    if (hairFamily.empty())
+                        hairFamily = cas::family(*p);
+                    sameHair = sameHair && cas::family(*p) == hairFamily;
+                    if (cas::categoryFlags(cat) & 1)
+                        hats = hats && !(p->number("flags") & cas::flag::Hat);
+                    continue;
+                }
+                if (cat == cas::category::Maternity)
+                    maternity = maternity && name == "afbodymaternityshirtpants_navyrust";
+                else
+                    allOpen = allOpen && !(p->number("flags") & (cas::flag::Hidden | cas::flag::NoRandom));
+            }
+        }
+    }
+    check(dressed, "randomize: each clothed category wears a whole outfit or a top and a bottom");
+    check(sawBody && sawTopBottom, "randomize: both whole outfits and tops with bottoms over the seeds");
+    check(allOpen, "randomize: no hidden or no_random clothes");
+    check(maternity, "randomize: the maternity outfit is the default one (navyrust, flags 13)");
+    check(sameHair, "randomize: one hair family in every category");
+    check(hats, "randomize: no hat in swimwear, pajamas, underwear, athletic");
+}
+
 // The naked outfit (shower, bath, getting changed) keeps the Sim's hair and
 // face: SetupShapesPrivate takes the naked category's hair and face from
 // swimwear, never the bald "<p>hairbald_skin" its list names (playtest 35:
@@ -1210,6 +1277,7 @@ int main() {
     testSawtoothAtticWindows();
     testNextStoryOverGround();
     testFaceSkinMigration();
+    testCasRandomize();
     testNakedOutfitKeepsHair();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

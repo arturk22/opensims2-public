@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -90,6 +91,32 @@ std::vector<uint32_t> outfitCategories(uint32_t ageBit, uint32_t genderBit);
 // (everyday: top and bottom; the others: a whole outfit; naked: the naked
 // top and bottom of the skin tone). `seed` != 0 picks at random instead.
 void completeSpec(const CasCatalog& catalog, CharacterSpec& spec, uint32_t seed = 0);
+
+// The skin catalog's category flags (cTSSkinCatalog::CheckInit, Mac BV
+// 0x7e4c34; GetCategoryFlags 0x7e9058): 1 for swimwear, pajamas, underwear,
+// naked and athletic (no hat: a hat hair is swapped for its hat-less one), 2
+// for try-on (no clothes drawn), 3 for 0x800; 0 for the others.
+uint32_t categoryFlags(uint32_t categoryBit);
+
+// The hair and clothes of a human as the CAS randomize button draws them
+// (SetDefaultClothing(true, ...) -> cTSSimOutfitData::Randomize(4, 0) then
+// Randomize(-1, 9) -> RandomizeForHumans, Mac BV 0x1b63ac / 0x818734):
+// candidates are the parts that are neither hidden nor "no_random" (flags
+// 1|8), else the "default" ones (flag 4). Hair: one everyday style of the hair
+// tone for every category, the hat-less one of the same family where the
+// category has flag 1. Clothes, for each category but naked and try-on: 49 %
+// a whole outfit first, else (or without one) a top and a bottom, a whole
+// outfit when there is no bottom. With `hair` false only the clothes
+// (MakeNewAge). Naked and try-on are left to completeSpec.
+void randomizeOutfits(const CasCatalog& catalog, CharacterSpec& spec, std::mt19937& rng, bool hair = true);
+
+// A human's look from the CAS randomize button (HandleButtonGlobalRandomize,
+// Mac BV 0x1bc14c, FUN_001b7f08 with every bit): normal fitness
+// (SetFitnessLevel(500)), skin and hair tones, the face (an archetype, eyes
+// and brows drawn among the parts that are neither hidden nor "no_random":
+// the data's beards, glasses and alien eyes all are), hair and clothes
+// (randomizeOutfits), the rest by completeSpec. Age and gender stay.
+void randomizeLook(const CasCatalog& catalog, CharacterSpec& spec, std::mt19937& rng);
 
 struct CharacterWriteResult {
     uint32_t guid = 0;
