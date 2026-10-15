@@ -4,6 +4,7 @@
 #include "app/object_fade.hpp"
 #include "render/camera.hpp"
 #include "render/cas_camera.hpp"
+#include "render/free_camera.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -437,6 +438,143 @@ end
         check(objectFades(all, 0), "objectFadeAllObjects fades every object");
     }
     {
+        // Back from the free camera: the Live camera takes the view over (MatchThisControllerWith).
+        LotCamera c(liveCamera());
+        c.setBounds(simd_make_float2(0, 0), simd_make_float2(64, 64));
+        // At (40, 20), 11 up, looking 40 degrees down towards -X: the view's pitch is inside the first level's range.
+        const float rad = float(M_PI) / 180;
+        const simd_float3 fwd = simd_make_float3(-std::cos(40 * rad), 0, -std::sin(40 * rad));
+        c.matchView(simd_make_float3(40, 20, 11), fwd);
+        check(near(c.yaw(), 0), "heading: the eye is on the +X side of what it looks at");
+        check(near(c.distance(), 10 / std::sin(40 * rad), 1e-2f), "distance: down to the pivot's height along the view");
+        check(near(c.pivot().x, 40 - c.distance() * std::cos(40 * rad), 1e-2f) && near(c.pivot().y, 20, 1e-2f),
+              "the pivot is that far along the view");
+        check(near(c.pitch(), 40, 1e-2f), "the pitch is the view's");
+        const simd_float3 e = c.eye();
+        check(near(e.x, 40, 0.05f) && near(e.y, 20, 0.05f) && near(e.z, 11, 0.05f), "the Live camera's eye is where the free camera's was");
+        // A steep view is held to the first level's pitch (30 .. 40 degrees).
+        c.matchView(simd_make_float3(40, 20, 11), simd_make_float3(0, 0.2f, -1));
+        check(near(c.pitch(), 40, 1e-2f) || c.pitch() <= 40.01f, "a steep view keeps the first level's top pitch");
+    }
+    {
+        // The free camera (Tab, cCameraCameraManController): FirstPersonCameras.txt's "CameraMan".
+        const auto cams = parseCameraConfig(R"(
+camera     "CameraMan" CameraMan
+fov        (20 25 30 35 40 45 50 55 60 65 70 75 80 85 90)
+clip       0.15 2000
+setparam defaultminchange        0.5
+setparam mouseheadingsensitivity 0.0005
+setparam upperpitchlimit         35
+setparam lowerpitchlimit         -80
+setparam orientationminchange	 0.1
+setparam orientationsteps    	 5
+setparam fovminchange		 0.001
+setparam fovsteps		 3
+setparam mincameraheight         1
+setparam maxcameraheight         50
+setparam translationminchange	 0.01
+setparam translationsteps    	 7
+setparam maxvelocity             10
+setparam velocitysensitivitymin  0.1
+setparam velocityminchange	 0.1
+setparam velocitysteps    	 5
+setparam ticklimit               50
+setparam constraintwidth         -10
+)");
+        const CameraDef* def = findCamera(cams, "CameraMan");
+        check(def != nullptr, "the CameraMan camera parses");
+        if (def) {
+            FreeCamera f(*def);
+            const auto& p = f.params();
+            check(p.fov.size() == 15 && near(p.nearClip, 0.15f) && near(p.maxVelocity, 10) && p.translationSteps == 7 &&
+                      p.velocitySteps == 5 && near(p.maxHeight, 50) && near(p.tickLimit, 50),
+                  "the spec's numbers");
+            // Starts where the previous camera was, looking where it looked; the pitch kept in its limits.
+            f.start(simd_make_float3(10, 10, 30), simd_make_float3(0, 1, -0.5f), 45);
+            check(near(f.heading(), float(M_PI) / 2) && f.pitch() < 0 && near(f.fov(), 45) && f.fovIndex() == 5,
+                  "starts at the previous view, the fov table's 45");
+            f.start(simd_make_float3(10, 10, 30), simd_make_float3(0, 0.1f, -1), 45);
+            check(near(f.pitch(), -80 * float(M_PI) / 180), "pitch held to lowerpitchlimit");
+            // Forward at full height (50): maxvelocity * 1000 / (50 ms * 7 steps) = 28.6 tiles a second once the velocity is up.
+            f.start(simd_make_float3(0, 0, 50), simd_make_float3(1, 0, 0), 45);
+            f.setMove(0, 1, 0);
+            for (int i = 0; i < 180; ++i)
+                f.update(1.0 / 60);
+            check(f.position().x > 76 && f.position().x < 82 && near(f.position().y, 0, 0.05f) && near(f.position().z, 50, 1e-2f),
+                  "full speed at full height: 28.6 tiles a second after the velocity ramps up");
+            // The speed scales with the height (velocitysensitivitymin 0.1 at the minimum height).
+            f.start(simd_make_float3(0, 0, 1), simd_make_float3(1, 0, 0), 45);
+            f.setMove(0, 1, 0);
+            for (int i = 0; i < 180; ++i)
+                f.update(1.0 / 60);
+            check(f.position().x > 6.5f && f.position().x < 8.5f, "a tenth of the speed at the lowest height");
+            // Strafing and the heading: facing +Y, right is +X.
+            f.start(simd_make_float3(0, 0, 50), simd_make_float3(0, 1, 0), 45);
+            f.setMove(1, 0, 0);
+            for (int i = 0; i < 60; ++i)
+                f.update(1.0 / 60);
+            check(f.position().x > 10 && near(f.position().y, 0, 0.05f), "right of a camera facing +Y is +X");
+            // Raise and lower: z held to [floor + 1, floor + 50], the floor under the camera sampled.
+            f.setFloorSampler([](float, float) { return 10.0f; });
+            f.start(simd_make_float3(0, 0, 30), simd_make_float3(1, 0, 0), 45);
+            f.setMove(0, 0, 1);
+            for (int i = 0; i < 1200; ++i)
+                f.update(1.0 / 60);
+            check(near(f.position().z, 60, 1e-3f) && near(f.heightFraction(), 1, 1e-3f), "raised to floor + maxcameraheight");
+            f.setMove(0, 0, -1);
+            for (int i = 0; i < 1200; ++i)
+                f.update(1.0 / 60);
+            check(near(f.position().z, 11, 1e-3f) && near(f.heightFraction(), 0, 1e-3f), "lowered to floor + mincameraheight");
+            // The lot's rectangle shrunk by constraintwidth (-10): 10 tiles out past the edge.
+            f.setFloorSampler(nullptr);
+            f.setBounds(simd_make_float2(0, 0), simd_make_float2(30, 30));
+            f.start(simd_make_float3(15, 15, 50), simd_make_float3(1, 0, 0), 45);
+            f.setMove(0, 1, 0);
+            for (int i = 0; i < 600; ++i)
+                f.update(1.0 / 60);
+            check(near(f.position().x, 40, 0.1f), "held 10 tiles past the lot's edge");
+            // One huge frame counts as ticklimit (50 ms).
+            FreeCamera a(*def), b(*def);
+            for (FreeCamera* c : {&a, &b}) {
+                c->start(simd_make_float3(0, 0, 50), simd_make_float3(1, 0, 0), 45);
+                c->setMove(0, 1, 0);
+            }
+            a.update(2.0);
+            b.update(0.05);
+            check(near(a.velocity().y, b.velocity().y) && near(a.position().x, b.position().x), "dt cut to ticklimit");
+            // The mouse: right turns right (the heading falls), up looks up, the pitch held in its limits.
+            FreeCamera m(*def);
+            m.start(simd_make_float3(0, 0, 10), simd_make_float3(1, 0, 0), 45);
+            m.look(100, 0);
+            check(m.heading() < 0 && near(m.heading(), -100 * 0.0005f * FreeCamera::kMouseUnit), "mouse right turns right");
+            m.look(0, -10000);
+            check(near(m.pitch(), 35 * float(M_PI) / 180), "pitch held to upperpitchlimit");
+            m.look(0, 100000);
+            check(near(m.pitch(), -80 * float(M_PI) / 180), "pitch held to lowerpitchlimit (looking down)");
+            // The fov table: Zoom in steps to a narrower fov, held at the table's ends, smoothed.
+            FreeCamera z(*def);
+            z.start(simd_make_float3(0, 0, 10), simd_make_float3(1, 0, 0), 45);
+            z.zoomStep(1);
+            check(z.fovIndex() == 4, "zoom in: the next narrower fov");
+            for (int i = 0; i < 100; ++i)
+                z.update(1.0 / 60);
+            check(near(z.fov(), 40, 1e-2f), "the fov reaches 40");
+            for (int i = 0; i < 40; ++i)
+                z.zoomStep(1);
+            check(z.fovIndex() == 0, "held at the narrowest");
+            for (int i = 0; i < 40; ++i)
+                z.zoomStep(-1);
+            check(z.fovIndex() == 14, "held at the widest");
+            // Saved positions.
+            z.start(simd_make_float3(5, 6, 20), simd_make_float3(0, 1, 0), 45);
+            z.savePosition(2);
+            z.start(simd_make_float3(0, 0, 10), simd_make_float3(1, 0, 0), 45);
+            check(z.restorePosition(2) && near(z.position().x, 5) && near(z.position().z, 20) && near(z.heading(), float(M_PI) / 2),
+                  "restore a saved position");
+            check(!z.restorePosition(4), "nothing saved there");
+        }
+    }
+    {
         // The top-down view: "Build" takes over "Live" with the pivot, the
         // heading, the 3D distance and the pitch fraction as numbers
         // (cCameraLive::SetActive, BV 0x6a56e0), the tables of BuildCamera.txt.
@@ -497,6 +635,27 @@ end
         s.setMode(S::Mode::Live);
         s.setMode(S::Mode::Buy);
         check(s.controller() == S::Controller::Live && !s.topDown(), "the flag off stays off across modes");
+        // Tab: the free camera and back to where it came from; Escape in it too.
+        S t;
+        t.cycleController();
+        check(t.controller() == S::Controller::CameraMan && t.freeCamera(), "Tab: the free camera");
+        t.cycleController();
+        check(t.controller() == S::Controller::Live, "Tab again: back to Live");
+        t.setMode(S::Mode::Build);
+        t.toggleTopDown();
+        t.cycleController();
+        check(t.freeCamera() && t.escape() && t.controller() == S::Controller::Build,
+              "Escape leaves the free camera for the top-down view it came from");
+        check(!t.escape(), "Escape elsewhere is not the camera's");
+        t.cycleController();
+        t.cycleController();
+        check(t.controller() == S::Controller::Build, "Tab from the top-down view and back");
+        t.cycleController();
+        t.setMode(S::Mode::Live);
+        check(!t.freeCamera() && t.controller() == S::Controller::Live, "a mode change ends the free camera");
+        t.cycleController();
+        t.toggleTopDown();
+        check(t.freeCamera(), "no top-down button in Live mode: T leaves the free camera alone");
     }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

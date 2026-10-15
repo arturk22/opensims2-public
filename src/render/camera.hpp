@@ -116,6 +116,14 @@ public:
     // pitch range and the params are the new camera's. Each camera keeps its
     // own saved positions (cCameraLive::SaveCameraPosition).
     void setDefinition(CameraDef def);
+    // Takes over from the free camera ("CameraMan": Tab again, Escape):
+    // MatchThisControllerWith(viewer) (cTSCameraSmoothSims1Controller, BV
+    // 0x86c05c): the heading of the view, the pitch held to the first level's
+    // range, the distance to the pivot's height along the view ((eye z -
+    // pivotheightabovefloor) / sin(pitch), held between the first and last
+    // levels), the pivot that far along the view, and the pitch fraction of
+    // the level it lands on; snapped.
+    void matchView(simd_float3 eye, simd_float3 forward);
 
     // --- Environment -------------------------------------------------------
     void setViewport(float width, float height) { viewW_ = width, viewH_ = height; }
@@ -124,6 +132,9 @@ public:
     const CameraDef& definition() const { return def_; }
     // Lot rectangle in tiles; the pivot stays inside it shrunk by constraintwidth.
     void setBounds(simd_float2 lo, simd_float2 hi);
+    const std::optional<std::pair<simd_float2, simd_float2>>& bounds() const { return bounds_; }
+    // The floor's height under a point as the camera samples it (0 without a sampler).
+    float floorHeight(float x, float y) const { return floorAt(x, y, 0); }
     // Floor height under a point (the visible level's); empty = flat at the pivot's z.
     void setFloorSampler(std::function<float(float x, float y)> f) { floor_ = std::move(f); }
 

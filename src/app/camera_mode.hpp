@@ -18,6 +18,15 @@
 //   panel's alike): it toggles their top-down button (Build 0xA3, Buy
 //   0xCC607036), whose onBtnToggledID calls SetTopDown with the new state.
 //   In Live mode T does nothing.
+// - Tab and Y ("Cycle Camera Controller", 0x0CA8D3F3): cCameraLive::DoMessage
+//   (BV 0x6a3df0, the Live and the Build camera alike) makes "CameraMan" the
+//   current controller in a lot ("CameraManNH" in the neighborhood); the
+//   free camera remembers which controller it came from (its SetActive,
+//   0x7a7d2c, keeps the previous controller's name) and Tab or Escape
+//   (0x8CA297E2, cCameraCameraManController::DoMessage 0x7a6878) make that one
+//   current again. Any SetTopDown or mode change that follows asks the
+//   manager for "Live" or "Build" and so ends the free camera too.
+//   (The "First" controller, the camera on a Sim's head, is not reached by any key.)
 
 namespace os2 {
 
@@ -26,7 +35,7 @@ public:
     enum class Mode { Live, Buy, Build };
     // The controllers of the lot: the "Live" camera and the top-down "Build"
     // one are the same class (cCameraLive) with different configurations.
-    enum class Controller { Live, Build };
+    enum class Controller { Live, Build, CameraMan };
 
     Controller controller() const { return controller_; }
     bool topDown() const { return topDown_; }
@@ -51,6 +60,22 @@ public:
         }
     }
 
+    // Tab / Y: the free camera, and back to the controller it came from.
+    void cycleController() {
+        if (controller_ == Controller::CameraMan)
+            controller_ = returnTo_;
+        else
+            returnTo_ = controller_, controller_ = Controller::CameraMan;
+    }
+    // Escape in the free camera (and only there) leaves it too; false elsewhere.
+    bool escape() {
+        if (controller_ != Controller::CameraMan)
+            return false;
+        controller_ = returnTo_;
+        return true;
+    }
+    bool freeCamera() const { return controller_ == Controller::CameraMan; }
+
     // The key T, or a click on the panel's top-down button: false when the
     // mode has no such button (Live).
     bool toggleTopDown() {
@@ -63,6 +88,7 @@ public:
 private:
     Mode mode_ = Mode::Live;
     Controller controller_ = Controller::Live;
+    Controller returnTo_ = Controller::Live; // what the free camera came from
     bool topDown_ = false;
 };
 

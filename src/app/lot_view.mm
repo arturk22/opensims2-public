@@ -33,6 +33,8 @@ void changeFloor(int delta) {
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
+    if (gCameraSelector.freeCamera()) // the free camera is another controller: no floor following
+        return;
     if (gCameraFollow && gSimulation && gPie)
         gCameraFollow->follow(gSimulation->machine(), gPie->sim());
 }

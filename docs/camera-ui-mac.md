@@ -382,6 +382,99 @@ velocidade do teclado (`0x3b6c780f`: `sqrt(largura·30) · eixo · distância ·
 constante · aceleração por repetição`) é outra fórmula que a do app
 (§1.4/TODO), não tocada nesta rodada.
 
+### 1.9 Tab: a câmera livre "CameraMan" (binário, rodada n11)
+
+**Quem troca.** `Tab` e `Y` mandam o evento `0x0CA8D3F3` ("Cycle Camera
+Controller"). Quem o trata é o controlador atual:
+
+- `cCameraLive::DoMessage` (BV `0x6a3df0`; vale para a "Live" e para a
+  "Build", a mesma classe): se o serviço de estado do jogo (`FUN_000c8370`,
+  `vtable 0x14`) é o **lote** (`0xbea28c2`), chama `ShowPIP(false)` na barra
+  principal (`0x1599358`, vtable `0xac`) e pede ao gerente de controladores
+  (`cTSCameraControllerManager::SetCurrentController(char const*)`, vtable
+  `0x54`) o controlador **"CameraMan"**; se é o **bairro** (`0xABEA28C7`), o
+  "CameraManNH" (a `cCameraNeighborhood` faz o mesmo, `0x765134`; não feito).
+- `cCameraCameraManController::DoMessage` (`0x7a6878`): Tab (`0x0CA8D3F3`) **ou
+  Escape** (`0x8CA297E2`, "Cancel") pedem ao gerente o controlador cujo nome
+  guarda em `+0x324`; o `SetActive` (`0x7a7d2c`) o preenche com o nome do
+  controlador anterior (`vtable 0x6c`) e liga o mapa de teclas `0x6A9362F7`
+  (desliga ao sair).
+- `cCameraFirstPersonController::DoMessage` (`0x7aeff8`), a "First" (câmera na
+  cabeça do Sim selecionado, nenhuma tecla chega a ela): Tab ou `0x8CA297E2`
+  voltam a "Live" no lote e a "Neighborhood" no bairro.
+
+Tab vale nos modos Viver, Comprar e Construir (e na vista de cima: o controlador
+é um `cCameraLive` em todos): o `CameraSelector` guarda de qual veio (Live ou
+Build) e Tab ou Escape voltam a ele; qualquer `SetTopDown`/`SetMode` seguinte pede "Live" ou
+"Build" ao gerente e acaba com a câmera livre (`camera_mode.hpp`).
+
+**Teclas na câmera livre** (`ui.package` `0x6A9362F7`, por cima do mapa do
+lote): `z`/`x`, `=`/`-`, NumPad `+`/`−` (com ou sem Shift): "Zoom in" /
+"Zoom Out" (`0x8D377398` / `0x8D37738A`), um passo na tabela de FOV por
+toque; `a d w s` (e as setas, do mapa de baixo): mover (os eventos
+`0x4CA2994F` esquerda, `0x8CA29985` direita, `0xACA299BB` frente,
+`0x2CA299BD` trás; Shift manda o argumento 2, mas o tratamento
+(`FUN_00d913b0`) só põe ±1: **Shift não acelera**); `q` baixa e `e` sobe a
+câmera (`0xCCC365B5`, `0xCCC365C9`); `Shift + a d w s` = "orbit"
+(`0x2CEBECBD`, `..C1`, `..C5`, `..C8`); F1–F6 "Disabled" (`0x00000001`);
+Ctrl+4..9 salva e 4..9 volta às posições 1–6 (`0xACA2982A`, `0xCCA29895`;
+`SaveCameraPosition`, BV `0x7a61b0`, guarda além da câmera o **modo de jogo**
+e o **andar** atuais e `Restore` (`0x7a626c`) os devolve).
+
+**Números** (`FirstPersonCameras.txt`, "CameraMan"; lidos em
+`cTSConfigDeviceSettings::SetDisplayMode` [nome errado do símbolo] `0xd92340`,
+a base de primeira pessoa, e `SetCameraSpec` `0x7a5f94`): tabela de FOV `20 25
+... 90` (graus), `clip 0.15 2000`, `maxvelocity 10`, `velocitysensitivitymin
+0.1`, passos/mudança mínima: translação 7 / 0,01, velocidade 5 / 0,1,
+orientação 5 / 0,1, FOV 3 / 0,001, `mincameraheight 1`, `maxcameraheight 50`,
+`ticklimit 50`, `constraintwidth -10`, `upperpitchlimit 35`,
+`lowerpitchlimit -80`, `mouseheadingsensitivity 0.0005` (a "CameraManNH" tem
+0,0015 e alturas 5..500; a "First", 0,00005).
+
+**A conta** (`Update`, `0x7a7ac4`; base `0xd90a4c` e `0xd90664`), uma vez por
+quadro com `dt = min(dt, ticklimit)` (o próprio gerente já corta o `dt` em
+100 ms, `0x864e94`):
+
+```
+escala        = s + (1 - s) * h            s = velocitysensitivitymin, h = fração da altura
+alvo_veloc    = maxvelocity * escala * (dir.x, dir.y, dir.z)    dir: direita/frente/subir = ±1
+alvo_posição  = restrito(posição + Rz(rumo) * velocidade_atual)  (x direita, y frente, z para cima)
+suavizar      = a mesma do §1.2 ao longo da reta (FUN_008c7c64): posição (7, 0,01), velocidade (5, 0,1), FOV (3, 0,001)
+altura        : z preso a [piso + 1, piso + 50] sob a câmera (HeightSample); h = (z - lo) / (hi - lo)
+```
+
+Cada quadro desloca a posição por `v · dt / (50 · 7)`: com a velocidade já
+subida (constante de 250 ms) são `maxvelocity · 1000 / 350 = 28,6 tiles por
+segundo` na altura máxima e um décimo disso (2,9) na mínima. A restrição
+(`ConstrainTranslation`, `0x7a6330`) é o retângulo do lote encolhido de
+`constraintwidth`, só no estado de lote.
+
+**Volta.** Voltar a "Live" (ou "Build") chama `cCameraLive::SetActive`, que
+com o anterior "CameraMan" faz `MatchThisControllerWith(viewer)`
+(`cTSCameraSmoothSims1Controller`, `0x86c05c`): rumo da visão, pitch preso à
+faixa do primeiro nível, distância `(z do olho − pivotheightabovefloor) /
+sin(pitch)` presa entre o primeiro e o último nível, o pivô a essa distância
+ao longo da visão, o nível de zoom e a fração de pitch daí. No app:
+`LotCamera::matchView`.
+
+**No app:** `FreeCamera` (`render/free_camera.*`, a conta acima, testada em
+`test_camera`), `CameraSelector` (Tab, Y, Escape), `applyCameraSelection`
+(`live_setup.mm`; o `LotCamera` passa a `setFirstPerson`), as teclas e o olhar
+em `app_view.mm`, os passos headless `--key tab`, `--key hold-<w|a|s|d|q|e>:<s>`,
+`--key look:<dx>,<dy>` e `--key fov:<±n>` (captura:
+`docs/screenshots/n11-camera-camera-livre.jpg`, a 4 de altura, olhando o alpendre da `Tutorial_Lot14`). Sem a câmera livre o seguimento do
+andar do Sim (`followSelectedSim`) pára (é outro controlador).
+**Inferido:** o olhar com o mouse (o mapa de eixos do mouse do controlador
+não foi lido): o deslocamento em pontos × `mouseheadingsensitivity` ×
+`FreeCamera::kMouseUnit` (6); o app só olha com o botão direito (ou do meio)
+apertado, como o giro da câmera do lote, em vez de sempre; o pitch preso a
+35°/−80°; a posição e a direção de partida (os da câmera que sai) e o FOV de
+partida (o mais perto de 45 da tabela). **Não feito:** a órbita (Shift +
+teclas: `PickOrbitCenter`, `0x7a6590`, lança um raio na cena e orbita o ponto
+atingido; a conta da órbita, `0x7a7784`, tem constantes não lidas), o
+"CameraManNH" no bairro, a "First", o `ShowPIP(false)` e o modo/andar nas
+posições salvas.
+
 ### 1.10 Fade de objetos perto da câmera (`objectFade*`; binário, rodada n11)
 
 **Parâmetros** (`LiveCamera.txt`): `objectFadeDistance 10`, `objectFadeFalloff

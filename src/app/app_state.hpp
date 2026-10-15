@@ -105,6 +105,7 @@
 #include "anim_snaps.hpp"
 #include "camera_follow.hpp"
 #include "camera_mode.hpp"
+#include "render/free_camera.hpp"
 #include "wall_view.hpp"
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
@@ -247,6 +248,7 @@ struct SceneState {
     std::unique_ptr<os2::LotAudio> audio;
     std::unique_ptr<os2::LotCameraFollow> cameraFollow;
     os2::CameraSelector cameraSelector; // Live / top-down camera by play mode and the T key
+    std::unique_ptr<os2::FreeCamera> freeCamera; // the free camera while the selector says CameraMan (Tab)
     std::unique_ptr<os2::UiLayer> ui;
     std::map<int16_t, os2::SimActor*> objectActors;
     std::function<os2::SimActor*(int16_t)> objectActor; // the actor animating an object (made on first use; captures the scene's renderer)
@@ -425,6 +427,7 @@ extern std::unique_ptr<os2::LotAudio>& gAudio;
 extern os2::LotCamera*& gCamera;
 extern std::unique_ptr<os2::LotCameraFollow>& gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
 extern os2::CameraSelector& gCameraSelector;
+extern std::unique_ptr<os2::FreeCamera>& gFreeCamera;
 
 // --- The shell's functions, by file -----------------------------------------
 
@@ -515,6 +518,10 @@ void releaseDayNight();
 void applyCameraSelection();
 void enterPlayMode(os2::CameraSelector::Mode mode);
 void toggleTopDownView();
+// Tab / Y (and Escape in it): the free camera (free_camera.hpp), and back.
+void cycleCameraController();
+bool leaveFreeCamera();
+bool freeCameraActive();
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 void runBuildSteps();
 void runBuySteps();

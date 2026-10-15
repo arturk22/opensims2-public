@@ -309,6 +309,31 @@ void LotCamera::setDefinition(CameraDef def) {
     setPose(p); // the targets (with the pivot held by the new camera's constraint) and the snap
 }
 
+void LotCamera::matchView(simd_float3 eye, simd_float3 forward) {
+    const simd_float3 f = simd_normalize(forward);
+    float down = -std::asin(std::clamp(f.z, -1.0f, 1.0f)); // radians, positive looking down
+    if (!def_.pitchMin.empty() && !def_.pitchMax.empty())
+        down = std::clamp(down, radians(def_.pitchMin.front()), radians(def_.pitchMax.front()));
+    float h = heading_.target;
+    if (f.x * f.x + f.y * f.y > 1e-8f)
+        h = std::atan2(-f.y, -f.x);
+    float d = dist_.target;
+    if (std::sin(down) > 1e-3f)
+        d = (eye.z - pivotHeight_) / std::sin(down);
+    d = clampDistance(d);
+    simd_float2 along = simd_make_float2(f.x, f.y);
+    if (simd_length(along) > 1e-6f)
+        along = simd_normalize(along);
+    const simd_float2 at = eye.xy + along * (d * std::cos(down));
+    dist_.value = dist_.target = d;
+    heading_.value = heading_.target = h;
+    pivot_ = pivotTarget_ = constrain(simd_make_float3(at.x, at.y, 0));
+    const float lo = sample(def_.pitchMin, 0), hi = sample(def_.pitchMax, 0);
+    if (hi - lo > 1e-3f)
+        pitchT_.value = pitchT_.target = std::clamp((degrees(down) - lo) / (hi - lo), 0.0f, 1.0f);
+    snap();
+}
+
 simd_float3 LotCamera::raisedPivot() const { return pivot_ + simd_make_float3(0, 0, pivotHeight_ + lift_); }
 
 void LotCamera::update(double dt) {

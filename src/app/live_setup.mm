@@ -277,11 +277,59 @@ void pollTutorial(double seconds) {
 void applyCameraSelection() {
     if (!gCamera)
         return;
-    const char* want = gCameraSelector.controller() == os2::CameraSelector::Controller::Build ? "Build" : "Live";
-    if (gCamera->definition().name == want)
+    using Controller = os2::CameraSelector::Controller;
+    // The free camera ("CameraMan"): starts at the view of the camera it replaces.
+    if (gCameraSelector.controller() == Controller::CameraMan) {
+        if (!gFreeCamera) {
+            gFreeCamera = std::make_unique<os2::FreeCamera>(loadLotCamera("CameraMan"));
+            const auto& b = gCamera->bounds();
+            if (b)
+                gFreeCamera->setBounds(b->first, b->second);
+            os2::LotCamera* camera = gCamera;
+            gFreeCamera->setFloorSampler([camera](float x, float y) { return camera->floorHeight(x, y); });
+            gFreeCamera->start(gCamera->eye(), gCamera->forward(), gCamera->fov());
+            gCamera->setFirstPerson(gFreeCamera->pose());
+            std::printf("opensims2: camera: CameraMan (free camera) at (%.1f, %.1f, %.1f)\n", gFreeCamera->position().x,
+                        gFreeCamera->position().y, gFreeCamera->position().z);
+        }
         return;
-    gCamera->setDefinition(loadLotCamera(want));
-    std::printf("opensims2: camera: %s%s\n", want, gCameraSelector.topDown() ? " (top-down view on)" : "");
+    }
+    // Back from the free camera: Live or Build takes the view over (MatchThisControllerWith).
+    const char* want = gCameraSelector.controller() == Controller::Build ? "Build" : "Live";
+    std::optional<os2::LotCamera::FirstPerson> from;
+    if (gFreeCamera) {
+        from = gFreeCamera->pose();
+        gFreeCamera.reset();
+        gCamera->setFirstPerson(std::nullopt);
+    }
+    bool changed = from.has_value();
+    if (gCamera->definition().name != want) {
+        gCamera->setDefinition(loadLotCamera(want));
+        changed = true;
+    }
+    if (from)
+        gCamera->matchView(from->eye, from->forward);
+    if (changed)
+        std::printf("opensims2: camera: %s%s\n", want, gCameraSelector.topDown() ? " (top-down view on)" : "");
+}
+
+bool freeCameraActive() { return gFreeCamera && gCameraSelector.freeCamera(); }
+
+// "Cycle Camera Controller" (Tab, Y): in a lot, the free camera and back. Not in the
+// neighborhood (its "CameraManNH" is not done) nor in Create-a-Sim.
+void cycleCameraController() {
+    if (!gCamera || !gSimulation || gHood || gCas)
+        return;
+    gCameraSelector.cycleController();
+    applyCameraSelection();
+}
+
+// Escape in the free camera leaves it (cCameraCameraManController::DoMessage).
+bool leaveFreeCamera() {
+    if (!gCameraSelector.escape())
+        return false;
+    applyCameraSelection();
+    return true;
 }
 
 // The play mode changed (cTSMainToolbar::SetMode): Live keeps the Live camera, Buy and

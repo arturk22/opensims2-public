@@ -155,7 +155,8 @@ using namespace os2app;
             if (st.text.rfind("hold-", 0) == 0) { // --key hold-<left|right|up|down|a|d|w|s|comma|period>:<seconds>
                 static const std::map<std::string, unsigned short> kKeys{
                     {"left", kLeft}, {"right", kRight}, {"up", kUp}, {"down", kDown}, {"a", kA},
-                    {"d", kD},       {"w", kW},         {"s", kS},   {"comma", kComma}, {"period", kPeriod}};
+                    {"d", kD},       {"w", kW},         {"s", kS},   {"comma", kComma}, {"period", kPeriod},
+                    {"q", kQ},       {"e", kE}};
                 const size_t colon = st.text.find(':');
                 const std::string name = st.text.substr(5, colon == std::string::npos ? std::string::npos : colon - 5);
                 const double secs = colon == std::string::npos ? 0.5 : std::atof(st.text.c_str() + colon + 1);
@@ -164,6 +165,11 @@ using namespace os2app;
                     const float y0 = view.camera->yaw();
                     [view holdKey:k->second seconds:secs];
                     const simd_float3 p1 = view.camera->pivot();
+                    if (freeCameraActive())
+                        std::printf("opensims2: key %s held %.2f s: free camera at (%.2f, %.2f, %.2f), heading %.1f, pitch %.1f\n",
+                                    name.c_str(), secs, gFreeCamera->position().x, gFreeCamera->position().y,
+                                    gFreeCamera->position().z, gFreeCamera->heading() * 57.29578f, gFreeCamera->pitch() * 57.29578f);
+                    else
                     std::printf("opensims2: key %s held %.2f s: pivot (%.2f, %.2f) -> (%.2f, %.2f), yaw %.1f -> %.1f\n",
                                 name.c_str(), secs, p0.x, p0.y, p1.x, p1.y, y0, view.camera->yaw());
                 }
@@ -171,6 +177,27 @@ using namespace os2app;
             }
             if (st.text == "space")
                 selectNextFamilySim();
+            if (st.text == "tab" || st.text == "y") { // "Cycle Camera Controller": the free camera, and back
+                cycleCameraController();
+                if (gCamera)
+                    gCamera->snap();
+                std::printf("opensims2: key %s: camera %s\n", st.text.c_str(),
+                            gCameraSelector.freeCamera() ? "CameraMan" : gCamera ? gCamera->definition().name.c_str() : "-");
+            }
+            if (st.text.rfind("look:", 0) == 0 && freeCameraActive()) { // --key look:<dx>,<dy>: the mouse's points
+                float dx = 0, dy = 0;
+                std::sscanf(st.text.c_str() + 5, "%f,%f", &dx, &dy);
+                gFreeCamera->look(dx, dy);
+                [view applyHeldKeys:0.05];
+            }
+            if (st.text.rfind("fov:", 0) == 0 && freeCameraActive()) { // --key fov:<+n|-n>: steps of the fov table
+                const int n = std::atoi(st.text.c_str() + 4);
+                for (int i = 0; i < std::abs(n); ++i)
+                    gFreeCamera->zoomStep(n > 0 ? 1 : -1);
+                for (int i = 0; i < 60; ++i)
+                    [view applyHeldKeys:0.05];
+                std::printf("opensims2: key %s: fov %.1f\n", st.text.c_str(), gFreeCamera->fov());
+            }
             if (st.text == "t") { // as keyDown: the top-down view (Buy and Build only)
                 toggleTopDownView();
                 if (gCamera)

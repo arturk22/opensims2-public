@@ -177,6 +177,16 @@ using namespace os2app;
     _camera->setViewport(float(self.bounds.size.width), float(self.bounds.size.height));
     if (gCas)
         return; // the CAS camera only follows the Sim and the zoom buttons
+    // The free camera ("CameraMan", Tab): the movement keys steer it (Shift does not speed it up),
+    // q and e lower and raise it; no panning, edge scrolling or orbit zoom.
+    if (freeCameraActive()) {
+        gFreeCamera->setMove(float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]),
+                             float([self held:kW orKey:kUp]) - float([self held:kS orKey:kDown]),
+                             float(_held.count(kE)) - float(_held.count(kQ)));
+        gFreeCamera->update(dt);
+        _camera->setFirstPerson(gFreeCamera->pose());
+        return;
+    }
     // Shift: "Move ... Faster" (twice the speed).
     const float fast = (NSEvent.modifierFlags & NSEventModifierFlagShift) ? 2.0f : 1.0f;
     float right = float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]);
@@ -205,8 +215,11 @@ using namespace os2app;
         _camera->update(0.05);
     }
     _held.erase(key);
-    for (int k = 0; k < 40; ++k) // the smoothing settles
+    for (int k = 0; k < 40; ++k) { // the smoothing settles
+        if (freeCameraActive())
+            [self applyHeldKeys:0.05];
         _camera->update(0.05);
+    }
 }
 
 - (void)keyDown:(NSEvent*)e {
@@ -261,6 +274,31 @@ using namespace os2app;
     // Esc closes the options panel (and its window) before leaving the lot.
     if (e.keyCode == kEscape && !gHood && escapeOptions())
         return;
+    // ... and in the free camera it is the camera's (the way back to the controller it came from).
+    if (e.keyCode == kEscape && leaveFreeCamera())
+        return;
+    if (freeCameraActive()) { // cCameraCameraManController's keys (the map 0x6A9362F7 over the lot's)
+        const bool control = e.modifierFlags & NSEventModifierFlagControl;
+        if (e.keyCode == kTab || e.keyCode == kEscape || (e.keyCode == kY && !control)) {
+            cycleCameraController();
+            return;
+        }
+        if (e.keyCode == kZ || e.keyCode == kEquals || e.keyCode == kPadPlus) { // "Zoom in": the next narrower fov
+            gFreeCamera->zoomStep(1);
+            return;
+        }
+        if (e.keyCode == kX || e.keyCode == kMinus || e.keyCode == kPadMinus) {
+            gFreeCamera->zoomStep(-1);
+            return;
+        }
+        if (const int slot = cameraSlot(e.keyCode); slot >= 0) {
+            if (control)
+                gFreeCamera->savePosition(slot);
+            else
+                gFreeCamera->restorePosition(slot);
+            return;
+        }
+    }
     if (const int slot = cameraSlot(e.keyCode); slot >= 0) {
         if (e.modifierFlags & NSEventModifierFlagControl)
             _camera->savePosition(slot);
@@ -316,6 +354,11 @@ using namespace os2app;
         return;
     }
     switch (e.keyCode) {
+    case kTab: cycleCameraController(); break; // "Cycle Camera Controller": the free camera (in a lot)
+    case kY: // the same, as the keys file has it ("Y"); Control-Y is redo
+        if (!(e.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))
+            cycleCameraController();
+        break;
     case kSpace: selectNextFamilySim(); break;
     case kPageUp: changeFloor(1); break;
     // "Paredes ... - Origem/Fim": Home and End step through the wall modes.
@@ -376,7 +419,7 @@ using namespace os2app;
 }
 
 - (void)scrollWheel:(NSEvent*)e {
-    if (gSceneLoading)
+    if (gSceneLoading || freeCameraActive())
         return;
     _camera->wheel(_mouse.wheelNotches(e.scrollingDeltaY, e.hasPreciseScrollingDeltas));
 }
@@ -385,6 +428,10 @@ using namespace os2app;
 - (void)dragRotate:(NSEvent*)e {
     if (gSceneLoading)
         return;
+    if (freeCameraActive()) { // the free camera looks round with the mouse (while a button is held: inferred)
+        gFreeCamera->look(float(e.deltaX), float(e.deltaY));
+        return;
+    }
     _camera->rotateRequest(float(e.deltaX), float(e.deltaY));
 }
 
@@ -449,8 +496,10 @@ using namespace os2app;
     }
     if (gLive && gLive->press([self canvasPoint:e], true))
         return;
-    // Control (the game's "CTRL + botão DIREITO") or Option: rotate and tilt.
-    _rotating = os2::CameraMouseInput::rotatePress(os2::CameraMouseInput::Button::Right,
+    // Control (the game's "CTRL + botão DIREITO") or Option: rotate and tilt. The free
+    // camera has no panning: the right button looks round.
+    _rotating = freeCameraActive() ||
+                os2::CameraMouseInput::rotatePress(os2::CameraMouseInput::Button::Right,
                                                    e.modifierFlags & NSEventModifierFlagControl,
                                                    e.modifierFlags & NSEventModifierFlagOption);
     if (!_rotating && gPie && !(gBuy && gBuy->active()) && !(gBuild && gBuild->active())) // a right click on a Sim of the family selects it
