@@ -645,3 +645,20 @@ O que continua sem nome: os dois u32 +0x34/+0x38 e o u8 +0xFD do NGBH, o
 lê e descarta 6 u32 + u16 depois dos timers (nunca acontece nos lotes do
 jogo), e o que o jogo faz com os campos 4–7 do token temporário fora da
 leitura de um token (só cópias; escrever neles não muda o token).
+
+**No código (rodada n09).** `LotObjects::State` dá nome a tudo isso
+(`stepOverPortal`, `tempTokenFields` 0–7, `arrayIterators`, `Timer::{id,
+tree, object, flags, period, ticksLeft}`, `offset`/`normalizedOffset`); os
+zeros e o 1 do cabeçalho e o zero da pilha são escritos como o jogo escreve.
+A VM: os timers seguem o binário (ID do global 36, quem pôs = stack object
+da árvore de evento, repetição só com verdadeiro, Modify/Delete nos timers do
+dono do código, ticks sem mínimo); os iteradores dos arrays começam em −1 e
+vão e voltam no save; os campos 4–7 do token temporário são cópias
+(`TempToken::copied`) que toda leitura do Manage Inventory preenche e que a
+operação 11 usa para as flags; os deslocamentos de uma parte de multi-tile
+são feitos do sub índice do OBJD (campo 0x56, x no byte alto com sinal, y no
+baixo) e do deslocamento de nível (0xB0), girados pela direção do líder; os
+16 dados do bairro (dono 0x22) vêm do NGBH e voltam a ele. Provas: `s2pkg
+lot-save --check` nos 69 lotes dá os mesmos 27.325 estados byte a byte iguais
+de antes; `hood-save --ticks 300 --check` nos quatro bairros, 68 de 68 lotes
+iguais; `lot-run` de 3.000 ticks nos 68 lotes, o mesmo resumo.

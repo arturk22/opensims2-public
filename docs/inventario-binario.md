@@ -81,12 +81,12 @@ palavra.
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% | 5,5 / 6 = **92%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 4 / 5 = **80%** | 12 / 6 |
-| Salvar e carregar | 32 (4) | 78 / 936 = 8,3% | 4,5 / 7 = **64%** | 12 / 2 |
+| Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% | 5 / 7 = **71%** | 40 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% | 5,5 / 8 = **69%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 7,5 / 9 = **83%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **75 / 105 = 71%** | **519 em src** |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **76,5 / 105 = 73%** | **517 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -255,11 +255,11 @@ Código: `src/vm/lot_save.*`, `lot_records.*`, `lot_resume.*`,
 |---|---|---|---|
 | XOBJ, XMTO e PERS: `cTSObject::Write/Read`, `cEdithMTObject::Write/Read`, `cTSPerson::Write` | `formats/lot_objects*.cpp`, `vm/lot_save.cpp` | fiel | Layout pela versão do ObjM. |
 | ObjM: `cEdithObjectModule` (`read_pre_object`, `SplitLoad`) | `formats/lot_objects.cpp` | fiel | Órfãos do persist DB ignorados, como no jogo. |
-| Campos sem nome: token, timers, os 6 u32 do XMTO | `vm/lot_records.cpp` | inferido | Lidos como bytes; os nomes faltam. A tabela de relacionamentos do XOBJ foi lida na rodada n08 (`relationships-mac.md` §1). |
+| Campos sem nome: cabeçalho, token, iteradores, timers, XMTO (`cTSObject::WriteHeader`/`WriteTimers`/`AddTimer`/`RunTree`, `cTSTreeStack::Write`, `cEdithMTObject::Read`) | `formats/lot_objects*.cpp`, `vm/lot_save.cpp`, `vm/lot_resume.cpp`, `vm/timer.cpp` | fiel | Rodada n09 (`save-mac.md` §8): todos com nome e lidos/gravados pelo sentido; timers com ID do contador do simulador e repetição só com verdadeiro; deslocamentos do XMTO feitos como o jogo (9.562 de 9.562). Falta o u32 +0x34/+0x38 e o u8 +0xFD do NGBH. |
 | Rota e animação em andamento | `vm/lot_resume.cpp` | fiel | `save-mac.md` §7c. |
 | Controladores: `cTSLoadLotController::LoadLot`, `cTSSaveLotController`, `cTSSaveNeighborhoodController` (8, 0) | `app/game_save.*`, `app/lot_loading.mm` | inferido | `LoadLot` lido (rodada 12); o salvar do bairro não. |
 | Persist DB: `cTSPersistSystem` (122, 0), `cTSPersistDBRecord`, cache | `formats/dbpf.*` | inferido | Funciona pelo formato DBPF público; a classe do jogo nunca foi lida. |
-| Inventários do bairro | — | faltando | Não são salvos (`TODO.md`, Manage Inventory). |
+| Inventários do bairro: `cTSNeighborhood::Write`/`Read`, `cTSInventory::Read`/`Write` | `formats/neighborhood*.cpp`, `vm/hood_save.cpp` | fiel | Já eram salvos (rodada 16; a linha estava desatualizada). Rodada n09: ordem contados/singulares confirmada; os 16 dados do bairro (dono 0x22) lidos e salvos. |
 
 ### 3.10 Bairro e famílias
 
@@ -363,7 +363,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos — **feita** (n06): telhados, cercas, água e GUOB lidos (`docs/roof-fence-water-mac.md`); água do terreno como o jogo (alfa por profundidade, leito e praia), parâmetros dos telhados, pinturas antes dos GUOB; piscina com o `RegularWavesHLSL` e as camadas de fundo; a triangulação dos telhados, o bump da água e as cáusticas ficam no `TODO.md`. | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |
 | 7 | **Construção: suporte, telhado e terreno** (`HasSupport`, `SupportedUnderneath`, leveler, `cTSUserToolRoof`, piscinas) — **feita** (n07): suporte pelas salas de carga, colunas, paredes de carga e topo de mansarda (`IsFloorable`, paredes `0x48`), `IsRoofValid` (`0x10`/`0x7E`/`0x7F`/`0x1C`), códigos das piscinas; conferido nos 63 lotes (`s2pkg lot-save --check-build`: 14.071 de 14.098 pisos); o teste de vértice do terreno lido mas não aplicado (flags desconhecidas) | Erros de colocação no modo Construção. | 1 Opus | sim |
 | 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias — **feita** (n08): tabelas de relacionamento do XOBJ e do SDSC, SREL como o jogo grava, motor das memórias e pontuação, painel de memórias com os scripts do jogo (`docs/relationships-mac.md`). | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |
-| 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
+| 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro — **feita** (n09): cabeçalho, token temporário (campos 4–7 como cópias), iteradores dos arrays, timers (ID, quem pôs, repetir), XMTO (deslocamentos) e NGBH (dados do bairro) com nome e pelo sentido (`docs/save-mac.md` §8); `lot-save --check` byte a byte igual nos 69 lotes, `hood-save --check` 68 de 68. | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
 | 10 | **CAS: corpo gordo, `BlendDeltas`, roupa aleatória** | O corpo gordo é um bug visível no CAS. | 1 Opus | sim |
 | 11 | **Câmera: seguir o Sim, Tab, fade, vista de cima** | Conforto; os valores já estão nos dados. | 1 Sonnet | não |
 | 12 | **Bairro: imposters e terreno** (desbotar, mapa alfa, `nhoodLightMap`) | Pouco visível. | 1 Opus | sim |
