@@ -1048,6 +1048,112 @@ caminho): o app o deixa em `VM::enteredText` sem ligar a nada.
 janela fica até o jogador fechá-la (STR# 0xED 1/3: "return and block/continue
 sim"). Sem o bit 7 o jogo continua pausado até ela fechar.
 
+**Rodada n27: o `cTSObjectDialog` e os tokens lidos no binário (Ghidra MCP +
+headless).**
+
+*`SetParams`* (BV `0x1d2b20`): `+0x58` tipo (byte 5); `+0x70` = byte 7 bit 0
+("return"); `+0x71` = **não** byte 7 bit 7; `+0x72` o stack object; `+0x74`
+e `+0x75` zerados (o tutorial os liga: sem tempo e sem título). As strings
+vêm do grupo da árvore (`frame→0x50→0x28`), do semi-global com o byte 8
+bit 0, do global `0x7FD46CD0` com o bit `0x40`; mensagem u16 13 (temp 0 com
+`0x02`), título byte 6 (temp 3 com `0x10`), botão 1 byte 3 (temp 1 com
+`0x04`), botão 2 byte 4 (temp 2 com `0x08`), botão 3 byte 0 (temp 4 com
+`0x20`). Botões sem string: STR# 0x8E 1/3/4/2 (OK, Sim, Não, Cancelar) por
+tipo. Os cinco textos passam pelo `ParseUIString` (abaixo) com o objeto que
+roda a árvore; o objeto que um token devolve vira o ícone automático.
+
+*`SetupDialog`* (BV `0x1d0da8`): título, ícone, **botão 1**: com `+0x71`
+(bit 7 desligado) `AddButton(texto, 2)` (interface vtable `0x14`, BV
+`0x25cf94`); com o bit 7, uma **caixa de fechar** `AddCloseBox(2,
+0x11110002)` (vtable `0x1c`, BV `0x25d444`; a `0x18`, BV `0x259588`, é a
+mesma com a imagem padrão `0x11110002`). Botão 2 (id 3) nos tipos 1/2,
+botão 3 (id 4) no 2, o texto, a caixa de texto no tipo 3, o tempo e as
+teclas como acima. **A caixa de fechar não entra na fila dos botões**: o
+`AddCloseBox` a guarda num campo só dela (`+0x108`) e a põe como filha da
+janela; a fila `+0x110` (que o `FUN_0025b1fc` iguala e o `DoLayout` põe em
+linha) tem só os `AddButton`. Nem o `DoLayout` nem o `SetArea` da janela
+(BV `0x25aae4`/`0x25ab90`) mexem nela: fica onde o botão é criado, no canto
+de cima à esquerda, do tamanho da imagem (inferido: o tamanho que o
+`SetImage` do botão dá; a imagem `0x11110002` não está no `ui.package` do
+jogo base).
+
+*`FUN_0025b1fc`* (as larguras): largura = texto + 16 de cada botão da fila;
+repete: o mais largo abaixo do limite anterior (`< prev`); menor que 82 vira
+82 com piso 0, senão o piso é ele − 20; todo botão entre o piso e ele vira
+ele; o limite passa a ser o valor **depois** de subir a 82. Sem botão menor
+que o limite, para. A altura é a do botão mais alto. (O app punha a caixa de
+fechar de 40 px na fila e a pulava ao igualar: o laço nunca acabava, o
+travamento do `--dialog-demo 0c`.)
+
+*`DoLayout`* (BV `0x25b540`), o que faltava: a altura do texto que conta
+para os botões é **max(altura do ícone, altura do texto)** com ícone; sem
+botões a altura deles é 0 (mínimo `0x76` − 0 para o y); e o texto **contorna
+o ícone**: com ícone, as primeiras ⌊(altura do ícone + 4) / linha⌋ + 1
+linhas ficam à direita dele e, se o texto passa de duas linhas a mais que
+isso, o resto vai para uma segunda janela de texto (`+0x104`) em x = 21
+(−5 de margem), da largura da janela − 57, logo abaixo das primeiras; a
+altura do texto é então as duas partes somadas. A caixa de texto
+(`AddEditBox`, BV `0x25ae00`) é um `GZWinTextEdit` com `vtable 0x84(0x40)`
+(64 letras), fundo (204, 214, 255), texto (5, 6, 113).
+
+*`ParseUIString`* (`cTSObject`, vtable `0x408`; base 1.0 `FUN_00b36ed0`, BV
+`0xb0eeb4`). Chamado pelo `TryDialog` (BV `0xe2bf70`: objeto = quem roda a
+árvore, segundo argumento 0 → o stack object do quadro) e pelo `SetParams`.
+Cada token é um `cRZString` estático (base: `0x1a2e778` + `0x18`·k, na
+ordem das strings `0x11370f8`…; BV: `0x2cc54f0` − 4·k). Para cada token,
+**numa ordem fixa**, o texto é varrido do começo: `GetPropertyValueAsString`
+(BV `0xb05f38`) acha o token **sem caixa e como prefixo** (`$Mes` acha
+`$Me`), lê até dois `:n` e devolve o comprimento; se os argumentos servem o
+trecho é trocado pelo valor, senão fica como está e a busca segue uma letra
+adiante. "local n" é a variável local n da árvore (`n` < número de locais).
+Os 35 tokens do **jogo base**, na ordem em que são trocados:
+
+| ordem | token | valor |
+|---|---|---|
+| 1–8 | `$Token{Personal,Family}{Counted,Singular}Local{Name,Desc}:a:b` | inventário do vizinho do local a (pessoal) ou da família do local a, ficha no índice local b: nome/descrição do catálogo pelo GUID |
+| 9 | `$FamilyAssets:a` | família de ID = local a: vtable `0xa4` (inferido: os fundos), número formatado |
+| 10 | `$Family` | nome da família do vizinho cujo ID é o stack object (dado de pessoa 61) |
+| 11 | `$LastName` | sobrenome do vizinho do stack object |
+| 12 | `$NeighborLocal:a` | primeiro nome do vizinho de ID local a |
+| 13 | `$Neighbor` | primeiro nome do vizinho do stack object (vira o ícone) |
+| 14 | `$Me` | nome de quem roda a árvore (pelo seletor) |
+| 15 | `$Object` | nome do stack object (seletor, o do mestre num multi-tile; vira o ícone) |
+| 16 | `$Local:a` | o local a, número formatado |
+| 17 | `$Money:a` | local a × local a+1 (só local a se o segundo é 0) |
+| 18 | `$Cash:a` | local a + 10000 × local a+1 |
+| 19 | `$TimeLocal:a` | hora local a (0–23) pelo formatador de hora do idioma, minuto 0; fora disso fica |
+| 20 | `$Attrib:n` | atributo n (literal) do stack object, formatado |
+| 21 | `$NameAttrib:n` | nome do objeto cujo ID está no atributo n do stack object |
+| 22 | `$NameLocal:a` | nome do objeto de ID local a |
+| 23 | `$FullNameLocal:a` | nome e sobrenome do vizinho de ID local a (sem ele, o do stack object) |
+| 24 | `$FullName` | nome e sobrenome do vizinho do stack object |
+| 25 | `$LotNameLocal:a` | nome do lote da família do vizinho de ID local a |
+| 26 | `$CatalogLocal:a` | nome de catálogo (seletor vtable `0xc4`) do objeto de ID local a |
+| 27 | `$DayLocal:a` | Live.package STR# 0x99 entrada local a + 1 (1 domingo … 7 sábado) |
+| 28 | `$DayFlags:a` | bits 0–6 do local a: STR# 0x99 entradas 2–7 e 1 (segunda … sábado, domingo), separadas por ", " |
+| 29 | `$JobTitle:a:b` | STR# 0x93 do grupo do objeto de ID local b, entrada local a + 1 |
+| 30 | `$PrivateString:a:b` | STR# local a do arquivo do **stack object** (seletor `0x104`), entrada local b |
+| 31 | `$BehaviorString:a:b` | STR# local a do grupo `0x7FE59FD0`, entrada local b |
+| 32 | `$AspirationString:a:b` | STR# local a do Live.package (`0x7F96C284`), entrada local b |
+| 33 | `$SemiGlobalString:a:b` | idem, do semi-global do stack object (seletor `0x110`) |
+| 34 | `$GlobalString:a:b` | idem, do global `0x7FD46CD0` |
+| 35 | `$TokenNameLocal:a` | ficha no índice local a do inventário pessoal de quem roda a árvore (erro 0x1C se não é pessoa) |
+
+Os números passam pelo formatador do idioma (`FUN_0006e164`→`0x98(0)`→
+`0x48`), com `%d` de reserva; como o português do jogo agrupa os milhares
+não foi lido (o app segue com `%d`). O BV acrescenta `$LotNameLocalByLotId`,
+`$SkillName`, `$WordPoints`, `$NeighborhoodLocal`, `$PrimaryNeighborhood`,
+`$Want/FearDescriptionLocal`, `$Want/FearHelpTextLocal`, `$GroupName`,
+`$Property{Private,SemiGlobal,Global}String` e `$GUIDCatalogNameLocal`;
+`$Subject`, `$Constant` e os de `$JobTitle`… `$ObjectType` do outro bloco
+são de outras funções. Nos textos do jogo base (STR# de `objects.package` e
+`Text/`): `$Me` 4.111 vezes, `$Local` 968, `$Object` 372, `$Neighbor` 336,
+`$NeighborLocal` 194, `$NameLocal` 135, `$PrivateString` 101, `$JobTitle`
+46, `$AspirationString` 32, `$TimeLocal` 11, `$CatalogLocal` 8, `$FullName`
+8, `$BehaviorString` 5, `$Money` 4, `$FamilyAssets` 3, `$Family` 3,
+`$GlobalString` 2, `$DayFlags`, `$Cash` e `$FullNameLocal` 1 cada; `$Mes`
+aparece 2 vezes.
+
 **Nomes (tipo 0x17, `cTSWinProcNameObjectDialog`).** `SetParams`
 (`0x370a50`): os vizinhos nos **temps 0–3** (o 0 obrigatório); cada caixa
 começa com o primeiro nome do Sim (selecionado); dado de pessoa 65 = 1

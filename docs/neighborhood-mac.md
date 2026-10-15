@@ -428,6 +428,22 @@ rotação `0x2BE6FB52`/`0x2BE6FB57`.
   (`CleanupThingsRelatedToEvictedFamily`, `0x87e7b0`) o jogo apaga os Sims e
   os objetos da família que ficaram (pessoas, categoria `0x67`, produtos com
   o bit 0 da propriedade `0x2A`; inferido pelos testes).
+- **Despejar a família do lote em jogo (rodada n27, Ghidra headless).** O
+  jogo **não** faz. O `EvictFamily(família, lote)` (BV `0x1434cc`) só
+  despeja no estado do bairro (`0xABEA28C7`) ou no do lote (`0x0BEA28C2`)
+  **com outro lote**: se o lote pedido é o que está aberto (`this+0x28`,
+  vtable `0x48` do lot info) devolve 0 sem mexer em nada, e nos outros
+  estados (CAS, menus) também. Quem pede é a mensagem `0xEC1AAC03` (o
+  `DoMessage`, BV `0x14c404`, a repassa como `0x4CCE5A9A` com as flags e o
+  lote; essa chama `EvictFamily` se a flag `0x08` está ligada, depois
+  `RefundValue`, `RelinquishOwnership` com `0x10`, e manda `0xAD054F0E`, que
+  só salva com as flags `0x10`/`0x20`/`0x1000`). Ninguém sai para o bairro.
+  A Generic Sims Call 4 manda a `0xEC1AAC03` com a flag 8 (`TryGenericSimCall`
+  BV `0xe36834`) e devolve 2 até a família antiga ficar sem casa; com o lote
+  aberto ela **espera para sempre**. No jogo base nenhuma árvore tira o
+  último membro da família do lote para outra família (o "mudar-se" põe o
+  visitante na família do lote), então isso não acontece. O `hood_bridge`
+  despejava qualquer lote; agora recusa o lote aberto, como o jogo.
 
 ---
 
@@ -565,9 +581,21 @@ Retreat"); com o mestre os objetos do lote saem iguais aos salvos pelo jogo
 nos 12 lotes do catálogo. Sobra uma diferença de §150 nos objetos da família
 em todos os lotes do jogo conferidos: os três CDs de videogame (`VideoGame -
 CD - ...`, §50 cada, fora do mundo em (-1, -1), sem contêiner) entram no
-valor que o jogo salvou e não no nosso; o `IsInWorld` (BV `0xaf627c`: flag
-+0x7a e `cWorldDB` vtable `0xf8` da posição) não explica isso (não
-conferido). Pessoas: só ligam um dos booleanos
+valor que o jogo salvou e não no nosso. **Rodada n27 (Ghidra MCP +
+headless): a regra do jogo também os deixa de fora.** O `IsInWorld` (BV
+`0xaf627c`, vtable `0x2e0`) é `+0x7a` **e** `cWorldDB::IsOnLot` do tile da
+posição: o `+0x7a` é zerado no construtor (`FUN_00b0c7a8`/`FUN_00b0d2a0`) e
+ligado no fim do `OnInit` (BV `0xb05ef0`), ou seja, "já passou pelo Init",
+não "está no mundo"; a vtable `0xf8` do `cWorldDB` (pela interface em −0x1c)
+é o `IsOnLot` (BV `0xd1604`): tile x, y e andar dentro do retângulo do lote
+(vtables `0x164`–`0x184`, o recurso `0x49FF7D76`: em `N001_Lot11` x 0–39, y
+0–29, andar 0–4). A posição vem da vtable `0x190` (BV `0xaf8108`: os bytes
+altos de `+0x1c4`/`+0x1c0`, que o `ReadHeader` lê do save como ponto fixo
+16.16, e `+0x1c8`, o andar) e o `FUN_008b6374` faz o tile (x, y, andar − 1).
+Os CDs, salvos em (−1, −1), dão o tile (−1, −1): fora do lote, `IsInWorld`
+falso, fora da soma, como no `computeLotData`. Os §150 a mais estão só nos
+valores que a Maxis gravou (inferido: os CDs estavam no mundo quando o lote
+foi salvo, ou a soma é de outra versão); nada a mudar no código. Pessoas: só ligam um dos booleanos
 (dado de pessoa `0x4c` = 0xD). `temCasa` liga para um objeto de catálogo no
 mundo sobre algo construído (vtable `0xc4` do mundo). O opensims2 lê os
 globais salvos e não os refaz.

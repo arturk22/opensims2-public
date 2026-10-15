@@ -416,5 +416,42 @@ sem família (`hood::Lot::families` vazio) e `--mode` ganha; o `app_args.mm` (`s
 no lugar de `--mode` ao entrar (Enter do bairro ou `--hood-lot`) e
 `LiveUi::setLiveEnabled(false)` apaga o botão Viver (estado 0) e ignora o clique.
 Mudar uma família para o lote antes de entrar o deixa ocupado (abre em Viver).
-**Inferido**: os nomes de `game→0x3c→0x24` (lido como "há Sim selecionável") e do
-caso Construir.
+**Inferido**: o nome de `game→0x3c→0x24` (lido como "há Sim selecionável").
+
+**O caso Construir é das expansões (rodada n27, Ghidra MCP).** No BV o
+`ApplySavedUIState` pega `controle de estado→0x24→0x7c` (o tipo do lote) e,
+só quando ele é **2** (dormitório da Universidade), lê a propriedade
+booleana `"dormSpecificToolsDisabled"`: ligada → `SetMode(4)`, desligada →
+`SetMode(3)`. O mesmo método no **Mac base 1.0** (`FUN_00c9fe50`, achado
+pela string `startPaused`, a única que o referencia) não tem esse ramo:
+`SetMode(2)` com Sims selecionáveis, senão `SetMode(3)`, e nada mais. O app
+abrir sempre em Comprar é o jogo base. `startPaused`/`startUnpaused` só são
+lidos com `testingCheatsEnabled` ligado (globais vtable `0x7c` no BV, `0x70`
+no base); fora disso vale o estado salvo do §7.6.
+
+### 7.6 O estado da UI salvo no lote (rodada n27, Ghidra MCP + headless)
+
+`ApplySavedUIState` aplica o que o `cTSMainToolbar::Read` (BV `0x1aadf0`)
+leu do lote. O `cTSMainToolbar::Write` (BV `0x1aacf8`) grava quatro u32:
+versão (3 no BV), **pausado** (`this+0x7c`), **andar** (`GetCurrentLevel`,
+vtable `0x90`, guardado em `+0x5c`) e **modo de parede** (`GetWallMode`,
+`0x98`, em `+0x60`). O `Read` aceita versão 0 (pausado = 1, mais um u32
+descartado), e a versão 2 tem um quinto u32 que ele lê e descarta. No
+pacote do lote é o recurso **`0x8B0C79D6`, instância 2** (cabeçalho de 64
+bytes com o nome, depois os u32): nos 68 lotes salvos do jogo é versão 2
+em 67 (pausado 0 em 27 e 1 em 40; andar 0, 1, 2 ou 3; parede 1 ou 2, uma
+vez 3) e versão 1 em um (pausado 1, andar 2, parede 3).
+
+Depois de escolher o modo, `ApplySavedUIState`:
+
+1. `SetSimulatorPaused(pausado, false)` (vtable `0x80`; `0xa0` no base);
+2. `SetWallMode(parede)` (`0x9c`; `0xc0` no base);
+3. prende o andar salvo entre o menor e o maior andar do mundo
+   (`WorldDB` vtables `0x140`/`0x144`; no base `0x110`/`0x114` do serviço
+   `0x4a037ee3`), chama `SetCurrentLevel(menor)` e então
+   `SetCurrentLevel(salvo)` (`0x94`; `0xb8` no base);
+4. liga `this+0x2c` (no base `+0x2c` também).
+
+O andar do jogo começa em 1 no chão (o `FUN_008b6374` tira 1 do andar da
+posição); o do app em 0. **Antes desta rodada** o app abria o lote no andar
+do primeiro Sim, com as paredes cortadas e a pausa do global 17 do SIMI.
