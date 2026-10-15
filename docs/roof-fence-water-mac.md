@@ -150,3 +150,114 @@ tiles do atlas cortados onde as faces se cruzam). Comparado ao binário:
   tiles face contra face; o jogo esconde o triângulo cujo centro fica
   abaixo de outro telhado). Portar isso é trocar o `lot_roof.cpp` inteiro:
   fica no `TODO.md`.
+
+## 2. Cercas (`nTSSG::cFenceGeometryNode`)
+
+Os métodos do `cFenceGeometryNode` no BV estão quase todos sem nome ou com
+nomes trocados (o symxfer põe `cWallManager::…` e
+`cWaterGeometryBuilder::ProcessHeightChangesForGeomUpdate` nesta área,
+`0x753b00..0x75b000`); achados pelo que fazem:
+
+- **Trilho** (`AddRailImpl`, BV `FUN_00759e38`): as duas pontas do
+  segmento viram pontos do mundo com `SampledFloorElevation` (`FUN_008a5fc0`);
+  a matriz é **translação na primeira ponta × rotação em z por
+  `atan2(Δy, Δx)` × cisalhamento em z de `Δz / comprimento horizontal`**
+  (o modelo sobe com o x local até o chão da outra ponta), escala 1 (o
+  trilho diagonal é outro modelo, `FenceGeometryResource(estilo, diagonal,
+  …)` `FUN_00759cc4`, escolhido pelos bits `0x30` do segmento). Mais
+  **0,75** em z quando as duas pontas tocam um quarto de piso que a
+  consulta do mundo (`FUN_00164a7c`, vtable `0xc8` da interface do
+  `cWorldDB`) devolve 4; o que é esse 4 não foi resolvido (a interface tem
+  outra vtable; pela posição pode ser o `DeckFoundationStyle`).
+- **Poste** (`AddPostImpl`, BV `FUN_0075a4c0`): no vértice, na altura do
+  `SampledFloorElevation`, **sem rotação**, escala 1; o mesmo +0,75 da
+  regra acima (só para cercas e meias paredes fora de um caso); para uma
+  meia parede o recurso é o poste da meia parede (`FUN_0075a350`, tipo 3).
+
+**No código** (`lotFencePieces` em `lot_model.cpp`): o trilho já é isso
+(rotação, cisalhamento pela altura do chão nas pontas; o comprimento
+dividido por √2 no diagonal dá 1) e o poste também. Fica de fora o +0,75
+(condição não resolvida). Nada mudou no código das cercas nesta rodada.
+
+## 3. Água do terreno e piscinas
+
+### 3.1 Água do terreno (`nTSSG::cWaterGeometryBuilder`)
+
+Os nomes do symxfer nesta classe também erram; o que foi lido:
+
+- **`ReadWaterRenderParameters`** (BV `FUN_00c42638`): lê
+  `TSData/Sys/Terrain.ini` `[WaterRenderParameters]`: `AlphaVsDepthCurve`
+  (sem ela, a reta (0, 0)–(4, 255)), `ShallowPaintDepthMin/Max`,
+  `DeepPaintDepthMin/Max`, `BeachPaintStartDepth/PeakDepth/EndDepth`,
+  `MaxBeachWidth` e `BeachIntensityFactor` (padrões −0,1, 0,6, 0,4, 1,2,
+  −0,2, −0,02, −0,2, 0,8 e 1 sem o ini). O jogo base traz
+  `.25,62, 10,110`, 0/5, 0,5/2, −0,35/−0,1/0,3, 1,5 e 3,2.
+- **Profundidade e alfa** (`SetWaterDepth`, `FUN_00c41644`): para cada
+  ponto da grade, profundidade = nível da água − terreno; a cor do vértice
+  da água é branca com **alfa = curva(profundidade)** (62/255 na margem,
+  110/255 a 10 de fundo).
+- **A malha**: a grade de água tem os cantos e o centro de cada tile; cada
+  tile são 4 triângulos (centro + aresta), cada um mostrado se algum dos 3
+  vértices tem água acima do terreno (`IsWaterTilePartUnderTerrain`,
+  `FUN_00c41488`).
+- **O material** (`TerrainWater`, `terrain.matShad`): passada 1 =
+  reflexo de `reflectionoutdoorwater-envcube` × `colorScalar (1,1,1)`,
+  alfa do vértice, `srcAlpha/invSrcAlpha`. Com pixel shader (o Mac tem,
+  `maxPixelProgramVersionMajor` = 1) há a passada 2: `water-1-bump` ×
+  `water-2-bump` animadas (translação senoidal 0,04 Hz em sentidos
+  opostos, escala `$waterbumpMapScale` = 4) com alfa 0,3.
+- **O leito e a praia** (`PaintUnderWaterTerrain`, `FUN_00c44670`, chamado
+  por `FUN_00c44be4` para os tiles cuja profundidade mudou mais de 0,01):
+  três camadas de pintura do terreno, `terrain-seabed-shallow`,
+  `terrain-seabed-deep` e `terrain-beach` (`+0x140..0x142` do
+  construtor), na resolução da pintura. Cada texel pega a profundidade
+  bilinear dos 4 cantos do tile e: o raso sobe de 0 em `ShallowMin` a 254
+  em `DeepMin` e desce a 0 em `ShallowMax`; o fundo sobe de `DeepMin` a
+  254 em `DeepMax` (255 depois); a praia sobe de `BeachStart` a 255 em
+  `BeachPeak` e desce a 0 em `BeachEnd`; acima da água (profundidade < 0)
+  ainda × (1 − d / `MaxBeachWidth`) × `BeachIntensityFactor`, com d a
+  distância ao ponto da grade debaixo d'água mais perto (só os que estão a
+  até `round(MaxBeachWidth)` tiles do tile).
+
+**No código** (`src/formats/lot_water.*`, `addWater` e a lista de pinturas
+em `lot_model.cpp`, o tipo `TerrainWater` em `model.cpp`/`renderer.cpp`):
+a curva e as três pinturas são as do binário, com o `Terrain.ini` lido; a
+água é só o reflexo com o alfa do vértice. **Inferido**: os quads da água
+sem o vértice do centro (o terreno nosso também é de 2 triângulos por
+tile), a ordem das três pinturas (depois das do lote), a grade da pintura
+quando o lote não tem pintura (4 pontos por tile). **Falta**: a passada 2
+(as duas texturas de bump animadas multiplicadas). Antes e depois:
+`docs/screenshots/n06-agua-lago-antes-depois.jpg` (N001_Lot79).
+
+### 3.2 Piscina (`nTSSG::cPoolGeometryNode`)
+
+Nomes contíguos em `0x73f5ac..0x742ff0` (`CreatePoolWater`,
+`CreatePoolLayers` com `poolWaterLayer-0`, `AddPoolDepthLayerColors`,
+`UpdateGomezWaterSingleStep` das ondas). Não foi lido a fundo nesta
+rodada; a piscina segue a `SimplifiedWaterSurface` (§9 do
+`shaders-mac.md`) e fica no `TODO.md`.
+
+## 4. Sombras de objetos
+
+As sombras dos objetos são os planos GUOB do próprio modelo (seis
+subconjuntos, tabela `0x277a8c0`: `groundshadow`, `wallshadow`,
+`northwallshadow`, `eastwallshadow`, `westwallshadow`,
+`southwallshadow`). `cShadow::UpdateGUOBs` (BV `0x678488`) liga, no
+estilo 3: o do chão sempre, o `wallshadow` conforme uma consulta da vista
+(vtable `0x6c`), e os de parede onde há parede daquele lado
+(`FindObjectWallPresence` `0x675d20`); com o bit 9 das opções todos;
+`EnableGUOB` (`0x67417c`) troca o material do subconjunto pelo do objeto,
+por `VisGUOBMaterial` (bit 7, depuração) ou por `GUOBOff`. O
+`InitGUOBs` (`0x6747c8`) guarda o material original de cada subconjunto
+(`FindGUOBMaterialFromSubset`: um `GUOBOff` salvo é tratado como sem
+material).
+
+**No código**: os planos já eram desenhados com o material salvo no lote
+(o estado que o jogo deixou ao salvar). Conferido nesta rodada que eles
+aparecem nos lotes (`N001_Lot11`: diferença de até 136/255 por pixel com e
+sem eles; são sombras claras na grama). Corrigido: as pinturas do terreno
+iam na mesma camada (7) que os planos e, ordenadas pela distância,
+podiam ser desenhadas por cima deles; agora vão com o terreno (camada 6),
+como no jogo, onde são passadas do shader do terreno. **Inferido / falta**:
+recalcular quais GUOB de parede ligam quando um objeto muda de lugar (hoje
+vale o estado salvo) e a condição do `wallshadow` e do `this+0xc`.
