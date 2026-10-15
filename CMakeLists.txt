@@ -305,7 +305,9 @@ if(WIN32)
       list(APPEND os2_shader_outputs ${output})
     endforeach()
     add_custom_target(os2_shaders DEPENDS ${os2_shader_outputs})
-    add_executable(opensims2_win src/app/win_main.cpp src/render/gpu_renderer.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp)
+    add_executable(opensims2_win src/app/win_main.cpp src/render/gpu_renderer.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp
+      src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp
+      src/render/camera.cpp src/render/cas_camera.cpp)
     target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_fx os2_port SDL3::SDL3 dbghelp)
     os2_warnings(opensims2_win)
     add_dependencies(opensims2_win os2_shaders)

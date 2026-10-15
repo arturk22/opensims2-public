@@ -256,8 +256,10 @@ public:
     UiScreen screen(int width, int height);
     // Rebuilds the overlay when something changed and encodes it (canvas =
     // the drawable size divided by `scale`).
+#ifndef _WIN32
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+#endif
 
 private:
     struct Label {
@@ -325,7 +327,9 @@ private:
 
     // Overlay: a ring of layers, so one is rebuilt while the GPU may still
     // read the ones of the frames in flight.
+#ifndef _WIN32
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
+#endif
     size_t layer_ = 0;
     bool dirty_ = true;
     int canvasW_ = 0, canvasH_ = 0;

@@ -8,7 +8,9 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_resources.hpp"
 #include "app/ui_panel_util.hpp"
+#ifndef _WIN32
 #include "render/ui_layer.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -1136,6 +1138,7 @@ UiScreen PieMenuHost::screen(int width, int height) {
     return out;
 }
 
+#ifndef _WIN32
 void PieMenuHost::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
@@ -1172,5 +1175,6 @@ void PieMenuHost::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 } // namespace os2

@@ -149,6 +149,8 @@ struct GpuRenderer::Gpu {
     SDL_GPUTexture* lightMapNext = nullptr; // slot 1
     float lightMapMix = 0;
     simd_float3 environment{1, 1, 1};
+    SDL_FColor clearColor{0.55f, 0.72f, 0.86f, 1.f};
+    bool overlays = true; // the UI image (off for offscreen captures)
     SDL_GPUTexture* depth = nullptr;
     SDL_GPUTexture* shadowAtlas = nullptr;
     SDL_GPUTexture* shadowDepth = nullptr;
@@ -996,7 +998,7 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
             1};
         SDL_GPUColorTargetInfo reflectedColor{};
         reflectedColor.texture = reflection;
-        reflectedColor.clear_color = {0.55f, 0.72f, 0.86f, 1.f};
+        reflectedColor.clear_color = clearColor;
         reflectedColor.load_op = SDL_GPU_LOADOP_CLEAR;
         reflectedColor.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPUDepthStencilTargetInfo reflectedDepth{};
@@ -1031,7 +1033,7 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
         if (censorColor && censorDepth) {
             SDL_GPUColorTargetInfo censorTarget{};
             censorTarget.texture = censorColor;
-            censorTarget.clear_color = {0.55f, 0.72f, 0.86f, 1.f};
+            censorTarget.clear_color = clearColor;
             censorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
             censorTarget.store_op = SDL_GPU_STOREOP_STORE;
             SDL_GPUDepthStencilTargetInfo censorDepthInfo{};
@@ -1052,7 +1054,7 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
 
     SDL_GPUColorTargetInfo color{};
     color.texture = target;
-    color.clear_color = SDL_FColor{0.55f, 0.72f, 0.86f, 1.f};
+    color.clear_color = clearColor;
     color.load_op = SDL_GPU_LOADOP_CLEAR;
     color.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPUDepthStencilTargetInfo depthInfo{};
@@ -1094,7 +1096,7 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
         }
     }
 
-    if (uiTexture && uiVertices && uiW > 1 && uiH > 1) {
+    if (overlays && uiTexture && uiVertices && uiW > 1 && uiH > 1) {
         float screen[4] = {float(width), float(height), 0, 0};
         SDL_BindGPUGraphicsPipeline(pass, ui);
         SDL_PushGPUVertexUniformData(cmd, 0, screen, sizeof screen);
@@ -1722,6 +1724,10 @@ void GpuRenderer::setUiImage(const RgbaImage& image, float x, float y, float w, 
     gpu_->uiVertices = gpu_->uploadBuffer(quad, sizeof quad, SDL_GPU_BUFFERUSAGE_VERTEX);
 }
 
+void GpuRenderer::setClearColor(simd_float4 color) { gpu_->clearColor = {color.x, color.y, color.z, color.w}; }
+
+SDL_Window* GpuRenderer::window() const { return gpu_->window; }
+
 bool GpuRenderer::draw(const simd_float4x4& viewProj) {
     SDL_Event event;
     while (SDL_PollEvent(&event))
@@ -1836,6 +1842,75 @@ bool GpuRenderer::capture(const std::filesystem::path& path, const simd_float4x4
         SDL_ReleaseGPUTransferBuffer(gpu_->device, reflectionTransfer);
     }
     return true;
+}
+
+RgbaImage GpuRenderer::capture(uint32_t width, uint32_t height, const FrameView& view, simd_float4 clearColor) {
+    RgbaImage image;
+    if (width == 0 || height == 0)
+        return image;
+    const simd_float4x4 viewProj = simd_mul(view.projection, view.view);
+    gpu_->flushDynamic();
+    gpu_->prepareCensor(viewProj, width, height);
+    const SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(gpu_->device, gpu_->window);
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = format;
+    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    SDL_GPUTexture* target = SDL_CreateGPUTexture(gpu_->device, &info);
+    SDL_GPUTransferBufferCreateInfo transferInfo{};
+    transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    transferInfo.size = width * height * 4;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu_->device, &transferInfo);
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu_->device);
+    const SDL_FColor savedClear = gpu_->clearColor;
+    gpu_->clearColor = {clearColor.x, clearColor.y, clearColor.z, clearColor.w};
+    gpu_->overlays = false;
+    const bool rendered = target && transfer && cmd && gpu_->render(cmd, target, width, height, viewProj);
+    gpu_->clearColor = savedClear;
+    gpu_->overlays = true;
+    auto release = [&] {
+        if (transfer)
+            SDL_ReleaseGPUTransferBuffer(gpu_->device, transfer);
+        if (target)
+            SDL_ReleaseGPUTexture(gpu_->device, target);
+    };
+    if (!rendered) {
+        if (cmd)
+            SDL_CancelGPUCommandBuffer(cmd);
+        release();
+        return image;
+    }
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion from{};
+    from.texture = target;
+    from.w = width;
+    from.h = height;
+    from.d = 1;
+    SDL_GPUTextureTransferInfo to{};
+    to.transfer_buffer = transfer;
+    to.pixels_per_row = width;
+    to.rows_per_layer = height;
+    SDL_DownloadFromGPUTexture(copy, &from, &to);
+    SDL_EndGPUCopyPass(copy);
+    if (SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd)) {
+        SDL_WaitForGPUFences(gpu_->device, true, &fence, 1);
+        SDL_ReleaseGPUFence(gpu_->device, fence);
+        if (const auto* pixels = static_cast<const uint8_t*>(SDL_MapGPUTransferBuffer(gpu_->device, transfer, false))) {
+            image.width = width;
+            image.height = height;
+            image.pixels.assign(pixels, pixels + size_t(width) * height * 4);
+            if (format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
+                for (size_t i = 0; i + 3 < image.pixels.size(); i += 4)
+                    std::swap(image.pixels[i], image.pixels[i + 2]);
+            SDL_UnmapGPUTransferBuffer(gpu_->device, transfer);
+        }
+    }
+    release();
+    return image;
 }
 
 bool GpuRenderer::captureMovie(const std::filesystem::path& path, const RgbaImage& frame) {

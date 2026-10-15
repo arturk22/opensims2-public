@@ -18,9 +18,17 @@
 #include <string>
 #include <vector>
 
+struct SDL_Window;
+
 namespace os2 {
 
 class ResourceIndex;
+
+// A camera's view and projection (as render/renderer.hpp's).
+struct FrameView {
+    simd_float4x4 view;
+    simd_float4x4 projection;
+};
 
 class GpuRenderer {
 public:
@@ -112,9 +120,14 @@ public:
     // A real UI image, in window pixels from the top left.
     void setUiImage(const RgbaImage& image, float x, float y, float w, float h);
 
+    // The window's background (the sky blue of the lot unless set).
+    void setClearColor(simd_float4 color);
+    SDL_Window* window() const;
     // Returns false when the window was closed.
     bool draw(const simd_float4x4& viewProj);
     bool capture(const std::filesystem::path& path, const simd_float4x4& viewProj);
+    // Renders one frame offscreen without the UI and reads it back (Renderer::capture).
+    RgbaImage capture(uint32_t width, uint32_t height, const FrameView& view, simd_float4 clearColor);
     // A .movie frame the way MovieLayer draws it: black, fitted, centred.
     bool captureMovie(const std::filesystem::path& path, const RgbaImage& frame);
 

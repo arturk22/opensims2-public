@@ -23,6 +23,8 @@
 #include "app/game_save.hpp"
 #include "app/build_mode.hpp"
 #include "app/buy_mode.hpp"
+#include "app/cas_mode.hpp"
+#include "render/camera.hpp"
 #include "app/lot_lighting.hpp"
 #include "app/vm_objects.hpp"
 #include "formats/ui_resources.hpp"
@@ -216,16 +218,171 @@ struct Camera {
     }
 };
 
+std::filesystem::path exeDir() {
+    wchar_t modulePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    return std::filesystem::path(modulePath).parent_path();
+}
+
+// The macOS virtual key codes CasMode reads (Backspace, Return, Z, Y, comma, period).
+unsigned short macKeyCode(SDL_Scancode code) {
+    switch (code) {
+    case SDL_SCANCODE_BACKSPACE: return 51;
+    case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: return 36;
+    case SDL_SCANCODE_Z: return 6;
+    case SDL_SCANCODE_Y: return 16;
+    case SDL_SCANCODE_COMMA: return 43;
+    case SDL_SCANCODE_PERIOD: return 47;
+    default: return 0xFFFF;
+    }
+}
+
+// --cas: Create-a-Sim (app/cas_mode.hpp), as the Mac host's prepareCas/finishCas.
+// Families are written under --cas-out (default: cas-families next to the exe,
+// so the game's own neighborhoods are left alone).
+int runCas(const std::filesystem::path& res, std::vector<std::string> args, const std::optional<std::filesystem::path>& shot) {
+    auto argument = [&](std::string_view name) -> std::optional<std::string> {
+        for (size_t i = 0; i + 1 < args.size(); ++i)
+            if (args[i] == name)
+                return args[i + 1];
+        return std::nullopt;
+    };
+    const std::filesystem::path exe = exeDir();
+    if (!argument("--cas-out")) {
+        args.push_back("--cas-out");
+        args.push_back((exe / "cas-families").string());
+    }
+    uint32_t w = 1280, h = 720;
+    if (auto size = argument("--cas-size"))
+        std::sscanf(size->c_str(), "%ux%u", &w, &h);
+    std::printf("opensims2: indexing %s\n", res.string().c_str());
+    std::fflush(stdout);
+    os2::ResourceIndex index(res);
+    os2::Renderer renderer(exe / "shaders", w, h);
+    std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+    const os2::LightingConfig lighting = os2::loadLightingConfig(res / "Lights" / "Lighting.txt");
+    if (const auto* state = lighting.state(argument("--lighting").value_or("CAS"))) {
+        renderer.setLighting(*state);
+        if (!argument("--lighting")) {
+            // The studio lamps of GlobalLots/CAS!.package replace these once it loads; without
+            // the studio its boom light stands in from the camera's side, above (as the Mac host).
+            auto set = os2::Renderer::outdoorLights(*state, true);
+            set.lights.push_back({simd_normalize(simd_make_float3(0.35f, 1.0f, 0.9f)), simd_make_float3(1.0f, 0.95f, 0.85f) * 1.25f * 0.6f});
+            renderer.setLightSets({set, set});
+        }
+    }
+    os2::GameAudio gameAudio(res, {});
+    const std::filesystem::path gameDir = res.parent_path().parent_path();
+    os2::CasMode cas(renderer, index, gameDir, args);
+    bool running = true;
+    cas.playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+    cas.onExit = [&] { running = false; };
+    cas.onFamilySaved = [](uint32_t family) { std::printf("opensims2: cas: family %u saved\n", family); };
+    std::unique_ptr<os2::LotCamera> camera = cas.makeCamera();
+    cas.setCamera(camera.get());
+    const simd_float4 background = simd_make_float4(0.33f, 0.36f, 0.45f, 1.f);
+    renderer.setClearColor(background);
+    cas.setCanvas(int(w), int(h));
+    camera->setViewport(float(w), float(h));
+    auto showUi = [&] {
+        os2::UiScreen screen;
+        if (!cas.layout(int(w), int(h), screen))
+            return false;
+        renderer.setUiImage(os2::composeUi(screen, {0, 0, 0, 0}), 0, 0, float(w), float(h));
+        return true;
+    };
+    auto viewProj = [&] { return simd_mul(camera->projection(float(w) / float(h)), camera->view()); };
+    SDL_SetWindowTitle(renderer.window(), cas.title().c_str());
+    cas.runScripted(args);
+
+    if (shot) {
+        camera->snap();
+        cas.update(0.5);
+        camera->snap();
+        std::ofstream log(shot->parent_path() / "frame_cas.txt");
+        for (const auto& line : cas.report()) {
+            std::printf("opensims2: %s\n", line.c_str());
+            log << line << "\n";
+        }
+        // The scene alone through the offscreen path portraits use, then the window with the UI.
+        const os2::RgbaImage scene = renderer.capture(w, h, os2::FrameView{camera->view(), camera->projection(float(w) / float(h))}, background);
+        log << "offscreen " << scene.width << "x" << scene.height << "\n";
+        showUi();
+        renderer.setEye(camera->eye());
+        if (!renderer.capture(*shot, viewProj()))
+            return 1;
+        std::printf("opensims2: wrote %s\n", shot->string().c_str());
+        return 0;
+    }
+
+    SDL_StartTextInput(renderer.window());
+    bool dragging = false;
+    const auto start = std::chrono::steady_clock::now();
+    auto last = start;
+    while (running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            const bool control = (SDL_GetModState() & SDL_KMOD_CTRL) != 0;
+            switch (event.type) {
+            case SDL_EVENT_QUIT: running = false; break;
+            case SDL_EVENT_KEY_DOWN:
+                if (event.key.scancode == SDL_SCANCODE_ESCAPE)
+                    running = false;
+                else
+                    cas.keyDown(macKeyCode(event.key.scancode), "", control);
+                break;
+            case SDL_EVENT_KEY_UP: cas.keyUp(macKeyCode(event.key.scancode)); break;
+            case SDL_EVENT_TEXT_INPUT: cas.keyDown(0xFFFF, event.text.text, control); break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    dragging = true;
+                    cas.mouseDown(simd_make_float2(event.button.x, event.button.y));
+                }
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                if (dragging)
+                    cas.mouseDragged(simd_make_float2(event.motion.x, event.motion.y));
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    dragging = false;
+                    cas.mouseUp(simd_make_float2(event.button.x, event.button.y));
+                }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL: camera->wheel(event.wheel.y); break;
+            default: break;
+            }
+        }
+        const auto now = std::chrono::steady_clock::now();
+        camera->update(std::chrono::duration<double>(now - last).count());
+        last = now;
+        cas.update(std::chrono::duration<double>(now - start).count());
+        showUi();
+        renderer.setEye(camera->eye());
+        if (!renderer.draw(viewProj()))
+            running = false;
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     SetUnhandledExceptionFilter(crashFilter);
     try {
         if (argc < 3) {
-            std::fprintf(stderr, "usage: opensims2_win <TSData/Res> <lot.package> [--screenshot file.png]\n");
+            std::fprintf(stderr, "usage: opensims2_win <TSData/Res> <lot.package | --cas> [--screenshot file.png]\n");
             return 2;
         }
         const std::filesystem::path res = argv[1];
+        if (std::string(argv[2]) == "--cas") {
+            std::vector<std::string> args(argv + 2, argv + argc);
+            std::optional<std::filesystem::path> casShot;
+            for (size_t i = 0; i + 1 < args.size(); ++i)
+                if (args[i] == "--screenshot")
+                    casShot = args[i + 1];
+            return runCas(res, args, casShot);
+        }
         const std::filesystem::path lotFile = argv[2];
         std::filesystem::path shot = "frame.png";
         bool exitAfterShot = false;

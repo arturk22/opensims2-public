@@ -11,7 +11,11 @@
 #include "formats/scenegraph.hpp"
 #include "formats/skeleton.hpp"
 #include "formats/xform.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
+#endif
 #include "vm/lot.hpp"
 
 #include <algorithm>
