@@ -12,6 +12,7 @@
 #include "formats/lot_edit.hpp"
 #include "lot.hpp"
 #include "placement.hpp"
+#include "rooms.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -170,14 +171,25 @@ void BuildEditor::syncWorld() {
                 break;
             }
     }
-    // The objects whose tile changed room get the new room (object data 29).
-    std::vector<std::pair<ObjectId, int16_t>> moved;
+    // cEdithObjectModule::UpdateObjectsInRoom (BV 0x52e170), for each room
+    // the map changed (the 0x2B4D18F6 message of definition 2): every object
+    // on the room's tiles gets the room (object data 29, SetRoom with its
+    // contained objects) and OnRoomChanged, which runs the "room changed"
+    // entry only for those whose room is new (and diagonal doors).
+    std::set<int16_t> changedRooms;
     if (vm_.world)
+        for (int level = w.firstLevel(); level < w.firstLevel() + w.levelCount(); ++level)
+            for (int y = 0; y < int(w.height()); ++y)
+                for (int x = 0; x < int(w.width()); ++x)
+                    if (const TilePos t{x, y, level}; vm_.world->contains(t) && vm_.world->room(t) != w.room(t))
+                        changedRooms.insert(w.room(t)), changedRooms.insert(vm_.world->room(t));
+    std::vector<std::pair<ObjectId, int16_t>> moved;
+    if (!changedRooms.empty())
         for (const auto& [id, o] : vm_.objects()) {
             if (!o.position.inWorld() || o.data[objdata::ContainerId])
                 continue;
             const TilePos t = VM::tileOf(o);
-            if (vm_.world->contains(t) && w.contains(t) && vm_.world->room(t) != w.room(t))
+            if (w.contains(t) && changedRooms.count(w.room(t)))
                 moved.push_back({id, w.room(t)});
         }
     vm_.world = std::move(w);
@@ -187,6 +199,10 @@ void BuildEditor::syncWorld() {
     for (const auto& [id, room] : moved)
         if (Object* o = vm_.object(id))
             o->data[objdata::Room] = room;
+    vm_.followContainers(); // SetRoom(..., true): the contained objects too
+    for (const auto& [id, room] : moved)
+        if (vm_.object(id))
+            finishMove(vm_, id);
     ++revision_;
 }
 
