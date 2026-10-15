@@ -555,14 +555,14 @@ struct Object {
             std::string animation; // empty with ticks > 0: a wait (for a door to open)
             ObjectId door = 0;     // the door whose portal this point goes through
             // The portal tree (OBJf 15 of `portalOwner`) runs on the walker's
-            // thread here, with `portal` as its stack object (routing.cpp);
+            // thread here, with `portal` as its stack object (routing_walk.cpp);
             // `viaPortal` points are the engine's own way through, skipped
             // when the tree did it.
             ObjectId portal = 0, portalOwner = 0;
             std::array<int16_t, 10> portalParams{};
             bool viaPortal = false;
             // A turn in place (ticks > 0): 45-degree steps, counter-clockwise
-            // positive; the animation played mirrored (routing.cpp turnPoint).
+            // positive; the animation played mirrored (routing_plan.cpp turnPoint).
             int turnSteps = 0;
             bool mirror = false;
         };
@@ -570,7 +570,7 @@ struct Object {
         int level = 0; // of the goal
         int facing = -1;
         ObjectId target = 0;
-        // For planning again when the way is blocked (routing.cpp): the goal
+        // For planning again when the way is blocked (routing_walk.cpp): the goal
         // points (x, y, cost) with their facings, the objects whose
         // footprints do not count, how long the walker has been blocked, how
         // often it planned again, and whether it stands waiting (a door, a
@@ -580,12 +580,12 @@ struct Object {
         std::vector<int16_t> multi; // the goals' multi slot indices (person data 38), when any
         std::vector<ObjectId> ignore;
         int blockedTicks = 0, replans = 0;
-        // Where the Sim in the way stood at the last try (routing.cpp).
+        // Where the Sim in the way stood at the last try (routing_walk.cpp).
         float blockerX = 0, blockerY = 0;
         bool waiting = false;
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
         ObjectId blocker = 0;     // the Sim in the way
-        // DoBlockedGoalStillAvailable (routing.cpp): the walker steps aside
+        // DoBlockedGoalStillAvailable (routing_walk.cpp): the walker steps aside
         // itself on a way of its own (TryGetSelfOutOfWay, once a route), then
         // plans its route again; a pause ("CT - Route Blocked Animation")
         // or "CT - Route Blocked" tree runs; the pauses so far.
@@ -595,8 +595,8 @@ struct Object {
         // pushes it).
         ObjectId asideFrom = 0;
         int pauses = 0;
-        bool inPortal = false;    // a portal tree runs (routing.cpp)
-        // The goal check / along route trees (routing.cpp): which one runs
+        bool inPortal = false;    // a portal tree runs (routing_walk.cpp)
+        // The goal check / along route trees (routing_walk.cpp): which one runs
         // (1 goal check, 2 along route), the tick of the last check and
         // how many path points were walked by then.
         int check = 0;
@@ -610,7 +610,7 @@ struct Object {
             bool mirror = false;
         } climb;
         bool endTurned = false; // the turn to the final facing was added
-        // The locomotion along the floor (routing.cpp locoStep, after
+        // The locomotion along the floor (routing_loco.cpp locoStep, after
         // cLocomotable::FollowOneStep, docs/routing-mac.md §6.1): a start
         // ("turnAndGo", or a step on a short way), the walk cycle, a stop
         // ("turnAndStop") at the end. A frame moves along the route (the
@@ -673,11 +673,11 @@ struct Object {
         uint16_t node = 0;
     };
     std::optional<Route> route;
-    // The walker's "Routing - Eye Attractor" (routing.cpp): the object the
+    // The walker's "Routing - Eye Attractor" (routing_walk.cpp): the object the
     // along route tree's parameter 5 names, kept on the way ahead.
     ObjectId eyeAttractor = 0;
     // A routing slot 0 the engine gave the object (the synthetic slot of a
-    // move-out-of-way destination, routing.cpp), instead of its SLOT's.
+    // move-out-of-way destination, routing_loco.cpp), instead of its SLOT's.
     std::optional<Slots::Slot> syntheticSlot;
     // A destination the engine made for a Sim (go_here.hpp): flushed once no
     // Sim has it queued, unless held (a pie menu is open on it).
@@ -756,14 +756,14 @@ struct Frame {
     bool subInteraction = false;
     // When this frame returns, the caller's instruction branches on this
     // instead of the returned value (a primitive that ran a tree for its
-    // own ends: the route failure feedback; routing.cpp).
+    // own ends: the route failure feedback; routing_walk.cpp).
     std::optional<bool> callerResult;
     // When this frame returns, the caller's instruction runs again (with
     // the returned value in Thread::rerunResult): a primitive that runs a
     // tree in the middle of its work (the routing's waiting animations).
     bool rerunCaller = false;
     // A route of this frame's instruction failed with this result and its
-    // failure feedback tree runs (routing.cpp); -1: none.
+    // failure feedback tree runs (routing_walk.cpp); -1: none.
     int16_t pendingRouteResult = -1;
     // The walker's pre-route tree ran for this frame's routing instruction,
     // which keeps the routing slot it read before (the tree may change the
@@ -771,7 +771,7 @@ struct Frame {
     bool preRouteRan = false;
     int16_t routeSlot = -1;
     // The walker's post-route tree runs for this frame's routing instruction
-    // (1 after an arrival, 2 after a failure; routing.cpp).
+    // (1 after an arrival, 2 after a failure; routing_walk.cpp).
     uint8_t postRoute = 0;
     // A route callback tree (pre/post-route, goal check, along route,
     // portal) the routing pushed: routes inside it are not base routes.
@@ -874,7 +874,7 @@ public:
     // need them, which then fail with the reason.
     std::optional<World> world;
     // The path planner of `world` (path_planner.hpp), built on first use
-    // (routing.cpp); reset it after changing the world.
+    // (routing_plan.cpp); reset it after changing the world.
     std::shared_ptr<PathPlanner> planner;
     // Walking speed in tiles per tick of walkers without a walk animation
     // (Sims walk at their walk animation's speed, animation.hpp): 2 m/s, the
@@ -914,10 +914,10 @@ public:
     // cTSPerson::OnCleanup's "out of the world and back in a free place
     // near" (vtable 0x2d8, FUN_00af87c8): out of its slot, then the first
     // tile centre of a square spiral where it fits, its room first
-    // (routing.cpp). False: no place, left where it was.
+    // (routing_walk.cpp). False: no place, left where it was.
     bool placeNearFree(Object& o);
     // The portals objects make of their portal-pair routing slots (the pool
-    // ladder), into World::objectPortals (routing.cpp). Called when the lot
+    // ladder), into World::objectPortals (routing_plan.cpp). Called when the lot
     // loads and when build or buy mode changes it.
     void refreshObjectPortals();
     // Objects placed on a tile (in the world and not in a slot), by ID.
@@ -1075,7 +1075,7 @@ public:
     // compare.
     bool checkCreatedPlacement = std::getenv("OS2_NO_CREATE_PLACEMENT") == nullptr;
     // Doors and stairs run their portal trees (OBJf entry 15: TEST while
-    // planning, the action on arrival; routing.cpp); off: the engine opens
+    // planning, the action on arrival; routing_plan.cpp, routing_walk.cpp); off: the engine opens
     // the way itself (waits at doors, climbs the stairs with its own phases).
     bool portalTrees = true;
     // An object whose Main fails is reset, as the binary does outside the
@@ -1364,7 +1364,7 @@ private:
 int16_t timeOfDay(int hour);
 // Registers the primitives implemented so far.
 void registerPrimitives(VM& vm);
-// The primitives that place and move objects in the world (routing.cpp).
+// The primitives that place and move objects in the world (routing_walk.cpp).
 void registerRoutingPrimitives(VM& vm);
 // A thread resumed from a save (lot_resume.hpp): the frame state of a
 // routing instruction (Go To Routing Slot, Go To Relative Position) that was
@@ -1405,7 +1405,7 @@ void registerAutonomyPrimitives(VM& vm);
 // Called when an interaction Gosub Found Action ran returns `result`.
 void foundActionReturned(VM& vm, Thread& t, bool result);
 // The rooms a Sim in `room` can walk to (cTSPerson::GetAccessibleRooms,
-// routing.cpp; PathPlanner::accessibleRooms); null without a world or when
+// routing_plan.cpp; PathPlanner::accessibleRooms); null without a world or when
 // the room has no free floor (nothing is filtered then).
 const std::vector<int16_t>* accessibleRooms(VM& vm, int16_t room);
 

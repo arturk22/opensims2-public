@@ -110,7 +110,7 @@ piano (linhas 1–15 de 16 cheias), (0,1)/(1,1) o banco, só as linhas 0–4
 
 O teste por passo do andar e o `Snap` usam a mesma pegada
 (`TSObjectCanSetPosition`: a caixa da pessoa contra as pegadas dos objetos,
-`VM::pointFree`, `footprintBlocker` em `routing.cpp`).
+`VM::pointFree` em `routing.cpp`, `footprintBlocker` em `routing_loco.cpp`).
 
 ### Quem entra no planejador (binário, rodada 15)
 
@@ -590,7 +590,7 @@ pelos passos·45°** (o decompilador perdeu a variável; a listagem em
 `0x6b63b4` lê os passos da pilha). O mesmo no fim: o último trecho chega pela
 direção final (`+0x1c4`, múltiplo de 45°).
 
-**Feito antes (rodada 13, routing2)** (`routing.cpp` `shapeWalk`/`turnSteps`/
+**Feito antes (rodada 13, routing2)** (`routing_plan.cpp` `shapeWalk`/`turnSteps`/
 `turnPoint`): o caminho cortado a cada 0,2 nos trechos do chão; a saída
 pela frente para quem replaneja andando; virar no lugar
 (`<idade>-TurnInPlace-45/90/135/180`) antes de sair quando o primeiro trecho
@@ -601,7 +601,7 @@ passou a valer para todos, girada pelos passos. Captura antiga:
 `docs/screenshots/r13-virar-no-lugar.jpg`.
 
 **Feito no opensims2 (rodada 13, front "walking")** (`locomotion.cpp`
-`gaitOf`/`locoClip`, `routing.cpp` `locoStep`/`stepBlocker`, `sim_motion.cpp`,
+`gaitOf`/`locoClip`, `routing_loco.cpp` `locoStep`/`stepBlocker`, `sim_motion.cpp`,
 `lot_vm.cpp`; testes `test_routing` `testLocoPhases`/`testRunnerStep`,
 `test_animation_vm` `testGait`): um **quadro** anda pela rota e o Sim fica
 onde está a raiz do clipe (posição = quadro + deslocamento da raiz girado
@@ -629,7 +629,7 @@ parada esticada sobre o que falta desliza até ~0,1 m/s. Captura:
 `docs/screenshots/r13-locomotor.jpg` (Don em N001_Lot16 virando 180° no
 `turnAndGo-alt-180` espelhado, andando e parando com `turnAndStop-alt-0`).
 
-**Feito na rodada 14 (front "walking2")** (`routing.cpp` `locoStep`/
+**Feito na rodada 14 (front "walking2")** (`routing_loco.cpp` `locoStep`/
 `blendedClip`/`stepBlocker`/`tileBlocker`, `locomotion.cpp` `gaitOf`,
 `sim_motion.cpp`, `lot_vm.cpp`, `anim_player` `Options::rate`; testes
 `test_routing` `testLocoBlend`/`testLocoHalt`):
@@ -789,7 +789,7 @@ parada esticada sobre o que falta desliza até ~0,1 m/s. Captura:
 
 **Feito na rodada 14, front "walking3"** (o locomotor conforme a leitura
 acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
-`routing.cpp` `locoStep`/`turnClip`/`sideStep`/`stepBlocker`; testes
+`routing_loco.cpp` `locoStep`/`turnClip`/`sideStep`/`stepBlocker`; testes
 `test_routing` `testLocoCurve`/`testLocoStride`/`testSidestep`/`testLocoBlend`):
 
 - **Curva**: a Catmull-Rom saiu; o quadro anda numa B-spline cúbica uniforme
@@ -864,7 +864,7 @@ acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
   resolve `w` exato num número inteiro de meios ciclos sem o termo de fase
   nem a troca para `−½` ciclo acima de 0,3.
 - **Rodada 15 (front "anim3"): o ajuste lido até o fim e feito**
-  (`fitStride` em `locomotion.cpp`; `routing.cpp` `fit`). Os papéis que
+  (`fitStride` em `locomotion.cpp`; `routing_loco.cpp` `fit`). Os papéis que
   faltavam: `L`/`Ls` são as `LocoDistance` (× escala) do ciclo longo e do
   curto (walk 1,393, walkShort 0,683 por ciclo: a mesma "passada" que o
   walking3 usava); `0x178`/`0x188` do pedido de locomoção são as porções

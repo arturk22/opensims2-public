@@ -185,7 +185,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                 const auto t = vm::VM::tileOf(ob);
                 const auto& sts = machine.world->stairs();
                 if (std::any_of(sts.begin(), sts.end(), [&](const auto& st) { return st.bottom == t || st.top == t; }))
-                    continue; // as routing.cpp's addObstacles: landings are kept clear
+                    continue; // as routing_plan.cpp's addObstacles: landings are kept clear
                 planner.addObstacle(t.level, float(t.x), float(t.y), float(t.x + 1), float(t.y + 1), vm::PathPlanner::kObject);
             }
         std::string list = tries;

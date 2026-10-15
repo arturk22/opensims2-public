@@ -378,7 +378,7 @@ dois objetos explícitos e só ela tem o u16 nos bytes 12–13 (31, 35, 38,
 strings "on level ground"/"with empty border"/"begin in front of refobj"/
 "line of sight", sem como separar com tão poucos usos. Bytes 12–13 em aberto.
 *Feito* na VM: a direção é mantida se a máscara deixa, senão a permitida mais
-próxima (`findLocationFor` em `src/vm/routing.cpp`).
+próxima (`findLocationFor` em `src/vm/routing_walk.cpp`).
 
 **Binário de Mac (BV 1.10):** **refutado no sentido do byte 3**: bit n
 ligado = direção n *proibida* (o código usa `~byte3`; `0xFE` = só N, `0xAA`

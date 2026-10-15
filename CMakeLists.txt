@@ -143,6 +143,8 @@ add_library(os2_vm
 target_include_directories(os2_vm PUBLIC src)
 target_compile_options(os2_vm PRIVATE -Wall -Wextra)
 target_link_libraries(os2_vm PUBLIC os2_formats)
+# vm/routing.cpp and vm/build_edit.cpp split by area (round 26, docs/ideias/DEBITOS-TECNICOS.md 1.2).
+target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp)
 
 # Sound: decoding to PCM (MP3 through AudioToolbox), name lookup and playback.
 add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp src/audio/mixer.cpp src/audio/sound_system.cpp)
