@@ -85,8 +85,8 @@ palavra.
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% | 5 / 7 = **71%** | 40 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
-| Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 7,5 / 9 = **83%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **77 / 105 = 73%** | **517 em src** |
+| Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **80,5 / 109 = 74%** | **517 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -325,7 +325,11 @@ Docs: `camera-ui-mac.md`, `ui-live-mac.md`, `game-flow-mac.md`.
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
-| Câmera: `cTSCameraSmoothSims1Controller` (58, 9), `cCameraLive` | `render/camera.*`, `app/camera_*` | inferido | Faltam seguir o Sim com a zona morta, Tab, fade de objetos e vista de cima (T). |
+| Câmera: `cTSCameraSmoothSims1Controller` (58, 9), `cCameraLive` | `render/camera.*`, `app/camera_*` | inferido | A velocidade do teclado e o pan (`0x3b6c780f`/`0xbb6c7808`: `sqrt(largura·30)`, aceleração por repetição) seguem inferidos (`TODO.md`). |
+| Vista de cima: `cTSMainToolbar::SetTopDown`/`SetMode`, a câmera "Build" do `cCameraLive` | `app/camera_mode.hpp`, `LotCamera::setDefinition`, painéis de Comprar e Construir | fiel | Rodada n11 (`camera-ui-mac.md` §1.7): T só em Comprar e Construir, o flag lembrado no Viver, a troca copia pivô, rumo, distância e pitch. Inferido: o `pivotheightabovefloor` do Build. |
+| Seguir o Sim: `cTSMainToolbar::AutotrackSim`/`CenterOnSim`, `cTSCameraSmoothSims1Controller::Update`/`HandleRequest`, `cTSWinProcSimChooserThumbnail` | `app/camera_follow.*`, `live_ui.cpp` | fiel | Rodada n11 (§1.8): zona morta medida do alvo do pivô ao ponto do piso do Sim, os movimentos do jogador acabam com o seguimento, o clique direito centra e segue, o esquerdo na selecionada centra e para. |
+| Fade de objetos: `cTSSGSystem::ObjectFadeParams`, `cObject::UpdateVisibilityAndRendering` | `app/object_fade.hpp`, `lot_actors.cpp`, `Renderer::setInstanceAlpha` | fiel | Rodada n11 (§1.10): "Obstructs View" (od 40 bit 3), alfa = (profundidade/distância)^queda. A câmera de cinema (`FUN_0065deb0`) e o `ParentFadeAlpha` não foram feitos. |
+| Câmera livre: `cCameraCameraManController` e a base de primeira pessoa | `render/free_camera.*`, `LotCamera::matchView`, `app_view.mm` | inferido | Rodada n11 (§1.9): Tab/Y/Escape, números do `FirstPersonCameras.txt`, velocidade e altura do `Update`; inferidos o olhar com o mouse e o FOV de partida; a órbita (Shift + teclas), a "CameraManNH" e a "First" não foram feitas. |
 | Menu de pie: `cTSWinPieMenu` (36, 5) | `app/pie_menu.*` | fiel | |
 | Velocidade, relógio, dinheiro: `cTSMainToolbar` (89, 10), `cTSWinProcLivePanel`, `cTSSimulator::Simulate` | `app/live_ui.cpp` | fiel | |
 | Painéis: motivos, relacionamentos, emprego, desejos (`cTSWinProcPanel*`, `cTSWinProcMotiveBar`) | `app/live_panels.*`, `wants_panel.*` | fiel | |
@@ -365,7 +369,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias — **feita** (n08): tabelas de relacionamento do XOBJ e do SDSC, SREL como o jogo grava, motor das memórias e pontuação, painel de memórias com os scripts do jogo (`docs/relationships-mac.md`). | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |
 | 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro — **feita** (n09): cabeçalho, token temporário (campos 4–7 como cópias), iteradores dos arrays, timers (ID, quem pôs, repetir), XMTO (deslocamentos) e NGBH (dados do bairro) com nome e pelo sentido (`docs/save-mac.md` §8); `lot-save --check` byte a byte igual nos 69 lotes, `hood-save --check` 68 de 68. | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
 | 10 | **CAS: corpo gordo, `BlendDeltas`, roupa aleatória** — **feita** (n10): corpo gordo como morph `fattop`/`fatbot` (não há roupa gorda nos dados), botão aleatório como o `RandomizeForHumans` (cabelo sem chapéu por categoria, 49 % roupa inteira, flags 1\|8 fora, "default" de reserva), peso das máscaras de região e `hairneck` do `BlendArchetype` (`docs/cas-mac.md`, fim). | O corpo gordo é um bug visível no CAS. | 1 Opus | sim |
-| 11 | **Câmera: seguir o Sim, Tab, fade, vista de cima** | Conforto; os valores já estão nos dados. | 1 Sonnet | não |
+| 11 | **Câmera: seguir o Sim, Tab, fade, vista de cima** — **feita** (n11): vista de cima (T, a câmera Build e o flag do `SetMode`), seguir o Sim (zona morta do alvo, movimentos do jogador, centrar), fade de objetos "Obstructs View" e a câmera livre do Tab (`camera-ui-mac.md` §1.7–1.10); órbita, "CameraManNH" e fade da câmera de cinema ficam no `TODO.md`. | Conforto; os valores já estão nos dados. | 1 Sonnet | não |
 | 12 | **Bairro: imposters e terreno** (desbotar, mapa alfa, `nhoodLightMap`) | Pouco visível. | 1 Opus | sim |
 
 Total: 14 agentes Opus e 3 Sonnet, em 12 rodadas. As rodadas 1 e 2 tocam

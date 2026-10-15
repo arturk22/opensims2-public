@@ -293,7 +293,8 @@ os2::LotViewOptions wantedLotView() {
     std::array<float, 2> look{gLotView.viewDirection};
     std::optional<std::array<float, 3>> eye;
     if (gCamera) {
-        const simd_float3 d = gCamera->pivot() - gCamera->eye();
+        // (the free camera's pivot stays where the orbit camera left it)
+        const simd_float3 d = gCameraSelector.freeCamera() ? gCamera->forward() : gCamera->pivot() - gCamera->eye();
         look = {d.x, d.y};
         const simd_float3 e = gCamera->eye();
         eye = std::array<float, 3>{e.x, e.y, e.z};

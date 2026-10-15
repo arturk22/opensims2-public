@@ -24,7 +24,9 @@ void updateAudio(double seconds) {
         return;
     os2::LotAudio::Listener l;
     if (gCamera) {
-        const simd_float3 p = gCamera->pivot(), look = p - gCamera->eye();
+        // (the free camera hears from where it is: its orbit pivot is stale)
+        const simd_float3 p = gCameraSelector.freeCamera() ? gCamera->eye() : gCamera->pivot(),
+                          look = gCameraSelector.freeCamera() ? gCamera->forward() : p - gCamera->eye();
         l.x = p.x, l.y = p.y, l.z = std::max(0.0f, p.z - 1);
         l.rightX = look.y, l.rightY = -look.x; // forward x up
         l.zoom = std::clamp(gCamera->zoom() / 5.0f, 0.0f, 1.0f);
