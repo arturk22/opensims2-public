@@ -50,6 +50,17 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why);
 // routing_loco.cpp
 // Where a walker will be `tiles` further along its route points.
 Point2 alongRoute(const Object& o, float tiles);
+// A walker's way ahead as its locomotion follows it (the frame's cubic path:
+// GlobalLocationEstimate), for the predicted blocking.
+struct WayAhead {
+    explicit WayAhead(const Object& o);
+    Point2 at(float tiles) const; // the frame `tiles` further on (where it stands without a way)
+    float left() const;           // the length of the way still to go
+    std::shared_ptr<const LocoCurve> curve;
+    size_t segment = 0;
+    float arc = 0;
+    Point2 from;
+};
 // Another Sim the walker is predicted to run into (CollisionCheck), and
 // how far along its way the collision comes (tiles), or {0, 0}.
 struct SimAhead {

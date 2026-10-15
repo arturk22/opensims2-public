@@ -43,6 +43,59 @@ Point2 alongRoute(const Object& o, float tiles) {
     return at;
 }
 
+// A walker's way ahead as its locomotion will follow it: the frame's cubic
+// path (LocoCurve), as GlobalLocationEstimate (cLocomotable vtable 0x3e8, BV
+// 0x6af398) gives where the walker will be at a time: the path's point
+// (vtable 0x54 of the path, +0x18c) at the distance completed by then
+// (DistanceCompletedEstimate, vtable 0x470); without a path, where it
+// stands. The curve is the one the frame is on (locoStep keeps it while
+// the route is the one it was made through), else the one locoStep would
+// make from the frame (from where the walker stands when it is not moving).
+WayAhead::WayAhead(const Object& o) : from{o.position.x, o.position.y} {
+    if (!o.route)
+        return;
+    const Object::Route& r = *o.route;
+    const Object::Route::Loco& L = r.loco;
+    size_t end = 0;
+    while (end < r.points.size() && floorPoint(r.points[end]))
+        ++end;
+    if (end == 0)
+        return;
+    const bool moving = L.kind != Object::Route::Loco::None && L.moving;
+    if (const LocoCurve* c = L.curve.get(); moving && L.onCurve && c && L.taken < c->points && c->points - L.taken == end) {
+        const auto& p = c->point(L.taken);
+        const auto& q = c->control.back();
+        if (p[0] == r.points[0].x && p[1] == r.points[0].y && q[0] == r.points[end - 1].x && q[1] == r.points[end - 1].y) {
+            curve = L.curve, segment = L.segment, arc = L.arc;
+            return;
+        }
+    }
+    std::vector<std::array<float, 2>> through;
+    through.reserve(end);
+    for (size_t k = 0; k < end; ++k)
+        through.push_back({r.points[k].x, r.points[k].y});
+    const float fx = moving ? L.fx : o.position.x, fy = moving ? L.fy : o.position.y;
+    curve = std::make_shared<const LocoCurve>(fx, fy, through);
+}
+
+float WayAhead::left() const { return curve ? curve->remaining(segment, arc) : 0.0f; }
+
+Point2 WayAhead::at(float tiles) const {
+    if (!curve || curve->segments() == 0)
+        return from;
+    const LocoCurve& c = *curve;
+    size_t j = segment;
+    float a = arc + std::max(tiles, 0.0f);
+    while (j < c.segments() && a >= c.length[j]) {
+        a -= c.length[j];
+        ++j;
+    }
+    if (j >= c.segments())
+        return {c.control.back()[0], c.control.back()[1]};
+    const auto p = c.at(j, c.parameterAt(j, a));
+    return {p[0], p[1]};
+}
+
 } // namespace routing_internal
 
 namespace {
@@ -88,18 +141,16 @@ SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r) {
         return {};
     constexpr float kCentres = 0.283f, kAhead = 0.35f;
     const float mySpeed = std::max(walkTilesPerTick(vm, me), 1e-4f);
-    // The horizon ends with the way (the request's end: CollisionCheck
-    // limits it to the request's remaining ticks).
-    float left = 0;
-    {
-        Point2 at{me.position.x, me.position.y};
-        for (const auto& p : r.points) {
-            if (p.ticks > 0 || p.portal || p.level != me.position.level)
-                break;
-            left += std::hypot(p.x - at[0], p.y - at[1]);
-            at = {p.x, p.y};
-        }
-    }
+    // Where the walker will be: its frame on the cubic path its locomotion
+    // follows (GlobalLocationEstimate; before, the straight lines between
+    // the route points, which the frame cuts inside at the corners: a Sim
+    // turning past another standing 0.33 off the way stepped within 0.283 of
+    // it unpredicted, and the two blocked each other for good at
+    // N001_Lot11's stair top). The horizon ends with the way (the request's
+    // end: CollisionCheck limits it to the request's remaining ticks).
+    (void)r;
+    const WayAhead mine(me);
+    const float left = mine.left();
     SimAhead best;
     for (const ObjectId id : vm.people()) {
         const Object* po = vm.object(id);
@@ -111,6 +162,7 @@ SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r) {
             continue;
         const bool walking = o.route && !o.route->waiting;
         const float ratio = walking ? walkTilesPerTick(vm, o) / mySpeed : 0;
+        const WayAhead its(o);
         const float reach = kCentres + kAhead;
         // OS2_DEBUG_AHEAD=<Sim id>: the Sims that Sim's prediction looks at (test aid).
         static const char* dbg = std::getenv("OS2_DEBUG_AHEAD");
@@ -126,9 +178,9 @@ SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r) {
             const float t0 = kStepTiles * float(k), t1 = kStepTiles * float(k + 1);
             if ((best.id && t0 >= best.at) || (k > 0 && t0 >= left))
                 break;
-            const Point2 a0 = alongRoute(me, t0), a1 = alongRoute(me, t1);
-            const Point2 b0 = walking ? alongRoute(o, t0 * ratio) : Point2{o.position.x, o.position.y};
-            const Point2 b1 = walking ? alongRoute(o, t1 * ratio) : b0;
+            const Point2 a0 = mine.at(t0), a1 = mine.at(t1);
+            const Point2 b0 = walking ? its.at(t0 * ratio) : Point2{o.position.x, o.position.y};
+            const Point2 b1 = walking ? its.at(t1 * ratio) : b0;
             const float ux = a1[0] - a0[0], uy = a1[1] - a0[1], ul = std::hypot(ux, uy);
             const Point2 f0 = ul > 0 ? Point2{a0[0] + ux / ul * kAhead, a0[1] + uy / ul * kAhead} : a0;
             const Point2 f1 = ul > 0 ? Point2{a1[0] + ux / ul * kAhead, a1[1] + uy / ul * kAhead} : a1;

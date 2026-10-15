@@ -911,7 +911,8 @@ static void testPreRouteTree() {
 
 // A Sim standing in a corridor is asked to move (MoveOutOfWay): a
 // destination object (GUID 0x7C4) is made on it, with a routing slot 0 in
-// the alcove beside it, and its
+// the alcove a tile past it (an alcove right beside it was a way round it
+// for the walker, whose predicted way follows the frame's curve), and its
 // "Interaction - Move Out Of Way" (action 0x100B: Go To Routing Slot 0 of
 // the destination) goes on the blocker's queue with the walker's priority
 // less one; the blocker's Main runs it, it steps aside and the walker gets
@@ -923,12 +924,12 @@ static void testMoveOutOfWay() {
         vm.world = World(12, 4);
         for (int x = 0; x < 12; ++x) {
             vm.world->addWall(1, x, 1, x + 1, 1);
-            if (x != 6)
+            if (x != 7)
                 vm.world->addWall(1, x, 2, x + 1, 2);
         }
-        vm.world->addWall(1, 6, 2, 6, 3);
         vm.world->addWall(1, 7, 2, 7, 3);
-        vm.world->addWall(1, 6, 3, 7, 3);
+        vm.world->addWall(1, 8, 2, 8, 3);
+        vm.world->addWall(1, 7, 3, 8, 3);
         constexpr uint32_t kDestGroup = 0x7F000002;
         code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
         ObjectDefinition simDef = definition(0xAAAA0002, 0, true);
