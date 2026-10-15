@@ -440,4 +440,8 @@ set_tests_properties(stair_lanes PROPERTIES PASS_REGULAR_EXPRESSION "stair lanes
 # every door leaf of N001_Lot11 is drawn closed again (tests/front_door.sh).
 add_test(NAME front_door COMMAND sh ${CMAKE_SOURCE_DIR}/tests/front_door.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/front_door)
 set_tests_properties(front_door PROPERTIES PASS_REGULAR_EXPRESSION "front door: ok" TIMEOUT 300)
+# With the game's data: a lot saved at night (N001_Lot11 at 22:02, 9000 ticks) goes on at once
+# when the app loads it, the Sims acting (tests/saved_lot_night.sh, fix-noite).
+add_test(NAME saved_lot_night COMMAND sh ${CMAKE_SOURCE_DIR}/tests/saved_lot_night.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/saved_lot_night)
+set_tests_properties(saved_lot_night PROPERTIES PASS_REGULAR_EXPRESSION "saved lot night: ok" TIMEOUT 600)
 set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")

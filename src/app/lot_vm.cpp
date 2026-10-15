@@ -85,6 +85,14 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     // Lot Loaded" plays the move-in scene when a family has just moved in.
     if (std::string err; !vm::runLotLoaded(m, &err) && !err.empty())
         std::fprintf(stderr, "opensims2: CT - Lot Loaded: %s\n", err.c_str());
+    // A saved lot goes on from its saved tick count (vm/thread_state: the
+    // routes' checks are timed by it), and the scene clock starts there:
+    // the game's cTSSimulator::Simulate (Mac BV 0x49c244) runs the ticks
+    // the time since its last call owes (42 ms each, at most 125 a call),
+    // whatever the tick count is. The VM used to wait for the scene clock
+    // to reach the saved count: N001_Lot11 saved at 21:55 after 8789 ticks
+    // stood still for 6 minutes at speed 1 once loaded.
+    slip_ = -double(m.ticks) / m.clock.ticksPerSecond;
     char buf[256];
     if (fromInit)
         std::snprintf(buf, sizeof buf, "%zu of %zu saved objects in the VM, from their Inits, %zu Mains", load.created,
@@ -572,7 +580,9 @@ void LotSimulation::updateScene(double seconds) {
     last_ = seconds;
     for (auto& b : bound_) {
         const float z = b.motion.z(t, [this](int level, float fx, float fy) { return floorHeight(level, fx, fy); });
-        seats.place(b.id, *b.actor, b.motion, seconds, t, dt, z, b.zOffset);
+        // (The moment in the caller's clock, as the actors and the objects'
+        // slots play: `seconds` is the VM's, ahead of it on a saved lot.)
+        seats.place(b.id, *b.actor, b.motion, seconds + slip_, t, dt, z, b.zOffset);
         if (const vm::Object* o = vm_->object(b.id)) {
             const auto target = lookTarget(*o);
             if (std::getenv("OS2_DEBUG_LOOK") && target.has_value() != b.look->target().has_value())
