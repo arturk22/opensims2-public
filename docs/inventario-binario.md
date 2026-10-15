@@ -371,3 +371,33 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 Total: 14 agentes Opus e 3 Sonnet, em 12 rodadas. As rodadas 1 e 2 tocam
 os mesmos arquivos (`anim_player.cpp`, `seat_module.*`): rodar em sequência,
 não em paralelo.
+
+## 6. Plano de rodadas 13 em diante (o que ainda segura o índice)
+
+Feito em 2026-10-15, depois das rodadas 1–11, para as linhas de §3 que
+seguem "inferido" ou "faltando". Rodam **até 3 em paralelo**, desde que
+sejam de **áreas diferentes** (coluna "Área"): duas rodadas da mesma área
+nunca rodam juntas. Todas Opus com Ghidra (só leitura). Ordem por impacto
+no jogo base.
+
+| # | Rodada | Linhas de §3 | Área |
+|---|---|---|---|
+| 13 | **Telhados do jogo**: triangulação, células do atlas e telhado com telhado (portar o `lot_roof.cpp` para as funções do `cWorldRoof` mapeadas no `TODO.md`) + pré-teste 0x7F do `cTSUserToolRoof` (beiral sobre janelas) | 3.12 telhados, 3.5 telhados | telhado |
+| 14 | **Locomoção**: `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle`, encadeamento das fases e o primeiro pé da parada | 3.3 locomoção | animação |
+| 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 | 3.12 efeitos | efeitos |
+| 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) | 3.12 luz | luz |
+| 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) | 3.8 curvas, desejos | motivos |
+| 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
+| 19 | **Paredes e pisos**: `cFloorGeometryNode`, `cFloorManager`, `cWallGeometryNode`, `cSimplifiedWall` (UV dos pisos e do topo) | 3.12 paredes e pisos, 3.6 geometria | lote |
+| 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada | 3.5 colocação, salas, desfazer, escadas | construção |
+| 21 | **Pele e CAS, resto**: `cTSSkinTextureCompositor`, câmera do CAS, compensação do arquétipo, `BlendFaces`, biografia da família | 3.11 pele, câmera, rosto, telas | CAS |
+| 22 | **Shaders e espelhos**: normal map, passe de recorte, CelShaded, `MirrorReflectionMaterial` com stencil | 3.12 materiais, espelhos | shaders |
+| 23 | **Animação, resto**: arquivo ANIM (strings, tangentes, Euler), canal de eventos, Look At na cabeça, cinemáticas (spots, ObjectHiding) | 3.3 ANIM, eventos, olhar, cinemáticas | animação |
+| 24 | **VM, resto**: `cTSGlobals`, `cTSDataTables`, `TryPlaySound`, `cTSInteraction`, registros de objetos da pessoa (`+0x60c`, faltando) | 3.1 fila, dados, som; 3.7 registros | VM |
+| 25 | **Cercas**: `cFenceGeometryNode`, `cFenceManager`, o +0,75 por tipo de piso | 3.12 cercas | lote |
+| 26 | **Salvar, resto**: salvar do bairro (`cTSSaveNeighborhoodController`), `cTSPersistSystem` | 3.9 controladores, persist | salvar |
+| 27 | **UI de jogo**: `ApplySavedUIState` (caso Construir), diálogos (27 marcadores), famílias e despejo se a 12 não fizer | 3.13 fluxo, diálogos; 3.10 famílias | UI |
+
+Limites: algumas linhas dependem de valores que só existem com o jogo
+rodando (UV da parede da piscina, flags do pincel de terreno); nesses
+casos a rodada lê o que der e deixa a linha "inferido" com o motivo.
