@@ -1533,6 +1533,12 @@ int GpuRenderer::instanceModel(int instance) const {
     return -1;
 }
 
+void GpuRenderer::retargetInstances(int from, int to) {
+    for (auto& instance : gpu_->instances)
+        if (instance.model == from)
+            instance.model = to;
+}
+
 void GpuRenderer::setLightMap(const RgbaImage& image) {
     setLightMap(0, image);
     if (gpu_->lightMapNext && gpu_->lightMapNext != gpu_->white)

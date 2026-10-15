@@ -47,6 +47,8 @@ public:
     void setInstanceTransform(int instance, const simd_float4x4& transform);
     void setInstanceModel(int instance, int model);
     int instanceModel(int instance) const;
+    // Every instance of model `from` draws model `to` (a Sim's new outfit).
+    void retargetInstances(int from, int to);
     // One light map in slot 0 (no crossfade).
     void setLightMap(const RgbaImage& image);
     // The lot's two light-map slots, drawn as mix(slot 0, slot 1, mix) (Renderer::setLightMap).

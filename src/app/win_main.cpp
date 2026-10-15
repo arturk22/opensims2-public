@@ -40,7 +40,12 @@
 #include "vm/world.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/character_write.hpp"
+#include "formats/cas_catalog.hpp"
+#include "formats/cas_face.hpp"
 #include "vm/baby_character.hpp"
+#include "vm/dialog.hpp"
+#include "app/door_portals.hpp"
+#include "port/files.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/particle_system.hpp"
 #include "formats/ui_script.hpp"
@@ -1125,6 +1130,185 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         for (auto& sim : sims)
             objectView.addSim(sim.id, sim.actor.get());
         std::printf("opensims2: object view %zu placed, %d follow the VM\n", placed.size(), following);
+
+        auto drawnSim = [&](int16_t id) -> DrawnSim* {
+            for (auto& s : sims)
+                if (s.id == id)
+                    return &s;
+            return nullptr;
+        };
+        // A Sim's body again from its character file (a new outfit, a new age).
+        auto rebuildSim = [&](DrawnSim& s, uint32_t category) {
+            os2::SimActor& actor = *s.actor;
+            actor.skin = os2::loadCharacterSim(index, parts, s.file, category);
+            actor.player.setSkeleton(&actor.skin.skeleton);
+            const int model = renderer.addObject(actor.skin.model, index, true);
+            renderer.retargetInstances(actor.model, model);
+            actor.model = s.model = model;
+        };
+        // A Sim that changes clothes gets the outfit of its character file.
+        simulation.onOutfitChange = [&](int16_t id, os2::SimActor&, uint32_t category) {
+            DrawnSim* s = drawnSim(id);
+            if (!s)
+                return;
+            try {
+                rebuildSim(*s, category);
+                std::printf("opensims2: Sim %d now wears outfit category 0x%03X\n", id, category);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: Sim %d: outfit 0x%03X: %s\n", id, category, e.what());
+            }
+        };
+        // The dialogs' $AspirationString and the newborns' names read Text/*.package (vm/dialog.hpp).
+        static std::unique_ptr<os2::UiResources> vmTexts;
+        os2::vm::textTables() = [&index, res](uint32_t group, uint32_t instance) -> const os2::StringTable* {
+            try {
+                if (!vmTexts)
+                    vmTexts = std::make_unique<os2::UiResources>(index, res);
+                return vmTexts->table(group, instance);
+            } catch (const std::exception&) {
+                return nullptr;
+            }
+        };
+        // A Sim that grows up (the Age primitive) gets its character file grown
+        // into the new age (cas::writeAgedCharacter), written beside the
+        // session's other files, and is rebuilt from it.
+        simulation.onAgeChange = [&](int16_t id, os2::SimActor&, uint32_t ageBit) {
+            DrawnSim* s = drawnSim(id);
+            if (!s)
+                return;
+            try {
+                static std::unique_ptr<os2::cas::CasCatalog> catalog;
+                static std::unique_ptr<os2::cas::FaceBaker> baker;
+                if (!catalog) {
+                    catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
+                    baker = std::make_unique<os2::cas::FaceBaker>(index, *catalog);
+                }
+                // The save copies it to the neighborhood; an NPC made in play
+                // stays in the session's NPCs folder (vm/baby_character.hpp).
+                const std::filesystem::path session = os2::sessionCharactersDir();
+                const std::filesystem::path dir = s->file.parent_path() == session / "NPCs" ? session / "NPCs" : session;
+                const std::filesystem::path out = dir / (s->file.stem().string() + ".package");
+                const std::filesystem::path tmp = dir / (s->file.stem().string() + ".new.package");
+                os2::cas::writeAgedCharacter(index, *catalog, *baker, s->file, ageBit, tmp, uint32_t(id) * 7919u + ageBit);
+                os2::replaceFile(tmp, out);
+                s->file = out;
+                rebuildSim(*s, 1);
+                std::printf("opensims2: Sim %d grew into age 0x%02X (%s)\n", id, ageBit, out.string().c_str());
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: Sim %d: age 0x%02X: %s\n", id, ageBit, e.what());
+            }
+        };
+        // Objects the VM animates (doors, fridges, phones, ...) swap their static
+        // model for a skinned one of the same CRES, posed by the animation (null: could not).
+        std::map<int16_t, std::unique_ptr<os2::SimActor>> objectActors;
+        auto objectActor = [&](int16_t id) -> os2::SimActor* {
+            auto it = objectActors.find(id);
+            if (it == objectActors.end()) {
+                const auto p = placed.find(id);
+                // Out of the world (saved at (0, 0) in no slot): an actor would be drawn at the lot's corner.
+                if (p == placed.end() || !objectView.hasModel(id))
+                    return nullptr;
+                try {
+                    const os2::ObjectModel model = os2::loadObjectModel(index, p->second.cres, objectView.materialsOf(id));
+                    os2::SkinnedModel skin(model.skeleton);
+                    skin.add(model);
+                    auto actor = std::make_unique<os2::SimActor>(std::move(skin));
+                    // From the pose the lot saved (a chair pushed in), and kept where its animations leave it.
+                    if (p->second.pose.size() == actor->skin.skeleton.bones.size())
+                        actor->player.setBasePose(p->second.pose);
+                    actor->player.setHoldPose(true);
+                    if (p->second.saved) {
+                        const os2::Xform& at = *p->second.saved;
+                        actor->position = at.t;
+                        actor->heading = 2 * std::atan2(at.q.z, at.q.w);
+                    }
+                    actor->model = renderer.addObject(actor->skin.model, index, true);
+                    renderer.addInstance(actor->model, matrix_identity_float4x4);
+                    objectView.setActor(id, actor.get()); // hides the static instance
+                    it = objectActors.emplace(id, std::move(actor)).first;
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "opensims2: object %d: %s\n", id, e.what());
+                    it = objectActors.emplace(id, nullptr).first;
+                }
+            }
+            return it->second.get();
+        };
+        // Once per name: the base game's trees ask for some the data lacks.
+        std::set<std::string> missingAnimations;
+        auto reportMissing = [&](int16_t id, const std::string& name, const std::exception& e) {
+            if (missingAnimations.insert(name).second)
+                std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
+        };
+        simulation.onObjectAnimation = [&](int16_t id, const std::string& name, double at) {
+            os2::SimActor* actor = objectActor(id);
+            if (!actor)
+                return;
+            try {
+                // Mirrored as the VM says (a chair pulled out to the side the Sim gets in from).
+                const os2::vm::Object* vo = simulation.machine().object(id);
+                const bool mirror = vo && !vo->animation.overlays.empty() && vo->animation.overlays.back().name == name &&
+                                    vo->animation.overlays.back().flipped;
+                actor->cue(at, actor->animation(index, name), {.fade = 0.1f, .loop = false, .mirror = mirror});
+            } catch (const std::exception& e) {
+                reportMissing(id, name, e);
+            }
+        };
+        // What the VM plays on an object, overlay by overlay (VM::objectPose):
+        // each overlay its own layer, mirrored as the VM plays it, and taken
+        // off when the VM takes it off, the object keeping that pose.
+        simulation.onObjectOverlay = [&](int16_t id, const std::string& name, bool flipped, uint32_t overlay, double at) {
+            os2::SimActor* actor = objectActor(id);
+            if (!actor)
+                return;
+            try {
+                const int layer = 1 + int(overlay & 0x3FFFFFFF);
+                actor->cue(at, actor->animation(index, name),
+                           {.fade = 0.1f, .loop = false, .priority = layer, .mirror = flipped, .level = layer});
+            } catch (const std::exception& e) {
+                reportMissing(id, name, e);
+            }
+        };
+        simulation.onObjectOverlayEnd = [&](int16_t id, uint32_t overlay, double at) {
+            const auto it = objectActors.find(id);
+            if (it != objectActors.end() && it->second)
+                it->second->cueStop(at, 1 + int(overlay & 0x3FFFFFFF), 0);
+        };
+        simulation.actorOf = [&](int16_t id) -> const os2::SimActor* {
+            const auto it = objectActors.find(id);
+            return it != objectActors.end() ? it->second.get() : nullptr;
+        };
+        // An animated object whose material the VM changes (the plumbob's
+        // colour) gets its skinned model again with the new materials.
+        objectView.onActorMaterials = [&](int16_t id) {
+            const auto it = objectActors.find(id);
+            if (it == objectActors.end() || !it->second)
+                return;
+            os2::SimActor& actor = *it->second;
+            try {
+                const os2::ObjectModel model = os2::loadObjectModel(index, objectView.cresOf(id), objectView.materialsOf(id));
+                os2::SkinnedModel skin(model.skeleton);
+                skin.add(model);
+                actor.skin = std::move(skin);
+                actor.player.setSkeleton(&actor.skin.skeleton);
+                const int m = renderer.addObject(actor.skin.model, index, true);
+                renderer.retargetInstances(actor.model, m);
+                actor.model = m;
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: object %d: %s\n", id, e.what());
+            }
+        };
+        // Doors open and close as the Sims walk through them (app/door_portals.hpp).
+        os2::DoorPortals doors(
+            [&](int16_t id, const std::string& name, double at) { simulation.onObjectAnimation(id, name, at); },
+            [&](int16_t id) -> std::optional<os2::Xform> {
+                if (objectView.hasModel(id))
+                    return objectView.placement(id);
+                const auto p = placed.find(id); // a door the VM does not have: where it was saved
+                return p != placed.end() ? p->second.saved : std::nullopt;
+            });
+        for (const auto& [id, p] : placed)
+            if (p.definition.rfind("Door", 0) == 0 && p.saved)
+                doors.addDoor(id);
         try {
             lotLighting = std::make_unique<os2::LotLighting>(renderer, index, simulation, objectView, lighting,
                                                              os2::loadLightOverrides(res / "Lights" / "LotLights.txt"));
@@ -1828,6 +2012,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         std::map<uint32_t, std::optional<std::filesystem::path>> embeddedCharacters;
         // Actors of Sims gone from the lot: kept (other views may still point at them), out of sight.
         std::vector<std::unique_ptr<os2::SimActor>> goneActors;
+        std::set<const os2::SimActor*> carriedSims; // drawn at a carrier's bone (last frame)
         double sceneNow = 0;
         auto adoptVmSims = [&] {
             os2::vm::VM& m = simulation.machine();
@@ -1838,6 +2023,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                         simd_float4x4 away = matrix_identity_float4x4;
                         away.columns[3] = simd_make_float4(0, 0, -1000, 1);
                         renderer.setInstanceTransform(it->instance, away);
+                        carriedSims.erase(it->actor.get());
                         goneActors.push_back(std::move(it->actor));
                         it = sims.erase(it);
                     } else {
@@ -1900,6 +2086,78 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 std::fflush(stdout);
             }
         };
+        // The plumbob over the selected Sim: the game's PlumbBob (a VM object
+        // in the Sim's head slots holder) when it is over that Sim; otherwise
+        // the app's own, spinning once every 2.316 s ("o-plumbob-spin") over
+        // the top of the posed mesh in the game's one's colour, and the
+        // game's ones hidden, so that there is one plumbob.
+        constexpr float kPlumbobGap = 0.2f, kPlumbobSpinSeconds = 2.316f;
+        int plumbob = -1;
+        float plumbobBottom = 0; // the model's lowest point (modelled about 1.24 over its origin)
+        try {
+            const os2::ObjectModel model = os2::loadObjectModel(index, "plumbob");
+            plumbob = renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
+            plumbobBottom = os2::modelBounds(model).first.z;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: plumbob: %s\n", e.what());
+        }
+        bool vmPlumbob = false;
+        std::map<std::string, int> plumbobModels; // per core material
+        std::string plumbobMaterial;
+        auto choosePlumbob = [&] {
+            if (!pie)
+                return;
+            vmPlumbob = false;
+            std::string material;
+            for (const auto& [id, o] : simulation.machine().objects()) {
+                if (o.person || !o.definition || o.definition->fileName != "PlumbBob")
+                    continue;
+                const bool over = objectView.hasModel(id) && objectView.outermostContainer(id) == pie->sim();
+                objectView.setHidden(id, !over || vmPlumbob);
+                if (over && !vmPlumbob)
+                    vmPlumbob = true;
+                if (material.empty() || over) {
+                    if (auto it = o.materials.find("core"); it != o.materials.end())
+                        material = it->second;
+                    else if (!o.materials.empty())
+                        material = o.materials.begin()->second;
+                }
+            }
+            if (vmPlumbob || material == plumbobMaterial || plumbob < 0)
+                return;
+            auto it = plumbobModels.find(material);
+            if (it == plumbobModels.end()) {
+                int m = -1;
+                try {
+                    m = renderer.addObject(os2::loadObjectModel(index, "plumbob", {{"core", material}}), index);
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "opensims2: plumbob %s: %s\n", material.c_str(), e.what());
+                }
+                it = plumbobModels.emplace(material, m).first;
+            }
+            if (it->second >= 0)
+                renderer.setInstanceModel(plumbob, it->second);
+            plumbobMaterial = material;
+        };
+        auto placePlumbob = [&](double seconds) {
+            if (plumbob < 0)
+                return;
+            simd_float4x4 at = matrix_identity_float4x4;
+            at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
+            for (const auto& s : sims) {
+                // Not over a Sim out of the world (at work, at school).
+                if (!pie || s.id != pie->sim() || vmPlumbob || !simInTheWorld(s.id))
+                    continue;
+                float top = s.actor->position[2];
+                for (const auto& p : s.actor->posed.parts)
+                    for (const auto& v : p.mesh.positions)
+                        top = std::max(top, v[2]);
+                const float angle = float(std::fmod(seconds / kPlumbobSpinSeconds, 1.0) * 2 * 3.14159265358979);
+                at = simd_matrix4x4(simd_quaternion(angle, simd_make_float3(0, 0, 1)));
+                at.columns[3] = simd_make_float4(s.actor->position[0], s.actor->position[1], top + kPlumbobGap - plumbobBottom, 1);
+            }
+            renderer.setInstanceTransform(plumbob, at);
+        };
         // Runs the lot's VM `ticks` ticks headless (a --wait step).
         auto runTicks = [&](long ticks) {
             const uint64_t target = simulation.ticks() + uint64_t(std::max(0L, ticks));
@@ -1921,15 +2179,69 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 liveUi->tick(now);
             const double scene = simulation.update(now);
             sceneNow = scene;
+            // The animated objects first: the Sims' hands reach for their bones.
+            for (auto& [id, a] : objectActors)
+                if (a)
+                    a->update(scene);
             adoptVmSims();
-            for (auto& sim : sims) {
-                sim.actor->update(scene);
-                renderer.updateObject(sim.model, sim.actor->posed);
+            {
+                std::vector<os2::Vec3> feet;
+                for (const auto& s : sims)
+                    feet.push_back(s.actor->position);
+                doors.update(simulation.machine(), feet, scene);
             }
+            // Body shape from person data 81 "Body Flags" and 58 age.
+            for (auto& s : sims)
+                if (const auto* o = simulation.machine().object(s.id); o && o->person)
+                    s.actor->bodyMorphs = os2::bodyShapeMorphs(o->person->data[81], o->person->data[58]);
+            // A carried baby or toddler (in a Sim's slot, "Pickup - Do Carry
+            // Sim") is drawn at the carrier's slot bone, after the carrier is posed.
+            std::map<os2::SimActor*, std::pair<const os2::SimActor*, std::string>> carried;
+            for (const auto& s : sims) {
+                const auto* o = simulation.machine().object(s.id);
+                const int16_t c = o && o->person ? o->data[os2::vm::objdata::ContainerId] : 0;
+                const auto* co = c ? simulation.machine().object(c) : nullptr;
+                const DrawnSim* carrier = co && co->person ? drawnSim(c) : nullptr;
+                if (carrier) {
+                    std::string bone = objectView.containerSlotBone(c, o->data[os2::vm::objdata::SlotNumber]);
+                    if (bone.empty())
+                        bone = "BellyTarget_surface"; // the carry animations' grip (inferred)
+                    carried[s.actor.get()] = {carrier->actor.get(), bone};
+                    carriedSims.insert(s.actor.get());
+                } else if (carriedSims.erase(s.actor.get())) {
+                    s.actor->transform.reset();
+                }
+            }
+            for (auto& sim : sims)
+                if (!carried.count(sim.actor.get()))
+                    sim.actor->update(scene);
+            for (auto& [a, by] : carried) {
+                const int b = by.first->skin.skeleton.find(by.second);
+                a->transform = b >= 0 && size_t(b) < by.first->bones.size() ? by.first->bones[size_t(b)] : by.first->placement();
+                a->update(scene);
+            }
+            // The carriers again: their hands reach the carried Sim's bones by IK.
+            {
+                std::set<const os2::SimActor*> again;
+                for (const auto& [a, by] : carried)
+                    again.insert(by.first);
+                for (auto& sim : sims)
+                    if (again.count(sim.actor.get()))
+                        sim.actor->update(scene);
+            }
+            choosePlumbob();
             objectView.update();
             updatePicks();
             if (lotLighting)
                 lotLighting->update(scene);
+            for (auto& [id, a] : objectActors)
+                if (a) {
+                    a->update(scene);
+                    renderer.updateObject(a->model, a->posed);
+                }
+            for (auto& sim : sims)
+                renderer.updateObject(sim.actor->model, sim.actor->posed);
+            placePlumbob(scene);
             os2::LotAudio::Listener listener;
             listener.x = camera.pivot.x;
             listener.y = camera.pivot.y;
@@ -2044,7 +2356,10 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (!renderer.capture(shot, camera.viewProj(1280.f / 720.f)))
                 exit.code = 1;
             else
-                std::printf("opensims2: wrote %s (%llu ticks)\n", shot.string().c_str(), (unsigned long long)simulation.ticks());
+                std::printf("opensims2: wrote %s (%llu ticks, %zu Sims, %zu objects animated, %zu doors open)\n",
+                            shot.string().c_str(), (unsigned long long)simulation.ticks(), sims.size(),
+                            size_t(std::count_if(objectActors.begin(), objectActors.end(), [](const auto& a) { return a.second != nullptr; })),
+                            doors.openCount());
             return exit;
         }
         bool pauseClick = false;
