@@ -69,8 +69,6 @@ struct LocoStep {
 LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId haltFor = 0, float haltRoom = 0);
 // What the walker would stand in at (x, y, level), or 0.
 ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level);
-// A halting walker whose next place is taken stays where it stands.
-void holdStill(const Object& me, LocoStep& st);
 // Puts the walker where this tick's locomotion step puts it.
 void applyLocoStep(VM& vm, Object& me, Object::Route& r, const LocoStep& st);
 

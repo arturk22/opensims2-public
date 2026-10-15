@@ -1162,8 +1162,10 @@ static void testLocoPhases() {
         const std::string want = facing == 4 ? "a-turnAndGo-alt-0" : "a-turnAndGo-alt-90";
         check(t.status == Thread::Status::Finished && t.result, "loco: the walk ends there");
         check(firstClip == want && firstMirror == (facing == 6), "loco: the start turns by the first leg's steps, mirrored counter-clockwise");
-        // (Started 100 ms back, FollowOneStep's head start of the first phase.)
-        check(startTicks >= 19 && startTicks <= 21, "loco: the start lasts its clip (0.75 s) less the 100 ms head start");
+        // (Started now, standing at its start the first tick:
+        // ComputeLocoStartTicks and FollowOneStep; the 5/100 ms are the next
+        // request's head start, docs/anim-mac.md §8.2-8.3.)
+        check(startTicks >= 23 && startTicks <= 24, "loco: the start lasts its clip (0.75 s) after a tick at its start");
         check(std::fabs(lagMid - 0.05f) < 0.02f, "loco: in the start the Sim stands at the clip's root, behind its frame");
         check(std::fabs(startStep - 0.85f / 23) < 0.01f || facing != 4, "loco: the start's frame covers its distance in its length");
         check(std::fabs(walkStep - 2.0f / 30) < 0.002f, "loco: the walk cycle at the gait's speed");
@@ -1276,6 +1278,22 @@ static void testFitStride() {
     // Walking on (no start): what is left of the half cycle counts first.
     f = fitStride(3, 1.393f, 0.683f, 0, 0, &stop, false, 0.3f, 0);
     check(std::fabs(f.cycles - (0.3f + 0.5f * 4)) < 1e-4f, "fit stride: f0 + half cycles");
+    // A short way (0.9 <= 0.9 x (0.853 + 0.337)): no cycles, one short
+    // weight (1.19 - 0.9) / (1.19 - 0.507) for the start and the stop.
+    f = fitStride(0.9f, 1.393f, 0.683f, 0.853f, 0.347f, &stop, false, 0, 0);
+    const float ws = 0.29f / 0.683f;
+    check(f.shortWay && f.cycles == 0 && std::fabs(f.weight - ws) < 1e-3f && std::fabs(f.stopWeight - ws) < 1e-3f &&
+              std::fabs(f.startDistance - (ws * 0.347f + (1 - ws) * 0.853f)) < 1e-3f &&
+              std::fabs(f.startDistance + f.stopDistance - 0.9f) < 1e-4f,
+          "fit stride: a short way blends start and stop by its length, no cycles");
+    // Under the short clips' 0.507: squeezed, the start 0.4 x 0.347 / 0.507.
+    f = fitStride(0.4f, 1.393f, 0.683f, 0.853f, 0.347f, &stop, false, 0, 0);
+    check(f.shortWay && f.weight == 1 && std::fabs(f.startDistance - 0.4f * 0.347f / 0.507f) < 1e-4f &&
+              std::fabs(f.stopDistance - (0.4f - f.startDistance)) < 1e-5f,
+          "fit stride: under the short clips the two are squeezed");
+    // The stop's first foot by the request's cycle portion (getter 0x178).
+    check(!stopFootOther(0.5f) && !stopFootOther(0.2f) && stopFootOther(0.7f) && stopFootOther(0),
+          "fit stride: the normal stop for a portion in (0, 0.5], else the R one");
 }
 
 static void testLocoStride() {
@@ -1437,12 +1455,16 @@ static void testLocoHalt() {
             std::fprintf(stderr, "halt (%s): %d halts, first %d ticks (%d in all), closest %.3f, result %d route result %d at %.2f\n",
                          object ? "object" : "Sim", halts, firstHalt, haltTicks, closest, t.result, walker.person->data[62],
                          walker.position.x);
-        check(halts >= 1 && firstHalt >= 14 && firstHalt <= 16, "loco halt: a blocked walker plays a stop clip first (0.5 s)");
-        if (object)
+        if (object) {
+            // The per-step test: LocoPlaceFromSceneGraph fails -> EndFollow(1),
+            // blocked at once with no clip.
+            check(halts == 0, "loco halt: the next step taken blocks at once, no stop clip");
             check(t.status == Thread::Status::Finished && !t.result && walker.person->data[62] == 15,
                   "loco halt: an object put in the way fails the route (blocked by object)");
-        else
+        } else {
+            check(halts >= 1 && firstHalt >= 14 && firstHalt <= 16, "loco halt: a blocked walker plays a stop clip first (0.5 s)");
             check(closest >= 0.4f, "loco halt: the stop keeps it out of the other Sim's way");
+        }
     }
 }
 

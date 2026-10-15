@@ -383,8 +383,12 @@ static void testBedTogether(bool sameTick) {
         const ObjectId c = vm.object(sim)->data[objdata::ContainerId];
         return c == bed || c == 763; // the two heads, E and F
     };
-    for (int i = 0; i < 1300 && !(inBed(jenny) && inBed(tech)); ++i)
+    int bedTicks = 0;
+    for (; bedTicks < 1300 && !(inBed(jenny) && inBed(tech)); ++bedTicks)
         vm.tick();
+    if (std::getenv("DEBUG_BED"))
+        std::fprintf(stderr, "bed together%s: %d ticks, jenny in %d tech in %d\n", sameTick ? " (same tick)" : "", bedTicks,
+                     inBed(jenny), inBed(tech));
     check(inBed(jenny) && inBed(tech), sameTick ? "bed together: both get in (sent in the same tick)" : "bed together: both get in");
     if (sameTick)
         return;

@@ -670,17 +670,34 @@ struct Object {
             // The planned stop's short weight (fitStride's v; the binary's
             // fit can give the stop its own weight).
             float stopWeight = 0;
-            // How early the next phase starts, overlapping the one ending
-            // (FollowOneStep: 5 ms when the way's beginning, measured up to
-            // 0.75, is at most 0.25 long, else 100 ms).
+            // How early the next request starts, overlapping the one ending
+            // (FollowOneStep: at the old one's EndTicks less 5 ms when the
+            // way's beginning, measured up to 0.75, is at most 0.25 long,
+            // else 100 ms; docs/anim-mac.md §8.3).
             float overlap = 0.1f;
             bool sidestep = false;   // stepping without turning (CreateStepCycle)
             int tick = 0, ticks = 0; // in a start or a stop
-            // VM ticks the phase began before its first tick: the first
-            // phase of a walk is started 5 or 100 ms back (FollowOneStep,
-            // BV 0x6b80e8: the new request's start ticks are now less 5,
-            // or 100 when the way's beginning is over 0.25).
+            // VM ticks the phase began before its first tick; -1 for a
+            // route's first phase: the request starts now and FollowOneStep
+            // updates it to now in that tick (0 ms played), so it stands
+            // at the clip's start that tick (docs/anim-mac.md §8.2-8.3).
             float lead = 0;
+            // The planned stop's foot (fitStride: the "R" clip), and a short
+            // way (start and stop, no cycles between: the stop follows the
+            // start at once).
+            bool stopOtherFoot = false, shortWay = false;
+            // Seconds the drawn clips cross over as this phase begins: the
+            // request's fade in for its first clip (233.3 ms), then the
+            // request's BlendDistance (+0xec) at the walk's speed between its
+            // clips (cLocoCycle::AnimUpdate, cosine; docs/anim-mac.md §8.4).
+            float fade = 0.2333f;
+            bool crossover = false; // the fade is one of the request's cosine crossovers
+            // Halting for a blocker (StopLocomotion with the stop clip): the
+            // walk's way still to go to the end of its half cycle before
+            // the stop clip, and that clip's foot.
+            float haltWalk = 0;
+            bool haltOtherFoot = false;
+            float haltRoom = 0; // how far its frame may still go (inferred)
             float distance = 0;      // its way along the route
             float speed = 0;         // the walk's, tiles per tick
             float fx = 0, fy = 0;    // the frame

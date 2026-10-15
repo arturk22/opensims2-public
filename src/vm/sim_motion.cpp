@@ -50,7 +50,8 @@ void SimMotion::sample(VM& vm, const Object& o) {
             s.framed = true;
             s.frameHeading = L.heading;
             s.walkLayers = L.layers;
-            s.walkFade = L.overlap;
+            s.walkFade = L.fade;
+            s.walkEase = L.crossover;
             s.x = L.fx, s.y = L.fy;
             if (L.kind == Loco::Walk)
                 if (auto secs = vm.animations.seconds(L.animation))

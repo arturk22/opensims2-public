@@ -339,21 +339,33 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     // This tick's step over the floor and the Sim it would walk into (the
     // locomotor's per-step placement test), when the prediction sees none.
     const bool onFloor = !r.points.empty() && floorPoint(r.points.front()) && me.position.inWorld();
+    // The halt for a blocker is over: the walk stands, blocked by it.
+    auto endHalt = [&] {
+        r.loco.kind = Object::Route::Loco::None;
+        r.loco.moving = false;
+        r.loco.halting = false;
+        r.loco.haltDone = true;
+    };
     if (r.loco.halting && onFloor) {
-        // Stopping for a blocker (StopLocomotion): the stop clip plays where
-        // the walker is, its frame going on only while the way is free;
-        // once it has played the walk is blocked (FollowOneStep state 7).
-        LocoStep st = locoStep(vm, me, r);
-        if (stepBlocker(vm, me, r, st.x, st.y, st.level))
-            holdStill(me, st);
+        // Stopping for a blocker (StopLocomotion): the walk to the end of
+        // its half cycle and the stop clip, along the way; once it has
+        // played the walk is blocked (FollowOneStep state 7). The next
+        // place taken blocks it at once (LocoPlaceFromSceneGraph fails ->
+        // EndFollow(1): the locomotion is killed, no clip).
         r.waiting = false;
-        applyLocoStep(vm, me, r, st);
-        if (r.loco.tick >= r.loco.ticks) {
-            r.loco.kind = Object::Route::Loco::None;
-            r.loco.moving = false;
-            r.loco.halting = false;
-            r.loco.haltDone = true;
+        if (r.loco.kind == Object::Route::Loco::None) {
+            endHalt();
+            return Step::Walking;
         }
+        LocoStep st = locoStep(vm, me, r);
+        if (stepBlocker(vm, me, r, st.x, st.y, st.level)) {
+            endHalt();
+            return Step::Walking;
+        }
+        applyLocoStep(vm, me, r, st);
+        if (r.loco.kind == Object::Route::Loco::None ||
+            (r.loco.kind == Object::Route::Loco::Stop && r.loco.tick >= r.loco.ticks))
+            endHalt();
         return Step::Walking;
     }
     std::optional<LocoStep> pending;
@@ -365,25 +377,29 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         b = r.loco.halted;
     if (!b)
         b = simAhead(vm, me, r);
-    float haltRoom = kBlockedWithin; // predicted: it stops within 2 steps
+    // Predicted (CollisionCheck): the walk halts with a stop clip; the next
+    // step taken (the per-step test): blocked at once.
+    const bool predicted = b != 0;
     if (!b && onFloor) {
         pending = locoStep(vm, me, r);
         b = stepBlocker(vm, me, r, pending->x, pending->y, pending->level);
-        haltRoom = 0; // the next step would be in it
         if (b && std::getenv("OS2_DEBUG_BLOCK"))
             std::fprintf(stderr, "t%llu %d step into %d\n", (unsigned long long)vm.ticks, me.id, b);
     }
-    if (b && onFloor && !waitingForPerson && r.loco.moving && me.person &&
+    if (b && predicted && onFloor && !waitingForPerson && r.loco.moving && me.person &&
         (r.loco.kind == Object::Route::Loco::Walk || r.loco.kind == Object::Route::Loco::Start)) {
         // The walk is interrupted (InterruptActiveLocoState(2), BV 0x6b4fa0):
         // it slows to a stop with a stop clip first (StopLocomotion).
-        LocoStep st = locoStep(vm, me, r, b, haltRoom);
+        LocoStep st = locoStep(vm, me, r, b, kBlockedWithin);
         if (st.loco.halting) {
             if (std::getenv("OS2_DEBUG_BLOCK"))
                 std::fprintf(stderr, "t%llu %d halts for %d\n", (unsigned long long)vm.ticks, me.id, b);
-            if (stepBlocker(vm, me, r, st.x, st.y, st.level))
-                holdStill(me, st);
             r.waiting = false;
+            if (stepBlocker(vm, me, r, st.x, st.y, st.level)) {
+                r.loco.halted = b;
+                endHalt();
+                return Step::Walking;
+            }
             applyLocoStep(vm, me, r, st);
             return Step::Walking;
         }

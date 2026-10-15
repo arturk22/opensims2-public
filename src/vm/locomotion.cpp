@@ -338,12 +338,25 @@ StrideFit fitStride(float d, float L, float Ls, float startLong, float startShor
     const bool hasStop = stop && *stop;
     bool foot = firstOtherFoot;
     std::pair<float, float> sp = hasStop ? (*stop)(foot) : std::pair<float, float>{0, 0};
-    const float r = d - startLong - sp.first;
-    if (r <= 0) { // no room for the cycles: all short
-        out.weight = out.stopWeight = 1;
+    // A short way (a start, d <= 0.9 of the long start and stop): no
+    // cycles; one short weight for both, the short clips squeezed under
+    // their own length.
+    if (startLong > 0 && d <= 0.9f * (startLong + sp.first)) {
+        const float Sl = startLong + sp.first, Ss = startShort + sp.second;
+        const float w = Ss < Sl ? std::clamp((Sl - d) / (Sl - Ss), 0.0f, 1.0f) : 1.0f;
+        out.weight = out.stopWeight = w;
         out.stopOtherFoot = foot;
+        out.shortWay = true;
+        if (d < Ss) {
+            out.startDistance = Ss > 0 ? d * startShort / Ss : d;
+            out.stopDistance = d - out.startDistance;
+        } else {
+            out.startDistance = w * startShort + (1 - w) * startLong;
+            out.stopDistance = std::max(0.0f, d - out.startDistance);
+        }
         return out;
     }
+    const float r = d - startLong - sp.first;
     const float fn = (r - L * (f0 + f1)) / (0.5f * L);
     int n = fn <= 0 ? 0 : int(fn);
     if (fn > 0 && fn - float(n) != 0)

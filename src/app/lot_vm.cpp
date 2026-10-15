@@ -334,6 +334,7 @@ void LotSimulation::sampleAll(double at) {
             want = "a-swimSlow-idle";
         bool loop = true;
         float fade = vm::kBlendTicks / 1000.0f;
+        bool ease = false;
         // The base layer's channel level: the standing idle under
         // everything, a walk or a stair phase at the locomotion's 0
         // (CreateLocoRequest's priority), Animate Sim's its own.
@@ -345,12 +346,12 @@ void LotSimulation::sampleAll(double at) {
             want = s.climb, loop = false, fade = chained ? 0.0f : 0.1f, level = vm::animlevel::Walk;
         } else if (s.walking && !s.walk.empty()) {
             // The locomotion's clips: a start or a stop once, the walk cycle
-            // looping; each blends from the last over the phases' overlap
-            // (FollowOneStep: the next phase starts 5 ms early on a way
-            // that begins short, else 100 ms, the last one ending meanwhile).
+            // looping; the first blends in over the request's fade in, each
+            // next one over the request's blend distance, a cosine crossover
+            // (cLocoCycle::AnimUpdate; docs/anim-mac.md §8.4).
             want = s.walk, loop = s.walkLoop, level = vm::animlevel::Walk;
             if (s.framed)
-                fade = s.walkFade;
+                fade = s.walkFade, ease = s.walkEase;
         }
         else if (!s.animation.empty()) {
             want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;
@@ -407,13 +408,13 @@ void LotSimulation::sampleAll(double at) {
                 const auto& base = s.walkLayers.front();
                 b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = base.mirror,
                                         .phase = double(s.walkPortion) * anim.duration / 1000.0, .level = level,
-                                        .weight = base.weight, .rate = base.rate, .expires = false});
+                                        .weight = base.weight, .rate = base.rate, .expires = false, .ease = ease});
                 for (size_t i = 1; i < s.walkLayers.size() && i < 8; ++i) {
                     const auto& l = s.walkLayers[i];
                     const Animation& more = b.actor->animation(index_, l.animation);
                     b.actor->cue(at, more, {.fade = l.fade >= 0 ? l.fade : fade, .loop = loop, .priority = kWalkBlend + int(i), .mirror = l.mirror,
                                             .phase = double(s.walkPortion) * more.duration / 1000.0, .level = level,
-                                            .weight = l.weight, .rate = l.rate, .expires = false});
+                                            .weight = l.weight, .rate = l.rate, .expires = false, .ease = ease});
                     extras = int(i);
                 }
             } else {

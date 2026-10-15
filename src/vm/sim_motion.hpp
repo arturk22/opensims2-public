@@ -72,9 +72,11 @@ public:
         // walk cycles.
         std::vector<LocoLayer> walkLayers;
         float walkPortion = 0; // the walk cycle portion its layers start at
-        // How long a phase of the walk blends into the next (the next one
-        // starting that early: 5 or 100 ms by the way's beginning).
+        // How long a phase of the walk blends in: the request's fade in for
+        // its first clip, then its blend distance at the walk's speed, a
+        // cosine crossover (`walkEase`; docs/anim-mac.md §8.4).
         float walkFade = 0.1f;
+        bool walkEase = false;
     };
 
     // Records the object's state after a VM tick (call once per tick,

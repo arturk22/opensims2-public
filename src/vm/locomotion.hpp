@@ -125,17 +125,30 @@ float strideWeight(const Gait& full, const Gait& shortGait, float stretch, float
 //   0x274b6e0 = -10) until the rest gives w >= 0:
 //   start(w) + (c' + 1/4) stride(w) + stride(v)/4 + stop(v) = d.
 // What is left (d - start - c stride - stop, >= 0) goes to +0xf8.
-// Inferred: the stop's foot from the cycle portion the walk ends at (the
-// binary's first foot comes from a portion getter not identified), v
-// clamped to [0, 1] (the binary lets it run past when w is out of [0, 1]),
-// the short ways (0.9 (start + stop) >= d) as before: strideWeight.
+// The stop's first foot (`firstOtherFoot`) is the request's
+// CyclePortionCompleted (getter 0x178) p: the normal clip (portion 0.5)
+// when 0 < p <= 0.5, else the "R" one (stopFootOther). Short ways (with a
+// start and d <= 0.9 (start_l + stop_l), 0x274b6d0; InitChannelNetwork
+// 0xd2dc58): no cycles, the start and the stop at one short weight
+// w = (S_l - d) / (S_l - S_s) (S = start + stop), at most 1; under S_s the
+// short clips are squeezed, the start over d s / (s + p), the stop over the
+// rest (docs/anim-mac.md §8.6). Inferred: v clamped to [0, 1] (the binary
+// lets it run past when w is out of [0, 1]).
 struct StrideFit {
     float weight = 0;     // the start's and the cycles' short weight (w)
     float stopWeight = 0; // the stop's (v)
     float cycles = 0;     // c
     float leftover = 0;
     bool stopOtherFoot = false;
+    // A short way: the start's and the stop's frame distances (squeezed
+    // under the short clips' own), no cycles between.
+    bool shortWay = false;
+    float startDistance = 0, stopDistance = 0;
 };
+// The stop's foot for a request starting at cycle portion p (0.5 standing,
+// BeginFollow; the portion it is at when walking on): the "R" clip
+// (portion 0) unless 0 < p <= 0.5 (docs/anim-mac.md §8.5).
+inline bool stopFootOther(float p) { return !(p > 0 && p <= 0.5f); }
 StrideFit fitStride(float d, float L, float Ls, float startLong, float startShort,
                     const std::function<std::pair<float, float>(bool otherFoot)>* stop, bool firstOtherFoot, float f0,
                     float f1);
