@@ -1865,15 +1865,19 @@ Lot11, 117 são da semente 4: o impasse do alpendre (§10).
   o alpendre é um tile só (8, 12, 2) entre o topo da escada do deck ("Stair
   Modular - Deck - Hi Stub") e a abertura da porta em x = 9. A Cassandra
   sobe e o Alexander sai pela porta; ele sai do caminho dela (o
-  `TryGetSelfOutOfWay`) e para em cima da ponta do portal da porta (o meio
-  do tile, inferido), por onde ela precisa passar; todo lugar de "sair do
-  caminho" no tile é recusado (`EvalTileForGoal` 9/10) e os dois falham rotas
-  o resto do jogo (117 em 12.000 ticks). Suspeitos: as pontas do portal da
-  porta (aqui os meios dos tiles; no binário os slots da porta,
-  `PortalGetLocationOfSlot`), a escolha na fileira do
-  `CreateMoveOutOfWayDestination` tipo 0 (aqui o primeiro ponto livre) e o
-  teste por passo do "lugar atual também inválido" por qualquer motivo
-  (§9.2).
+  `TryGetSelfOutOfWay`) e para junto da ponta do portal da porta, por onde
+  ela precisa passar; todo lugar de "sair do caminho" no tile é recusado
+  (`EvalTileForGoal` 9/10) e os dois falham rotas o resto do jogo (117 em
+  12.000 ticks). As pontas do portal da porta estão certas: a porta ("Door -
+  1 Tile - Beveled Glass", no mesmo tile) tem os ossos `route_door_0_N` em
+  (0, 0) e `route_door_0_S` em (0, −1) do modelo, os meios dos dois tiles,
+  como o VM. O ponto 0,35 à frente dele, rumo à ponta (0,12 adiante), cai
+  sobre ela, e a distância entre os centros diminui (`EstimateDistanceToBlocker`,
+  BV `0x6ae72c`: os centros): pela leitura, o binário também o bloquearia.
+  Suspeitos que faltam: a escolha na fileira do
+  `CreateMoveOutOfWayDestination` tipo 0 (aqui o primeiro ponto livre), o
+  "lugar atual também inválido" por qualquer motivo do teste por passo
+  (§9.2) e o tempo das pausas.
 - A escala de x,y por 1/16 do `cTSSlotDescriptor::Read` até a "versão"
   `0x46` (os SLOT `0x43`–`0x46` do jogo base já estão em tiles: qual versão
   ele compara?).
