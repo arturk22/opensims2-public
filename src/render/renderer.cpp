@@ -105,8 +105,9 @@ struct Draw {
     uint32_t lightSet;
 };
 
-// Height map to normal: height difference per texel times this (inferred;
-// the game's conversion strength is not known).
+// Height map to normal: height difference per texel times this (inferred:
+// the game's ConvertHeightMapToNormalMapFast, with the TXTR's bump scale 10,
+// is not in the Mac binary; docs/shaders-mac.md 13.2).
 constexpr float kBumpStrength = 2.0f;
 
 constexpr size_t kMaxLights = 16;
@@ -665,7 +666,8 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
             mat.cutout = t;
             mat.flags |= kCutout;
         }
-    if (!sm.normalMap.empty())
+    // StandardMaterialPassesDX8: the bump pass needs bumpMapping (MaterialDetail $High).
+    if (!sm.normalMap.empty() && graphicsOptions().bumpMapping)
         if (MTL::Texture* t = texture(sm.normalMap, index)) {
             mat.height = t;
             mat.misc.y = kBumpStrength;

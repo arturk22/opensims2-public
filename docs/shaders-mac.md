@@ -532,6 +532,7 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
 | env cube | só se Σcoef ≥ 0,003; × `allTextureLights` à noite | igual sem a luz de textura |
 | cabelo | alpha test > 60 com blend, escreve z | igual (`SimHairAlphaState`) |
 | `TODO.md` "no caminho DX9 a difusa interpolada não é saturada" | não se aplica: o Mac usa DX8, que satura no vértice | — |
+| normal map | 1ª direcional e 1ª ponto/spot por pixel, sem tangentes no Mac (§13.2) | igual desde a rodada n22 (a força da conversão segue inferida) |
 
 ## 11. O que falta
 
@@ -684,6 +685,21 @@ Lido com o Ghidra MCP no BV (`sims2_bv.ppc`, só leitura) e no texto dos
   (`ConvertHeightMapToNormalMapFast`/`GenerateBumpMap_L8_to_A8R8G8B8` com o
   bump scale 10 do TXTR) não está no BV (o `_D3DXComputeNormalMap` da Aspyr
   no `baserom.sym` tem 12 bytes, um stub); a fórmula segue inferida.
+- **No app** (rodada n22, `shaders.metal`): o passe de bump do DX8 como
+  acima, com as tangentes do Mac (nenhuma): `n·L1 = sat(n_z · N·L1)` para a
+  1ª direcional, a 1ª ponto/spot fora do vértice e somando
+  `sat(−(nx+ny+nz)) · cor da luz 2 / 2`, `v0 = sat(0,5·(luzes do vértice +
+  ambiente + emissiva))` e `cor = sat(2·tex·difusa·(v0 + n·L1·cor1/2 + ...))`
+  (a emissiva agora vezes a difusa, como no pixel shader); o especular e o
+  env cube usam a normal do vértice (o `BumpyShinyPass` com tangente zero
+  reflete na normal do vértice). O normal map sai do mapa de altura em
+  espaço de textura (`heightNormal`, força 2 por texel, inferida; antes o
+  relevo seguia a direção da luz pelas derivadas de tela). Só com
+  `bumpMapping` (MaterialDetail Alto, `GraphicsOptions::bumpMapping`, ainda
+  sem botão). Teste `render` (bump num mapa plano: a luz do vértice e o sol
+  por pixel). `docs/screenshots/n22-shaders-normal-map.jpg` (a lareira
+  `fireplacehearthvalue`: antes os furos com contorno escuro pela luz,
+  depois só o escurecimento do `n_z`).
 
 ### 13.3 Passe de recorte (`stdMatCutoutTextureName`)
 

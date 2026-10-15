@@ -11,6 +11,7 @@
 //                  shadows) and objectShadows (not drawn by this engine)
 //   Reflection     $Off/$On: reflectionWithExtraViewer, nhoodWaterReflection
 //   LightingQuality $Low: specHighlights false; $Medium/$High: true
+//   MaterialDetail $Low/$Medium: bumpMapping false; $High: true (normal maps)
 //
 // Plain C++.
 
@@ -23,6 +24,7 @@ struct GraphicsOptions {
     bool reflectionWithExtraViewer = true;  // mirrors (cViewerRefNodeRecursive "screenreflection")
     bool nhoodWaterReflection = true;
     bool specHighlights = true;
+    bool bumpMapping = true; // MaterialDetail $High (not in the options window yet)
 };
 
 inline GraphicsOptions& graphicsOptions() {

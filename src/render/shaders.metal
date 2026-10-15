@@ -147,25 +147,15 @@ vertex VertexOutClip vertex_main(uint vid [[vertex_id]],
     return out;
 }
 
-// Normal bumped by a height map, with the tangent frame taken from the screen
-// derivatives of position and uv (the game converts its "-bump" height maps
-// into normal maps when it loads them).
-float3 bumpedNormal(float3 n, float3 world, float2 uv, texture2d<float> height, sampler smp, float strength) {
+// The normal map the game makes of a "-bump" height map when it loads it
+// (ConvertHeightMapToNormalMapFast, not in the Mac binary): the height's
+// slope per texel times `strength`, in texture space (inferred).
+float3 heightNormal(float2 uv, texture2d<float> height, sampler smp, float strength) {
     const float2 size = float2(height.get_width(), height.get_height());
     const float h = height.sample(smp, uv).r;
     const float hu = height.sample(smp, uv + float2(1.0 / size.x, 0)).r;
     const float hv = height.sample(smp, uv + float2(0, 1.0 / size.y)).r;
-    const float3 tn = normalize(float3((h - hu) * strength, (h - hv) * strength, 1.0));
-    const float3 dp1 = dfdx(world), dp2 = dfdy(world);
-    const float2 duv1 = dfdx(uv), duv2 = dfdy(uv);
-    const float3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
-    const float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
-    const float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
-    const float m = max(dot(t, t), dot(b, b));
-    if (m <= 1e-20)
-        return n;
-    const float inv = rsqrt(m);
-    return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
+    return normalize(float3((h - hu) * strength, (h - hv) * strength, 1.0));
 }
 
 // A Sim's shadow as the floors see it (nTSSG::cShadow, docs/lighting-mac.md 9).
@@ -376,8 +366,6 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         }
         color.rgb = albedo * saturate(draw.color.rgb * diffuse);
     } else if (draw.flags & kLighting) {
-        if (draw.flags & kNormalMap)
-            n = bumpedNormal(n, in.world, in.baseUv, height, smp, draw.misc.y);
         // The game's DX8 StandardMaterial (docs/shaders-mac.md 4.2-4.3), per
         // pixel: lit = saturate(0.5 x ((ambient + lights) x diffuse +
         // emissive)), colour = saturate(2 x texture x lit), so light reaches
@@ -386,27 +374,73 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         float3 v = normalize(frame.eye.xyz - in.world);
         float3 r = reflect(-v, n);
         constant LightSet& set = lightSets[draw.lightSet];
-        float3 diffuse = set.ambient.rgb;
+        const uint count = min(uint(set.ambient.w), kMaxLights);
         float3 spec = 0.0;
-        for (uint i = 0; i < min(uint(set.ambient.w), kMaxLights); ++i) {
-            float att;
-            const float3 l = lightVector(set.lights[i], in.world, att);
-            float ndl = dot(n, l);
-            // Hair: strands lit from either side, never fully dark (the
-            // inner layers' normals point every way, often down into the
-            // shell); the far side only a little, or every lamp behind
-            // and below washes the hair out (red hair came out salmon).
-            if (draw.flags & kTwoSidedLight)
-                ndl = max(0.08, ndl > 0.0 ? ndl : -0.3 * ndl);
-            if (ndl <= 0.0 || att <= 0.0)
-                continue;
-            diffuse += set.lights[i].color.rgb * att * ndl;
-            if (draw.specular.w > 0.0)
+        if (draw.specular.w > 0.0)
+            for (uint i = 0; i < count; ++i) {
+                float att;
+                const float3 l = lightVector(set.lights[i], in.world, att);
+                if (dot(n, l) <= 0.0 || att <= 0.0)
+                    continue;
                 spec += set.lights[i].color.rgb * att * set.lights[i].color.w * pow(max(dot(r, l), 0.0), draw.specular.w);
+            }
+        if (draw.flags & kNormalMap) {
+            // DX8StandardMaterialDiffuseBumpPixelShader (docs/shaders-mac.md
+            // 13.2): the first directional light and the first point/spot
+            // by pixel, the others by vertex: v0 = sat(0.5 x (vertex lights
+            // + ambient + emissive)), lit = (sat(n.L1) x c1 / 2 + sat(n.L2) x
+            // c3 / 2 + v0) x diffuse, colour = sat(2 x lit x texture). On the
+            // Mac the vertices have no tangents (skipTangentsInVertexData
+            // below ps 2): L1 in tangent space is (0, 0, N.L1), so n.L1 =
+            // n.z x N.L1; L2 is read from the unwritten t2, (-1, -1, -1), and
+            // c3 is the third light's colour (both inferred from the
+            // registers' defaults).
+            const float3 bn = heightNormal(in.baseUv, height, smp, draw.misc.y);
+            int first = -1, firstPoint = -1;
+            for (uint i = 0; i < count; ++i) {
+                if (set.lights[i].params.z < 0.5 && first < 0)
+                    first = int(i);
+                if (set.lights[i].params.z >= 0.5 && firstPoint < 0)
+                    firstPoint = int(i);
+            }
+            float3 vertexLight = set.ambient.rgb + draw.emissive.rgb;
+            float nl1 = 0.0;
+            for (uint i = 0; i < count; ++i) {
+                float att;
+                const float3 l = lightVector(set.lights[i], in.world, att);
+                const float ndl = dot(n, l);
+                if (int(i) == first)
+                    nl1 = saturate(bn.z * clamp(ndl, -1.0, 1.0));
+                else if (int(i) != firstPoint)
+                    vertexLight += set.lights[i].color.rgb * att * max(ndl, 0.0);
+            }
+            const float3 v0 = saturate(0.5 * vertexLight);
+            float3 lit = v0;
+            if (first >= 0)
+                lit += nl1 * 0.5 * set.lights[first].color.rgb;
+            if (firstPoint >= 0 && count > 2)
+                lit += saturate(-(bn.x + bn.y + bn.z)) * 0.5 * set.lights[2].color.rgb;
+            color.rgb = saturate(2.0 * albedo * lit * draw.color.rgb);
+        } else {
+            float3 diffuse = set.ambient.rgb;
+            for (uint i = 0; i < count; ++i) {
+                float att;
+                const float3 l = lightVector(set.lights[i], in.world, att);
+                float ndl = dot(n, l);
+                // Hair: strands lit from either side, never fully dark (the
+                // inner layers' normals point every way, often down into the
+                // shell); the far side only a little, or every lamp behind
+                // and below washes the hair out (red hair came out salmon).
+                if (draw.flags & kTwoSidedLight)
+                    ndl = max(0.08, ndl > 0.0 ? ndl : -0.3 * ndl);
+                if (ndl <= 0.0 || att <= 0.0)
+                    continue;
+                diffuse += set.lights[i].color.rgb * att * ndl;
+            }
+            // Ambient only (no lights in the set): 0.5 x ambient x diffuse, no emissive.
+            const float3 emissive = set.ambient.w > 0.0 ? draw.emissive.rgb : float3(0.0);
+            color.rgb = saturate(2.0 * albedo * saturate(0.5 * (emissive + draw.color.rgb * diffuse)));
         }
-        // Ambient only (no lights in the set): 0.5 x ambient x diffuse, no emissive.
-        const float3 emissive = set.ambient.w > 0.0 ? draw.emissive.rgb : float3(0.0);
-        color.rgb = saturate(2.0 * albedo * saturate(0.5 * (emissive + draw.color.rgb * diffuse)));
         color.rgb = saturate(color.rgb + saturate(draw.specular.rgb * spec));
         if (frame.params.z > 0.5 && n.z > 0.7 && color.a > 0.99)
             color.rgb *= simShadows(in.world, uint(frame.params.z), shadows, shadowAtlas, maskSmp, true);

@@ -150,6 +150,21 @@ int main() {
         // saturate(2 * tex * saturate(0.5 * (diffuse * light + emissive))): red 0.8 * 0.4375 = 0.35,
         // green 0.4 * 0.4375 + 0.1 = 0.275, blue 4 * 0.4375 = 1.75 saturates (at 2 inside, 1 out).
         check(near(p[0], 89) && near(p[1], 70) && p[2] == 255, "diffuse, emissive and saturation");
+
+        // The DX8 bump pass (docs/shaders-mac.md 13.2) on a flat height map:
+        // v0 = sat(0.5 x (ambient + emissive)) = (0.125, 0.175, 0.125), the
+        // sun by pixel 0.5 x 0.1875 x n.z (1); lit = (v0 + 0.09375) x
+        // diffuse, colour = sat(2 x lit): the emissive now times the diffuse.
+        Renderer bumped(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+        bumped.setLighting(state);
+        bumped.setDynamicTexture("flat-bump_txtr", RgbaImage{4, 4, std::vector<uint8_t>(4 * 4 * 4, 128)});
+        ObjectModel bump = grey;
+        bump.materials["grey"].properties.push_back({"stdMatNormalMapTextureEnabled", "true"});
+        bump.materials["grey"].properties.push_back({"stdMatNormalMapTextureName", "flat-bump"});
+        bumped.addInstance(bumped.addObject(bump, index), matrix_identity_float4x4);
+        img = bumped.capture(64, 64, view, clear);
+        p = center(img);
+        check(near(p[0], 89) && near(p[1], 55) && p[2] == 255, "bump pass: vertex light, the sun by pixel");
     }
 
     // Blended parts are drawn back to front whatever order they were added in.
