@@ -79,7 +79,9 @@ struct FloorColorGrid {
 std::vector<FloorColorGrid> diffuseFloors(const LotLightMapLayout& layout, const std::vector<DiffusionSource>& sources,
                                           const DiffusionParams& params);
 
-// The walls: for every face of layout.walls, its cell's texels (w x h, row 0
+// The walls (the faces of layout.lightWalls, the light-blocking and pool
+// walls SetupWalls takes; other faces stay black): for every face of
+// layout.walls, its cell's texels (w x h, row 0
 // at the top as the atlas keeps them), light-map bytes (0.5 x (colour -
 // ambient), the outside ambient for walls facing out). `floorTexel(level,
 // x, y)` gives the floor page's diffusion (its byte / 255 x 2) at a point.

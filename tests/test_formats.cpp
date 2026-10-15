@@ -978,6 +978,9 @@ end
         backSide = lampSide;
         backSide.normal = {1, 0};
         const size_t front = wl.addWall(lampSide), back = wl.addWall(backSide);
+        LotLightMapLayout::WallFace fenceSide = lampSide;
+        fenceSide.origin = {1, 0}, fenceSide.wallA = {1, 0}, fenceSide.wallB = {1, 1};
+        const size_t fence = wl.addWall(fenceSide);
         LightMapLight bulb;
         bulb.position = {0.5f, 0.5f, 1.5f};
         bulb.color = {1, 1, 1};
@@ -987,6 +990,9 @@ end
         const auto& fc = wl.walls[front];
         const auto& bc = wl.walls[back];
         check(texel(m.image, fc.x + 4, fc.y + 12) > texel(m.image, bc.x + 4, bc.y + 12) + 0.1f, "wall lit on the lamp's side only");
+        const auto& nc = wl.walls[fence];
+        check(texel(m.image, nc.x + 4, nc.y + 12) == 0 && texel(m.image, fc.x + 4, fc.y + 12) > 0,
+              "SetupWalls: a fence gets no wall diffusion (only light-blocking and pool walls)");
     }
     {
         // Portals (docs/lighting-mac.md 11.4): a 4 x 2 lot, a room with

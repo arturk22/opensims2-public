@@ -643,11 +643,24 @@ private:
             return std::make_tuple(level, std::lround(a[0] * 8), std::lround(a[1] * 8), std::lround(b[0] * 8), std::lround(b[1] * 8));
         };
         faceSeg_.assign(l_.walls.size(), -1);
+        // SetupWalls (Mac BV 0xef0324) takes the wall graphs 3 (the walls
+        // that block light), 8 and 11 (half walls) and 10 (stage walls), and
+        // the pool walls of graph 0 (docs/lighting-mac.md 11.5): the
+        // layout's light walls, which keep the pool walls. Fences, deck
+        // skirts and deck walls get no wall diffusion (their cells stay
+        // black; inferred: the colour the game clears wall tiles to).
+        std::set<std::tuple<int, long, long, long, long>> diffused;
+        for (const auto& w : l_.lightWalls) {
+            diffused.insert({w.level, long(w.ax), long(w.ay), long(w.bx), long(w.by)});
+            diffused.insert({w.level, long(w.bx), long(w.by), long(w.ax), long(w.ay)});
+        }
         for (size_t fi = 0; fi < l_.walls.size(); ++fi) {
             const auto& f = l_.walls[fi];
             V2 a = f.wallA, b = f.wallB;
             if (same(a, b)) // no grid ends given: the face's own
                 a = f.origin, b = {f.origin[0] + f.along[0] * f.length, f.origin[1] + f.along[1] * f.length};
+            else if (!diffused.count({f.level, std::lround(a[0]), std::lround(a[1]), std::lround(b[0]), std::lround(b[1])}))
+                continue;
             const V2 dir = unit(sub(b, a));
             if (dot2(normal(dir), f.normal) < 0)
                 std::swap(a, b);
