@@ -412,3 +412,51 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   Captura: `docs/screenshots/r9-tv-canal.jpg` (`--lot N001_Lot49 --sim-id
   347 --pie "Television - Floor - Moderate" --pie-select 0 --run-vm 1500
   --frames 3 --walls cutaway --pivot 24.5,7.5 --zoom 5 --orientation 2`).
+
+## 8. Rodada n23: o que o binário faz no Start/Stop e o que sobrou
+
+Leitura de 2026-10-15 (`docs/inventario-binario.md` §6, linha 23). Modo:
+**Ghidra MCP** e **Ghidra sem janela** (clone APFS do projeto, só leitura:
+`FUN_007c3898` Start, `FUN_007c56b4` Stop e `FUN_007c82ec` Prep não existem
+como funções no projeto). Endereços BV.
+
+- **O andar.** O Start guarda o andar atual (`+0x154`) e põe o do **ator de
+  origem** (`+0x12C`, o `OriginActorIndex` do CINE: o ator que a câmera e o
+  rig seguem; vtable `0x90` do objeto, menos 1 se > 0), ou o mais alto do
+  `WorldDB` (vtable `0x144`) com "mostrar a casa inteira" (`+0x164`). O
+  `opensims2` usava o primeiro ator (no `ProposeAccept`, cuja origem é o
+  ator 1, o andar errado). As paredes: guarda (`+0x158`) e põe o modo **3**
+  (erguidas com telhado) com a casa inteira, senão **1** (cortadas; os modos
+  do `cITSMainToolbar::eWallMode`, `ui-live-mac.md` §8c). Uma propriedade
+  (`+0x194`, desligada) pula o andar e as paredes — confere com o que o
+  `forceCinematicState` já fazia.
+- **"ObjectHiding".** É a opção gráfica "Object Hiding" (o grupo `0xA` da
+  janela de opções, lida em `ApplyChanges`/`RestoreDefaultsWithoutApplying`
+  do painel): com a casa inteira o Start guarda o valor (`+0x160`) e o põe
+  em **1**; o Stop devolve. Fora isso não mexe. No `opensims2` o fade de
+  objetos não depende da opção e fica desligado durante as cenas (a câmera
+  de cinema tem o seu, `objectFadeCineCam`, `cObject::ComputeCinematicFade`,
+  não feito): nada a mudar até o fade da câmera de cinema existir.
+- **A "velocidade forçada".** O Start **não** chama o `cTSSimulator`
+  (`SetSpeed`/`Pause` ficam de fora): ele guarda o valor da vtable `0x74`
+  do objeto em `+0xB4` e chama a `0x5C(1)`; o Stop chama a `0x60(true)` e
+  devolve o valor. Se esse objeto é o `cCustomAnimTimer2` (o relógio de
+  animação, vtable `0x27e4fd4`), são o `MaxElapsedTicksPerFrame` e o
+  `SetTimeClampingEnabled`: o tempo que a animação pode andar por quadro
+  (`UpdateFrameTime`, BV `0x73ea10`). O tipo do objeto não foi confirmado.
+  O `opensims2` segue pondo o jogo em velocidade normal e sem pausa durante
+  a cena (**inferido**, nosso).
+- **Espelho pelo temp 3.** Confirmado: o `try_animate_sim` (BV `0x69d634`)
+  com a flag `0x01` do byte 8 usa `temp 3 ≠ 0` no lugar do bit 0 do byte 2;
+  o `try_animate_overlay` (BV `0x69ea54`) faz o mesmo com a flag `0x01` do
+  byte 15. Era inferido.
+- **Sem "Start Animations Now"** (0x04): o Prep só marca a cena pronta
+  (`+0x166`); quem chama o Start depois não foi achado (a espera por um
+  ator que anime, ou 1 s, segue inferida).
+- **Spots do rig.** A direção do cone não foi lida (o rig continua com os
+  spots como pontos; a luz das cenas é frente de render).
+- **A câmera e o rig agora pelas regras do ANIM** (`anim-mac.md` §9): as
+  rotações da `cinecam` e dos ossos do rig amostradas por quadro e com
+  slerp, as tangentes por tick e as chaves assadas a cada 33,3 ticks — o
+  que muda o caminho da câmera nas curvas assadas com menos chaves que a
+  duração do canal.
