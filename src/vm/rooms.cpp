@@ -1,6 +1,9 @@
 #include "rooms.hpp"
 
 #include "errors.hpp"
+#include "placement.hpp"
+
+#include <array>
 
 namespace os2::vm {
 
@@ -41,6 +44,84 @@ int16_t roomValue(const VM& vm, int16_t room, int16_t value) {
     if (!(it->second.known & (1u << value)))
         throw VMError("room " + std::to_string(room) + ": value " + std::to_string(value) + " not known");
     return it->second.values[size_t(value)];
+}
+
+namespace {
+
+// A door part that is a portal: in the binary IsPortal (BV 0xe1fe94) is an
+// object with portal slot pairs; of a door's parts that is the one holding
+// its routing slots, the lead (the 0,0 part; inferred from the saved
+// attributes, see portalRooms).
+bool isPortal(const Object& o) {
+    if (!o.definition || o.definition->objectType() != kObjectTypeDoor)
+        return false;
+    const ObjectId lead = o.data[objdata::LeadTileObjectId];
+    return !lead || lead == o.id;
+}
+
+// PortalDiagonalWallPlacement (BV 0xe1edd8): wall placement flags & 0x50.
+bool diagonalDoor(const Object& o) {
+    return o.definition && o.definition->objectType() == kObjectTypeDoor && (o.data[objdata::WallPlacementFlags] & 0x50);
+}
+
+} // namespace
+
+bool portalRooms(const VM& vm, const Object& o, int16_t& a, int16_t& b) {
+    if (!vm.world || !isPortal(o) || !o.position.inWorld())
+        return false;
+    const TilePos t = VM::tileOf(o);
+    const int dir = o.data[objdata::Direction];
+    // A diagonal door stands in the diagonal wall across its tile: its sides
+    // are the tiles half a turn round from its facing (inferred).
+    const auto front = diagonalDoor(o) ? directionStep(dir - 1) : std::array<int, 2>{0, 0};
+    const auto back = directionStep(diagonalDoor(o) ? dir + 3 : dir + 4);
+    const TilePos ta{t.x + front[0], t.y + front[1], t.level}, tb{t.x + back[0], t.y + back[1], t.level};
+    if (!vm.world->contains(ta) || !vm.world->contains(tb))
+        return false;
+    a = vm.world->room(ta);
+    b = vm.world->room(tb);
+    return true;
+}
+
+void onRoomChanged(VM& vm, ObjectId id) {
+    Object* o = vm.object(id);
+    if (!o)
+        return;
+    const int16_t room = o->data[objdata::Room];
+    if (room == o->notifiedRoom && !diagonalDoor(*o))
+        return;
+    o->notifiedRoom = room;
+    if (!vm.functionTree(*o, kRoomChangedFunction))
+        return;
+    std::array<int16_t, 4> args{room, -1, 0, 0};
+    if (isPortal(*o)) {
+        // PortalOnRoomChanged / PortalGetRooms: only when the pair changed.
+        int16_t a = 0, b = 0;
+        if (!portalRooms(vm, *o, a, b) || (a == o->portalRooms[0] && b == o->portalRooms[1]))
+            return;
+        o->portalRooms = {a, b};
+        args = {a, b, 0, 0};
+    }
+    vm.runFunction(id, kRoomChangedFunction, 1000, args, id);
+}
+
+void notifyRoomChanges(VM& vm) {
+    std::vector<ObjectId> moved;
+    for (const auto& [id, o] : vm.eachObject())
+        if (o.data[objdata::Room] != o.notifiedRoom)
+            moved.push_back(id);
+    for (ObjectId id : moved)
+        onRoomChanged(vm, id);
+}
+
+void finishMove(VM& vm, ObjectId id) {
+    std::vector<ObjectId> todo{id};
+    for (size_t i = 0; i < todo.size() && i < 64; ++i) {
+        onRoomChanged(vm, todo[i]);
+        for (const auto& [cid, c] : vm.eachObject())
+            if (c.data[objdata::ContainerId] == todo[i] && cid != todo[i])
+                todo.push_back(cid);
+    }
 }
 
 } // namespace os2::vm

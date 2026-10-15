@@ -10,6 +10,7 @@
 #include "interactions.hpp"
 #include "locomotion.hpp"
 #include "placement.hpp"
+#include "rooms.hpp"
 #include "routing_internal.hpp"
 #include "sim_motion.hpp"
 
@@ -54,6 +55,7 @@ void moveTo(VM& vm, Object& o, float x, float y, int level) {
     o.position = {x, y, level};
     if (vm.world)
         o.data[objdata::Room] = vm.world->room(VM::tileOf(o));
+    onRoomChanged(vm, o.id); // SetLocation's FinishEditing
 }
 
 } // namespace routing_internal

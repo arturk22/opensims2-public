@@ -3,6 +3,7 @@
 #include "placement.hpp"
 
 #include "hood_bridge.hpp"
+#include "rooms.hpp"
 #include "formats/build_catalog.hpp"
 #include "formats/log_once.hpp"
 #include "formats/resindex.hpp"
@@ -466,19 +467,29 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
         if (p.container) {
             o->data[objdata::ContainerId] = p.container;
             o->data[objdata::SlotNumber] = int16_t(p.slot);
-            if (const Object* c = vm.object(p.container))
+            if (const Object* c = vm.object(p.container)) {
                 o->position = c->position;
+                o->data[objdata::Room] = c->data[objdata::Room];
+            }
         } else {
             o->data[objdata::ContainerId] = 0;
             o->data[objdata::SlotNumber] = -1;
+            // SetLocation: the room (definition 2) where it now stands.
+            if (vm.world)
+                o->data[objdata::Room] = vm.world->room(VM::tileOf(*o));
         }
     }
     // The pool ladder's and diving board's portals follow it (build mode
     // does the same, build_edit.cpp).
     vm.refreshObjectPortals();
     vm.planner.reset();
+    // SetPosition (BV 0xafd048): OnPlacement (entry 9), then FinishEditing
+    // tells the room (OnRoomChanged, entry 7).
     for (const auto& part : p.parts)
         runEntry(vm, part.id, entry::Placement);
+    for (const auto& part : p.parts)
+        if (vm.object(part.id))
+            finishMove(vm, part.id);
     (void)id;
 }
 

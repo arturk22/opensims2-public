@@ -1982,7 +1982,55 @@ static void testRemovedTargetResetsPerson() {
           "a removed current interaction object resets the person to its Main, not as an error; others go on");
 }
 
+// cTSObject::OnRoomChanged (BV 0xb0093c, docs/primitives-mac.md §4i): the
+// "room changed" entry (OBJf 7) runs once an object's room is not the one
+// last told: {room, -1} for an object, the two rooms of its sides for a door
+// part that is a portal (the saved doors of N001_Lot11: attributes 3/4 of
+// the 0,0 part are front/back, the 0,1 part has its room and -1).
+static void testRoomChanged() {
+    Fixture fx;
+    ObjectDefinition door = definition(0x0D0D0D0D);
+    door.fields[(0x52 - 0x44) / 2] = kObjectTypeDoor;
+    fx.code.add(kObjGroup, 0x80, std::move(door));
+    fx.code.add(kObjGroup, 0x81, definition(0x0E0E0E0D));
+    ObjectFunctions f;
+    f.functions.resize(8);
+    f.functions[7] = {0, 0x1000};
+    fx.code.add(kObjGroup, 0x80, f);
+    fx.code.add(kObjGroup, 0x81, f);
+    // attr 3 := param 0, attr 4 := param 1, attr 5 += 1 (as the doors' "Function - Room Changed - SG", and a count)
+    fx.code.add(kObjGroup, 0x1000, tree({expr(Attr, 3, Assign, Param, 0, go(1), E), expr(Attr, 4, Assign, Param, 1, go(2), E),
+                                         expr(Attr, 5, Add, Lit, 1, T, E)}, 4));
+    fx.vm.world = World(10, 10);
+    for (int x = 0; x < 10; ++x)
+        for (int y = 0; y < 10; ++y)
+            fx.vm.world->setRoom({x, y, 1}, int16_t(x < 5 ? 1 : 2));
+    Object& front = fx.vm.instantiate(kObjGroup, 0x80);
+    Object& back = fx.vm.instantiate(kObjGroup, 0x80);
+    Object& toy = fx.vm.instantiate(kObjGroup, 0x81);
+    for (Object* o : {&front, &back, &toy})
+        o->attributes.assign(8, 0);
+    front.position = {4.5f, 3.5f, 1};
+    back.position = {5.5f, 3.5f, 1};
+    back.data[objdata::LeadTileObjectId] = front.id;
+    front.data[objdata::LeadTileObjectId] = front.id;
+    toy.position = {1.5f, 1.5f, 1};
+    for (Object* o : {&front, &back, &toy})
+        o->data[objdata::Room] = fx.vm.world->room(VM::tileOf(*o));
+    fx.vm.tick();
+    check(front.attributes[3] == 1 && front.attributes[4] == 2 && back.attributes[3] == 2 && back.attributes[4] == -1 &&
+              toy.attributes[3] == 1 && toy.attributes[4] == -1,
+          "room changed: a door portal gets its front and back rooms, other parts their room and -1");
+    fx.vm.tick();
+    check(front.attributes[5] == 1 && back.attributes[5] == 1 && toy.attributes[5] == 1, "room changed runs once while the room stays");
+    toy.position = {7.5f, 1.5f, 1};
+    toy.data[objdata::Room] = fx.vm.world->room(VM::tileOf(toy));
+    fx.vm.tick();
+    check(toy.attributes[3] == 2 && toy.attributes[5] == 2, "room changed runs again when the object's room changes");
+}
+
 int main() {
+    testRoomChanged();
     testRemovedTargetResetsPerson();
     testLoopWithLocalsAndParams();
     testThreadOfReusedId();

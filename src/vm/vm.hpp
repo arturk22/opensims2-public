@@ -505,6 +505,11 @@ struct Object {
     std::array<int16_t, kObjectDataCount> data{};
     // Kept next to `data`: the scans over every object read them (cache lines).
     Position position;
+    // The room last told to the object's "room changed" entry point
+    // (cTSObject +0x1CC, -1 from the constructor, never saved), and the
+    // portal's two rooms last told (+0x2B4/+0x2B6): vm/rooms.cpp onRoomChanged.
+    int16_t notifiedRoom = -1;
+    std::array<int16_t, 2> portalRooms{-1, -1};
     // On Timer's timers, in the order they were set.
     std::vector<ObjectTimer> timers;
     std::optional<Person> person;
@@ -1059,8 +1064,10 @@ public:
     // going after `maxTurns` yields), or nothing if the object has no such function.
     // `args` are its parameters (the engine's RunTree passes some: the
     // stairs' "Set Model by Type", entry 47, takes the railing model).
+    // `stackObject`: the tree's stack object (cTSObject::RunTree's short;
+    // OnRoomChanged passes the object itself).
     std::optional<Thread> runFunction(ObjectId id, size_t function, size_t maxTurns = 1000,
-                                      std::span<const int16_t> args = {});
+                                      std::span<const int16_t> args = {}, ObjectId stackObject = 0);
     // Starts the object's Main in its thread; false if it has none.
     bool startMain(ObjectId id);
     void resetAfterError(ObjectId id, Thread& t);

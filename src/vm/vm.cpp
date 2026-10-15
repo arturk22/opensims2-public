@@ -887,7 +887,8 @@ uint16_t VM::functionTree(const Object& o, size_t function) {
     return f && function < f->functions.size() ? f->functions[function].action : 0;
 }
 
-std::optional<Thread> VM::runFunction(ObjectId id, size_t function, size_t maxTurns, std::span<const int16_t> args) {
+std::optional<Thread> VM::runFunction(ObjectId id, size_t function, size_t maxTurns, std::span<const int16_t> args,
+                                      ObjectId stackObject) {
     const Object* o = object(id);
     if (!o)
         throw VMError("object " + std::to_string(id) + " does not exist");
@@ -896,7 +897,7 @@ std::optional<Thread> VM::runFunction(ObjectId id, size_t function, size_t maxTu
     // masters' Init 0x1005) runs nothing (inferred).
     if (!tree || !resolveTree(*o, tree).second)
         return std::nullopt;
-    Thread t = start(id, tree, args);
+    Thread t = start(id, tree, args, stackObject);
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < maxTurns; ++turn)
         run(t, instructionsPerTurn);
     return t;
@@ -1019,6 +1020,7 @@ void VM::tick() {
     flushKillQueue(*this); // kill.hpp
     flushDestinations(*this); // go_here.hpp
     followContainers();
+    notifyRoomChanges(*this); // rooms.hpp: OnRoomChanged
 }
 
 // The object's reset after a SimAntics error (cTSObject::HandleError, BV
