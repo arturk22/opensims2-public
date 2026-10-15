@@ -3384,6 +3384,107 @@ primeiro: confirmado.
 Todas as primitivas com handler no base (§2) estão registradas na VM;
 o `bhav-sweep` não acha nenhuma faltando.
 
+## 4i. Rodada n04: o que o motor mantém (sala, load, roomChanged, wallAdjacency)
+
+Lido no BV com o Ghidra MCP (só leitura). Os slots de vtable foram
+resolvidos com `tools/symxfer/vtables.py` (classe `9cTSObject`).
+
+### A sala do objeto (object data 29, `cTSObject +0xD4`)
+
+O object data começa em `cTSObject +0x9A` (logo depois dos 8 temps em
+`+0x8A`): a sala (od 29) é o `+0xD4` (`GetRoomID`, BV `0xaf56a8`: `lha
+r3,0xd4(r3)`), as wall adjacency flags (od 5) o `+0xA4`, a direção (od 1) o
+`+0x9C`.
+
+- **`SetLocation(FTilePt, int, long)`** (BV `0xaf5ba8`, vtable `0x304`):
+  `BeginEditing`; guarda o ponto; `SetLevel`; a sala é a do **gerenciador de
+  partições, definição 2** no ponto (`WorldDB +0x94` → vtable `0x13c`
+  (local, **2**, 1)), isto é o mapa do 3ARY `0x09` (paredes que bloqueiam
+  colocação; `docs/buy-build-mac.md` §7.3); um segundo número (a "sala de
+  envscore", `+0x288`) vem de outro serviço (vtable `0x24`, não lido);
+  `SetRoom(sala, envscore, false)`; depois cada objeto nos slots recebe o
+  mesmo `SetLocation`; `FinishEditing`.
+- **`SetRoom(short, long, bool)`** (BV `0xaf48c8`, vtable `0x98`): se a sala
+  ou o envscore mudou, grava os dois; com o bool, repassa a cada objeto
+  contido (`NumObjectSlots`/`GetContainedObject`, vtables `0x104`/`0x110`).
+  Não chama nenhuma árvore.
+- **`BeginEditing`/`FinishEditing`** (BV `0xaf54ec`/`0xaf55bc`): um contador
+  em `+0x78`, propagado aos contidos. Quando volta a 0,
+  **`OnFinishEditing`** (BV `0xb01a44`) chama **`OnRoomChanged`** se a sala
+  (`+0xD4`) difere da última avisada (`+0x1CC`), e `OnEnvScoreRoomChanged`
+  se o envscore mudou (`+0x28C` ≠ `+0x288`). Toda mudança de lugar
+  (`SetPosition`, `SetLocation`, `PostLoad`) passa por aqui.
+- O construtor (`FUN_00b0c7a8`) põe **−1** na última sala avisada
+  (`+0x1CC`), no envscore (`+0x288`, `+0x28C`) e no cache de salas do portal
+  (`+0x2B4`/`+0x2B6`). Nada disso é salvo: todo objeto novo ou carregado é
+  avisado na primeira vez que ganha um lugar.
+
+### `OnRoomChanged` (BV `0xb0093c`, vtable `0x334`): a entrada 7 do OBJf
+
+1. Se a sala não mudou desde o último aviso, só continua para uma porta
+   (`GetType` = 8) diagonal (`PortalDiagonalWallPlacement`, flags de parede
+   `& 0x50`); senão volta.
+2. Guarda a sala em `+0x1CC`.
+3. Objeto que **não é portal** (`IsPortal`, vtable `0x374`) e tem a entrada
+   7 (`GetTreeID(7)`): `RunTree(7, eu, {sala, −1, 0, 0})` (o stack object é o
+   próprio objeto, `+0x1BC` = o ID; `RunTree` BV `0xafe524` roda a árvore da
+   tabela de funções até o fim, na hora).
+4. **Portal**: `PortalOnRoomChanged` (BV `0xe1eeec`): com a entrada 7 e
+   `PortalGetRooms` (BV `0xe22498`) verdadeiro, `RunTree(7, eu, {sala A,
+   sala B, 0, 0})`. `PortalGetRooms` só é verdadeiro quando o par mudou desde
+   a última vez (cache `+0x2B4`/`+0x2B6`). `PortalCalculateRooms` (BV
+   `0xe221e4`) anda pelos pares de slots do portal, acha a sala (definição 2)
+   no ponto de cada slot (`PortalGetLocationOfSlot`) e devolve a primeira
+   sala achada e a primeira diferente dela (se todas são iguais, A = B; menos
+   de dois pontos com sala = falso).
+5. `AggregateOnRoomChanged` (agregados; nada da VM).
+
+Nos dados do jogo base a entrada 7 está em 140 OBJf: portas e portões (o
+"Function - Room Changed - SG" das portas, semi-global `0x7FD0DEBA`, só faz
+**atributo 3 := param 0, atributo 4 := param 1**: as salas dos dois lados),
+o barquinho da caixa de brinquedos e o objeto de teste. Os Sims não têm.
+
+### `UpdateObjectsInRoom` (BV `0x52e170`): quando o mapa de salas muda
+
+O `cEdithObjectModule::DoMessage` (BV `0x534dec`) recebe a `0x2B4D18F6` (o
+`FlushRoomChangedNotifications` da definição 2, uma por sala mudada) e chama
+`UpdateObjectsInRoom(sala)`: para cada tile da sala (`FloorTilesInRoom`,
+definição 2) e cada objeto no tile, `SetRoom(sala, envscore, true)` e
+`OnRoomChanged`. As mensagens de parede (`0x0B4CF313`, `0x2B4CF319`) vão
+para `UpdateObjectsAdjacentToWall` (abaixo).
+
+### `PostLoad`: a entrada 2 (load) roda em todo objeto carregado
+
+`cEdithObjectModule::PostLoad(versão)` (BV `0x52d590`) chama o
+`cTSObject::PostLoad(versão, nullptr)` (BV `0xb0b1e0`, vtable `0x318`) de
+**todo** objeto do lote, os contêineres antes dos contidos. Esse
+`PostLoad`: `BeginEditing`; `SetLocation` no lugar salvo (a sala é
+recalculada); acertos de versão do arquivo; **`RunTree(2, 0, params)`** com
+os quatro parâmetros zerados quando o chamador não passa nenhum; para
+objetos que o pedem (`+0x180` bit 2 e outros), entrada `0x2B`,
+`InitSlotsFromDefinition` e `UpdateWallAdjacency(true)`; `FinishEditing`
+(o aviso de sala da primeira vez). **Não há teste de versão do objeto**: o
+opensims2 rodava o load só quando o od 58 diferia da versão do OBJD (tirado
+da descrição do editor; inferido e errado). Nos dados, a entrada 2 está em
+476 OBJf: os Sims (o "Function - Load" das pessoas, semi-global
+`0x2034`), o lixo e alguns outros.
+
+### `UpdateWallAdjacency(bool)` (BV `0xaf7104`, vtable `0x2f4`): od 5 e a entrada 6
+
+Com o bool, ou quando o objeto tem a entrada 6
+(`RequiresWallAdjacencyUpdate`, BV `0xaf5050`): olha as 6 paredes do tile
+do objeto (`FUN_001645b0`: segmentos 1, 2, 4, 8 = as arestas, 0x10/0x20 = as
+diagonais; vtable `0xb0` do gerenciador de partições) girados pela direção
+(`WallSegmentRotate(segmentos, (−od1 / 2) & 3)`, BV `0x1563540`: um quarto
+de volta leva 1→2→4→8→1 e troca as diagonais) e monta o od 5 a partir do
+byte alto dele: segmento 1 → `0x01`, 2 → `0x04`, 4 → `0x02`, 8 → `0x08`,
+0x10 → `0x40`, 0x20 → `0x80`; e, no tile do andar de cima, 1 → `0x10`, 4 →
+`0x20`. Se o od 5 mudou, `RunTree(6, 0, {})`. Chamado no `SetPosition` (BV
+`0xafd048`, com `false`), no `PostLoad` e pelo
+`cEdithObjectModule::UpdateObjectsAdjacentToWall` (BV `0x52e468`, os dois
+tiles de cada lado da parede que mudou). A entrada 6 está em 158 OBJf
+(bancadas, cadeiras, fogões, geladeiras, lareiras, banheiras, escadas).
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
