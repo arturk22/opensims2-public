@@ -807,7 +807,11 @@ Exit snap(Context& c) {
     const Position from = me.position;
     const int fromDir = me.data[objdata::Direction];
     me.position = {goals.points[best][0], goals.points[best][1], goals.level};
-    if (goals.facings[best] >= 0)
+    // The direction: the slot's only when it "snaps to direction" (flag
+    // 0x1000, the slot's vtable 0xE4: the target's direction turned by the
+    // bone's or the slot's); otherwise the snapped object keeps its own
+    // (TrySnap, BV 0xe43624; docs/seat-mac.md §H).
+    if (goals.facings[best] >= 0 && (slot.flags & 0x1000))
         me.data[objdata::Direction] = int16_t(goals.facings[best]);
     if (std::getenv("OS2_DEBUG_SNAP"))
         std::fprintf(stderr, "t%llu snap of %d to %d (mode %u slot %u flags %X): goal %zu of %zu at (%.2f, %.2f) dir %d -> %d\n",
