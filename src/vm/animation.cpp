@@ -734,6 +734,9 @@ Exit animateObject(Context& c) {
     if (!started)
         return Exit::True;
     started->level = animlevel::Object;
+    // Flag 0x20: temp 1 loops, -1 until stopped (checkLoops lets no other
+    // value under 1 through); a count still plays once and holds (inferred).
+    started->forever = (o[2] & 0x20) && c.thread.temps[1] == -1;
     // Its time, for the bones its slots stand at (VM::objectPose).
     started->length = library(c.vm).seconds(started->name).value_or(0) * 1000.0f;
     started->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
@@ -1122,6 +1125,7 @@ void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r) {
     o.me = r.me, o.codeOwner = r.codeOwner, o.stackObject = r.stackObject;
     o.length = library(vm).seconds(r.name).value_or(0) * 1000.0f;
     o.loops = o.length > 0 && r.loops > 0 ? r.loops : 0;
+    o.forever = r.loops == -1;
     o.perTick = float(1000.0 / vm.clock.ticksPerSecond) * (r.speed > 0 ? r.speed : 1.0f);
     o.played = r.played;
     // The events of the loop it is in not reached yet (tickOverlayEvents;
@@ -1230,9 +1234,11 @@ void tickOverlayEvents(VM& vm) {
         auto& ov = po->animation.overlays;
         for (auto it = ov.begin(); it != ov.end();) {
             if (it->loops <= 0 || it->length <= 0) {
-                // Animate Object's: played until stopped, holding its last frame.
+                // Animate Object's: played until stopped, holding its last
+                // frame, or looping (temp 1 = -1).
                 if (!po->person && it->perTick > 0)
-                    it->played = std::min(it->played + it->perTick, it->length);
+                    it->played = it->forever && it->length > 0 ? std::fmod(it->played + it->perTick, it->length)
+                                                               : std::min(it->played + it->perTick, it->length);
                 ++it;
                 continue;
             }

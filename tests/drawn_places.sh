@@ -36,6 +36,14 @@ n=$(grep -c "(PlumbBob_objt) out of the world: not animated" "$out/emptylot.log"
 if [ "$n" != 2 ] || grep -q "object [0-9]* plays o-plumbob-spin" "$out/emptylot.log"; then
     echo "FAIL emptylot: $n out-of-world PlumbBobs left unanimated (want 2)"; fail=1
 fi
+# The selected Sim's PlumbBob in N001_Lot11 spins on: its saved Animate
+# Object request has loops 0xFFFFFFFF (temp 1 = -1), played looping; it
+# held its last frame after one turn.
+OS2_DEBUG_VM=1 "$app" --data "$OS2_DATA" --vm --lot N001_Lot11 --run-vm 30 --screenshot "$out/plumbob.png" \
+    -ApplePersistenceIgnoreState YES > "$out/plumbob.log" 2>&1
+if ! grep -q "starts o-plumbob-spin (overlay [0-9]*, placed, looping)" "$out/plumbob.log"; then
+    echo "FAIL plumbob: $(grep 'o-plumbob-spin' "$out/plumbob.log" || echo 'no spin started')"; fail=1
+fi
 # The floor buttons stop at the ground: N002_Lot31's pool makes a level -1,
 # which Page Down showed with nothing but the terrain (live QA, round 20).
 "$app" --data "$OS2_DATA" --vm --ui live --lot N002_Lot31 --key pagedown --screenshot "$out/floordown.png" \

@@ -300,7 +300,7 @@ void LotSimulation::sampleAll(double at) {
                     }
                 for (const auto& x : o.animation.overlays)
                     if (cued.insert(x.id).second)
-                        onObjectOverlay(id, x.name, x.flipped, x.id, at);
+                        onObjectOverlay(id, x.name, x.flipped, x.id, x.forever, at);
             } else if (!o.animation.overlays.empty()) {
                 onObjectAnimation(id, o.animation.overlays.back().name, at);
             }

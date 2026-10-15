@@ -506,7 +506,7 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
                     // Where its event tree runs counts only with one.
                     // (A pose held until stopped never reaches its events.)
                     s += " " + v.name + "@" + std::to_string(v.played) + "x" + std::to_string(v.loops) + "/" +
-                         std::to_string(v.loops > 0 ? v.pending.size() : 0) + (v.blendOutSent ? "b" : "");
+                         std::to_string(v.loops > 0 ? v.pending.size() : 0) + (v.blendOutSent ? "b" : "") + (v.forever ? "f" : "");
                     if (v.eventTree)
                         s += ":" + std::to_string(v.me) + "," + owner(v.codeOwner) + "," +
                              std::to_string(v.stackObject) + "," + std::to_string(v.eventTree);

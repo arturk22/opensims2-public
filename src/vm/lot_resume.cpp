@@ -439,7 +439,9 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
                     }
             if (animateObject) {
                 r.level = animlevel::Object;
-                r.loops = 0; // played until stopped (animateObject)
+                // Played until stopped (animateObject): looping when saved
+                // with loops 0xFFFFFFFF (temp 1 = -1; the PlumbBob's spin).
+                r.loops = q.loops == 0xFFFFFFFFu ? -1 : 0;
                 const uint16_t tree = r.eventTree;
                 r.eventTree = 0;
                 r.treeEvents = false;

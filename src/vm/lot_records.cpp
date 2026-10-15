@@ -318,7 +318,7 @@ std::optional<std::vector<uint8_t>> withAnimation(VM& vm, const Object& o, std::
         r.channel = animChannelName(ov.level, false);
         r.arType = 4;
         r.oeType = uint32_t(ov.oeType);
-        r.loops = uint32_t(std::max(ov.loops, 0));
+        r.loops = ov.forever ? 0xFFFFFFFFu : uint32_t(std::max(ov.loops, 0));
         r.stackObject = uint16_t(ov.stackObject);
         r.eventTree = ov.eventTree;
         r.target = uint32_t(uint16_t(ov.ikObject));

@@ -89,7 +89,9 @@ public:
     // (VM::objectPose): a two-tile door's leaves are two overlays of one
     // animation, the second flipped ("Set door open", semi-global
     // 0x7FD0DEBA 0x200D); with only the last one cued, one leaf opened.
-    std::function<void(int16_t id, const std::string& animation, bool flipped, uint32_t overlay, double at)> onObjectOverlay;
+    // `loop`: an Animate Object's played until stopped, looping (Overlay::forever).
+    std::function<void(int16_t id, const std::string& animation, bool flipped, uint32_t overlay, bool loop, double at)>
+        onObjectOverlay;
     std::function<void(int16_t id, uint32_t overlay, double at)> onObjectOverlayEnd;
     // Called when a Sim starts an animation the VM's Animate Sim plays (null:
     // it walks, climbs or idles instead), cued at `at` seconds.

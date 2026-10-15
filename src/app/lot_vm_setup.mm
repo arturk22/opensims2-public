@@ -277,19 +277,20 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // leaves are one animation played twice, the second flipped: as one
     // layer replacing the other, only one leaf opened.
     gSimulation->onObjectOverlay = [&index](int16_t id, const std::string& name, bool flipped, uint32_t overlay,
-                                            double at) {
+                                            bool loop, double at) {
         if (gSnaps)
             gSnaps->objectAnimation(id, name, at);
         if (std::getenv("OS2_DEBUG_VM"))
-            std::fprintf(stderr, "opensims2: object %d starts %s%s (overlay %u, %s) at %.2f\n", id, name.c_str(),
-                         flipped ? " flipped" : "", overlay, gPlacedObjects.count(id) ? "placed" : "not placed", at);
+            std::fprintf(stderr, "opensims2: object %d starts %s%s (overlay %u, %s%s) at %.2f\n", id, name.c_str(),
+                         flipped ? " flipped" : "", overlay, gPlacedObjects.count(id) ? "placed" : "not placed",
+                         loop ? ", looping" : "", at);
         os2::SimActor* actor = gScene.objectActor(id);
         if (!actor)
             return;
         try {
             const int layer = 1 + int(overlay & 0x3FFFFFFF);
             actor->cue(at, actor->animation(index, name),
-                       {.fade = 0.1f, .loop = false, .priority = layer, .mirror = flipped, .level = layer});
+                       {.fade = 0.1f, .loop = loop, .priority = layer, .mirror = flipped, .level = layer});
         } catch (const std::exception& e) {
             reportMissing(id, name, e);
         }

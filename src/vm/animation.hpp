@@ -172,6 +172,10 @@ struct Overlay {
     // 1 with flag 0x20); 0 = it holds or loops until stopped (carry poses,
     // Animate Object, temp 1 = -1, animations without length).
     int loops = 0;
+    // Animate Object with temp 1 = -1 (flag 0x20): it loops until stopped
+    // (the PlumbBob's o-plumbob-spin; the game saves its request with loops
+    // 0xFFFFFFFF), where the others of loops 0 hold their last frame.
+    bool forever = false;
     float played = 0, perTick = 0, length = 0; // animation ticks (ms at speed 1)
     bool blendOutSent = false;
     bool flipped = false; // played mirrored (Animate Object/Overlay's flip: a chair pulled out to the Sim's side)
@@ -286,7 +290,7 @@ bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r);
 struct ResumedOverlay {
     std::string name;
     int8_t oeType = oetype::Normal, level = animlevel::Carry;
-    int loops = 0;
+    int loops = 0; // -1: an Animate Object's that loops until stopped (Overlay::forever)
     float played = 0, speed = 1, heading = 0;
     bool mirrored = false;
     int16_t ikObject = 0;
