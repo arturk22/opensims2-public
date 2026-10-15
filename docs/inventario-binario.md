@@ -80,13 +80,13 @@ palavra.
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 7,5 / 11 = **68%** | 63 / 50 |
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% | 5,5 / 6 = **92%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
-| Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 3 / 5 = **60%** | 12 / 6 |
+| Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 4 / 5 = **80%** | 12 / 6 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% | 4,5 / 7 = **64%** | 12 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% | 5 / 7 = **71%** | 40 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% | 5,5 / 8 = **69%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
-| Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 6,5 / 9 = **72%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **73 / 105 = 70%** | **519 em src** |
+| Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 7,5 / 9 = **83%** | 43 / 52 |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **75 / 105 = 71%** | **519 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -241,8 +241,8 @@ Código: `src/vm/motives.*`, `wants.*`, `src/formats/wants.*`,
 | `cTSMotives` (17, 4): `GetMotiveRef`, `GetOldMotiveRef`, `UpdateMood` | `vm/motives.cpp` | fiel | O decaimento vem das árvores. |
 | Curvas: `cTSMotiveCurve`, `cTSMotiveCurveSet`, `cTSPiecewiseFunction` (15, 0) | `vm/autonomy.cpp` | inferido | Só `InteractionScoreCurve` foi lida. |
 | Desejos e medos: `cTSWantSimulator` (92, 28), `cTSWantNode`, `cTSWantInstance` (41, 0), `cTSWantTreeManager` | `vm/wants.cpp` | inferido | Ordem dos operadores, empates e parâmetros da check tree inferidos. |
-| Memórias: `cTSMemoryDefinition`, `cTSMemoryInstance` (18, 0), `cTSMemorySimulator` | `vm/` (tokens do Manage Inventory) | inferido | Só o lado SimAntics existe; o motor das memórias não foi lido. |
-| Relacionamentos: `TryNewRelationship` (fiel), `cTSRelationshipTable` (18, 0), `cTSFamilyRelationship` (21, 0), gravador das `SREL` | `vm/primitives.cpp`, `vm/hood_save.cpp` | inferido | O gravador das `SREL` do lote não foi achado (`save-mac.md` §7). |
+| Memórias: `cTSMemoryDefinition`, `cTSMemoryInstance` (18, 0), `cTSMemorySimulator`, `cTSPerson::UpdateMemories`/`PruneMemories` | `vm/memories.*`, `app/wants_panel.cpp` | fiel | Rodada n08 (`relationships-mac.md` §4): tokens de memória, decaimento diário, poda, a pontuação (dado 54; bate nos 50 Sims dos lotes) e Humor+Memória = Humor. Inferido: o `$Constant` dos textos. |
+| Relacionamentos: `TryNewRelationship` (fiel), `cTSRelationshipTable` (18, 0), `cTSRelationshipEntry`, `cTSFamilyRelationship` (21, 0), gravador das `SREL` | `vm/primitives.cpp`, `vm/lot.cpp`, `vm/lot_records.cpp`, `vm/hood_*.cpp`, `vm/ownership.cpp` | fiel | Rodada n08 (`relationships-mac.md` §1–3, §6): a tabela de cada objeto (no XOBJ) e de cada vizinho (no SDSC) lista as SREL que valem, chave crua (dono e objeto juntos), ordem do `GUIDHash`, SREL versão 2 sem os bytes velhos, a morte de objeto. Inferido: ordem num mesmo balde, apagar as SREL de quem morreu. |
 
 ### 3.9 Salvar e carregar
 
@@ -255,7 +255,7 @@ Código: `src/vm/lot_save.*`, `lot_records.*`, `lot_resume.*`,
 |---|---|---|---|
 | XOBJ, XMTO e PERS: `cTSObject::Write/Read`, `cEdithMTObject::Write/Read`, `cTSPerson::Write` | `formats/lot_objects*.cpp`, `vm/lot_save.cpp` | fiel | Layout pela versão do ObjM. |
 | ObjM: `cEdithObjectModule` (`read_pre_object`, `SplitLoad`) | `formats/lot_objects.cpp` | fiel | Órfãos do persist DB ignorados, como no jogo. |
-| Campos sem nome: token, tabela de relacionamentos, timers, os 6 u32 do XMTO | `vm/lot_records.cpp` | inferido | Lidos como bytes; os nomes faltam. |
+| Campos sem nome: token, timers, os 6 u32 do XMTO | `vm/lot_records.cpp` | inferido | Lidos como bytes; os nomes faltam. A tabela de relacionamentos do XOBJ foi lida na rodada n08 (`relationships-mac.md` §1). |
 | Rota e animação em andamento | `vm/lot_resume.cpp` | fiel | `save-mac.md` §7c. |
 | Controladores: `cTSLoadLotController::LoadLot`, `cTSSaveLotController`, `cTSSaveNeighborhoodController` (8, 0) | `app/game_save.*`, `app/lot_loading.mm` | inferido | `LoadLot` lido (rodada 12); o salvar do bairro não. |
 | Persist DB: `cTSPersistSystem` (122, 0), `cTSPersistDBRecord`, cache | `formats/dbpf.*` | inferido | Funciona pelo formato DBPF público; a classe do jogo nunca foi lida. |
@@ -329,7 +329,7 @@ Docs: `camera-ui-mac.md`, `ui-live-mac.md`, `game-flow-mac.md`.
 | Menu de pie: `cTSWinPieMenu` (36, 5) | `app/pie_menu.*` | fiel | |
 | Velocidade, relógio, dinheiro: `cTSMainToolbar` (89, 10), `cTSWinProcLivePanel`, `cTSSimulator::Simulate` | `app/live_ui.cpp` | fiel | |
 | Painéis: motivos, relacionamentos, emprego, desejos (`cTSWinProcPanel*`, `cTSWinProcMotiveBar`) | `app/live_panels.*`, `wants_panel.*` | fiel | |
-| Painel de memórias: `cTSWinProcPanelMemories` (21, 0) | — | faltando | |
+| Painel de memórias: `cTSWinProcPanelMemories` (21, 0), `cTSWinProcMemoryThumbnail`, `cTSWinProcMemoryDescription` | `app/live_panels.cpp`, `app/wants_panel.cpp` | fiel | Rodada n08 (`relationships-mac.md` §5): miniaturas `0x4906500A` (fundo bom/ruim, ícone com máscara, seleção), descrição `0x4906500C`. Inferido: páginas por setas (o jogo rola), o painel expandido não é desenhado. |
 | Fila de ações: `cTSUIActionQueue`, `cTSWinActionQueueIcon` | `app/live_ui.cpp` | fiel | |
 | Clique e cursores: `cTSWinSceneGraph::ObjectAtGameWindowPoint` | `app/game_cursors.*`, `lot_view.mm` | fiel | |
 | Fluxo do jogo: `cTSGameStateController` (65, 14), `cTSStartupController` | `app/game_flow.*`, `scene_*.mm` | inferido | O caso Construir do `ApplySavedUIState` não foi achado. |
@@ -362,7 +362,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) — **feita** (n05): posição da câmera, `WallsBetweenPointSetAndPoint` (raio até 3,0 de altura), `Expose` com memória de 3 cômodos e o Start das cinemáticas (`ui-live-mac.md` §8d). | Visível em todo lote; rodada pequena. | 1 Opus | sim |
 | 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos — **feita** (n06): telhados, cercas, água e GUOB lidos (`docs/roof-fence-water-mac.md`); água do terreno como o jogo (alfa por profundidade, leito e praia), parâmetros dos telhados, pinturas antes dos GUOB; piscina com o `RegularWavesHLSL` e as camadas de fundo; a triangulação dos telhados, o bump da água e as cáusticas ficam no `TODO.md`. | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |
 | 7 | **Construção: suporte, telhado e terreno** (`HasSupport`, `SupportedUnderneath`, leveler, `cTSUserToolRoof`, piscinas) — **feita** (n07): suporte pelas salas de carga, colunas, paredes de carga e topo de mansarda (`IsFloorable`, paredes `0x48`), `IsRoofValid` (`0x10`/`0x7E`/`0x7F`/`0x1C`), códigos das piscinas; conferido nos 63 lotes (`s2pkg lot-save --check-build`: 14.071 de 14.098 pisos); o teste de vértice do terreno lido mas não aplicado (flags desconhecidas) | Erros de colocação no modo Construção. | 1 Opus | sim |
-| 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |
+| 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias — **feita** (n08): tabelas de relacionamento do XOBJ e do SDSC, SREL como o jogo grava, motor das memórias e pontuação, painel de memórias com os scripts do jogo (`docs/relationships-mac.md`). | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |
 | 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
 | 10 | **CAS: corpo gordo, `BlendDeltas`, roupa aleatória** | O corpo gordo é um bug visível no CAS. | 1 Opus | sim |
 | 11 | **Câmera: seguir o Sim, Tab, fade, vista de cima** | Conforto; os valores já estão nos dados. | 1 Sonnet | não |

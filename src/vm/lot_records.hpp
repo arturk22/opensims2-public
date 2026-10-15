@@ -30,11 +30,12 @@ namespace os2::vm {
 // - the routing state (0xBC66BAEC, instance = object ID) of each Sim
 //   created during play: an idle one (no route, as the game writes for a
 //   standing Sim);
-// - the lot's SRELs (0xCC364C2A, instance = from << 16 | to, object IDs;
-//   ownership ones, with two values, name a neighbor ID): exactly the VM's
-//   relationships with a lot object on one side (Sim-to-Sim ones belong to
-//   the neighborhood): changed ones rewritten, new ones added, those the VM
-//   no longer has deleted. Values the VM cut to 16 bits keep their saved 32
+// - the objects' relationship tables and the lot's SRELs (0xCC364C2A,
+//   instance = object ID << 16 | key; docs/relationships-mac.md §1-§2):
+//   each object's table (in its XOBJ) lists the keys of its VM entries, and
+//   each changed or new entry is written as cTSRelationshipEntry does;
+//   records of entries the tables lost are deleted (Sim-to-Sim ones belong
+//   to the neighborhood). Values the VM cut to 16 bits keep their saved 32
 //   bits while the cut agrees.
 // The cTSDataTables records (0x3053CF74) the game deletes when an object
 // has none: no lot of the game has one and the VM keeps none, so none is

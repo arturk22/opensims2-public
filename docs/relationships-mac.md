@@ -51,6 +51,27 @@ tipo dele e o grupo `0xAC3A7122` (só formato velho).
 Consequência: **um SREL do lote só vale se a tabela do objeto "de" lista a
 chave**. Registros órfãos (nenhuma tabela os lista) são ignorados.
 
+**Ordem das chaves**: o `hash_map` do gcc com `GUIDHash` (BV `0x19aaef0`, o
+hash de inteiro de 32 bits de Thomas Wang: `k += k<<12; k ^= k>>22; k +=
+k<<4; k ^= k>>9; k += k<<10; k ^= k>>2; k += k<<7; k ^= k>>12`) em 53
+baldes (cresce pela lista de primos do gcc, `0x2738b80`: 97, 193, ...);
+anda balde por balde, cada balde do mais novo para o mais velho. Os 225
+tabelas de 2+ chaves dos lotes dos quatro bairros estão nessa ordem de
+balde; a ordem dentro de um balde se inverte a cada ler/gravar (inserir
+na cabeça).
+
+**Vizinhos**: `cTSNeighbor::Write` (BV `0x4913d8`) grava, depois do
+neighbor ID e do GUID, o Save da tabela do vizinho: é o "u32 3, n, IDs" do
+fim do SDSC. As listas dos SDSC também estão na ordem de balde.
+
+**Dados** (N001–N003 + Tutorial): nos lotes, 29.604 tabelas de objeto
+(todas versão 3) listam 1.814 chaves, todas com SREL; dos 10.654 SREL dos
+lotes, **8.840 são órfãos** (de objetos que já não existem, ou chaves que
+as tabelas não têm). Nos bairros, os SDSC listam 447/466/911/13 chaves
+(todas com SREL) e sobram 2.150/2.722/1.036/195 SREL que nenhum SDSC
+lista (a maioria de 3 valores, de um Sim para dezenas de moradores): o
+jogo não os lê.
+
 ## 2. O registro SREL (`cTSRelationshipEntry`)
 
 Vtable BV `0x2811c90`, objeto de 0x2C bytes (ctor `0xac6b00`): chave do
@@ -149,9 +170,68 @@ GUID (`cTSMemoryDefinition::Load`, `0xb19bb0`, guardada num mapa):
 
 - a definição só existe se o OBJD tem tipo 15; campo 0x20 → `+0xC`; campo
   0x21 = 0 / = 1 → dois bools; nome e descrição do catálogo; ícone
-  `0x856DDBAC`, instância 1, grupo do OBJD; textos: STR# do objeto, índice
-  = campo 0x29 (versão masculina) e 0x29 + 1 (feminina), título e
-  descrição de cada; um vazio copia o outro.
+  `0x856DDBAC`, instância 1, grupo do OBJD; textos: o CTSS do objeto de
+  instância = campo 0x29 (0x7D0 em todos os do base; versão masculina) e
+  campo 0x29 + 1 (feminina), entrada 0 o título e 1 a descrição; um vazio
+  copia o outro.
 - a instância usa a versão feminina quando o **assunto** é uma pessoa com
   dado 65 (gênero) = 1, e troca as variáveis do texto (`0xb18ab0`); marca
   "aspiração" quando prop 11 ≠ 0 e é igual ao dado 46 do Sim.
+
+**Conferido nos dados**: a pontuação calculada assim das memórias do
+inventário de cada vizinho (NGBH) é igual ao dado 54 salvo no PERS de
+**todos os 50 Sims** dos lotes de N001, N002 e N003.
+
+## 5. O painel de memórias (`cTSWinProcPanelMemories`)
+
+Vtable BV `0x280dac0`; aqui o symxfer acerta os nomes. É a aba
+"Lembranças" (`0x30000000`) da Simologia (`0x49064820`).
+
+- Grade (`onAttach` `0xa73e04`, `cTSWinProcGrid`): janela `0x1006` do grupo
+  recolhido; a "Constants Table" `0x3000` do script dá 6 colunas × 1 linha
+  recolhido, 6 × 4 expandido (`0x2006`), 2 px entre as miniaturas; barra
+  `0x1008`, setas `0x1004`/`0x1005`, expandir `0x1009` (`SetExpanded`
+  `0xa744e8` troca `0xA1`/`0xA2`/`0xB1`/`0xB2`).
+- A lista: `GetMemories` (a mais nova primeiro), refeita na mensagem
+  `0xEDDEAF8D` quando o painel está visível (`DoWinProcMessage`
+  `0xa7560c`).
+- Miniatura (script **`0x4906500A`**, `cTSWinProcMemoryThumbnail`;
+  `SetMemory` `0xa759e8`): `0x0B` fundo verde se a memória é boa (tipo ≠
+  4, 5, 6), `0x0A` vermelho se não; o ícone da definição carregado no
+  tamanho da janela `0x0C` e passado pela máscara alfa dela
+  (`nTSUI::ApplyAlphaMask`; sem ícone a janela some); o botão `0x0D`
+  (moldura de 4 quadros) recebe o título e fica marcado na selecionada
+  (`SetSelected` `0xa7458c`).
+- Clique (`onCommand` `0xa7426c` → mensagem `0x0BD78A8B` com o índice →
+  `ShowMemoryDescription` `0xa75ed4`): seleciona e abre a descrição
+  (`cTSWinProcMemoryDescription`, popup do script **`0x4906500C`**: `0xA1`
+  "Memory Name", `0xA2` "Memory Subject Name", `0xA3` "Memory
+  Description", `0xA4` o ícone em `0xA5`); o `onAttach` dela mede `0xA5`
+  para crescer a caixa.
+
+## 6. No código (rodada n08)
+
+- `VM::relationships`: tabelas de vizinho `{true, de} → {true, para}` e de
+  objeto `{false, objeto} → {false, chave crua}` (dono e IDs de objeto no
+  mesmo espaço, como o binário); `TryNewRelationship` 0x08 e
+  `UpdateObjectOwnership`/`GetOwnerShipBias`/Set to Next 32 usam a tabela
+  do objeto; o Set to Next 32 anda na ordem do hash.
+- Carregar: lote pelas chaves do XOBJ (`LotObjects::State::
+  relationshipKeys`), bairro pela lista do SDSC; SREL que não é versão 2 ou
+  falta = entrada sem variáveis. Morte de objeto: a tabela dele some e os
+  outros objetos perdem a chave com o ID dele (`KillOutOfWorldObject`).
+- Gravar: SREL como `ResourceWrite` (sem os bytes velhos depois dos
+  valores); tabela do XOBJ crua enquanto as chaves são as mesmas (o jogo
+  trocaria as de um mesmo balde), senão versão 3 na ordem do hash;
+  entradas iguais ao que foi lido não são regravadas; registros de
+  chaves perdidas são apagados. SDSC com chaves novas na ordem do hash.
+- Memórias: `vm/memories.*` (`UpdateMemories`, `PruneMemories`, pontuação
+  no dado 54, a cada 60 ticks e no `DayPassed`); `Humor+Memória = Humor`.
+  Painel: `app/live_panels.cpp` (`LivePanels::memories`) e
+  `app/wants_panel.cpp` (`simMemories`).
+- Inferido: a ordem dentro de um balde quando as chaves não vieram do
+  arquivo (crescente); apagar os SREL de um objeto que morreu (quem chama
+  `RemoveAllEntries(true)` não foi achado); o `$Constant` dos textos (o
+  formato do token não foi lido); a janela `0xA2` da descrição fica vazia;
+  a página por setas em vez da barra; o painel expandido não é desenhado.
+

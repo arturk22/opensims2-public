@@ -388,7 +388,10 @@ não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 - Os campos do token, da tabela de relacionamentos e dos timers; o
   `cTSRoute::SaveToStream` (rota em andamento).
 - Quem responde à mensagem `0xBC` além do módulo de objetos e do simulador
-  (a ordem exata) e o gravador das `SREL` do lote.
+  (a ordem exata). ~~O gravador das `SREL` do lote~~: é a tabela de cada
+  objeto, gravada no XOBJ (`cTSRelationshipTable::Write`, BV `0xac6f04`),
+  que grava as SREL das entradas carregadas (`docs/relationships-mac.md`
+  §1–2, rodada n08).
 - O campo +0xB0 do `SIMI` e os blocos `0x2A4` da pessoa no SDSC.
 - ~~Depois de um dia, um Sim salvo no meio de uma interação às vezes volta
   com dados de pessoa diferentes (N001_Lot36)~~: não se repete no main da
