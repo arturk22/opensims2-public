@@ -466,11 +466,14 @@ std::vector<std::string> carryOverlays(VM& vm, const Object& sim, const std::str
     }
 }
 
+// cTSObject::PlaceInSlot (BV 0xafcc28): the container's position, room and
+// direction (docs/seat-mac.md §B).
 void putInSlot(Object& x, const Object& container, int slot) {
     x.data[objdata::ContainerId] = container.id;
     x.data[objdata::SlotNumber] = int16_t(slot);
     x.position = container.position;
     x.data[objdata::Room] = container.data[objdata::Room];
+    x.data[objdata::Direction] = container.data[objdata::Direction];
     x.route.reset();
 }
 

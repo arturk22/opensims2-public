@@ -9,6 +9,7 @@
 #include "go_here.hpp"
 #include "interactions.hpp"
 #include "locomotion.hpp"
+#include "placement.hpp"
 #include "routing_internal.hpp"
 #include "sim_motion.hpp"
 
@@ -1292,38 +1293,39 @@ Exit findLocationFor(Context& c) {
 // bones (the renderer's; ignored), 0x02 only tests whether it would fit
 // ("TEST ONLY" in the editor's disassembler, Mac binary; "Be Fed - Find Drop
 // Slot", "Sub - Is Locked?"). Bytes 7-8 (a u16: 0x09B4, 0x0BEF, ...) are not
-// understood. The object takes the container's position, as the saved
-// lots keep contained objects; false when another object is in the slot;
-// the game's error when the slot does not exist.
+// understood. The object takes the container's position and direction
+// (PlaceInSlot), as the saved lots keep contained objects.
 Exit snapInto(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t flags = o[9];
     if (flags & ~0x07)
         throw VMError("Snap Into: flags " + hexString(flags) + " not implemented");
+    // cTSObject::TrySnapInto (BV 0xe4253c; docs/seat-mac.md §B): my object
+    // data 52 and 54 are cleared first; an object that does not exist is
+    // error 0x17; one that does not fit (TSObjectCanPlaceInSlot: no such
+    // slot, the slot taken, too heavy, its own container, the wrong height)
+    // makes the primitive false with od 52 = the error + 2; else, unless
+    // TEST ONLY (0x02), PlaceInSlot.
+    Object& me = c.me();
+    me.data[52] = 0;
+    me.data[54] = 0;
     Object* x = c.vm.object(c.get(o[0], int16_t(le16(&o[1]))));
     Object* into = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
     if (!x || !into)
-        throw VMError("Invalid object id.");
-    if (x == into)
-        throw VMError("Snap Into: an object into itself");
+        throw gameError(err::NoObject, "Snap Into");
     const int slot = flags & 0x01 ? c.thread.temps[0] : o[6];
-    size_t containers = 0;
-    if (const Slots* table = slotTable(c.vm, *into))
-        for (const auto& s : table->slots)
-            containers += s.type == 0;
-    if (slot < 0 || size_t(slot) >= containers)
-        throw VMError("Slot number out of range. (slot " + std::to_string(slot) + " of " + std::to_string(containers) +
-                      ")");
-    const ObjectId there = c.vm.containedIn(into->id, int16_t(slot));
-    if (there && there != x->id)
+    if (const int error = slotPlacementError(c.vm, *x, *into, slot)) {
+        if (std::getenv("OS2_SNAP_FAILS"))
+            std::fprintf(stderr, "t%llu snap into of %d into %d slot %d failed: %d (od 4 %d, od 27 %d, od 28 %d)\n",
+                         (unsigned long long)c.vm.ticks, x->id, into->id, slot, error, x->data[4], x->data[27], into->data[28]);
+        me.data[52] = int16_t(error + 2);
         return Exit::False;
+    }
     if (flags & 0x02)
         return Exit::True; // TEST ONLY
-    x->data[objdata::ContainerId] = into->id;
-    x->data[objdata::SlotNumber] = int16_t(slot);
-    x->position = into->position;
-    x->data[objdata::Room] = into->data[objdata::Room];
-    if (!(x->route && x->route->inPortal)) // a portal tree snaps the walker step by step
+    const bool inPortal = x->route && x->route->inPortal;
+    placeInSlot(c.vm, *x, *into, slot);
+    if (!inPortal) // a portal tree snaps the walker step by step
         x->route.reset();
     return Exit::True;
 }

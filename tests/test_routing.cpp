@@ -379,26 +379,42 @@ static void testSnapAndPlace() {
     Slots table;
     table.slots.resize(3);
     table.slots[1].type = 3; // containers: slots 0 and 2 of the table, numbered 0 and 1
+    table.slots[0].height = table.slots[2].height = 4; // counter height: bit 3 of the allowed heights
     code.add(kGroup, 0x80, table);
     Object& counter = vm.instantiate(kGroup, 0x80);
     counter.position = {3.5f, 3.5f, 1};
+    counter.data[objdata::Direction] = 4;
     Object& plate = place(vm, 6, 6);
     Object& cup = place(vm, 6, 5);
+    plate.data[4] = cup.data[4] = 0x08;
     // Snap the stack object (plate) into me (counter), slot 1; then the cup into the same slot.
     code.add(kGroup, 0x1000, tree({instr(0x71, T, F, {StackId, 0, 0, Data, 11, 0, 1, 0, 0, 0})}));
     Thread t = vm.start(counter.id, 0x1000, {}, plate.id);
     vm.run(t);
+    // PlaceInSlot: the container's position and direction (docs/seat-mac.md §B).
     check(t.status == Thread::Status::Finished && t.result && vm.containedIn(counter.id, 1) == plate.id &&
-              plate.position.x == 3.5f,
+              plate.position.x == 3.5f && plate.data[objdata::Direction] == 4 && counter.data[52] == 0,
           "Snap Into a slot");
     t = vm.start(counter.id, 0x1000, {}, cup.id);
     vm.run(t);
-    check(t.status == Thread::Status::Finished && !t.result, "the slot is taken");
+    // TestPlaceInSlot's errors + 2 in my od 52: 0x0C taken, 0x0E no slot, 0x25 the wrong height, 0x0F too heavy.
+    check(t.status == Thread::Status::Finished && !t.result && counter.data[52] == 0x0E, "the slot is taken");
     code.add(kGroup, 0x1001, tree({expr(Temp, 0, Assign, Lit, 2, go(1), E),
                                    instr(0x71, T, F, {StackId, 0, 0, Data, 11, 0, 0, 0, 0, 1})}));
     t = vm.start(counter.id, 0x1001, {}, cup.id);
     vm.run(t);
-    check(t.status == Thread::Status::Failed && t.error.find("Slot number out of range") == 0, "slot from temp 0");
+    check(t.status == Thread::Status::Finished && !t.result && counter.data[52] == 0x10, "slot from temp 0 (no slot 2)");
+    code.add(kGroup, 0x1005, tree({instr(0x71, T, F, {StackId, 0, 0, Data, 11, 0, 0, 0, 0, 0})}));
+    cup.data[4] = 0x01; // the floor only
+    t = vm.start(counter.id, 0x1005, {}, cup.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result && counter.data[52] == 0x27, "the wrong height");
+    cup.data[4] = 0x08;
+    cup.data[27] = 5; // heavier than the counter holds (od 28 = 0)
+    t = vm.start(counter.id, 0x1005, {}, cup.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result && counter.data[52] == 0x11, "too heavy");
+    cup.data[27] = 0;
 
     // Find Location For, normal: the cup next to the counter (whose tile is taken).
     code.add(kGroup, 0x1002, tree({instr(0x10, T, F, {0, 0, 0})}));

@@ -46,6 +46,53 @@ int16_t layers(const Object& o) {
 
 int normDir(int d) { return ((d % 8) + 8) % 8; }
 
+std::vector<const Slots::Slot*> containerSlots(VM& vm, const Object& o);
+
+} // namespace
+
+int slotPlacementError(VM& vm, const Object& x, const Object& container, int slot) {
+    int first = 0;
+    auto error = [&](int code) {
+        if (!first)
+            first = code;
+    };
+    if (const ObjectId lead = x.data[objdata::LeadTileObjectId]; lead && lead != x.id)
+        error(0x11);
+    const auto slots = containerSlots(vm, container);
+    if (slot < 0 || size_t(slot) >= slots.size()) {
+        error(placementerror::NoPlace);
+        return first;
+    }
+    if (const ObjectId held = vm.containedIn(container.id, int16_t(slot)); held && held != x.id)
+        error(placementerror::Objects);
+    if (container.data[objdata::SupportStrength] < x.data[objdata::Weight])
+        error(placementerror::Weight);
+    for (const Object* c = &container; c; c = c->data[objdata::ContainerId] ? vm.object(c->data[objdata::ContainerId]) : nullptr) {
+        if (c->id == x.id) {
+            error(placementerror::Objects);
+            break;
+        }
+        if (c->data[objdata::ContainerId] == c->id)
+            break;
+    }
+    const int h = slots[size_t(slot)]->height;
+    const int mask = h == 13 ? -1 : h >= 1 && h <= 16 ? 1 << (h - 1) : 0;
+    if (!(x.data[objdata::AllowedHeightFlags] & mask))
+        error(0x25);
+    return first;
+}
+
+void placeInSlot(VM& vm, Object& x, const Object& container, int slot) {
+    x.data[objdata::ContainerId] = container.id;
+    x.data[objdata::SlotNumber] = int16_t(slot);
+    x.position = container.position;
+    x.data[objdata::Room] = container.data[objdata::Room];
+    x.data[objdata::Direction] = container.data[objdata::Direction];
+    (void)vm;
+}
+
+namespace {
+
 // Container slots of an object's SLOT, in slot-number order.
 std::vector<const Slots::Slot*> containerSlots(VM& vm, const Object& o) {
     std::vector<const Slots::Slot*> out;

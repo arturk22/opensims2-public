@@ -68,6 +68,23 @@ constexpr size_t UserDelete = 50;
 // The tile offset of a multi-tile part (sub index) facing `direction`.
 std::array<int, 2> partOffset(uint16_t subIndex, int direction);
 
+// TSObjectCanPlaceInSlot / TestPlaceInSlot (Mac BV 0x8aa14c, 0x8a6264;
+// docs/seat-mac.md §B): the first placement error of putting `x` into
+// containment slot `slot` of `container`, 0 when it fits: 0x11 a part of
+// a multi-tile object (inferred: a part whose lead is another object),
+// 0x0E no such slot, 0x0C the slot holds another object, 0x0F the
+// container's support strength (od 28) below x's weight (od 27), 0x0C x is
+// the container or holds it, 0x25 x's allowed height flags (od 4) without
+// the slot's height bit (1 << (height - 1); height 13 takes all). Not
+// done: the container's "allow in slot" tree (OBJf 0x34).
+int slotPlacementError(VM& vm, const Object& x, const Object& container, int slot);
+// cTSObject::PlaceInSlot (BV 0xafcc28): `x` leaves its place (and the slot
+// it was in), goes into `slot` of `container` (od 2 and 3), at the
+// container's position and room, facing the container's direction (the
+// binary asks the object's aggregates first, AggregateDirection; inferred:
+// none answers for the objects the trees put in slots).
+void placeInSlot(VM& vm, Object& x, const Object& container, int slot);
+
 // Placement error codes (cTSSimSystem::PlacementErrorString): the text is
 // string code - 2 of UIText.package's STR# 0x89 ("Local fora dos limites",
 // ...); the list codes (0x19, 0x8C-0x91) show its "Sua colocação só pode
