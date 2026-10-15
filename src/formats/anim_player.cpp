@@ -259,6 +259,13 @@ bool AnimPlayer::playsOn(const Layer& l, double now) const {
 }
 
 void AnimPlayer::stayInWorld(const Xform& delta, double now) {
+    // The held bones stay where they were in the world too.
+    if (skeleton_ && held_.size() == skeleton_->bones.size())
+        for (size_t i = 0; i < held_.size(); ++i) {
+            const int parent = skeleton_->bones[i].parent;
+            if (parent >= 0 && skeleton_->bones[size_t(parent)].parent < 0)
+                held_[i] = delta.then(held_[i]);
+        }
     for (auto& l : layers_) {
         // A looping layer still playing goes on in the new place; one that
         // plays once (held or not yet ended) or fades out stays.
@@ -320,7 +327,10 @@ std::string AnimPlayer::describe(double now) const {
 std::vector<Xform> AnimPlayer::pose(double now) {
     if (!skeleton_)
         return {};
-    std::vector<Xform> out = base_.size() == skeleton_->bones.size() ? base_ : skeleton_->restPose();
+    // Under every layer: what each bone was left at (the last pose), else the base pose.
+    std::vector<Xform> out = held_.size() == skeleton_->bones.size()   ? held_
+                             : base_.size() == skeleton_->bones.size() ? base_
+                                                                       : skeleton_->restPose();
     std::erase_if(layers_, [&](const Layer& l) { return l.fadeOutStart >= 0 && weight(l, now) <= 0; });
     // A layer that played once and ended gives way to every other: the
     // game's request expires at its end and its bones keep the values it
@@ -420,6 +430,10 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     // The deltas each bone took (for the IK goals below).
     std::vector<Xform> applied;
     std::vector<uint8_t> appliedHas;
+    // The bones a base channel wrote this time (the others keep what they
+    // held: a delta over nothing, the look-at's head, does not pile up).
+    std::vector<bool> written(n, false);
+    const std::vector<Xform> under = out;
     if (anyDelta) {
         applied.assign(n, Xform{});
         appliedHas.assign(n, 0);
@@ -464,7 +478,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                 acc.t[size_t(c)] += (x.t[size_t(c)] - acc.t[size_t(c)]) * t;
         }
         if (cum > 0)
-            out[b] = acc;
+            out[b] = acc, written[b] = true;
         // The delta channels over the base mix (cChannelUberOutletQ::
         // ChannelData, BV 0xd5e1c4): from the highest priority down, each
         // rotation raised to its weight (q^w: the angle times w about its
@@ -596,6 +610,10 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         base_ = out;
         layers_.clear();
     }
+    held_ = out;
+    for (size_t b = 0; b < n; ++b)
+        if (!written[b])
+            held_[b] = under[b];
     return out;
 }
 

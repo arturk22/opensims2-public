@@ -82,9 +82,17 @@ valor escrito. Ou seja:
   estava misturando dois pedidos quando o último expirou, fica a mistura.
 
 No `AnimPlayer` isso era feito com o pedido terminado posto num nível −1
-abaixo de todos (inferido, rodada 15/21). **A mudar** (§7): o pedido que
-termina sai, e cada osso que nenhum pedido escreve fica com o valor do
-quadro anterior.
+abaixo de todos (inferido, rodada 15/21), e o osso que nenhuma camada
+escrevia voltava à pose base (a de repouso, num Sim). **Feito** (rodada
+n02): cada osso que nenhuma camada escreve fica com o valor do quadro
+anterior (`AnimPlayer::held_`; só os canais base contam: um delta sem canal
+base, o da cabeça, não se acumula), também depois de um salto da raiz
+(`stayInWorld`). Teste `test_anim` "held bones". **Continua inferido** o
+pedido terminado no nível −1: é o nosso modelo da sobreposição no fim de um
+pedido (o `CreateTransitionBlend` e o fim da ação do primitivo bloqueante,
+que deixam o pedido velho sair por blend enquanto o novo entra, não foram
+lidos); tirá-lo na hora faria cada troca de animação saltar, porque um
+canal sozinho entrando já toma o osso inteiro (normalização).
 
 ## 3. O peso de um canal (`cChannelUber::Weight`)
 

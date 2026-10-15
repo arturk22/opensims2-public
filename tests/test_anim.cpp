@@ -503,6 +503,37 @@ static Animation constantAnim(const char* bone, float degrees, uint8_t priority,
     return a;
 }
 
+// The game's outlets write no bone that no channel feeds, and the scene
+// graph bone keeps its last value (docs/anim-mac.md §2): a bone only a
+// stopped overlay wrote holds where it was left, not the rest pose, and a
+// delta over no base channel (the look-at's head) does not pile up.
+static void testHeldBones() {
+    Skeleton s;
+    s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
+    s.bones.push_back({"pelvis", 0, Xform{}, 1, 1});
+    s.bones.push_back({"spine0", 1, Xform{}, 2, 2});
+    s.bones.push_back({"head", 2, Xform{}, 3, 3});
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    const Animation idle = constantAnim("pelvis", 0, 0, 0), wave = constantAnim("spine0", 30, 5, 0);
+    AnimPlayer p(&s);
+    p.play(idle, 0, {.fade = 0});
+    p.play(wave, 0, {.fade = 0, .mask = boneMask(s, "spine0"), .priority = 101, .level = 1});
+    check(near(angle(p.pose(0.1)[2].q), 30, 1e-2f), "held bones: the overlay plays");
+    p.stop(0.2, 0.1f, 101);
+    p.pose(0.25);
+    p.pose(0.4); // faded out and dropped
+    check(p.layerCount() == 1 && near(angle(p.pose(0.5)[2].q), 30, 0.5f),
+          "held bones: a bone no layer writes keeps its last value");
+    const Animation nod = constantAnim("head", 10, 0, 0, true);
+    AnimPlayer d(&s);
+    d.play(idle, 0, {.fade = 0});
+    d.play(nod, 0, {.fade = 0, .priority = 3});
+    float last = 0;
+    for (int i = 1; i <= 5; ++i)
+        last = angle(d.pose(0.1 * i)[3].q);
+    check(near(last, 10, 0.1f), "held bones: a delta over no base channel does not pile up");
+}
+
 static void testPlayer() {
     Skeleton s;
     s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
@@ -1196,6 +1227,7 @@ int main() {
     testMirror();
     testBodyShape();
     testPlayer();
+    testHeldBones();
     testChannelLevels();
     testDeltaChannels();
     testDeltaIk();

@@ -49,7 +49,8 @@ std::vector<Xform> mirrorPose(const Skeleton& skeleton, const std::vector<int>& 
 // its share of what is left; the layers of one level are averaged by
 // weight (nlerp), and the weights are normalized, so a single layer fading
 // in over nothing already has the whole bone, and a bone no layer moves
-// keeps the base pose. play() replaces the layers of the same priority
+// keeps the value it had last (held_; the base pose before anything played).
+// play() replaces the layers of the same priority
 // with a crossfade (the old one blends out as the new one blends in), so
 // a base layer (walk, idle, Animate Sim) and the overlays mix by their
 // levels (Options::level).
@@ -59,7 +60,10 @@ public:
     // The pose under every layer (the bones an animation does not key, and
     // the whole pose when nothing plays): an object's pose as the lot saved
     // it (a chair pushed in) instead of the skeleton's rest pose.
-    void setBasePose(std::vector<Xform> local) { base_ = std::move(local); }
+    void setBasePose(std::vector<Xform> local) {
+        base_ = std::move(local);
+        held_.clear();
+    }
     // An object holds its pose when its animations are stopped (the game's
     // objects keep their bones where the last frame left them, and save
     // them so: a chair pushed in stays in): stop() then freezes the pose
@@ -74,6 +78,7 @@ public:
         skeleton_ = skeleton;
         twins_.clear();
         deltaToIk_.clear();
+        held_.clear();
     }
 
     struct Options {
@@ -204,6 +209,11 @@ private:
     const Skeleton* skeleton_;
     std::vector<Layer> layers_;
     std::vector<Xform> base_; // setBasePose's, empty: the skeleton's rest pose
+    // Each bone's value as the last pose() left it: a bone no layer writes
+    // keeps it (the game's channel outlet writes no bone without weight, and
+    // the scene graph bone keeps its last value; docs/anim-mac.md §2). Empty
+    // until the first pose(): the base pose.
+    std::vector<Xform> held_;
     bool hold_ = false;
     double lastAdvance_ = 0;
     std::vector<IkMiss> ikMisses_;
