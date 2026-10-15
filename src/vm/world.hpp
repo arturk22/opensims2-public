@@ -142,7 +142,8 @@ public:
         std::array<float, 2> a{}, b{};
         int16_t partA = 0, partB = 0; // object IDs
         int16_t slotA = 0, slotB = 0; // routing slot numbers in each part's SLOT
-        bool oneWay = false;          // from a to b only (the slot at b does not name a's)
+        bool oneWay = false;          // from a to b only (cPortal::IsOneWay)
+        int stair = -1;               // the World::stairs entry a stair's portal climbs
     };
     void setObjectPortals(std::vector<ObjectPortal> p) {
         ++revision_;

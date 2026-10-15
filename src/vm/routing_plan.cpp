@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <set>
 #include <tuple>
@@ -268,6 +269,15 @@ std::optional<PortalUse> portalUse(VM& vm, const PathPlanner& planner, size_t in
             if (kb < db)
                 db = kb, slotB = int(k);
         }
+    } else if (p.object >= 0) {
+        // An object's portal (a stair's lane, the pool ladder): the parts
+        // whose slots make its two ends, and those slots
+        // (PortalAddToPathPlannerImpl passes each end's object and slot).
+        const World::ObjectPortal& op = planner.world().objectPortals()[size_t(p.object)];
+        if (!vm.object(op.partA) || !vm.object(op.partB))
+            return std::nullopt;
+        u.entry = op.partA, u.exit = op.partB;
+        slotA = op.slotA, slotB = op.slotB;
     } else if (p.stair >= 0) {
         const Stair& st = planner.world().stairs()[size_t(p.stair)];
         auto [top, bottom] = stairSteps(vm, st);
@@ -276,15 +286,6 @@ std::optional<PortalUse> portalUse(VM& vm, const PathPlanner& planner, size_t in
         if (!top || !bottom)
             return std::nullopt;
         u.entry = bottom, u.exit = top; // end a is the bottom landing
-    } else if (p.object >= 0) {
-        // An object's portal: the parts whose slots make its two ends, and
-        // those slots (PortalAddToPathPlannerImpl passes each end's object
-        // and slot).
-        const World::ObjectPortal& op = planner.world().objectPortals()[size_t(p.object)];
-        if (!vm.object(op.partA) || !vm.object(op.partB))
-            return std::nullopt;
-        u.entry = op.partA, u.exit = op.partB;
-        slotA = op.slotA, slotB = op.slotB;
     } else {
         return std::nullopt;
     }
@@ -639,53 +640,87 @@ void restorePlannerNoise(VM& vm, uint32_t noise) {
 }
 
 // The portals objects make of their routing slots, as the binary gathers
-// them (docs/routing-mac.md §8, "Portais de objeto"): cTSObject::
-// PortalFillInSlotInfoList walks the parts of a multi-tile object and
-// PortalGatherSlotInformation takes, of an object that is not a door or a
-// stair, each routing slot marked as a portal pair (cTSRoutingSlot::
-// IsPortalPair: SLOT flag 0x200000, inferred from the pool ladder, the only
-// base-game object whose slots carry 0xE00000 = the pair and the two
-// "disable locomotion continuation" bits) with its two bone names (the
-// slot's STR# 0x90 entry "own,other"); PortalConnectSlotInformation joins
-// each such slot to the slot whose own name is its other name, and
-// PortalAddToPathPlannerImpl (on the lead) adds a portal between the two
-// slots' points, each on its part's level. The pool ladder: from
-// "route_poolladder_0_n" on the bottom part (in the pool, a level down) to
-// "route_poolladder_0_s" on the deck part beside it. Each connection is a
-// one-way portal (MakeNodesForPortal links the far end back only when the
-// portal is not one-way; inferred: each connection adds a one-way one);
-// both slots of the ladder and of the diving board name each other, so
-// here one portal crossed both ways.
+// them (docs/routing-mac.md §8.5, §8.6):
+// - cTSObject::PortalFillInSlotInfoList (BV 0xe21a18; a multi-tile object's
+//   walks its parts into the lead's list, 0xaf17f4) gathers the routing
+//   slots of the object, and a modular stair's "Portal - A" (type 12) also
+//   those of the stair's other end (PortalGetOtherEndOfStairs, BV 0xe21144:
+//   the last type 11/12 member of its object group, the "... - End"; here
+//   the end of object data 80 "Get - Next (down)", as stairSteps finds it).
+// - PortalGatherSlotInformation (BV 0xe1ff3c) names each slot by
+//   ModelBoneName (BV 0xafbb30: only a slot with 0x20000 in its slot flags,
+//   Slots::Slot::unknown10; the slot's STR# 0x90 entry "own,other"; a name
+//   already gathered keeps the first) and makes a connection to another
+//   name: a portal pair (cITSRoutingSlot::IsPortalPair, RS flag 0x200000,
+//   confirmed in round n03) to its second name; any other slot of a door,
+//   straight stair, modular stair or its portal (types 8, 10, 11, 12) to
+//   the name TSObjectAutoPortalConnectionNameGenerator (BV 0xe1fa5c) makes
+//   by swapping the suffix (_n/_s, _e/_w, _nw/_se, _ne/_sw, _top/_bottom).
+// - PortalConnectSlotInformation (BV 0xe1f878) joins each connection to the
+//   slot with that name and drops the ones without.
+// - PortalAddToPathPlannerImpl (BV 0xe22a44): a connection becomes a portal
+//   only when its first slot's object has the portal function (OBJf entry
+//   15); a stair's (types 10, 11, 12) runs from the end whose slot is
+//   number 0 and is one-way (cPortal +0x61, IsOneWay, BV 0xba2f04), two-way
+//   when neither end is slot 0; any other object's (the pool ladder, the
+//   diving board) runs from its first slot to its second, one-way. Doors go
+//   by AddDoorPortal (here World::doors), so not here.
+// Each base-game stair piece carries two lanes of slots, "_0_*" and "_1_*"
+// a third of a tile apart: slot 0 is "_0_top" on the top piece and
+// "_1_bottom" on the bottom one, so "_0" is the lane down and "_1" the lane
+// up, and Sims going up and down do not meet. The portal of a stair keeps
+// the World::stairs entry it climbs (for the engine's own climb, when the
+// portal tree cannot run), which then makes no portal of its own.
+// The pool ladder's and diving board's two slots name each other: two
+// one-way connections, kept here as one two-way portal.
 void VM::refreshObjectPortals() {
     if (!world)
         return;
     constexpr uint32_t kPortalPair = 0x200000;
+    constexpr int32_t kNamedSlot = 0x20000;
     constexpr uint16_t kModelBoneNames = 0x90;
     struct Info {
-        ObjectId group, part;
+        ObjectId owner, part;
         int16_t slot;
+        uint16_t type; // of the part
         int level;
         std::array<float, 2> at;
-        std::string own, other;
+        std::string own;
+    };
+    struct Connection {
+        size_t from;
+        std::string to;
     };
     std::vector<Info> infos;
-    for (const auto& [id, o] : objects_) {
-        if (o.person || !o.definition || !o.position.inWorld() || o.data[objdata::ContainerId] != 0)
-            continue;
-        switch (o.definition->objectType()) {
-        case kObjectTypeDoor:
-        case kObjectTypeStairs:
-        case kObjectTypeModularStairs:
-        case kObjectTypeModularStairsPortal: continue; // their own portals (World::doors, World::stairs)
-        default: break;
+    std::vector<Connection> connections;
+    auto lower = [](std::string b) {
+        while (!b.empty() && b.front() == ' ')
+            b.erase(b.begin());
+        while (!b.empty() && b.back() == ' ')
+            b.pop_back();
+        for (char& c : b)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return b;
+    };
+    // TSObjectAutoPortalConnectionNameGenerator: the other end's name, or "".
+    auto otherName = [](const std::string& name) -> std::string {
+        static const std::pair<const char*, const char*> kSwap[] = {
+            {"_n", "_s"},   {"_s", "_n"},   {"_e", "_w"},    {"_w", "_e"},     {"_nw", "_se"},
+            {"_se", "_nw"}, {"_ne", "_sw"}, {"_sw", "_ne"}, {"_top", "_bottom"}, {"_bottom", "_top"}};
+        for (const auto& [from, to] : kSwap) {
+            const size_t n = std::strlen(from);
+            if (name.size() >= n && name.compare(name.size() - n, n, from) == 0)
+                return name.substr(0, name.size() - n) + to;
         }
+        return {};
+    };
+    auto gather = [&](ObjectId owner, const Object& o) {
+        const uint16_t type = o.definition->objectType();
         const auto slots = routingSlots(slotTable(*this, o));
+        const StringTable* names = code().strings(o.group, kModelBoneNames);
         for (size_t k = 0; k < slots.size(); ++k) {
             const Slots::Slot& slot = *slots[k];
-            if (!(slot.flags & kPortalPair))
-                continue;
-            const StringTable* names = code().strings(o.group, kModelBoneNames);
-            if (!names || slot.ts2Extra[0] >= names->count(lang::EnglishUS))
+            if (!(slot.unknown10 & kNamedSlot) || !names || slot.ts2Extra[0] >= names->count(lang::EnglishUS))
                 continue;
             std::vector<std::string> list;
             const std::string text = names->get(slot.ts2Extra[0], lang::EnglishUS);
@@ -693,41 +728,133 @@ void VM::refreshObjectPortals() {
                 size_t end = text.find(',', start);
                 if (end == std::string::npos)
                     end = text.size();
-                std::string b = text.substr(start, end - start);
-                while (!b.empty() && b.front() == ' ')
-                    b.erase(b.begin());
-                while (!b.empty() && b.back() == ' ')
-                    b.pop_back();
-                for (char& c : b)
-                    c = char(std::tolower(static_cast<unsigned char>(c)));
-                list.push_back(b);
+                list.push_back(lower(text.substr(start, end - start)));
                 start = end + 1;
             }
-            const RouteGoals g = routingGoals(slot, o);
-            if (list.empty() || list[0].empty() || g.points.empty())
+            if (list.empty() || list[0].empty())
                 continue;
-            infos.push_back({multiTileGroup(o), id, int16_t(k), o.position.level, g.points[0], list[0],
-                             list.size() > 1 ? list[1] : std::string()});
+            const bool pair = slot.flags & kPortalPair;
+            std::string to;
+            if (pair)
+                to = list.size() > 1 ? list[1] : std::string();
+            else if (type == kObjectTypeDoor || type == kObjectTypeStairs || type == kObjectTypeModularStairs ||
+                     type == kObjectTypeModularStairsPortal)
+                to = otherName(list[0]);
+            else
+                continue;
+            // A name already gathered for this owner keeps its first slot.
+            auto found = std::find_if(infos.begin(), infos.end(),
+                                      [&](const Info& x) { return x.owner == owner && x.own == list[0]; });
+            size_t index = size_t(found - infos.begin());
+            if (found == infos.end()) {
+                const RouteGoals g = routingGoals(slot, o);
+                if (g.points.empty())
+                    continue;
+                infos.push_back({owner, o.id, int16_t(k), type, o.position.level, g.points[0], list[0]});
+                index = infos.size() - 1;
+            } else if (!pair) {
+                continue;
+            }
+            if (!to.empty())
+                connections.push_back({index, to});
         }
-    }
-    std::vector<World::ObjectPortal> out;
-    std::set<std::pair<size_t, size_t>> seen;
-    for (size_t i = 0; i < infos.size(); ++i) {
-        if (infos[i].other.empty())
+    };
+    for (const auto& [id, o] : objects_) {
+        if (o.person || !o.definition || !o.position.inWorld() || o.data[objdata::ContainerId] != 0)
             continue;
-        for (size_t j = 0; j < infos.size(); ++j) {
-            if (j == i || infos[j].group != infos[i].group || infos[j].own != infos[i].other)
-                continue;
-            if (!seen.insert({std::min(i, j), std::max(i, j)}).second)
-                break;
-            const Info &ia = infos[i], &ib = infos[j];
-            out.push_back({ia.level, ib.level, ia.at, ib.at, ia.part, ib.part, ia.slot, ib.slot, ib.other != ia.own});
-            if (std::getenv("OS2_OBJECT_PORTALS"))
-                std::fprintf(stderr, "object portal %d slot %d (%.2f, %.2f, %d) <-> %d slot %d (%.2f, %.2f, %d)\n", ia.part,
-                             ia.slot, ia.at[0], ia.at[1], ia.level, ib.part, ib.slot, ib.at[0], ib.at[1], ib.level);
-            break;
+        const uint16_t type = o.definition->objectType();
+        if (type == kObjectTypeDoor || type == kObjectTypeModularStairs)
+            continue; // doors: World::doors; a modular stair's pieces: through its portal piece
+        // OS2_STAIR_ONE_PORTAL=1: the stairs' old portal instead (one, both
+        // ways, landing to landing), to compare.
+        static const bool onePortal = std::getenv("OS2_STAIR_ONE_PORTAL") != nullptr;
+        if (onePortal && (type == kObjectTypeStairs || type == kObjectTypeModularStairsPortal))
+            continue;
+        const ObjectId owner = multiTileGroup(o);
+        gather(owner, o);
+        if (type == kObjectTypeModularStairsPortal) {
+            ObjectId end = id;
+            for (int i = 0; i < 64; ++i) {
+                const Object* x = object(end);
+                const ObjectId next = x ? x->data[80] : 0;
+                if (next <= 0 || !object(next))
+                    break;
+                end = next;
+            }
+            const Object* e = end != id ? object(end) : nullptr;
+            if (e && e->definition &&
+                (e->definition->objectType() == kObjectTypeModularStairs ||
+                 e->definition->objectType() == kObjectTypeModularStairsPortal))
+                gather(owner, *e);
         }
     }
+    // The stair a stair portal climbs: the World::stairs entry between the
+    // two levels whose bottom landing is nearest the lower end.
+    auto stairOf = [&](const Info& lo, const Info& hi) {
+        int best = -1;
+        float bestD = 1.5f;
+        const auto& stairs = world->stairs();
+        for (size_t s = 0; s < stairs.size(); ++s) {
+            if (stairs[s].bottom.level != lo.level || stairs[s].top.level != hi.level)
+                continue;
+            const auto b = stairs[s].at(0), t = stairs[s].at(stairs[s].length());
+            const float d = std::hypot(b[0] - lo.at[0], b[1] - lo.at[1]) + std::hypot(t[0] - hi.at[0], t[1] - hi.at[1]);
+            if (d < bestD * 2)
+                best = int(s), bestD = d / 2;
+        }
+        return best;
+    };
+    std::vector<World::ObjectPortal> out;
+    for (const Connection& c : connections) {
+        const Info& a = infos[c.from];
+        size_t to = infos.size();
+        for (size_t j = 0; j < infos.size(); ++j)
+            if (j != c.from && infos[j].owner == a.owner && infos[j].own == c.to) {
+                to = j;
+                break;
+            }
+        if (to == infos.size())
+            continue;
+        const Object* first = object(a.part);
+        if (!first || !functionTree(*first, 15))
+            continue;
+        const Info& b = infos[to];
+        const Info *from = &a, *dest = &b;
+        bool oneWay = true;
+        const bool stair = a.type == kObjectTypeStairs || a.type == kObjectTypeModularStairs ||
+                           a.type == kObjectTypeModularStairsPortal;
+        if (stair) {
+            if (a.slot != 0 && b.slot == 0)
+                std::swap(from, dest);
+            else if (a.slot != 0)
+                oneWay = false;
+        }
+        World::ObjectPortal p{from->level, dest->level, from->at,    dest->at,    from->part,
+                              dest->part,  from->slot,  dest->slot,  oneWay};
+        if (stair && from->level != dest->level)
+            p.stair = from->level < dest->level ? stairOf(*from, *dest) : stairOf(*dest, *from);
+        // The same portal again (a straight stair's two pads both have the
+        // portal function): once. The other way of a one-way one: two-way.
+        bool merged = false;
+        for (World::ObjectPortal& q : out) {
+            if (q.partA == p.partA && q.slotA == p.slotA && q.partB == p.partB && q.slotB == p.slotB) {
+                q.oneWay = q.oneWay && p.oneWay;
+                merged = true;
+            } else if (q.partA == p.partB && q.slotA == p.slotB && q.partB == p.partA && q.slotB == p.slotA) {
+                q.oneWay = false;
+                merged = true;
+            }
+            if (merged)
+                break;
+        }
+        if (!merged)
+            out.push_back(p);
+    }
+    if (std::getenv("OS2_OBJECT_PORTALS"))
+        for (const auto& p : out)
+            std::fprintf(stderr, "object portal %d slot %d (%.2f, %.2f, %d) %s %d slot %d (%.2f, %.2f, %d) stair %d\n", p.partA,
+                         p.slotA, p.a[0], p.a[1], p.levelA, p.oneWay ? "->" : "<->", p.partB, p.slotB, p.b[0], p.b[1], p.levelB,
+                         p.stair);
     world->setObjectPortals(std::move(out));
 }
 

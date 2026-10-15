@@ -522,6 +522,7 @@ ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved,
         ResumeResult r = resumeLotObjects(vm, load, saved);
         r.globalsMade = updateSimObjects(vm);
         computeLotData(vm); // the lot loaded (cTSLot, message 0x8B)
+        vm.refreshObjectPortals(); // a modular stair's pieces are linked by their object data 80
         return r;
     }
     for (const auto& e : load.objects)
@@ -533,6 +534,7 @@ ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved,
         out.freshMains += e.created && vm.startMain(e.id);
     out.globalsMade = updateSimObjects(vm);
     computeLotData(vm);
+    vm.refreshObjectPortals();
     return out;
 }
 

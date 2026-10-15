@@ -282,6 +282,36 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                             machine.object(sim)->position.y, machine.object(sim)->position.level);
         };
     machine.threads.insert_or_assign(sim, machine.start(sim, 0x1FF1, {}, object));
+    // S2PKG_ROUTE_ALSO=sim,object[,x,y,level]: a second Sim walks to that
+    // object at the same time (from there, out of any slot), by the same
+    // tree: two Sims crossing on a stair.
+    vm::ObjectId also = 0;
+    if (const char* a = std::getenv("S2PKG_ROUTE_ALSO")) {
+        char who[64] = {};
+        int target = 0, level = 0;
+        float x = 0, y = 0;
+        const int n = std::sscanf(a, "%63[^,],%d,%f,%f,%d", who, &target, &x, &y, &level);
+        also = n >= 2 ? vm::findSim(machine, who) : 0;
+        if (also && also != sim && machine.object(target)) {
+            vm::Object& o2 = *machine.object(also);
+            if (n >= 5) {
+                o2.position = {x, y, level};
+                o2.data[vm::objdata::ContainerId] = 0;
+                o2.data[vm::objdata::SlotNumber] = -1;
+                o2.data[vm::objdata::Room] = machine.world->room(vm::VM::tileOf(o2));
+            }
+            o2.queue.clear();
+            o2.activeInteraction = -1;
+            if (o2.group != s.group)
+                code.add(o2.group, 0x1FF1, *code.behavior(s.group, 0x1FF1));
+            machine.threads.insert_or_assign(also, machine.start(also, 0x1FF1, {}, vm::ObjectId(target)));
+            std::printf("also: Sim %d %s at (%.2f, %.2f, %d) to %d\n", also, nameOf(o2).c_str(), o2.position.x,
+                        o2.position.y, o2.position.level, target);
+        } else {
+            also = 0;
+        }
+    }
+    bool alsoDone = also == 0;
     bool shown = false;
     for (int i = 0; i < ticks; ++i) {
         machine.tick();
@@ -302,6 +332,20 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                                 p.door ? (" door " + std::to_string(p.door)).c_str() : "");
             }
             std::printf("\n");
+        }
+        if (!alsoDone) {
+            const vm::Object* o2 = machine.object(also);
+            const auto at = machine.threads.find(also);
+            alsoDone = !o2 || at == machine.threads.end() || at->second.status != vm::Thread::Status::Running;
+            if (o2 && ((i + 1) % 60 == 0 || alsoDone))
+                std::printf("  also tick %d: at (%.2f, %.2f, %d)%s%s%s\n", i + 1, o2->position.x, o2->position.y,
+                            o2->position.level, o2->route ? (o2->route->waiting ? ", waiting" : ", walking") : "",
+                            o2->route && o2->route->blocker ? (", blocked by " + std::to_string(o2->route->blocker)).c_str() : "",
+                            alsoDone ? (at != machine.threads.end() && at->second.status == vm::Thread::Status::Finished &&
+                                                at->second.result
+                                            ? ", arrived"
+                                            : ", failed")
+                                     : "");
         }
         const auto it = machine.threads.find(sim);
         const bool done = it == machine.threads.end() || it->second.status != vm::Thread::Status::Running;

@@ -102,11 +102,18 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         p.cost = kPortalCost;
         portals_.push_back(p);
     }
-    // Stairs: from the bottom landing to the top one.
+    // Stairs: from the bottom landing to the top one, unless the stair's
+    // objects make its portals of their routing slots (World::objectPortals,
+    // the binary's way: two one-way lanes, docs/routing-mac.md §8.6). This
+    // one stays for stairs without them (worlds built without objects).
     const auto& stairs = world.stairs();
+    const auto& objectPortals = world.objectPortals();
     for (size_t i = 0; i < stairs.size(); ++i) {
         const Stair& s = stairs[i];
         if (!world.contains(s.bottom) || !world.contains(s.top))
+            continue;
+        if (std::any_of(objectPortals.begin(), objectPortals.end(),
+                        [&](const World::ObjectPortal& o) { return o.stair == int(i); }))
             continue;
         Portal p;
         p.levelA = s.bottom.level, p.levelB = s.top.level;
@@ -126,8 +133,8 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         p.stair = int(i);
         portals_.push_back(p);
     }
-    // Objects' portals (the pool ladder): between their two slots' points.
-    const auto& objectPortals = world.objectPortals();
+    // Objects' portals (stairs, the pool ladder): between their two slots'
+    // points.
     for (size_t i = 0; i < objectPortals.size(); ++i) {
         const World::ObjectPortal& o = objectPortals[i];
         if (o.levelA < world.firstLevel() || o.levelA >= world.firstLevel() + levels ||
@@ -138,6 +145,7 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         p.a = o.a, p.b = o.b;
         p.cost = kPortalCost;
         p.object = int(i);
+        p.stair = o.stair;
         p.oneWay = o.oneWay;
         portals_.push_back(p);
     }
