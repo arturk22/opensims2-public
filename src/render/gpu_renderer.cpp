@@ -1376,6 +1376,31 @@ int GpuRenderer::addObject(const ObjectModel& model, ResourceIndex& index, bool 
     return int(gpu_->models.size() - 1);
 }
 
+void GpuRenderer::replaceObject(int model, const ObjectModel& replacement, ResourceIndex& index) {
+    if (model < 0 || size_t(model) >= gpu_->models.size())
+        return;
+    Gpu::Model stored;
+    for (const auto& part : replacement.parts) {
+        if (part.mesh.positions.empty() || part.mesh.triangles.empty() || part.shadowPlane)
+            continue;
+        Gpu::Part gpuPart;
+        gpu_->fillPart(gpuPart, part, replacement, index, false);
+        if (gpuPart.indexCount == 0)
+            continue;
+        stored.parts.push_back(std::move(gpuPart));
+    }
+    // SDL_GPU frees released buffers once the frames using them are done.
+    for (auto& part : gpu_->models[size_t(model)].parts) {
+        if (part.vertices)
+            SDL_ReleaseGPUBuffer(gpu_->device, part.vertices);
+        if (part.indices)
+            SDL_ReleaseGPUBuffer(gpu_->device, part.indices);
+        if (part.mask && part.mask != gpu_->white)
+            SDL_ReleaseGPUTexture(gpu_->device, part.mask);
+    }
+    gpu_->models[size_t(model)] = std::move(stored);
+}
+
 void GpuRenderer::updateObject(int model, const ObjectModel& posed) {
     if (model < 0 || size_t(model) >= gpu_->models.size())
         return;

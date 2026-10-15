@@ -21,6 +21,7 @@
 #include "formats/effects.hpp"
 #include "app/live_ui.hpp"
 #include "app/game_save.hpp"
+#include "app/build_mode.hpp"
 #include "app/buy_mode.hpp"
 #include "app/vm_objects.hpp"
 #include "formats/ui_resources.hpp"
@@ -36,6 +37,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -288,7 +290,57 @@ int main(int argc, char** argv) {
         const int houseModel = renderer.addObject(house, index);
         renderer.addInstance(houseModel, matrix_identity_float4x4);
 
+        // Fence rails and posts: a model per CRES, an instance per piece; called
+        // again after Build mode changed the fences (extra instances hidden).
+        std::map<std::string, int> fenceModels;
+        std::vector<int> fenceInstances;
+        auto placeFences = [&] {
+            size_t used = 0;
+            for (const auto& piece : os2::lotFencePieces(lot, patterns)) {
+                auto it = fenceModels.find(piece.model);
+                if (it == fenceModels.end()) {
+                    int id = -1;
+                    try {
+                        id = renderer.addObject(os2::loadObjectModel(index, piece.model), index);
+                    } catch (const std::exception& e) {
+                        std::fprintf(stderr, "opensims2: fence %s: %s\n", piece.model.c_str(), e.what());
+                    }
+                    it = fenceModels.emplace(piece.model, id).first;
+                }
+                if (it->second < 0)
+                    continue;
+                simd_float4x4 at;
+                std::memcpy(&at, piece.transform.data(), sizeof at);
+                if (used < fenceInstances.size()) {
+                    renderer.setInstanceModel(fenceInstances[used], it->second);
+                    renderer.setInstanceTransform(fenceInstances[used], at);
+                } else {
+                    fenceInstances.push_back(renderer.addInstance(it->second, at));
+                }
+                ++used;
+            }
+            simd_float4x4 away = matrix_identity_float4x4;
+            away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+            for (size_t i = used; i < fenceInstances.size(); ++i)
+                renderer.setInstanceTransform(fenceInstances[i], away);
+            return used;
+        };
+        std::printf("opensims2: %zu fence pieces\n", placeFences());
+
         const os2::LightingConfig lighting = os2::loadLightingConfig(res / "Lights" / "Lighting.txt");
+        // Redraws the lot after Build mode changed it: the model, the fences and the light map.
+        int lotRebuilds = 0;
+        auto rebuildLot = [&] {
+            cache.geometryChanged();
+            layout = os2::LotLightMapLayout{};
+            const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view, &layout, &cache);
+            renderer.replaceObject(houseModel, model, index);
+            renderer.setGroundClip(os2::lotSkirtBottom(lot));
+            placeFences();
+            if (const auto* state = lighting.state("day"))
+                renderer.setLightMap(os2::computeLotLightMap(layout, *state, {}, os2::LightMapGlobals::from(lighting)).image);
+            ++lotRebuilds;
+        };
         if (const auto* state = lighting.state("day")) {
             const os2::RgbaImage lightMap =
                 os2::computeLotLightMap(layout, *state, {}, os2::LightMapGlobals::from(lighting)).image;
@@ -496,7 +548,8 @@ int main(int argc, char** argv) {
 
         std::unique_ptr<os2::LiveUi> liveUi;
         std::unique_ptr<os2::BuyMode> buy;
-        int liveWindows = 0, liveDrawn = 0, buyWindows = 0, buyDrawn = 0;
+        std::unique_ptr<os2::BuildMode> build;
+        int liveWindows = 0, liveDrawn = 0, buyWindows = 0, buyDrawn = 0, buildWindows = 0, buildDrawn = 0;
         auto showLiveUi = [&] {
             if (!liveUi || !liveUi->ok())
                 return false;
@@ -512,6 +565,14 @@ int main(int argc, char** argv) {
                 buyWindows = int(buyScreen.windows);
                 buyDrawn = int(buyScreen.drawn);
                 screen.quads.insert(screen.quads.end(), buyScreen.quads.begin(), buyScreen.quads.end());
+            }
+            os2::UiScreen buildScreen;
+            if (build && build->active()) {
+                build->update();
+                buildScreen = build->screen(1280, 720);
+                buildWindows = int(buildScreen.windows);
+                buildDrawn = int(buildScreen.drawn);
+                screen.quads.insert(screen.quads.end(), buildScreen.quads.begin(), buildScreen.quads.end());
             }
             renderer.setUiImage(os2::composeUi(screen, {0, 0, 0, 0}), 0, 0, 1280, 720);
             return true;
@@ -616,21 +677,41 @@ int main(int argc, char** argv) {
                 buy = std::make_unique<os2::BuyMode>(simulation, objectView, renderer, index, res);
                 buy->setCanvas(1280, 720);
                 buy->playSound = [&](const std::string& name) { gameAudio.playUi(name); };
-                liveUi->onMode = [&](int mode) {
-                    if (mode == 1 && buy->ok()) {
-                        buy->enter();
-                        liveUi->setMode(1);
-                    } else if (mode == 0) {
-                        buy->exit();
-                        liveUi->setMode(0);
-                    }
-                };
                 std::printf("opensims2: buy mode %s, %zu catalog entries\n", buy->ok() ? "ready" : "unavailable",
                             buy->catalog().entries().size());
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: buy mode: %s\n", e.what());
                 buy.reset();
             }
+            try {
+                build = std::make_unique<os2::BuildMode>(simulation, objectView, renderer, index, res, lot);
+                build->setCanvas(1280, 720);
+                build->onGeometryChanged = rebuildLot;
+                build->playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+                std::printf("opensims2: build mode %s\n", build->ok() ? "ready" : "unavailable");
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: build mode: %s\n", e.what());
+                build.reset();
+            }
+            liveUi->onMode = [&](int mode) {
+                if (mode == 1 && buy && buy->ok()) {
+                    if (build)
+                        build->exit();
+                    buy->enter();
+                    liveUi->setMode(1);
+                } else if (mode == 2 && build && build->ok()) {
+                    if (buy)
+                        buy->exit();
+                    build->enter();
+                    liveUi->setMode(2);
+                } else if (mode == 0) {
+                    if (buy)
+                        buy->exit();
+                    if (build)
+                        build->exit();
+                    liveUi->setMode(0);
+                }
+            };
         }
         const auto start = std::chrono::steady_clock::now();
         auto seconds = [&] {
@@ -862,6 +943,53 @@ int main(int argc, char** argv) {
             std::printf("opensims2: buy %s\n", buyLine.c_str());
         }
         log << "buy " << buyLine << "\n";
+        std::string buildLine = "build skipped";
+        if (build && build->ok() && liveUi && liveUi->ok()) {
+            camera = homeCamera;
+            bool buildClick = false;
+            if (const auto rect = liveUi->controlRect(os2::LiveUi::kMainWindow, 0x77D97B28)) {
+                const simd_float2 at{((*rect)[0] + (*rect)[2]) * 0.5f, ((*rect)[1] + (*rect)[3]) * 0.5f};
+                buildClick = liveUi->press(at);
+            }
+            std::string roomLine = "no room drawn";
+            if (build->active()) {
+                const size_t wallsBefore = lot.walls.size();
+                const int rebuildsBefore = lotRebuilds;
+                const int cx = int(camera.pivot.x), cy = int(camera.pivot.y);
+                std::string drawn;
+                for (int r = 2; r < 12 && drawn.empty(); ++r)
+                    for (int dx = -r; dx <= r && drawn.empty(); dx += 2)
+                        for (int dy = -r; dy <= r && drawn.empty(); dy += 2) {
+                            if (std::abs(dx) != r && std::abs(dy) != r)
+                                continue;
+                            const int x0 = cx + dx, y0 = cy + dy;
+                            if (x0 < 1 || y0 < 1 || x0 + 3 >= int(lot.width) || y0 + 3 >= int(lot.height))
+                                continue;
+                            const std::string area = std::to_string(x0) + "," + std::to_string(y0) + "," +
+                                                     std::to_string(x0 + 3) + "," + std::to_string(y0 + 3);
+                            build->runSteps({"", "--room", area});
+                            if (lotRebuilds > rebuildsBefore) {
+                                drawn = area;
+                                camera.pivot = simd_make_float3(float(x0) + 2.f, float(y0) + 2.f, 1.f);
+                                camera.distance = 16.f;
+                            }
+                        }
+                roomLine = drawn.empty() ? "no room drawn"
+                                         : "room " + drawn + "; walls " + std::to_string(wallsBefore) + " -> " +
+                                               std::to_string(lot.walls.size()) + "; lot rebuilt " +
+                                               std::to_string(lotRebuilds - rebuildsBefore);
+                for (int i = 0; i < 5; ++i)
+                    frame();
+                showLiveUi();
+                renderer.setEye(camera.eye());
+                renderer.capture(shot.parent_path() / "frame_build.png", camera.viewProj(1280.f / 720.f));
+            }
+            buildLine = std::string(buildClick ? "clicked" : "miss") + (build->active() ? " active" : " inactive") +
+                        " panel " + std::to_string(buildWindows) + " windows " + std::to_string(buildDrawn) +
+                        " drawn; " + roomLine;
+            std::printf("opensims2: build %s\n", buildLine.c_str());
+        }
+        log << "build " << buildLine << "\n";
         log << "movie " << movieLabel << " " << movieW << "x" << movieH << " frame " << movieFrame << "\n";
         log << "particles " << renderer.particleCount() << " effect " << effectName << "\n";
         log << "audio " << (gameAudio.hasDevice() ? "on" : "off") << " frames " << gameAudio.mixer().framesRendered()

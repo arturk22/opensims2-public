@@ -29,6 +29,8 @@ public:
 
     int addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic = false);
     void updateObject(int model, const ObjectModel& posed);
+    // Uploads `replacement` in place of a model (the lot after Build mode changed it).
+    void replaceObject(int model, const ObjectModel& replacement, ResourceIndex& index);
     int addInstance(int model, const simd_float4x4& transform);
     void setInstanceTransform(int instance, const simd_float4x4& transform);
     void setInstanceModel(int instance, int model);
