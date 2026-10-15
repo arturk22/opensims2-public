@@ -611,7 +611,8 @@ Exit animateSim(Context& c) {
     // requests).
     a.name = name;
     ++a.serial;
-    a.flipped = (o[8] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0; // the flag in temp 3 replaces the literal one (inferred)
+    // Byte 8 flag 0x01: temp 3 != 0 instead of the literal (try_animate_sim, BV 0x69d634).
+    a.flipped = (o[8] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0;
     a.level = animlevel::ofSim(int8_t(o[12]));
     const float weight = float(int8_t(o[13])) / 100.0f;
     a.weight = weight <= 0 || weight > 1 ? 1.0f : weight;
@@ -716,7 +717,7 @@ Exit animateOverlay(Context& c) {
     // the adult's Main ("Animation name is empty string").
     const Object& ageOf = o[9] == animlist::Global && c.me().person ? c.me() : target;
     const std::string entry = listEntry(c, ageOf, o[9], animationIndex(c, 0, o[2] & 0x04));
-    // Flipped as Animate Sim's: flag 0x01 of byte 15 takes temp 3 (inferred as there).
+    // Flipped as Animate Sim's: flag 0x01 of byte 15 takes temp 3 (try_animate_overlay, BV 0x69ea54).
     Overlay* ov = startOverlay(c, target, entry, (o[15] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0,
                                o[9] == animlist::Social, &ageOf);
     if (!ov)

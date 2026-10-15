@@ -50,16 +50,24 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
         // (the wall view: updateLotView rebuilds the lot model for it)
         gCinematicForced.walls = gWallView.mode();
         gWallView.setMode(wholeHouse ? 3 : 1);
+        // The floor is the origin actor's (the CINE's OriginActorIndex, the
+        // one the camera and the light rig follow: Start's +0x12C, its level
+        // less one; ProposeAccept's is its second actor), not the first's.
         std::optional<int> firstLevel;
         if (gSimulation && gCinematic) {
             const os2::vm::VM& m = gSimulation->machine();
-            for (const int16_t id : gCinematic->actors()) {
+            const auto& actors = gCinematic->actors();
+            const uint32_t origin = gCinematic->camera().scene().originActor;
+            const int16_t originId = origin < actors.size() && actors[origin] ? actors[origin]
+                                     : actors.empty()                         ? int16_t(0)
+                                                                              : actors.front();
+            for (const int16_t id : actors) {
                 const auto it = id > 0 ? m.objects().find(os2::vm::ObjectId(id)) : m.objects().end();
                 if (it == m.objects().end() || !it->second.position.inWorld())
                     continue;
                 const auto& p = it->second.position;
                 const int level = std::max(p.level - 1, 0); // the VM counts from 1
-                if (!firstLevel && id == gCinematic->actors().front())
+                if (!firstLevel && id == originId)
                     firstLevel = level;
                 gCinematicForced.targets.push_back({p.x, p.y, float(level)});
             }
@@ -73,7 +81,11 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
         }
         (void)renderer;
     }
-    if (gSimulation) { // held for the whole scene (the speed buttons wait)
+    // Held for the whole scene, the speed buttons waiting (ours: Start and
+    // Stop, BV 0x7c3898/0x7c56b4, do not touch the simulator's speed; they
+    // save and set the object at +0xB4's vtable 0x74/0x5C, which would be
+    // the animation timer's MaxElapsedTicksPerFrame, to 1).
+    if (gSimulation) {
         auto& g = gSimulation->machine().globals;
         g[os2::vm::global::Speed] = 2;
         g[os2::vm::global::Paused] = 0;
