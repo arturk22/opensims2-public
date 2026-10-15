@@ -247,7 +247,8 @@ Feito (rodada n01, cada parte um commit, testes verdes):
 1. **A**: objetivos de sentar nas varreduras com peso de sentar, os pesos
    no custo, a cadeira no parâmetro 0 da pós-rota, chegada na hora com o Sim
    já na cadeira do objetivo, e a cadeira dos slots de osso que pesam sentar
-   (cadeirão). Teste `sit_goals` (N001_Lot49: TV → namoradeira). Autonomia de
+   (cadeirão). Teste `sit_goals` (N001_Lot49: TV → namoradeira;
+   `docs/screenshots/i001-tv-sofa.jpg`, "Assistir" no Darren, sem janela). Autonomia de
    14400 ticks em N001_Lot11/68/49: igual (nenhum Sim escolheu a TV).
 2. **B**: Snap Into com od 52 = erro + 2, slot inexistente = falso (não erro
    de VM), os testes do `TestPlaceInSlot` (ocupado, peso, cadeia, altura) e a
