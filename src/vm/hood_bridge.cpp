@@ -78,6 +78,7 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
                                       .house = int16_t(f.record.lot),
                                       .flags = f.record.flags,
                                       .friends = int16_t(f.record.friends),
+                                      .name = f.name,
                                       .wardrobe = f.wardrobe};
         ++out.families;
     }

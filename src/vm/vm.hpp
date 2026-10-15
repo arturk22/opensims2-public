@@ -1346,6 +1346,7 @@ public:
         int16_t house = 0;
         uint32_t flags = 0; // FAMI flags: bit 0 telephone, bit 3 computer (inferred)
         int16_t friends = 0;
+        std::string name; // the family's name (the neighborhood's FAMI string; $Family)
         // The family's clothing bin (cTSFamily::GetClothingList: the GZPS
         // keys of its BINX entries, formats/neighborhood.hpp), what Plan
         // Outfit offers; the clothing rack adds to it (hood_save writes the

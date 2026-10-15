@@ -567,6 +567,61 @@ static void testFamilyBinEntries() {
     fs::remove(file);
 }
 
+// cTSObject::ParseUIString (base 1.0 FUN_00b36ed0): each token a pass in the
+// game's order, found without case and as a prefix, its arguments locals
+// (a local past the tree's stays as it is), $Money a x b, $Cash a + 10000 x
+// b, $DayFlags the day names joined by ", ", the neighbor tokens of the
+// neighbor in the stack object, $FamilyAssets of the family in the local.
+static void testTokens() {
+    CodeLibrary code;
+    VM vm{code};
+    code.add(kObjGroup, 0x12D,
+             strings({"$Mes; $NeighborLocal:1 $Neighbor $FullNameLocal:1 $LastName; $$Money:2 $$Cash:2; "
+                      "$DayFlags:4; $DayLocal:0; $$FamilyAssets:5; $NeighborLocal:9 stays; $TimeLocal:3 stays; "
+                      "$neighborlocal:1 $FAMILY",
+                      "OK"}));
+    auto assign = [](uint8_t local, uint8_t value) { return instr(0x02, {local, 0, value, 0, 0, 5, 0x19, 0x07}); };
+    // Locals: 0 = 3 (a day), 1 = 7 (a neighbor), 2/3 = 12 and 100, 4 = 0x45
+    // (Monday, Wednesday, Sunday), 5 = 9 (a family).
+    auto b = tree({assign(0, 3), assign(1, 7), assign(2, 12), assign(3, 100), assign(4, 0x45), assign(5, 9),
+                   instr(0x24, {0, 0, 0, 2, 0, 0, 0, 0x00, 0x00, 0, 0, 0, 0, 1, 0})},
+                  6);
+    for (int k = 0; k < 6; ++k)
+        b.instructions[size_t(k)].onTrue = {Kind::Instruction, uint8_t(k + 1)};
+    code.add(kObjGroup, 0x1000, std::move(b));
+    Neighbor n;
+    n.firstName = "Bella", n.lastName = "Goth";
+    n.personData[persondata::FamilyNumber] = 9;
+    vm.neighbors[7] = n;
+    vm.families[9].funds = 20500;
+    vm.families[9].name = "Goth";
+    Object& me = vm.createObject(kObjGroup);
+    Thread t = vm.start(me.id, 0x1000, {}, 7);
+    vm.run(t);
+    auto it = vm.dialogs.find(me.id);
+    check(it != vm.dialogs.end(), "tokens: a dialog");
+    if (it == vm.dialogs.end())
+        return;
+    const std::string& m = it->second.message;
+    auto has = [&](const char* s, const char* what) {
+        if (m.find(s) == std::string::npos) {
+            std::fprintf(stderr, "  message: %s\n", m.c_str());
+            check(false, what);
+        }
+    };
+    has("s; Bella Bella Bella Goth Goth;", "tokens: $Me as a prefix, the neighbor tokens");
+    has("$1200 $1000012;", "tokens: $Money a x b, $Cash a + 10000 x b");
+    // Without Live.package's STR# 0x99 here: the Portuguese names it has.
+    has("Segunda-feira, Quarta-feira, Domingo;", "tokens: $DayFlags");
+    has("; Quarta-feira;", "tokens: $DayLocal (local + 1 of STR# 0x99)");
+    has("$20500;", "tokens: $FamilyAssets of the family in the local");
+    // $NeighborLocal:9 stays, and the later $Neighbor pass takes its first
+    // letters, as the game's prefix search does.
+    has("BellaLocal:9 stays; $TimeLocal:3 stays;", "tokens: arguments that do not hold stay");
+    has("Bella Goth", "tokens: without case");
+    check(it->second.iconNeighbor == 7, "tokens: $Neighbor gives the icon");
+}
+
 int main() {
     lang::setPreferred(lang::EnglishUS);
     testFamilyBinEntries();
@@ -574,6 +629,7 @@ int main() {
     testNpcNeighborSaved();
     testFamilyMembershipSaved();
     testYesNoCancel();
+    testTokens();
     testNotification();
     testSpecialDialogs();
     testLightAndOutfit();

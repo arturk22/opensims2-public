@@ -36,17 +36,25 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 
 namespace os2::vm {
 
 namespace {
 
 constexpr uint16_t kDialogStrings = 0x12D;
-// The last object a name token of a dialog string named ($Object,
-// $NameLocal, ...): the automatic icon's object (resolveIcon).
-thread_local int16_t lastTokenObject = 0;
+// The object or neighbor the last icon-giving token of a dialog string
+// named (ParseUIString's selector out-parameter: $Neighbor and $FullName
+// the neighbor in the stack object, $Object the stack object): the
+// automatic icon (resolveIcon).
+struct TokenIcon {
+    int16_t object = 0, neighbor = 0;
+};
+thread_local TokenIcon lastTokenIcon;
 constexpr uint16_t kJobStrings = 0x93; // a job object's titles and descriptions
 constexpr uint32_t kTypeCtss = 0x43545353;
 constexpr uint32_t kEditorLabelGroup = 0x7FE59FD0;
@@ -115,24 +123,37 @@ std::string neighborName(VM& vm, int16_t id) {
     return {};
 }
 
-// "17:00" (24-hour clock, as Brazilian Portuguese writes it; inferred).
+// "17:00": the hour of $TimeLocal with minute 0, as ParseUIString asks the
+// language's time formatter for it (vtable 0x24(hour, 0, -1)); the
+// 24-hour form of Brazilian Portuguese is inferred.
 std::string clockTime(int hour, int minute) {
     char buf[16];
     std::snprintf(buf, sizeof buf, "%d:%02d", ((hour % 24) + 24) % 24, std::clamp(minute, 0, 59));
     return buf;
 }
 
-// The work days of a job (the "days" bits of the career tables): bit 0
-// Monday ... bit 6 Sunday (inferred: the jobs of the game have 0x1F,
-// Monday to Friday, or bits past 4 for the weekend ones).
+// Live.package's STR# 0x99, one-based: 1 Sunday ... 7 Saturday.
+std::string dayName(int oneBased) {
+    static const char* fallback[] = {"Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"};
+    const auto& tables = textTables();
+    const StringTable* t = tables ? tables(kLiveTextGroup, 0x99) : nullptr;
+    if (t && oneBased > 0 && size_t(oneBased) <= t->entries.size()) {
+        std::string s = t->get(size_t(oneBased - 1));
+        if (!s.empty())
+            return s;
+    }
+    return oneBased >= 1 && oneBased <= 7 ? fallback[oneBased - 1] : std::string();
+}
+
+// $DayFlags (ParseUIString): bits 0-6 of a job's days are STR# 0x99 entries
+// 2-7 and 1 (Monday ... Saturday, Sunday), joined by ", ".
 std::string dayFlags(int bits) {
-    static const char* names[] = {"Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"};
     std::string out;
     for (int d = 0; d < 7; ++d)
         if (bits & (1 << d)) {
             if (!out.empty())
                 out += ", ";
-            out += names[d];
+            out += dayName(d + 2 == 8 ? 1 : d + 2);
         }
     return out;
 }
@@ -300,125 +321,278 @@ std::string displayName(VM& vm, const Object& o) {
     return o.definition ? o.definition->fileName : std::string();
 }
 
-// The tokens, as Sims2.exe names them ("$Me", "$Object", "$Local", ...; the
-// list is in the exe next to the dialog code). Their meaning is inferred
-// from the strings that use them (FreeSO's VMDialogHandler has The Sims 1's
-// versions): numbers after ':' are local variables of the tree that puts
-// the dialog up. Tokens not understood stay as they are.
+namespace {
+
+// GetPropertyValueAsString (BV 0xb05f38): `token` in `text` from `from`,
+// without case and as a prefix ("$Mes" holds "$Me"), then up to two
+// ":<digits>" arguments (-1 when absent); `len` covers all of it.
+struct TokenMatch {
+    size_t pos = std::string::npos, len = 0;
+    int a = -1, b = -1;
+};
+
+TokenMatch findToken(const std::string& text, const std::string& lowerToken, size_t from) {
+    TokenMatch m;
+    if (from > text.size())
+        return m;
+    const std::string low = lower(text);
+    const size_t pos = low.find(lowerToken, from);
+    if (pos == std::string::npos)
+        return m;
+    m.pos = pos;
+    size_t p = pos + lowerToken.size();
+    auto digits = [&](int& out) {
+        std::string d;
+        while (p < text.size() && std::isdigit(static_cast<unsigned char>(text[p])))
+            d += text[p++];
+        if (!d.empty())
+            out = std::atoi(d.c_str());
+    };
+    if (p < text.size() && text[p] == ':') {
+        ++p;
+        digits(m.a);
+        if (p < text.size() && text[p] == ':') {
+            ++p;
+            digits(m.b);
+        }
+    }
+    m.len = p - pos;
+    return m;
+}
+
+} // namespace
+
+// cTSObject::ParseUIString (vtable 0x408; base 1.0 FUN_00b36ed0, BV
+// 0xb0eeb4; docs/primitives-mac.md "Dialog", round n27): the base game's 35
+// tokens, each a pass over the whole text in the game's order; a token
+// whose arguments do not hold (a local past the tree's locals, no such
+// neighbor or object) stays as it is and the pass goes on one letter
+// later. "local n" is the tree's local variable n; the stack object, when
+// a token reads a neighbor, is a neighbor ID. `depth` is not used (the
+// game inserts a string token's text and goes on with the tokens after it
+// in the order); it stays for the callers.
 std::string expandDialogTokens(Context& c, const std::string& text, int depth) {
+    (void)depth;
     VM& vm = c.vm;
-    std::string out;
-    out.reserve(text.size());
-    auto local = [&](int i) -> int16_t {
-        return i >= 0 && size_t(i) < c.frame.locals.size() ? c.frame.locals[size_t(i)] : int16_t(0);
-    };
-    auto objectName = [&](int16_t id) {
+    std::string out = text;
+    const int locals = int(c.frame.locals.size());
+    auto validLocal = [&](int i) { return i >= 0 && i < locals; };
+    auto local = [&](int i) -> int16_t { return validLocal(i) ? c.frame.locals[size_t(i)] : int16_t(0); };
+    const int16_t stackId = c.frame.stackObject;
+    const Object* me = vm.object(c.thread.me);
+    // An object's name as its selector gives it (a multi-tile part: its
+    // master's).
+    auto objectName = [&](int16_t id) -> std::optional<std::string> {
         const Object* o = vm.object(id);
-        return o ? displayName(vm, *o) : std::string();
+        if (!o)
+            return std::nullopt;
+        if (const Object* lead = vm.object(multiTileGroup(*o)))
+            o = lead;
+        return displayName(vm, *o);
     };
-    for (size_t i = 0; i < text.size();) {
-        if (text[i] != '$') {
-            out += text[i++];
-            continue;
+    auto neighborFirst = [&](int16_t id) -> std::optional<std::string> {
+        if (!vm.neighbor(id))
+            return std::nullopt;
+        return neighborName(vm, id);
+    };
+    auto neighborFull = [&](int16_t id) -> std::optional<std::string> {
+        const Neighbor* n = vm.neighbor(id);
+        if (!n)
+            return std::nullopt;
+        const std::string first = neighborName(vm, id), last = n->lastName;
+        if (!first.empty() && !last.empty())
+            return first + " " + last;
+        return last.empty() ? first : last;
+    };
+    auto familyOf = [&](int16_t neighborId) -> const VM::Family* {
+        const Neighbor* n = vm.neighbor(neighborId);
+        if (!n)
+            return nullptr;
+        const Object* sim = vm.neighborSim(neighborId);
+        const int16_t family = sim && sim->person ? sim->person->data[persondata::FamilyNumber]
+                                                  : n->personData[persondata::FamilyNumber];
+        auto f = vm.families.find(family);
+        return f == vm.families.end() ? nullptr : &f->second;
+    };
+    auto number = [](int64_t v) { return std::to_string(v); }; // the language's formatter, %d without it (inferred: no grouping)
+    auto table = [&](uint32_t group, int t, int index) -> std::optional<std::string> {
+        const StringTable* st = group ? vm.code().strings(group, uint16_t(t)) : nullptr;
+        if (!st)
+            return std::string(); // FUN_00212618 gives an empty string
+        return stringAt(st, index);
+    };
+
+    // Each entry: the token and its value at a match (none: stays).
+    using Value = std::function<std::optional<std::string>(const TokenMatch&)>;
+    auto twoLocals = [&](const TokenMatch& m) { return validLocal(m.a) && validLocal(m.b); };
+    const std::pair<const char*, Value> tokens[] = {
+        // 1-8: the inventory tokens ($TokenPersonalCountedLocalName ...):
+        // not done (no base-game string uses them); they stay.
+        {"$familyassets", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!validLocal(m.a))
+                 return std::nullopt;
+             auto f = vm.families.find(local(m.a));
+             if (f == vm.families.end())
+                 return std::nullopt;
+             return number(f->second.funds); // family vtable 0xa4 (inferred: the funds)
+         }},
+        {"$family", [&](const TokenMatch&) -> std::optional<std::string> {
+             const VM::Family* f = familyOf(stackId);
+             if (!f)
+                 return std::nullopt;
+             return f->name;
+         }},
+        {"$lastname", [&](const TokenMatch&) -> std::optional<std::string> {
+             const Neighbor* n = vm.neighbor(stackId);
+             if (!n)
+                 return std::nullopt;
+             return n->lastName;
+         }},
+        {"$neighborlocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             return validLocal(m.a) ? neighborFirst(local(m.a)) : std::nullopt;
+         }},
+        {"$neighbor", [&](const TokenMatch&) -> std::optional<std::string> {
+             auto v = neighborFirst(stackId);
+             if (v)
+                 lastTokenIcon = {0, stackId};
+             return v;
+         }},
+        {"$me", [&](const TokenMatch&) -> std::optional<std::string> {
+             if (!me)
+                 return std::nullopt;
+             return displayName(vm, *me);
+         }},
+        {"$object", [&](const TokenMatch&) -> std::optional<std::string> {
+             auto v = objectName(stackId);
+             if (v)
+                 lastTokenIcon = {stackId, 0};
+             return v;
+         }},
+        {"$local", [&](const TokenMatch& m) -> std::optional<std::string> {
+             return validLocal(m.a) ? std::optional<std::string>(number(local(m.a))) : std::nullopt;
+         }},
+        {"$money", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!validLocal(m.a) || !validLocal(m.a + 1))
+                 return std::nullopt;
+             const int64_t x = local(m.a), y = local(m.a + 1);
+             return number(y ? x * y : x);
+         }},
+        {"$cash", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!validLocal(m.a) || !validLocal(m.a + 1))
+                 return std::nullopt;
+             return number(int64_t(local(m.a)) + int64_t(local(m.a + 1)) * 10000);
+         }},
+        {"$timelocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!validLocal(m.a) || local(m.a) < 0 || local(m.a) >= 24)
+                 return std::nullopt;
+             return clockTime(local(m.a), 0);
+         }},
+        {"$attrib", [&](const TokenMatch& m) -> std::optional<std::string> {
+             const Object* s = vm.object(stackId);
+             if (!s || m.a < 0 || size_t(m.a) >= s->attributes.size())
+                 return std::nullopt;
+             return number(s->attributes[size_t(m.a)]);
+         }},
+        {"$nameattrib", [&](const TokenMatch& m) -> std::optional<std::string> {
+             const Object* s = vm.object(stackId);
+             if (!s || m.a < 0 || size_t(m.a) >= s->attributes.size())
+                 return std::nullopt;
+             return objectName(s->attributes[size_t(m.a)]);
+         }},
+        {"$namelocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             return validLocal(m.a) ? objectName(local(m.a)) : std::nullopt;
+         }},
+        {"$fullnamelocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!validLocal(m.a))
+                 return std::nullopt;
+             if (auto v = neighborFull(local(m.a)))
+                 return v;
+             return neighborFull(stackId);
+         }},
+        {"$fullname", [&](const TokenMatch&) -> std::optional<std::string> {
+             auto v = neighborFull(stackId);
+             if (v)
+                 lastTokenIcon = {0, stackId};
+             return v;
+         }},
+        {"$lotnamelocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!validLocal(m.a))
+                 return std::nullopt;
+             const VM::Family* f = familyOf(local(m.a));
+             if (!f)
+                 return std::nullopt;
+             auto l = vm.lots.find(f->house);
+             if (l == vm.lots.end())
+                 return std::nullopt;
+             return l->second.name;
+         }},
+        {"$cataloglocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             return validLocal(m.a) ? objectName(local(m.a)) : std::nullopt;
+         }},
+        {"$daylocal", [&](const TokenMatch& m) -> std::optional<std::string> {
+             return validLocal(m.a) ? std::optional<std::string>(dayName(local(m.a) + 1)) : std::nullopt;
+         }},
+        {"$dayflags", [&](const TokenMatch& m) -> std::optional<std::string> {
+             return validLocal(m.a) ? std::optional<std::string>(dayFlags(local(m.a))) : std::nullopt;
+         }},
+        {"$jobtitle", [&](const TokenMatch& m) -> std::optional<std::string> {
+             // STR# 0x93 of the object in local b's group, entry local a + 1.
+             if (!twoLocals(m))
+                 return std::nullopt;
+             const Object* job = vm.object(local(m.b));
+             if (!job)
+                 return std::nullopt;
+             return table(job->group, kJobStrings, local(m.a) + 1);
+         }},
+        {"$privatestring", [&](const TokenMatch& m) -> std::optional<std::string> {
+             // STR# local a of the stack object's own file, entry local b.
+             if (!twoLocals(m))
+                 return std::nullopt;
+             const Object* s = vm.object(stackId);
+             if (!s)
+                 return std::nullopt;
+             return table(s->group, local(m.a), local(m.b));
+         }},
+        {"$behaviorstring", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!twoLocals(m))
+                 return std::nullopt;
+             return table(kEditorLabelGroup, local(m.a), local(m.b));
+         }},
+        {"$aspirationstring", [&](const TokenMatch& m) -> std::optional<std::string> {
+             // Live.package's tables, as "Aspiration - Get Level" leaves them
+             // in temps 1 and 2 (the age's table 0x9A-0x9D, entry 1 + 13 x
+             // aspiration + 2 x level + 1 for a female).
+             if (!twoLocals(m))
+                 return std::nullopt;
+             const auto& tables = textTables();
+             const StringTable* t = tables ? tables(kLiveTextGroup, uint32_t(uint16_t(local(m.a)))) : nullptr;
+             return stringAt(t, local(m.b));
+         }},
+        {"$semiglobalstring", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!twoLocals(m))
+                 return std::nullopt;
+             const Object* s = vm.object(stackId);
+             if (!s)
+                 return std::nullopt;
+             return table(s->semiGroup, local(m.a), local(m.b));
+         }},
+        {"$globalstring", [&](const TokenMatch& m) -> std::optional<std::string> {
+             if (!twoLocals(m))
+                 return std::nullopt;
+             return table(kGlobalGroup, local(m.a), local(m.b));
+         }},
+        // 35: $TokenNameLocal (the personal inventory of the Sim): not done.
+    };
+    for (const auto& [token, value] : tokens) {
+        const std::string t = token;
+        for (size_t from = 0;;) {
+            const TokenMatch m = findToken(out, t, from);
+            if (m.pos == std::string::npos)
+                break;
+            if (auto v = value(m))
+                out.replace(m.pos, m.len, *v);
+            from = m.pos + 1;
         }
-        if (i + 1 < text.size() && text[i + 1] == '$') { // "$$Local:2": a dollar sign, then the token
-            out += '$';
-            ++i;
-            continue;
-        }
-        size_t j = i + 1;
-        while (j < text.size() && std::isalpha(static_cast<unsigned char>(text[j])))
-            ++j;
-        const std::string name = lower(text.substr(i + 1, j - i - 1));
-        std::vector<int> args;
-        size_t k = j;
-        while (k + 1 < text.size() && text[k] == ':' && std::isdigit(static_cast<unsigned char>(text[k + 1]))) {
-            size_t e = k + 1;
-            int v = 0;
-            while (e < text.size() && std::isdigit(static_cast<unsigned char>(text[e])))
-                v = v * 10 + (text[e++] - '0');
-            args.push_back(v);
-            k = e;
-        }
-        const std::string raw = text.substr(i, k - i);
-        auto arg = [&](size_t n) { return n < args.size() ? args[n] : 0; };
-        std::string value;
-        bool known = true;
-        const Object* me = vm.object(c.thread.me);
-        const Object* stack = vm.object(c.frame.stackObject);
-        if (name == "me")
-            value = me ? displayName(vm, *me) : "";
-        else if (name == "fullname")
-            value = me ? fullName(vm, *me) : "";
-        else if (name == "lastname") {
-            const Neighbor* n = me ? neighborOf(vm, *me) : nullptr;
-            value = n ? n->lastName : "";
-        } else if (name == "object") {
-            value = stack ? displayName(vm, *stack) : "";
-            if (stack)
-                lastTokenObject = stack->id;
-        }
-        else if (name == "neighbor") // the neighbor whose ID is in the stack object
-            value = neighborName(vm, c.frame.stackObject);
-        else if (name == "local" && !args.empty())
-            value = std::to_string(local(arg(0)));
-        else if (name == "attrib" && !args.empty() && stack) // the stack object's attribute (as FreeSO)
-            value = std::to_string(size_t(arg(0)) < stack->attributes.size() ? stack->attributes[size_t(arg(0))] : 0);
-        else if (name == "namelocal" && !args.empty()) {
-            value = objectName(local(arg(0)));
-            if (vm.object(local(arg(0))))
-                lastTokenObject = local(arg(0));
-        }
-        else if (name == "fullnamelocal" && !args.empty()) {
-            const Object* o = vm.object(local(arg(0)));
-            value = o ? fullName(vm, *o) : "";
-        } else if (name == "neighborlocal" && !args.empty())
-            value = neighborName(vm, local(arg(0)));
-        else if (name == "cataloglocal" && !args.empty())
-            value = objectName(local(arg(0)));
-        else if (name == "timelocal" && !args.empty())
-            value = clockTime(local(arg(0)), args.size() > 1 ? local(arg(1)) : 0);
-        else if (name == "dayflags" && !args.empty())
-            value = dayFlags(local(arg(0)));
-        else if (name == "cash" || name == "familyassets") {
-            const int16_t family = me && me->person ? me->person->data[persondata::FamilyNumber] : 0;
-            auto f = vm.families.find(family);
-            value = std::to_string(f == vm.families.end() ? 0 : f->second.funds);
-        } else if (name == "jobtitle" && args.size() >= 2) {
-            // $JobTitle:<title index local>:<job object local>: the entry
-            // (0-based) of the job object's STR# 0x93 of titles and
-            // descriptions, as "Function - Get Job Title Index for Level"
-            // computes it (title, description per level and gender; inferred).
-            const Object* job = vm.object(local(arg(1)));
-            const StringTable* t = job ? vm.code().strings(job->group, kJobStrings) : nullptr;
-            value = t ? t->get(size_t(std::max<int>(local(arg(0)), 0))) : std::string();
-            known = !value.empty();
-        } else if (name == "aspirationstring" && args.size() >= 2) {
-            // <table local>:<index local>: Live.package's aspiration level
-            // names, as global "Aspiration - Get Level" leaves them in temps
-            // 1 and 2 (the age's table 0x9A-0x9D and 1 + 13 x aspiration + 2
-            // x level + 1 for a female: one-based like the Dialog's own,
-            // "Don Juan" 11, "Femme Fatale" 12; read from the data).
-            const auto& tables = textTables();
-            const StringTable* t = tables ? tables(kLiveTextGroup, uint32_t(uint16_t(local(arg(0))))) : nullptr;
-            value = stringAt(t, local(arg(1)));
-            known = t != nullptr;
-        } else if ((name == "privatestring" || name == "semiglobalstring" || name == "globalstring") && args.size() >= 2 &&
-                   depth < 4) {
-            // <table local>:<index local>, from the code owner's scope; the
-            // index is one-based like the Dialog's own (Controller - Age's
-            // "has grown into $PrivateString:4:5" with local 5 = 18 for
-            // entry 18, "an adult"; inferred from the data).
-            const Object* owner = vm.object(c.frame.codeOwner);
-            const int scope = name == "privatestring" ? 0 : name == "semiglobalstring" ? 1 : 2;
-            const StringTable* t =
-                owner ? scopeStrings(vm, *owner, c.frame.group, scope, uint16_t(local(arg(0)))) : nullptr;
-            value = expandDialogTokens(c, stringAt(t, local(arg(1))), depth + 1);
-            known = t != nullptr;
-        } else
-            known = false;
-        out += known ? value : raw;
-        i = k;
     }
     return out;
 }
@@ -677,18 +851,24 @@ void acceptDialog(Context& c, Dialog& d) {
 }
 
 // cTSObjectDialog::SetParams' icon (BV 0x1d2b20; byte 7 bits 1-3, STR#
-// 0xF4): 0 automatic, the object a token of the text named (inferred: the
-// token expansion hands one back) else the stack object; 2 the neighbor
+// 0xF4): 0 automatic, the selector the token expansion hands back (the
+// last $Neighbor/$FullName neighbor or $Object object) else the stack
+// object; 2 the neighbor
 // whose ID is in the stack object (error 0x37 in TryDialog's notifications
 // if none); 3 "indexed", the tree's object (inferred: the binary asks the
 // object definition of the tree's file); 4 "named", a string of STR# 0x12D
 // at byte 1: "gz <instance>"/"gzi <instance>" a UI image, "guid <n>" an
 // object; 1 none.
-void resolveIcon(Context& c, Dialog& d, const StringTable* strings, int16_t tokenObject) {
+void resolveIcon(Context& c, Dialog& d, const StringTable* strings, TokenIcon token) {
     VM& vm = c.vm;
     const auto& o = c.instruction.operands;
     switch (d.icon) {
-    case 0: d.iconObject = tokenObject ? tokenObject : c.frame.stackObject; break;
+    case 0:
+        if (token.neighbor)
+            d.iconNeighbor = token.neighbor;
+        else
+            d.iconObject = token.object ? token.object : c.frame.stackObject;
+        break;
     case 2:
         if (vm.neighbor(c.frame.stackObject))
             d.iconNeighbor = c.frame.stackObject;
@@ -761,16 +941,18 @@ Exit dialog(Context& c) {
     d.type = type;
     d.typeName = typeLabel(vm, type);
     d.cls = dialogClass(type);
-    lastTokenObject = 0;
-    d.message = expandDialogTokens(c, stringAt(strings, messageIndex));
+    // SetParams expands the title before the message: the message's
+    // icon-giving tokens are the last ones.
+    lastTokenIcon = {};
     d.title = expandDialogTokens(c, stringAt(strings, titleIndex));
+    d.message = expandDialogTokens(c, stringAt(strings, messageIndex));
     d.icon = (o[7] >> 1) & 7;
     d.timeout = o[10];
     d.priority = o[9];
     d.continueOthers = o[7] & 0x80;
     d.detached = o[7] & 0x01;
     d.depth = depth, d.tree = c.frame.behavior, d.node = c.frame.pc;
-    const int16_t tokenObject = lastTokenObject;
+    const TokenIcon tokenIcon = lastTokenIcon;
     // A button's string (STR# 0x12D), else cTSObjectDialog's default from
     // UIText STR# 0x8E (FUN_001d0a38: 1 OK, 2 Cancel, 3 Yes, 4 No).
     auto button = [&](int index, int fallback) {
@@ -796,7 +978,7 @@ Exit dialog(Context& c) {
             throw VMError("Could not find object reference (text notification without an object)");
         d.blocking = false;
         d.detached = false;
-        resolveIcon(c, d, strings, tokenObject);
+        resolveIcon(c, d, strings, tokenIcon);
         if (type == dialogtype::TextNotification || type == dialogtype::TnsBirthday)
             c.thread.temps[size_t(resultTemp)] = int16_t(d.id & 0x7FFF);
         if (vm.notifications.size() >= kMaxNotifications)
@@ -837,7 +1019,7 @@ Exit dialog(Context& c) {
         case dialogtype::YesNoCancel: d.buttons = {button(o[3], 3), button(o[4], 4), button(o[0], 2)}; break;
         default: d.buttons = {button(o[3], 1)}; break;
         }
-        resolveIcon(c, d, strings, tokenObject);
+        resolveIcon(c, d, strings, tokenIcon);
         break;
     case DialogClass::NameObject:
         // OK (0xA000) and, in the panels that have one, cancel (0xA001).
