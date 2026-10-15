@@ -422,7 +422,7 @@ private:
         const V3 d1{0, 0, -kThicknessTop}, d2{0, 0, -kThicknessInner};
         const std::array<V3, 4> a{from, to, to + d1, from + d1};
         const std::array<V3, 4> b{a[3], a[2], a[2] + d2, a[3] + d2};
-        for (auto [out, q] : {std::pair{trim, a}, std::pair{edges, b}}) {
+        for (auto [out, q] : {std::pair{edges, a}, std::pair{trim, b}}) {
             const V3 n = faceNormal(q[0], q[2], q[1]);
             std::array<uint32_t, 4> k;
             for (size_t j = 0; j < 4; ++j)
@@ -755,8 +755,11 @@ LotRoofs::LotRoofs(const Lot& lot) {
         pattern_ = r.pattern;
         const float h = lot.elevationAt(r.level, std::clamp(r.x0, 0.0f, float(lot.width)),
                                         std::clamp(r.y0, 0.0f, float(lot.height)));
-        if (roofgame::Roof::supported(r.type))
+        if (roofgame::Roof::supported(r.type)) {
+            // The game's own path (docs/roof-fence-water-mac.md §1.5).
             world_.add(roofgame::Roof(r, h));
+            continue;
+        }
         auto roof = std::make_unique<Roof>();
         roof->level = r.level;
         switch (r.type) {
@@ -798,6 +801,20 @@ LotRoofs& LotRoofs::operator=(LotRoofs&&) noexcept = default;
 
 LotRoofs::Meshes LotRoofs::build() const {
     Meshes m;
+    for (size_t k = 0; k < world_.roofs().size(); ++k) {
+        roofgame::World::Meshes g;
+        world_.build(k, g);
+        // RoofEdges (textureedges) is the upper strip, RoofTrim (texturetrim) the lower.
+        for (auto [from, to] : {std::pair{&g.top, &m.top}, std::pair{&g.under, &m.under},
+                                std::pair{&g.upperStrip, &m.edges}, std::pair{&g.lowerStrip, &m.trim}}) {
+            const uint32_t base = uint32_t(to->positions.size());
+            to->positions.insert(to->positions.end(), from->positions.begin(), from->positions.end());
+            to->uvs.insert(to->uvs.end(), from->uvs.begin(), from->uvs.end());
+            to->normals.insert(to->normals.end(), from->normals.begin(), from->normals.end());
+            for (uint32_t t : from->triangles)
+                to->triangles.push_back(base + t);
+        }
+    }
     for (const auto& r : roofs_)
         for (const auto& e : r->edges)
             e.generate(Out{&m.top}, Out{&m.edges}, Out{&m.trim}, Out{&m.under});
@@ -806,6 +823,12 @@ LotRoofs::Meshes LotRoofs::build() const {
 
 float LotRoofs::heightAt(float x, float y, int level, float fallback, float offset) const {
     float best = -kInf;
+    // The game's roofs over their walls' rectangle (FillFromRooves 0xd77b54
+    // writes GetSampledElevationByRoofID there; the attic walls rise to it).
+    for (const auto& r : world_.roofs())
+        if (r.level == level && x >= std::min(r.x0, r.x1) && x <= std::max(r.x0, r.x1) &&
+            y >= std::min(r.y0, r.y1) && y <= std::max(r.y0, r.y1))
+            best = std::max(best, r.elevation(x, y, 0.0f));
     for (const auto& r : roofs_)
         if (r->level == level)
             if (float h = r->heightAt(x, y); h != kInf && h > best)

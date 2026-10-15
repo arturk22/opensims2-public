@@ -17,10 +17,12 @@ namespace os2 {
 
 struct Lot;
 
-// The roofs of a lot, built the way the game draws them: every roof face is a
-// grid of half-tile roof tiles that pick their picture from the roof
-// pattern's 5 x 5 texture atlas (plain, ridge, hip and valley pieces), cut
-// where the faces of different roofs meet. Units are tiles, Z up.
+// The roofs of a lot. Types 1-6 (the base game's) as the game builds them
+// (lot_roof_game.*, docs/roof-fence-water-mac.md §1.5): a grid of heights per
+// half tile, two triangles per cell, each hidden under a higher roof or
+// picking its 5 x 5 atlas cell from its vertices' properties. The diagonal
+// and pagoda types stay on the OpenTS2 port (faces of half-tile tiles cut
+// where they meet). Units are tiles, Z up.
 class LotRoofs {
 public:
     explicit LotRoofs(const Lot& lot);
@@ -30,8 +32,8 @@ public:
 
     struct Meshes {
         MeshGroup top;   // atlas texture ("texturetop")
-        MeshGroup edges; // the roof's thickness along its borders ("textureedges")
-        MeshGroup trim;  // strip along the top of the borders ("texturetrim")
+        MeshGroup edges; // the upper strip of the borders, RoofEdges ("textureedges")
+        MeshGroup trim;  // the lower strip, RoofTrim ("texturetrim")
         MeshGroup under; // the underside ("textureunder")
     };
     Meshes build() const;
@@ -43,7 +45,7 @@ public:
     // Catalog GUID of the roof pattern (the last roof's, as in the game);
     // the default "Classic" pattern when no roof names one.
     uint32_t pattern() const { return pattern_; }
-    size_t count() const { return roofs_.size(); }
+    size_t count() const { return roofs_.size() + world_.roofs().size(); }
     std::vector<std::string> warnings;
 
     // The lot's roofs of types 1-6 as the game's nTSWorld::cWorldRoof holds

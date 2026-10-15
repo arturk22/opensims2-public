@@ -9,6 +9,7 @@
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_model.hpp"
+#include "formats/lot_roof.hpp"
 #include "formats/lot_water.hpp"
 #include "formats/log_once.hpp"
 #include "app/wall_view.hpp"
@@ -1296,6 +1297,78 @@ static void testLotWater() {
     check(d.beach[0] == uint8_t(int(b)), "beach above the water fades with the distance to it");
 }
 
+// The game's roofs (docs/roof-fence-water-mac.md §1.5): two triangles per
+// half tile, the atlas cell of each from its vertices (plain 60, the ridge's
+// 4, the hip lines' 2/0x42...), the triangles under another roof hidden.
+static void testGameRoofs() {
+    Lot lot;
+    lot.width = 16, lot.height = 16, lot.levelCount = 2;
+    lot.elevations.assign(17 * 17 * 2, 0.0f);
+    for (size_t i = 17 * 17; i < lot.elevations.size(); ++i)
+        lot.elevations[i] = 3.0f;
+    auto roof = [](uint32_t id, uint32_t type, float x0, float y0, float x1, float y1) {
+        Lot::Roof r;
+        r.id = id, r.type = type, r.level = 1, r.levelTo = 1, r.angle = 0.5f;
+        r.x0 = x0, r.y0 = y0, r.x1 = x1, r.y1 = y1;
+        return r;
+    };
+    // The cell (row, column) of the 5 x 5 atlas a top triangle samples.
+    auto cell = [](const MeshGroup& g, size_t t) {
+        float u = 0, v = 0;
+        for (int k = 0; k < 3; ++k)
+            u += g.uvs[g.triangles[t + size_t(k)]][0], v += g.uvs[g.triangles[t + size_t(k)]][1];
+        return std::pair{int(v / 3 / 0.19921875f), int(u / 3 / 0.19921875f)};
+    };
+    {
+        Lot one = lot;
+        one.roofs = {roof(1, Lot::LongGable, 2, 2, 8, 5)};
+        const LotRoofs roofs(one);
+        const LotRoofs::Meshes m = roofs.build();
+        // 6 x 3 tiles with the eaves: 15 x 9 grid points, 14 x 8 cells.
+        check(m.top.triangles.size() == 3 * 2 * 14 * 8 && m.under.triangles.size() == m.top.triangles.size(),
+              "game gable: two triangles per half-tile cell, top and underside");
+        check(std::abs(roofs.heightAt(5, 3.5f, 1, -1) - 4.58f) < 1e-4f && std::abs(roofs.heightAt(5, 2, 1, -1) - 3.08f) < 1e-4f,
+              "game gable: ridge 0.5 per notch over the eave tip at -0.42, the wall line at +0.08");
+        int plain = 0, ridge = 0, other = 0;
+        for (size_t t = 0; t < m.top.triangles.size(); t += 3) {
+            bool onRidge = false;
+            for (int k = 0; k < 3; ++k)
+                onRidge |= m.top.positions[m.top.triangles[t + size_t(k)]][2] > 4.57f;
+            const auto [row, col] = cell(m.top, t);
+            if (onRidge ? (row == 0 && col == 2) : (row == 3 && col == 0))
+                ++(onRidge ? ridge : plain);
+            else
+                ++other;
+        }
+        check(other == 0 && ridge == 2 * 14 * 2 && plain > 0,
+              "game gable: the ridge's triangles take cell 4, the rest cell 60");
+        check(!m.edges.triangles.empty() && m.edges.triangles.size() == m.trim.triangles.size(),
+              "game gable: the upper and lower strips round the border");
+    }
+    {
+        Lot one = lot;
+        one.roofs = {roof(1, Lot::Hip, 2, 2, 8, 6)};
+        const LotRoofs::Meshes m = LotRoofs(one).build();
+        bool hipCell = false;
+        for (size_t t = 0; t < m.top.triangles.size(); t += 3) {
+            const auto [row, col] = cell(m.top, t);
+            hipCell |= (row == 0 && col == 1) || (row == 3 && col == 3); // bases 2 and 0x42
+        }
+        check(hipCell, "game hip: the hip lines' triangles take their own cells");
+    }
+    {
+        // Two gables crossing: each loses the triangles under the other.
+        Lot two = lot;
+        two.roofs = {roof(1, Lot::LongGable, 2, 6, 12, 9), roof(2, Lot::LongGable, 6, 2, 9, 12)};
+        Lot a = lot, b = lot;
+        a.roofs = {two.roofs[0]};
+        b.roofs = {two.roofs[1]};
+        const size_t alone = LotRoofs(a).build().top.triangles.size() + LotRoofs(b).build().top.triangles.size();
+        const size_t both = LotRoofs(two).build().top.triangles.size();
+        check(both < alone && both > alone / 2, "game roofs: a roof's triangles under another roof are hidden");
+    }
+}
+
 int main() {
     testLogOnce();
     testDxt1();
@@ -1314,6 +1387,7 @@ int main() {
     testLotModel();
     testLotLightMap();
     testLotWater();
+    testGameRoofs();
     testTwoTileArchMask();
     testSawtoothAtticWindows();
     testNextStoryOverGround();
