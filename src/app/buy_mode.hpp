@@ -113,8 +113,9 @@ public:
     // A panel (or the design dialog) is under canvas point p.
     bool overPanel(simd_float2 p) const;
     int direction() const { return direction_; }
-    // Headless: holds at a tile / places there.
-    void holdAt(int x, int y, int direction);
+    // Headless: holds at a tile / places there. `autoRotate`: turned to fit
+    // the walls first, as TryPlace does on a mouse move (vm::autoRotate).
+    void holdAt(int x, int y, int direction, bool autoRotate = false);
     bool placeAt(int x, int y, int direction);
     // Picks up a placed object (the hand) by ID.
     bool grab(vm::ObjectId id);

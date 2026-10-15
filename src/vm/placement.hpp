@@ -123,6 +123,19 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id);
 Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots = true,
                          bool footprints = false);
 
+// cTSObject::ShouldAutoRotate (Mac BV 0xafec08; cEdithMTObject's, 0xaf062c,
+// asks every part): the wall placement flags (od 13) ask for a wall on some
+// side (0x5F: front, right, behind, left and the two diagonals).
+bool shouldAutoRotate(VM& vm, ObjectId id);
+// cTSUserToolObject::AutoRotateObjectToMatchWalls (BV 0x209e14), run by
+// TryPlace on every move of what is held when shouldAutoRotate: the first of
+// `direction`, +2, +4, +6 (90-degree steps, wrapping in 0..7) whose position
+// test passes on `tile` (FUN_009eb96c: TSObjectIsInLockedArea, then
+// TSObjectCanSetPositionAndOrientation; no slot is looked for). None passing:
+// `direction` is kept (the binary then tries the same four with the
+// diagonal selector's object, SwapDiagonalObject, BV only: not done here).
+int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction, bool footprints = false);
+
 // Where the group of `id` is now (its lead's direction, level, container
 // slot and each part's tile), for putting it back with applyPlacement.
 Placement currentPlacement(VM& vm, ObjectId id);

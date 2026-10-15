@@ -126,8 +126,12 @@ public:
     void runSteps(const std::vector<std::string>& args);
     bool selectObject(const CatalogEntry& e);
     // Headless: places the held object (a door or window) at a tile.
-    bool placeObjectAt(int x, int y, int direction);
-    void holdObjectAt(int x, int y, int direction);
+    // `autoRotate`: first turned to fit the walls, as TryPlace does on a
+    // mouse move (vm::autoRotate; the mouse's press and moves pass true).
+    bool placeObjectAt(int x, int y, int direction, bool autoRotate = false);
+    void holdObjectAt(int x, int y, int direction, bool autoRotate = false);
+    // The object tool's held door or window (0: none).
+    vm::ObjectId held() const { return held_; }
 
     // --- The lot (mouse rays in world space) ---------------------------------
     void pointAt(simd_float3 eye, simd_float3 dir);

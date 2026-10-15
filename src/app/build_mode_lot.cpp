@@ -114,7 +114,7 @@ void BuildMode::pointAt(simd_float3 eye, simd_float3 dir) {
         return;
     pointer_ = groundPoint(eye, dir);
     if (tool_ == Tool::Object && held_ && pointer_)
-        holdObjectAt(int(std::floor(pointer_->x)), int(std::floor(pointer_->y)), direction_);
+        holdObjectAt(int(std::floor(pointer_->x)), int(std::floor(pointer_->y)), direction_, true);
     dirty_ = true;
 }
 
@@ -128,7 +128,7 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
     pointer_ = p;
     if (tool_ == Tool::Object) {
         if (held_ && object_)
-            placeObjectAt(int(std::floor(p->x)), int(std::floor(p->y)), direction_);
+            placeObjectAt(int(std::floor(p->x)), int(std::floor(p->y)), direction_, true);
         return true;
     }
     if (tool_ == Tool::Design) {

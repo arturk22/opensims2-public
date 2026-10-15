@@ -274,10 +274,14 @@ void BuildMode::cancel() {
     dirty_ = true;
 }
 
-void BuildMode::holdObjectAt(int x, int y, int direction) {
+void BuildMode::holdObjectAt(int x, int y, int direction, bool autoRotate) {
     direction_ = direction;
     if (!held_)
         return;
+    // TryPlace step 2 (docs/buy-build-mac.md §7.6.1): a door or window turns
+    // to the side its wall is on.
+    if (autoRotate && vm::shouldAutoRotate(vm_, held_))
+        direction_ = vm::autoRotate(vm_, held_, {x, y, level_}, direction_);
     last_ = vm::checkPlacement(vm_, held_, {x, y, level_}, direction_);
     // Turning green: ui_build_door_green / ui_build_stair_green.
     if (last_.ok && !lastOk_) {
@@ -297,10 +301,10 @@ void BuildMode::holdObjectAt(int x, int y, int direction) {
     dirty_ = true;
 }
 
-bool BuildMode::placeObjectAt(int x, int y, int direction) {
+bool BuildMode::placeObjectAt(int x, int y, int direction, bool autoRotate) {
     if (!held_ || !object_)
         return false;
-    holdObjectAt(x, y, direction);
+    holdObjectAt(x, y, direction, autoRotate);
     if (!last_.ok) {
         std::string text = last_.reason;
         if (last_.error >= 2 && vm::placementerror::textIndex(last_.error) >= 0)
@@ -547,7 +551,8 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
 // --floor-rotation <1|2|4|8>, --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>,
 // --wallpaper-room x,y,<pattern|none>, --wallpaper-flood x0,y0,x1,y1,<r|l>,<pattern|none>
 // (Shift on that face), --door <guid|name>@x,y[,dir] places
-// a door, window or gate, --build-undo / --build-redo (with any value),
+// a door, window or gate (no dir: turned to its wall, as a click does;
+// --door <guid|name> alone only holds it, for the mouse steps), --build-undo / --build-redo (with any value),
 // --build-tool pool (the pool tool, for the mouse steps --drag / --hover).
 void BuildMode::runSteps(const std::vector<std::string>& args) {
     if (!active_)
@@ -668,12 +673,13 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             const CatalogEntry* e = objects_.find(v.substr(0, at));
             if (!e)
                 throw std::runtime_error("--door: no build object \"" + v.substr(0, at) + "\"");
-            int x = 0, y = 0, dir = 2;
+            int x = 0, y = 0, dir = 2, got = 0;
             if (at != std::string::npos)
-                std::sscanf(v.c_str() + at + 1, "%d,%d,%d", &x, &y, &dir);
+                got = std::sscanf(v.c_str() + at + 1, "%d,%d,%d", &x, &y, &dir);
             selectObject(*e);
+            // Without a direction it turns to its wall, as the mouse's click does.
             if (at != std::string::npos)
-                placeObjectAt(x, y, dir);
+                placeObjectAt(x, y, dir, got < 3);
         } else if (a == "--build-design") { // <id>[,row:option...][,accept|cancel]
             selectDesignTool();
             if (design(vm::ObjectId(n(0)), simd_make_float2(560, 420)))

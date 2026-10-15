@@ -315,6 +315,21 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
     return p;
 }
 
+bool shouldAutoRotate(VM& vm, ObjectId id) {
+    for (ObjectId part : groupOf(vm, id))
+        if (const Object* o = vm.object(part); o && (o->data[objdata::WallPlacementFlags] & 0x5F))
+            return true;
+    return false;
+}
+
+int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction, bool footprints) {
+    int d = normDir(direction);
+    for (int k = 0; k < 4; ++k, d = normDir(d + 2))
+        if (checkPlacement(vm, id, tile, d, false, footprints).ok)
+            return d;
+    return normDir(direction);
+}
+
 Placement currentPlacement(VM& vm, ObjectId id) {
     Placement p;
     const Object* lead = vm.object(id);

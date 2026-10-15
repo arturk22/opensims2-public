@@ -346,10 +346,13 @@ std::optional<vm::TilePos> BuyMode::tileUnder(simd_float3 eye, simd_float3 dir) 
     return vm::TilePos{int(std::floor(hit->x)), int(std::floor(hit->y)), level_};
 }
 
-void BuyMode::holdAt(int x, int y, int direction) {
+void BuyMode::holdAt(int x, int y, int direction, bool autoRotate) {
     direction_ = direction;
     if (!held_)
         return;
+    // TryPlace step 2: what needs a wall turns to it (docs/buy-build-mac.md §7.6.1).
+    if (autoRotate && vm::shouldAutoRotate(vm_, held_))
+        direction_ = vm::autoRotate(vm_, held_, {x, y, level_}, direction_);
     last_ = vm::checkPlacement(vm_, held_, {x, y, level_}, direction_);
     preview(last_);
     dirty_ = true;
@@ -361,7 +364,7 @@ void BuyMode::pointAt(simd_float3 eye, simd_float3 dir) {
     if (!active_ || !held_ || pressing_)
         return;
     if (auto t = tileUnder(eye, dir))
-        holdAt(t->x, t->y, direction_);
+        holdAt(t->x, t->y, direction_, true);
 }
 
 std::string BuyMode::errorText(const vm::Placement& p) {
@@ -580,7 +583,7 @@ bool BuyMode::mouseDown(simd_float3 eye, simd_float3 dir, std::optional<simd_flo
     if (held_) {
         if (!t)
             return false;
-        holdAt(t->x, t->y, direction_);
+        holdAt(t->x, t->y, direction_, true);
         pressing_ = true;
         turned_ = false;
         pressTile_ = *t;
@@ -611,7 +614,7 @@ bool BuyMode::mouseDown(simd_float3 eye, simd_float3 dir, std::optional<simd_flo
 bool BuyMode::pressAt(int x, int y) {
     if (!active_ || !held_)
         return false;
-    holdAt(x, y, direction_);
+    holdAt(x, y, direction_, true);
     pressing_ = true;
     turned_ = false;
     pressTile_ = {x, y, level_};
@@ -623,7 +626,7 @@ void BuyMode::mouseDrag(simd_float3 eye, simd_float3 dir) {
         if (auto t = tileUnder(eye, dir)) {
             grabMoved_ |= t->x != pressTile_.x || t->y != pressTile_.y;
             pressTile_ = *t;
-            holdAt(t->x, t->y, direction_);
+            holdAt(t->x, t->y, direction_, true);
         }
         return;
     }

@@ -160,10 +160,19 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             const auto at = value.find('@');
             const CatalogEntry* e = objects->find(value.substr(0, at));
             if (!e || at == std::string::npos)
-                throw std::runtime_error("--door: expected <guid|name>@x,y[,dir][,level]");
+                throw std::runtime_error("--door: expected <guid|name>@x,y[,dir|auto][,level]");
             const auto g = fields(value.substr(at + 1));
             const vm::ObjectId id = vm::createGhost(vm, e->group, e->instance);
-            const vm::Placement p = vm::checkPlacement(vm, id, {num(g, 0, 0), num(g, 1, 0), num(g, 3, 1)}, num(g, 2, 2));
+            const vm::TilePos tile{num(g, 0, 0), num(g, 1, 0), num(g, 3, 1)};
+            // No direction (or "auto"): turned to its wall as the object
+            // tool's TryPlace does (vm::autoRotate, AutoRotateObjectToMatchWalls).
+            const bool turn = g.size() < 3 || g[2].empty() || g[2] == "auto";
+            int dir = turn ? 2 : num(g, 2, 2);
+            if (turn) {
+                dir = vm::shouldAutoRotate(vm, id) ? vm::autoRotate(vm, id, tile, 2) : 2;
+                std::printf("--door: turned to direction %d\n", dir);
+            }
+            const vm::Placement p = vm::checkPlacement(vm, id, tile, dir);
             std::string why = p.reason;
             r.ok = p.ok && vm::buy(vm, id, p, e->price, &why);
             if (!r.ok)
