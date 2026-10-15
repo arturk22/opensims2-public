@@ -50,6 +50,31 @@ struct Lot {
     // The templates lock the 10-tile road strip (docs/buy-build-mac.md
     // §7.20). Empty when the lot has none.
     std::vector<uint8_t> locked;
+    // 3ARY 0x14: the deck/foundation/pool marker of every quarter tile
+    // (c3DArray<cWorldDB::cDeckFoundationMarkerTile>, four u32 laid out as
+    // `floors`), which cWorldDB::DeckFoundationStyle (Mac BV 0xd2d08,
+    // cIWorldDB slot 0xc8) reads: the deckfoundations.txt product ID (base
+    // game: 0 foundation, 1 and 2 decks, 3 pool), -1 none. A foundation's or
+    // deck's markers sit on the level under its raised floor, a pool's on
+    // the level under the ground (docs/buy-build-mac.md §7.24). Empty when
+    // the lot has none (N002_Lot32). One plane per level from the lowest up
+    // to the one under the top (no marker can sit on the top level: the lots
+    // hold one plane fewer than the elevations; DeckFoundationStyle answers
+    // -1 from the top level up), from `deckFoundationBase`, the lowest level
+    // when the lot was read. Read for the fences' +0.75
+    // (docs/roof-fence-water-mac.md §2.1); Build mode does not write it.
+    std::vector<std::array<int32_t, 4>> deckFoundationStyles;
+    int deckFoundationBase = 0;
+    // The marker of quarter `quarter` (0 west, 1 north, 2 east, 3 south) of
+    // tile (x, y) on `level`; -1 off the arrays.
+    int32_t deckFoundationStyle(int level, int x, int y, int quarter) const {
+        const size_t plane = size_t(width) * height;
+        if (!plane || x < 0 || y < 0 || x >= int(width) || y >= int(height) || quarter < 0 || quarter > 3 ||
+            level < deckFoundationBase || size_t(level - deckFoundationBase) >= deckFoundationStyles.size() / plane)
+            return -1;
+        return deckFoundationStyles[(size_t(level - deckFoundationBase) * width + size_t(x)) * height + size_t(y)]
+                                   [size_t(quarter)];
+    }
     bool tileLocked(int level, int x, int y) const {
         if (locked.empty() || !hasLevel(level) || x < 0 || y < 0 || x >= int(width) || y >= int(height))
             return false;

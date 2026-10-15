@@ -29,6 +29,7 @@
 #include <string>
 #include <unistd.h>
 #include <filesystem>
+#include <map>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -1492,6 +1493,30 @@ static void testWallGeometry() {
     }
 }
 
+// With the game's data: N001_Lot68's deck/foundation markers (3ARY 0x14):
+// the pool's 3 under the ground (level -1), the foundation's 0 and the
+// deck's 1 under the raised floor (level 0).
+static void testDeckFoundationMarkers() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    const std::filesystem::path lotPath =
+        std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/N001/Lots/N001_Lot68.package";
+    if (!std::filesystem::exists(lotPath))
+        return;
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    std::map<std::pair<int, int32_t>, int> counts;
+    for (int level = lot.minLevel; level < lot.minLevel + lot.levelCount; ++level)
+        for (int x = 0; x < int(lot.width); ++x)
+            for (int y = 0; y < int(lot.height); ++y)
+                for (int q = 0; q < 4; ++q)
+                    if (const int32_t s = lot.deckFoundationStyle(level, x, y, q); s != -1)
+                        ++counts[{level, s}];
+    check(counts.size() == 3 && counts[{-1, 3}] == 160 && counts[{0, 0}] == 728 && counts[{0, 1}] == 36,
+          "lot 68: the deck/foundation markers (3ARY 0x14): pool 3 on level -1, foundation 0 and deck 1 on level 0");
+}
+
 static void testTwoTileArchMask() {
     const char* data = std::getenv("OS2_DATA");
     if (!data)
@@ -1807,6 +1832,7 @@ int main() {
     testPropertySet();
     testLotModel();
     testWallGeometry();
+    testDeckFoundationMarkers();
     testLotLightMap();
     testLotWater();
     testGameRoofs();
