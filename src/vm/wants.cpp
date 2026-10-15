@@ -1002,6 +1002,29 @@ int16_t normalizedAspirationScore(const wants::Library& lib, int age, int32_t ra
     return int16_t(std::clamp(int(std::nearbyintf(x)), -100, 100)); // the float rounding trick: to nearest, ties even
 }
 
+int32_t rawAspirationScore(const wants::Library& lib, int age, int32_t normalized) {
+    // RawAspirationScore (BV 0x506efc): the meter's segment of the value,
+    // the same fraction of the age's thresholds (fmadds, rounded to
+    // nearest even), within the first and last threshold (-1000 and 16000
+    // without them).
+    static constexpr int kMeter[7] = {-100, -50, 0, 25, 50, 75, 100};
+    const int v = std::clamp<int>(normalized, -100, 100);
+    size_t i = 0;
+    for (size_t k = 1; k <= 5; ++k)
+        if (kMeter[k] <= v)
+            i = k;
+    float f = float(v - kMeter[i]) / float(kMeter[i + 1] - kMeter[i]);
+    f = std::clamp(f, 0.0f, 1.0f);
+    int32_t raw = 0, lo = -1000, hi = 16000;
+    if (auto it = lib.tuning.levels.find(age); it != lib.tuning.levels.end()) {
+        const auto& t = it->second;
+        raw = int32_t(std::nearbyintf(std::fmaf(float(t[i + 1] - t[i]), f, float(t[i]))));
+        lo = t[0], hi = t[6];
+    }
+    raw = std::clamp(raw, lo, hi);
+    return std::clamp<int32_t>(raw, -0x50000, 0x4FFF6);
+}
+
 int aspirationLevel(const wants::Library& lib, int age, int32_t raw) {
     auto it = lib.tuning.levels.find(age);
     if (it == lib.tuning.levels.end())
@@ -1050,8 +1073,9 @@ bool markWantAchieved(VM& vm, int16_t id, uint32_t guid, const WantSubject& subj
             std::array<int16_t, kTempCount> temps{};
             if (runWantTree(vm, *ws, *ctl, d->simArrayTree, params, &temps).value_or(false))
                 // The list is the object array 0 of the object the tree
-                // leaves in temp 0 (inferred: FUN_00508b10 reads the
-                // controller's vtable 0x4c(0), then that object's array 0).
+                // leaves in the controller's temp 0 (FUN_00508b10: the
+                // controller's vtable 0x4c(0), the object of that ID, its
+                // array 0 when it has arrays).
                 if (Object* holder = vm.object(temps[0]); holder && !holder->arrays.empty())
                     for (int16_t v : holder->arrays[0].values)
                         if (v)
@@ -1146,30 +1170,22 @@ Exit wantsGenericCall(Context& c) {
         break;
     }
     case 2:
-    case 3: { // SetAspirationScore: normalized (2) or raw / 10 (3)
+    case 3: { // SetAspirationScore (simulator vtable 0x9c, BV 0x509634): normalized (2) or raw / 10 (3)
         const Meta m = meta(vm, id);
         if (!m)
             break;
         const int age = wants::ageEnum(pd(m, persondata::PersonAge));
-        int32_t raw = 0;
-        if (op == 3) {
-            raw = int32_t(arg) * 10;
+        if (op == 2) {
+            // The meter value, clamped, is kept; the raw score is
+            // RawAspirationScore's (BV 0x506efc).
+            const int16_t v = int16_t(std::clamp<int>(arg, -100, 100));
+            setPd(m, kPdAspirationRaw, int16_t(rawAspirationScore(*ws->library, age, v) / 10));
+            setPd(m, kPdAspirationScore, v);
         } else {
-            // The raw score that gives this meter value (inverse of the
-            // normalization; inferred).
-            static constexpr int kMeter[7] = {-100, -50, 0, 25, 50, 75, 100};
-            auto it = ws->library->tuning.levels.find(age);
-            if (it != ws->library->tuning.levels.end()) {
-                const int v = std::clamp<int>(arg, -100, 100);
-                size_t i = 0;
-                while (i < 5 && kMeter[i + 1] < v)
-                    ++i;
-                const float f = float(v - kMeter[i]) / float(kMeter[i + 1] - kMeter[i]);
-                raw = it->second[i] + int32_t(f * float(it->second[i + 1] - it->second[i]));
-            }
+            const int32_t raw = std::clamp<int32_t>(int32_t(arg) * 10, -0x50000, 0x4FFF6);
+            setPd(m, kPdAspirationRaw, int16_t(raw / 10));
+            setPd(m, kPdAspirationScore, normalizedAspirationScore(*ws->library, age, raw));
         }
-        setPd(m, kPdAspirationRaw, int16_t(raw / 10));
-        setPd(m, kPdAspirationScore, normalizedAspirationScore(*ws->library, age, int32_t(raw / 10) * 10));
         break;
     }
     case 4: requestWantsUpdate(vm, id, 3); break; // RecheckGoals

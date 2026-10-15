@@ -171,6 +171,11 @@ static void testTuningAndMeter() {
     check(normalizedAspirationScore(lib, 4, 11500) == 83, "Vladmir: elder 11500 -> 83");
     check(aspirationLevel(lib, 0, 1200) == 2 && aspirationLevel(lib, 0, 500) == 0 && aspirationLevel(lib, 4, 11500) == 5,
           "aspiration levels");
+    // RawAspirationScore (BV 0x506efc): the inverse, rounded to nearest.
+    check(rawAspirationScore(lib, 0, 0) == 1200 && rawAspirationScore(lib, 0, -100) == 0 &&
+              rawAspirationScore(lib, 0, 100) == 12000 && rawAspirationScore(lib, 0, 17) == 2016 &&
+              rawAspirationScore(lib, 0, 500) == 12000 && rawAspirationScore(lib, 9, 0) == 0,
+          "raw score of a meter value (clamped; an age without thresholds gives 0)");
 }
 
 static void testSimulator() {

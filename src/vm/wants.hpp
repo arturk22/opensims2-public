@@ -120,6 +120,8 @@ bool markWantAchieved(VM& vm, int16_t neighborId, uint32_t guid, const WantSubje
 // (-100..100) and the level (0..5: below severe failure, severe failure,
 // neutral, bronze, silver, gold) for an age (wants::ageEnum).
 int16_t normalizedAspirationScore(const wants::Library& lib, int age, int32_t raw);
+// The raw score of a meter value (RawAspirationScore, BV 0x506efc).
+int32_t rawAspirationScore(const wants::Library& lib, int age, int32_t normalized);
 int aspirationLevel(const wants::Library& lib, int age, int32_t raw);
 // cTSWantSimulator::ChangeScore for a neighbor (its Sim on the lot if any).
 void changeAspirationScore(VM& vm, int16_t neighborId, int32_t points);
