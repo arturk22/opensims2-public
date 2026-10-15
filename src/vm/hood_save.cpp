@@ -550,8 +550,11 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         for (const auto& [key, i] : vm.inventories)
             if (!was.count(key) && (!i.singular.empty() || !i.counted.empty()))
                 changed = true;
+        if (vm.neighborhoodData != inv.data)
+            changed = true;
         if (changed && inv.version) {
             hood::NeighborhoodInventories n = inv;
+            n.data = vm.neighborhoodData;
             auto rebuild = [&](InventoryKind kind, std::vector<hood::Inventory>& list) {
                 std::vector<hood::Inventory> out;
                 for (const auto& i : list) {

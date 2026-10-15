@@ -47,11 +47,7 @@ std::vector<uint8_t> NeighborhoodInventories::write() const {
     for (uint32_t h : header)
         w.u32(h);
     str32(w, regionType);
-    // The second region type in a 32-byte block, zero-padded.
-    const size_t block = w.size();
-    str32(w, secondRegionType);
-    while (w.size() < block + 32)
-        w.u8(0);
+    w.shorts(data);
     writeInventory(w, global);
     writeInventories(w, lots);
     writeInventories(w, families);

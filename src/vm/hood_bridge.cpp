@@ -164,6 +164,7 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
         ++out.familyTies;
     }
 
+    vm.neighborhoodData = h.inventories.data;
     vm.inventories.clear();
     vm.inventory(InventoryKind::Global, 0) = toInventory(h.inventories.global);
     ++out.inventories;

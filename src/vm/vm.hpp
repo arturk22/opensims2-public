@@ -1246,7 +1246,9 @@ public:
         std::string name;   // the lot info's name (the phone book's neighbor rows)
     };
     std::map<int16_t, LotRecord> lots;
-    std::array<int16_t, 4> neighborhoodData{};
+    // The neighborhood data (data owner 0x22, labels in STR# 0xF9), the
+    // NGBH's 16 values (cTSNeighborhood +0x14).
+    std::array<int16_t, 16> neighborhoodData{};
 
     // Neighbors by neighbor ID. Without a neighborhood they are only
     // the ones added here (tests, stand-ins).

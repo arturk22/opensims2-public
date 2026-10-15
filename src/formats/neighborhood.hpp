@@ -47,18 +47,19 @@ constexpr uint32_t FamilyHistory = 0x46414D68; // FAMh (not decoded)
 namespace hood {
 
 // ---------------------------------------------------------------------------
-// NGBH: inventories of the whole neighborhood. Version 0x6F (base game):
-//   'NGBH' u32 magic, u32 version, 3 x u32 (0, 0x80, 0x80 in every shipped
-//   neighborhood), u32-length region type ("Temperate", "Desert"), then a
-//   32-byte block that starts with a second u32-length string (empty, or
-//   "Temperate" in N003) and is zero-padded; the global inventory, then the
-//   lot, family and neighbor inventories (u32 count, then u32 ID + inventory
-//   each) and one final byte (1, 0 in the tutorial).
-// An inventory is two token lists (u32 count, then tokens); a token is u32
-// GUID, u16 flags, u32 count and that many u16 values. The first list holds
-// one or no token, the second the memories (flags 3, the subject Sim's GUID
-// in the data) and other tokens: taken to be the counted and the singular
-// tokens of cTSInventory (confirmar o que foi inferido).
+// NGBH: inventories of the whole neighborhood, as cTSNeighborhood::Write/
+// Read (BV 0x4dc43c/0x4e0d38; docs/save-mac.md §8) do them. Version 0x6F
+// (base game): 'NGBH' u32 magic, u32 version, u32 0, two u32 (+0x34, +0x38:
+// 0x80, 0x80 in every shipped neighborhood; not identified), u32-length
+// region type ("Temperate", "Desert"), the 16 i16 neighborhood data (+0x14,
+// data owner 0x22; N003's hold the bytes of "Temperate"), the global
+// inventory, then the lot, family and neighbor inventories (u32 count,
+// then u32 ID + inventory each) and one final byte (+0xFD; 1, 0 in the
+// tutorial; not identified).
+// An inventory (cTSInventory::Read/Write, BV 0x497040/0x4949a0) is the
+// counted tokens then the singular ones (u32 count, then tokens); a token
+// is u32 GUID, u16 flags, u32 count and that many u16 values. The singular
+// list holds the memories (flags 3, the subject Sim's GUID in the data).
 struct InventoryToken {
     uint32_t guid = 0;
     uint16_t flags = 0;
@@ -75,7 +76,7 @@ struct NeighborhoodInventories {
     uint32_t version = 0;
     std::array<uint32_t, 3> header{};
     std::string regionType;
-    std::string secondRegionType;
+    std::array<int16_t, 16> data{}; // the neighborhood data (data owner 0x22)
     Inventory global;
     std::vector<Inventory> lots, families, neighbors;
     uint8_t trailer = 0;

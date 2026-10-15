@@ -177,13 +177,8 @@ NeighborhoodInventories NeighborhoodInventories::parse(std::span<const uint8_t> 
     for (auto& h : n.header)
         h = r.u32();
     n.regionType = str32(r);
-    const size_t block = r.pos();
-    n.secondRegionType = str32(r);
-    if (r.pos() - block > 32)
-        throw FormatError("NGBH: second region type longer than its block");
-    for (auto b : r.bytes(32 - (r.pos() - block)))
-        if (b)
-            throw FormatError("NGBH: non-zero padding after the region type");
+    for (auto& d : n.data)
+        d = r.i16();
     n.global = readInventory(r, 0);
     n.lots = readInventories(r);
     n.families = readInventories(r);

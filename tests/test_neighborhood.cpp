@@ -144,7 +144,7 @@ static std::vector<uint8_t> objd(uint32_t guid) {
 static void testDecoders() {
     {
         const auto n = NeighborhoodInventories::parse(ngbh());
-        check(n.version == 0x6F && n.regionType == "Temperate" && n.secondRegionType.empty(), "NGBH header");
+        check(n.version == 0x6F && n.regionType == "Temperate" && n.data == std::array<int16_t, 16>{}, "NGBH header");
         check(n.global.singular.size() == 1 && n.global.singular[0].guid == 0x6D9E58F0, "NGBH global inventory");
         check(n.lots.size() == 1 && n.lots[0].id == 11 && n.lots[0].singular[0].data.size() == 3, "NGBH lot");
         check(n.families.size() == 1 && n.families[0].counted.size() == 1 && n.families[0].counted[0].flags == 1,
@@ -153,11 +153,10 @@ static void testDecoders() {
                   n.neighbors[0].singular[0].data[1] == 1997,
               "NGBH memory");
         check(n.trailer == 1, "NGBH trailer");
-        check(NeighborhoodInventories::parse(ngbh("Temperate")).secondRegionType == "Temperate",
-              "NGBH second region type eats into the block");
-        auto bad = ngbh();
-        bad[0x30] = 1;
-        throws([&] { NeighborhoodInventories::parse(bad); }, "NGBH non-zero padding");
+        // The 32 bytes after the region type are the 16 neighborhood data
+        // (cTSNeighborhood +0x14, data owner 0x22), whatever they hold.
+        const auto t = NeighborhoodInventories::parse(ngbh("Temperate"));
+        check(t.data[0] == 9 && t.data[1] == 0 && t.write() == ngbh("Temperate"), "NGBH neighborhood data");
         auto cut = ngbh();
         cut.pop_back();
         throws([&] { NeighborhoodInventories::parse(cut); }, "NGBH truncated");
