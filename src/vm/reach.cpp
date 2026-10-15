@@ -344,10 +344,11 @@ std::string reachAnimation(VM& vm, const Object& sim, const std::string& surface
 }
 
 // The body's reach animation from the surface object's "Reach Animations"
-// (STR# 0x92), as try_new_reach looks it up (Mac BV 0x69111c; round 21):
-// the reached object's and the surface's own lists (where the object is
-// picked up from, or the target put into) and their semi-globals', then
-// the global one, whose
+// (STR# 0x92), as try_new_reach looks it up (Mac BV 0x69111c; round 21;
+// the order read in round n01, docs/seat-mac.md §F, at BV 0x692610): the
+// surface's own list (where the object is picked up from: its container;
+// or the target put into), then its semi-global's, then the global one
+// (none without a surface: the floor), whose
 // sixteen entries are "a2o-<floor|tableCoffee|table|counter>-<get|put>"
 // close and far. The entry is ComputeReachAnimIndex's (BV 0x68ba50): the
 // height band (under 0.4 floor 0, 0.7 coffee table 1, 0.9 table 2, else
@@ -356,13 +357,15 @@ std::string reachAnimation(VM& vm, const Object& sim, const std::string& surface
 // (seated reaches: played as the generic standing "a2o-table-get", the Sim
 // in the dining chair stood up through it), the bar stools'
 // "a2o-barstool-seated-get/put", the books', the phones', the urns'.
-// Inferred: the lists of the object reached first (the book's, the bar
-// tumbler's; the chess piece's semi-global is the board's), the band from
-// the slot's height class (the SLOT's The Sims 1 enumeration, surfaceFor)
-// rather than its height in metres, the distance from the Sim to the
-// surface object, and "." or empty entries passing on to the next list.
-// Empty when no list has one (the generic name then).
-std::string reachListAnimation(VM& vm, const Object& sim, const Object* object, const Object* surface, int height, bool get) {
+// The reached object's own lists are not looked at (its STR# 0x86 gives
+// the object's animation, not the body's). Inferred: the band from the
+// slot's height class (the SLOT's The Sims 1 enumeration, surfaceFor)
+// rather than the height in metres of the reach point over the Sim's root
+// (the binary's: the slot's bone, or its offset, in the Sim's frame), the
+// distance from the Sim to the surface object rather than to that point,
+// and "." or empty entries passing on to the next list. Empty when no
+// list has one (the generic name then).
+std::string reachListAnimation(VM& vm, const Object& sim, const Object* surface, int height, bool get) {
     if (surface && surface->person)
         surface = nullptr;
     int band = 0;
@@ -381,9 +384,8 @@ std::string reachListAnimation(VM& vm, const Object& sim, const Object* object, 
                      std::hypot(sim.position.x - surface->position.x, sim.position.y - surface->position.y) > 0.8f;
     const size_t close = size_t(band + (get ? 0 : 8));
     std::vector<uint32_t> groups;
-    for (const Object* o : {object, surface})
-        if (o)
-            groups.push_back(o->group), groups.push_back(o->semiGroup);
+    if (surface)
+        groups.push_back(surface->group), groups.push_back(surface->semiGroup);
     for (uint32_t g : groups) {
         const StringTable* t = g ? vm.code().strings(g, 0x92) : nullptr;
         if (!t)
@@ -611,7 +613,7 @@ Exit reachPut(Context& c) {
         surface = surfaceOf(c.vm, *x);
         if (const Object* on = c.vm.object(x->data[objdata::ContainerId]); on && !on->person) {
             const Slots::Slot* s = containmentSlot(c.vm, *on, x->data[objdata::SlotNumber]);
-            listed = reachListAnimation(c.vm, me, x, on, s ? s->height : 1, true);
+            listed = reachListAnimation(c.vm, me, on, s ? s->height : 1, true);
         }
         if (const uint16_t grasp = le16(&o[11]); grasp != 0xFFFF)
             if (const std::string entry = adultListEntry(c, grasp); !entry.empty())
@@ -645,7 +647,7 @@ Exit reachPut(Context& c) {
                 return Exit::False;
             const Slots::Slot* s = containmentSlot(c.vm, *to, r.slot);
             surface = surfaceFor(s ? s->height : 1);
-            listed = reachListAnimation(c.vm, me, c.vm.object(x), to, s ? s->height : 1, false);
+            listed = reachListAnimation(c.vm, me, to, s ? s->height : 1, false);
         } else {
             if (!me.position.inWorld())
                 throw VMError("Reach/Put: dropping onto the floor while out of world");
