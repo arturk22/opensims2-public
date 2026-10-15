@@ -115,8 +115,11 @@ ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
                 continue;
             const float d0 = std::hypot(a0[0] - b0[0], a0[1] - b0[1]);
             const float d1 = std::hypot(a1[0] - b1[0], a1[1] - b1[1]);
+            // Moving apart: CollisionCheck (BV 0x6b49e8) passes it to the
+            // windows after as the one to ignore (round n03), so the scan
+            // goes on without it.
             if (d1 > d0)
-                continue; // moving apart: the scan goes on
+                break;
             if (t0 <= kBlockedWithin)
                 return id;
             break;
