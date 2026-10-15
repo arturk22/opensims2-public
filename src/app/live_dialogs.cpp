@@ -425,7 +425,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
         return true;
     };
     // The vanity (cTSWinProcVanityDialog): the look being edited per Sim,
-    // the choices of each group as CAS offers them (cas_mode.cpp), OK
+    // the choices of each group as CAS offers them (cas_mode_panels.cpp), OK
     // writing the character file and dressing the Sim again in what it
     // wears (OnOk: person data 8, 119, 120).
     // (edits: by Sim ID, gScene.mirrorEdits; previews: by the game's face and
