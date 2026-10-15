@@ -275,7 +275,7 @@ add_test(NAME tutorial COMMAND test_tutorial)
 # With the game's data (OS2_DATA): s2pkg tutorial --auto plays "O Básico -
 # Parte Um" (Tutorial_Lot14) to its step 32 and past it (live QA 14);
 # without the data it is skipped.
-add_test(NAME tutorial_auto COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'furthest step shown 33 (skipped: no OS2_DATA)'; else $<TARGET_FILE:s2pkg> tutorial \"$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package\" --auto --ticks 9000; fi")
+add_test(NAME tutorial_auto COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'furthest step shown 33 (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" tutorial \"$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package\" --auto --ticks 9000; fi")
 set_tests_properties(tutorial_auto PROPERTIES PASS_REGULAR_EXPRESSION "furthest step shown 3[3-9]")
 
 add_executable(test_queue tests/test_queue.cpp)
