@@ -492,7 +492,8 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
         if (!vm.object(id))
             continue;
         constexpr std::array<int16_t, 4> kNoParams{};
-        if (auto t = vm.runFunction(id, kLoadFunction, 1000, kNoParams)) {
+        if (!vm.runLoadEntries) {
+        } else if (auto t = vm.runFunction(id, kLoadFunction, 1000, kNoParams)) {
             ++out.loads;
             if (t->status == Thread::Status::Failed)
                 out.failedLoads.push_back(std::move(*t));

@@ -69,7 +69,8 @@ struct LoadedLot {
 // As lot-run: the lot's neighbourhood (`source` names it), entered, and the
 // Sims bound to their neighbors.
 LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::path& source,
-                   const hood::Neighborhood* hood, const fs::path& charactersDir, bool movedIn = false) {
+                   const hood::Neighborhood* hood, const fs::path& charactersDir, bool movedIn = false,
+                   bool loadEntries = true) {
     LoadedLot out;
     DbpfPackage pkg(package);
     const Lot lot = Lot::load(pkg);
@@ -104,6 +105,7 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     out.vm = std::make_unique<vm::VM>(code);
     vm::VM& m = *out.vm;
     m.initCreatedObjects = true;
+    m.runLoadEntries = loadEntries;
     m.instructionsPerTurn = s2pkgBudget();
     m.setClockGlobals();
     if (hood) {
@@ -286,7 +288,9 @@ int cmdLotSave(const std::vector<std::string>& args) {
         for (const auto& d : diffs)
             std::printf("    %s\n", d.c_str());
     }
-    LoadedLot b = loadInto(code, dst, src, h, characters, true);
+    // The reload skips the load entries (VM::runLoadEntries): the check is
+    // of what the save carries.
+    LoadedLot b = loadInto(code, dst, src, h, characters, true, false);
     const auto diffs = vm::compareLotState(*a.vm, *b.vm);
     std::printf("  VM state after load -> save -> load: %s\n", diffs.empty() ? "the same" : "differs:");
     for (const auto& d : diffs)
@@ -511,7 +515,7 @@ int cmdHoodSave(const std::vector<std::string>& args) {
             continue;
         vm::CodeLibrary code2(&index);
         const hood::Neighborhood back = hood::Neighborhood::load(outHood, true);
-        LoadedLot b = loadInto(code2, dst, dst, &back, characters);
+        LoadedLot b = loadInto(code2, dst, dst, &back, characters, false, false);
         auto diffs = vm::compareLotState(*a->vm, *b.vm);
         for (auto& d : vm::compareNeighborhoodState(*a->vm, *b.vm))
             diffs.push_back("neighborhood: " + d);
@@ -716,7 +720,7 @@ int cmdPlayLoop(const std::vector<std::string>& args) {
 
     // The lot again, with the saved neighborhood.
     vm::CodeLibrary code2(&index);
-    LoadedLot b = loadInto(code2, lotFile, lotFile, &back, characters);
+    LoadedLot b = loadInto(code2, lotFile, lotFile, &back, characters, false, false);
     for (const auto& e : b.load.objects)
         if (!e.error.empty()) {
             std::printf("  reload: object %d (%s): %s\n", e.id, e.name.c_str(), e.error.c_str());

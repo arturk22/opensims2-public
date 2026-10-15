@@ -1072,6 +1072,10 @@ public:
     bool startMain(ObjectId id);
     void resetAfterError(ObjectId id, Thread& t);
     void resetObject(ObjectId id, Thread& t); // the same reset, not after an error
+    // A loaded lot's objects run their load entry (OBJf 2, lot_resume.hpp);
+    // off only for the save checks (s2pkg lot-save --check), which compare
+    // what the save carries, not what the game's load trees do after.
+    bool runLoadEntries = true;
     std::map<ObjectId, Thread> threads; // the Main threads
     // Instructions a thread may run in one turn before it fails as an
     // infinite loop: the game's "Too many iterations" (0x44D) after 100000
