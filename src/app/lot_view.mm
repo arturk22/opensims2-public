@@ -247,6 +247,44 @@ bool onCutWall(const os2::Xform& at) {
     return false;
 }
 
+// The selected Sim's point for the cutaway (cWallCutawayManager,
+// docs/ui-live-mac.md 8d). SetSelectedSimLocation keeps where the Sim is
+// while it is on the level shown; "changed" (CutawayLocationChanged) is
+// another room indoors, another tile outdoors (by the room where it was).
+// The cutaway is worked out again only when the Sim, the camera or the view
+// changed, with the Sim where it is then: between those times the point
+// stays. None unless the kept Sim is on the level shown.
+std::optional<std::array<float, 3>> cutawaySimPoint(const os2::LotViewOptions& v) {
+    auto& c = gScene.cutawaySim;
+    const os2::vm::VM& m = gSimulation->machine();
+    const int16_t id = m.globals[os2::vm::global::SelectedPersonId];
+    bool changed = false;
+    if (const auto it = m.objects().find(os2::vm::ObjectId(id)); id > 0 && it != m.objects().end() &&
+                                                                  it->second.position.inWorld() &&
+                                                                  it->second.position.level - 1 == v.level) {
+        const auto& p = it->second.position;
+        if (!c.stored) {
+            changed = true;
+        } else {
+            const uint16_t was = os2::lotRoomAt(*gLotShape, c.level, c.x, c.y);
+            changed = was ? was != os2::lotRoomAt(*gLotShape, v.level, p.x, p.y)
+                          : (std::floor(c.x) != std::floor(p.x) || std::floor(c.y) != std::floor(p.y) ||
+                             c.level != v.level);
+        }
+        c.stored = true, c.level = v.level, c.x = p.x, c.y = p.y;
+    }
+    const simd_float3 e = gCamera->eye(), f = gCamera->pivot();
+    const std::array<float, 6> camera{e.x, e.y, e.z, f.x, f.y, f.z};
+    if (changed || camera != c.camera || c.mode != gWallView.mode() || c.viewLevel != v.level || !c.used) {
+        c.camera = camera, c.mode = gWallView.mode(), c.viewLevel = v.level;
+        if (c.stored)
+            c.used = std::array<float, 3>{c.x, c.y, gLotShape->elevationAt(c.level, c.x, c.y)};
+    }
+    if (!c.stored || c.level != v.level)
+        return std::nullopt;
+    return c.used;
+}
+
 os2::LotViewOptions wantedLotView() {
     if (cinematicPlaying())
         return cinematicLotView();
@@ -261,17 +299,9 @@ os2::LotViewOptions wantedLotView() {
     os2::LotViewOptions v = gWallView.options(look, viewLevel());
     v.camera = eye; // cutaway tests the walls against the camera's position
     // cutawayForSelectedSim: the selected Sim on the level shown.
-    if (v.walls == os2::LotViewOptions::Walls::Cutaway && gCamera && gSimulation && gLive &&
-        v.level != os2::LotViewOptions::kAllLevels) {
-        const os2::vm::VM& m = gSimulation->machine();
-        const int16_t id = m.globals[os2::vm::global::SelectedPersonId];
-        if (const auto it = m.objects().find(os2::vm::ObjectId(id)); id > 0 && it != m.objects().end() &&
-                                                                      it->second.position.inWorld() &&
-                                                                      it->second.position.level - 1 == v.level) {
-            const simd_float3 e = gCamera->eye();
-            v.simLine = std::array<float, 4>{e.x, e.y, it->second.position.x, it->second.position.y};
-        }
-    }
+    if (v.walls == os2::LotViewOptions::Walls::Cutaway && gCamera && gSimulation && gLive && gLotShape &&
+        v.level != os2::LotViewOptions::kAllLevels)
+        v.simPoint = cutawaySimPoint(v);
     return v;
 }
 

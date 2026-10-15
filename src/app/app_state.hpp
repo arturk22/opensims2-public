@@ -267,6 +267,18 @@ struct SceneState {
     std::unique_ptr<os2::PatternCatalog> lotPatterns;
     os2::LotViewOptions lotView;
     std::vector<bool> lotCutaway; // the walls lotView's cutaway cut (os2::lotCutawayWalls)
+    // cWallCutawayManager's selected Sim (SetSelectedSimLocation, docs/ui-live-mac.md
+    // 8d): where it was last seen on the level shown, and the point the cutaway
+    // uses, taken again only when the Sim changes room (tile outdoors) or the
+    // camera or the view changes.
+    struct CutawaySim {
+        bool stored = false;
+        int level = 0;
+        float x = 0, y = 0;
+        std::optional<std::array<float, 3>> used;
+        std::array<float, 6> camera{};
+        int mode = -1, viewLevel = 0;
+    } cutawaySim;
     int lotInstance = -1;
     int lotModel = -1;
     os2::LotModelCache lotCache;

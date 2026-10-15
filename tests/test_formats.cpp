@@ -637,13 +637,13 @@ static void testLotModel() {
         add(2, Lot::Normal);    // room 2 | yard: outside, its outside face +X
         add(3, Lot::Normal);    // yard | yard: alone
         add(0, Lot::Foundation); // a style without cutaway
-        auto cutAt = [&](std::array<float, 2> look, std::optional<std::array<float, 4>> simLine = std::nullopt,
+        auto cutAt = [&](std::array<float, 2> look, std::optional<std::array<float, 3>> simPoint = std::nullopt,
                          std::optional<std::array<float, 3>> camera = std::nullopt) {
             LotViewOptions v;
             v.walls = LotViewOptions::Walls::Cutaway;
             v.level = 0;
             v.viewDirection = look;
-            v.simLine = simLine;
+            v.simPoint = simPoint;
             v.camera = camera;
             std::vector<float> fromSet;
             const auto set = lotCutawayWalls(c, v);
@@ -672,11 +672,54 @@ static void testLotModel() {
               "a camera on the inside of the wall's line does not cut it");
         check(cutAt({-1, 0}, std::nullopt, std::array<float, 3>{2.0f, -20, 15}) == std::vector<float>{1},
               "a camera on the wall's line does not cut it (the game's test is strict)");
-        // cutawayForSelectedSim: a Sim at x = 3.5 seen from a camera at -X
-        // cuts the walls across the line, the outside wall facing away and
-        // the one alone in the yard too (fences and foundations never).
-        check(cutAt({1, 0.2f}, std::array<float, 4>{-5, 0.4f, 3.5f, 0.5f}) == std::vector<float>{1, 2, 3},
-              "the walls between the camera and the selected Sim are cut");
+        // cutawayForSelectedSim (WallsBetweenPointSetAndPoint, docs/ui-live-mac.md
+        // 8d): a Sim at x = 3.5 seen from a camera at +X, 1.5 up per tile
+        // away: the ray stops 3.0 up, 2 tiles on; nothing on its way here.
+        check(cutAt({-1, 0}, std::array<float, 3>{0.5f, 0.5f, 0}, std::array<float, 3>{20.5f, 0.5f, 30}) ==
+                  std::vector<float>{1, 2},
+              "a Sim with no wall toward the camera cuts nothing more");
+        // From x = 0.5 toward a camera at +X lower down (3 up per 20 tiles):
+        // the ray reaches 6 tiles on, past the yard wall at x = 3.
+        check(cutAt({1, 0}, std::array<float, 3>{0.5f, 0.5f, 0}, std::array<float, 3>{40.5f, 0.5f, 20}) ==
+                  std::vector<float>{1, 2, 3},
+              "the walls between the selected Sim and the camera are cut");
+        // A Sim in the yard at x = 3.5 seen from -X: the outside wall at
+        // x = 2, its outside face away from the camera, is cut for the Sim;
+        // the yard wall at x = 3 by the Sim is not (the walk starts a tile
+        // toward the camera, as the game's).
+        check(cutAt({1, 0}, std::array<float, 3>{3.5f, 0.5f, 0}, std::array<float, 3>{-40, 0.5f, 20}) ==
+                  std::vector<float>{1, 2},
+              "a Sim behind the house: the back wall between it and the camera is cut");
+        // A camera high above: the ray reaches 3.0 up within the Sim's own
+        // tile plus a little: only the next tile is marked.
+        check(cutAt({1, 0}, std::array<float, 3>{0.5f, 0.5f, 0}, std::array<float, 3>{1.6f, 0.5f, 3}) ==
+                  std::vector<float>{1},
+              "the end tile of the Sim's ray is not marked: the wall at x = 1 is cut as an inside wall only");
+    }
+    {
+        // The query's steps: the Sim's tile, one back on an axis the camera
+        // is on the negative side of, the end tile left out, and an edge only
+        // with both tiles across it marked (or at the lot's edge).
+        Lot q;
+        q.width = 8, q.height = 8, q.minLevel = 0, q.levelCount = 1;
+        q.elevations.assign(9 * 9, 0.0f);
+        auto has = [](const std::vector<std::array<int, 4>>& v, std::array<int, 4> e) {
+            return std::find(v.begin(), v.end(), e) != v.end();
+        };
+        // +X: tiles 3, 4, 5 (the end, 6, is not), edges x = 4 and 5.
+        auto plus = lotWallsBetweenPointsAndCamera(q, {{3.5f, 2.5f, 0}}, {9.5f, 2.5f, 6});
+        check(has(plus, {4, 2, 4, 3}) && has(plus, {5, 2, 5, 3}) && !has(plus, {3, 2, 3, 3}) &&
+                  !has(plus, {6, 2, 6, 3}) && has(plus, {5, 2, 6, 3}) && !has(plus, {6, 2, 7, 3}),
+              "toward +X: the edges past the Sim's tile, the end tile left out");
+        // -X: from tile 2 (one back), tiles 2 and 1 (the end, 0, is not):
+        // only the edge x = 2; the one at x = 3 by the Sim is not.
+        auto minus = lotWallsBetweenPointsAndCamera(q, {{3.5f, 2.5f, 0}}, {-2.5f, 2.5f, 6});
+        check(has(minus, {2, 2, 2, 3}) && !has(minus, {3, 2, 3, 3}) && !has(minus, {1, 2, 1, 3}),
+              "toward -X: the walk starts a tile back, so the Sim's own edge is left out (as the game)");
+        // Below 3.0 the ray goes all the way to the camera.
+        auto low = lotWallsBetweenPointsAndCamera(q, {{0.5f, 0.5f, 0}}, {6.5f, 0.5f, 2});
+        check(has(low, {5, 0, 5, 1}) && !has(low, {6, 0, 6, 1}), "a camera less than 3.0 up: the ray reaches it");
+        check(lotRoomAt(q, 0, 0.5f, 0.5f) == 0, "no room map: outdoors");
     }
     check(WallView::visible(lot, 0, 0.5f, 0.5f, 1.0f) && !WallView::visible(lot, 0, 0.5f, 0.5f, 3.0f) &&
               WallView::visible(lot, 1, 0.5f, 0.5f, 3.0f),

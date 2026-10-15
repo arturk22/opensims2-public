@@ -975,21 +975,97 @@ std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view) {
             else // no camera: along the view direction (into the scene)
                 cut[i] = s * (nx * view.viewDirection[0] + ny * view.viewDirection[1]) < -1e-3f;
         }
-        // usarSim: a wall across the camera-to-Sim line (the world's ray
-        // query; here the line in the plan, inferred).
-        if (!cut[i] && view.simLine) {
-            const auto& l = *view.simLine;
-            auto orient = [](float ax, float ay, float bx, float by, float cx, float cy) {
-                return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-            };
-            const float d1 = orient(l[0], l[1], l[2], l[3], w.a.x, w.a.y);
-            const float d2 = orient(l[0], l[1], l[2], l[3], w.b.x, w.b.y);
-            const float d3 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[0], l[1]);
-            const float d4 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[2], l[3]);
-            cut[i] = ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+    }
+    // usarSim (KeepOnlyFrontFacingOutsideWalls with cutawayForSelectedSim):
+    // the eligible walls of the Sim's level between it and the camera.
+    if (view.simPoint && view.camera && view.level != LotViewOptions::kAllLevels) {
+        const auto edges = lotWallsBetweenPointsAndCamera(lot, {*view.simPoint}, *view.camera);
+        for (size_t i = 0; i < lot.walls.size(); ++i) {
+            const auto& w = lot.walls[i];
+            if (cut[i] || w.a.level != view.level || (w.type != Lot::Normal && w.type != Lot::Attic))
+                continue;
+            // The wall's tile edges (walls run along whole tiles, straight or diagonal).
+            int x = int(std::lround(w.a.x)), y = int(std::lround(w.a.y));
+            const int bx = int(std::lround(w.b.x)), by = int(std::lround(w.b.y));
+            const int sx = (bx > x) - (bx < x), sy = (by > y) - (by < y);
+            for (int k = 0; k < 64 && (x != bx || y != by) && !cut[i]; ++k) {
+                std::array<int, 4> e{x, y, x + sx, y + sy};
+                if (std::make_pair(e[2], e[3]) < std::make_pair(e[0], e[1]))
+                    e = {e[2], e[3], e[0], e[1]};
+                cut[i] = std::binary_search(edges.begin(), edges.end(), e);
+                x += sx, y += sy;
+            }
         }
     }
     return cut;
+}
+
+std::vector<std::array<int, 4>> lotWallsBetweenPointsAndCamera(const Lot& lot,
+                                                               const std::vector<std::array<float, 3>>& points,
+                                                               std::array<float, 3> camera) {
+    const int w = int(lot.width), h = int(lot.height);
+    std::vector<bool> marked(size_t(std::max(w, 0)) * size_t(std::max(h, 0)), false);
+    for (const auto& p : points) {
+        // From the point toward the camera, stopped 3.0 over the point (0x0274b48c).
+        float d[3] = {camera[0] - p[0], camera[1] - p[1], camera[2] - p[2]};
+        float e[3] = {camera[0], camera[1], camera[2]};
+        if (d[2] > 3.0f) {
+            const float f = 3.0f / d[2];
+            for (int k = 0; k < 3; ++k)
+                d[k] *= f, e[k] = p[k] + d[k];
+        }
+        const int signX = d[0] > 0 ? 1 : d[0] < 0 ? -1 : 0, signY = d[1] > 0 ? 1 : d[1] < 0 ? -1 : 0;
+        // The point's tile, one back on each axis the camera is on the negative side of.
+        int cur[2] = {int(std::floor(p[0])) - (signX < 0), int(std::floor(p[1])) - (signY < 0)};
+        const int end[2] = {int(std::floor(e[0])), int(std::floor(e[1]))};
+        const float ax = std::abs(d[0]), ay = std::abs(d[1]);
+        const int major = ax > ay ? 0 : 1, minor = 1 - major;
+        const float big = major == 0 ? ax : ay, small = major == 0 ? ay : ax;
+        const int stepMajor = major == 0 ? signX : signY, stepMinor = major == 0 ? signY : signX;
+        float err = small;
+        // Until the major axis reaches the end's tile (which is not marked).
+        for (int guard = 0; guard < 4 * (w + h) + 8; ++guard) {
+            if (stepMajor > 0 ? !(end[major] > cur[major]) : !(end[major] < cur[major]))
+                break;
+            if (cur[0] >= 0 && cur[0] < w && cur[1] >= 0 && cur[1] < h)
+                marked[size_t(cur[0]) * size_t(h) + size_t(cur[1])] = true;
+            if (big > err)
+                cur[major] += stepMajor, err += small;
+            else
+                cur[minor] += stepMinor, err -= big;
+        }
+    }
+    // The marked tiles' walls: the diagonals always, the edge on the low x
+    // (y) side when the tile across it is marked too or it is the lot's edge.
+    std::vector<std::array<int, 4>> out;
+    auto at = [&](int x, int y) { return marked[size_t(x) * size_t(h) + size_t(y)]; };
+    for (int x = 0; x < w; ++x)
+        for (int y = 0; y < h; ++y) {
+            if (!at(x, y))
+                continue;
+            out.push_back({x, y + 1, x + 1, y}); // mask 8
+            out.push_back({x, y, x + 1, y + 1}); // mask 4
+            if (x == 0 || at(x - 1, y))
+                out.push_back({x, y, x, y + 1}); // mask 1
+            if (y == 0 || at(x, y - 1))
+                out.push_back({x, y, x + 1, y}); // mask 2
+        }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+uint16_t lotRoomAt(const Lot& lot, int level, float x, float y) {
+    const auto it = lot.roomLayers.find(0x0B);
+    const auto& rooms = it != lot.roomLayers.end() && it->second.size() == lot.rooms.size() ? it->second : lot.rooms;
+    if (rooms.empty() || !lot.hasLevel(level) || x < 0 || y < 0 || x >= float(lot.width) || y >= float(lot.height))
+        return 0;
+    const uint32_t tx = uint32_t(x), ty = uint32_t(y);
+    const auto& q = rooms[(size_t(level - lot.minLevel) * lot.width + tx) * lot.height + ty];
+    // The quarters west, north, east, south (roomBeside's order): the one
+    // the point's offset from the tile's centre leans to.
+    const float fx = x - float(tx) - 0.5f, fy = y - float(ty) - 0.5f;
+    const size_t quarter = std::abs(fx) > std::abs(fy) ? (fx < 0 ? 0 : 2) : (fy > 0 ? 1 : 3);
+    return q[quarter];
 }
 
 int lotTopLevel(const Lot& lot) {

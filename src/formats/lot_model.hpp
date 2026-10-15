@@ -100,10 +100,11 @@ struct LotViewOptions {
     int lowestCut = kAllLevels;
     bool roof = true;
     // cutawayForSelectedSim (on: its tweak's default is true and
-    // globalProps.xml does not set it; docs/ui-live-mac.md 8c): in cutaway,
-    // with the selected Sim on the level shown, the walls crossing the line
-    // from the camera (x, y) to the Sim (x, y) are cut too.
-    std::optional<std::array<float, 4>> simLine;
+    // globalProps.xml does not set it; docs/ui-live-mac.md 8c-8d): in
+    // cutaway, with the selected Sim on `level`, its point (x, y and the
+    // floor's height) and `camera`: the walls of `level` between the two
+    // (lotWallsBetweenPointsAndCamera) are cut too.
+    std::optional<std::array<float, 3>> simPoint;
 };
 // Which of lot.walls the view's cutaway cuts down
 // (cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls and the walls
@@ -113,6 +114,18 @@ struct LotViewOptions {
 // model only when this changes, as UpdateSceneGraph only touches the
 // differences.
 std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view);
+// nTSWorld::cWallGraph::WallsBetweenPointSetAndPoint (BV 0xc1d6ec,
+// docs/ui-live-mac.md 8d): the tile edges and diagonals, as (x0, y0, x1, y1)
+// with the lower end first, where walls between the points and the camera
+// would stand. From each point the ray toward the camera stops 3.0 up (a
+// story), and the tiles on its way are walked in the game's own steps.
+std::vector<std::array<int, 4>> lotWallsBetweenPointsAndCamera(const Lot& lot,
+                                                               const std::vector<std::array<float, 3>>& points,
+                                                               std::array<float, 3> camera);
+// The room at (x, y) of `level` from the light's room map (3ARY 0x0B, as
+// the walls' faces in lotCutawayWalls; the VM's map without it): the
+// quarter of the tile the point is in. 0 is outdoors.
+uint16_t lotRoomAt(const Lot& lot, int level, float x, float y);
 // The highest level with walls (not attic walls: the gables go with the
 // roof over the level below) or floors (lowest level if none).
 int lotTopLevel(const Lot& lot);
