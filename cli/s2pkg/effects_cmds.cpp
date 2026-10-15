@@ -66,10 +66,13 @@ void printParticles(const fx::Particles& p, const char* indent) {
         std::printf(" (%g %g %g)", c[0], c[1], c[2]);
     std::printf("\n%stexture=%s tiles=%ux%u align=%u draw=%u layer=%g frames=%u+%u@%g\n", indent, p.material.c_str(),
                 p.tileU, p.tileV, p.alignment, unsigned(p.drawType), p.layer, p.frameStart, p.frameCount, p.frameSpeed);
-    std::printf("%sforce=[%g %g %g] wind=%g drag=%g force2=[%g %g %g] %g %g screw=%g wiggles=%zu walk=%g..%g/%g..%g\n",
-                indent, p.force[0], p.force[1], p.force[2], p.windStrength, p.drag, p.force2[0], p.force2[1],
-                p.force2[2], p.force2a, p.force2b, p.screw, p.wiggles.size(), p.randomWalkDelay[0],
-                p.randomWalkDelay[1], p.randomWalkStrength[0], p.randomWalkStrength[1]);
+    std::printf("%sforce=[%g %g %g] globalWind=%g bomb=%g at [%g %g %g] drag=%g stretch=%g screw=%g wiggles=%zu "
+                "walk=%g..%g/%g..%g turn %g %g rotate %u x[%g %g] +%g, x[%g %g] +%g\n",
+                indent, p.force[0], p.force[1], p.force[2], p.globalWind, p.bomb, p.bombCenter[0], p.bombCenter[1],
+                p.bombCenter[2], p.drag, p.stretch, p.screw, p.wiggles.size(), p.randomWalkDelay[0],
+                p.randomWalkDelay[1], p.randomWalkStrength[0], p.randomWalkStrength[1], p.randomWalkTurnX,
+                p.randomWalkTurnY, p.rotateCount, p.rotateRange[0][0], p.rotateRange[0][1], p.rotateOffset[0],
+                p.rotateRange[1][0], p.rotateRange[1][1], p.rotateOffset[1]);
 }
 
 void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
@@ -102,21 +105,21 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
                             curveText(m.sizeCurve).c_str(), curveText(m.alphaCurve).c_str(), m.emitDirection.lo[0],
                             m.emitDirection.lo[1], m.emitDirection.lo[2], m.emitDirection.hi[0], m.emitDirection.hi[1],
                             m.emitDirection.hi[2], m.emitSpeed[0], m.emitSpeed[1], m.force[0], m.force[1], m.force[2],
-                            m.windStrength, m.drag);
-                std::printf("%sdelay=%g..%g trigger=%g..%g volume=[%g %g %g]-[%g %g %g] align=%u force2=[%g %g %g] %g screw=%g wiggles=%zu",
+                            m.globalWind, m.bomb);
+                std::printf("%sdelay=%g..%g trigger=%g..%g volume=[%g %g %g]-[%g %g %g] align=%u bomb at [%g %g %g] drag=%g screw=%g collider=%s wiggles=%zu",
                             in.c_str(), m.rateDelay[0], m.rateDelay[1], m.rateTrigger[0], m.rateTrigger[1], m.emitVolume.lo[0], m.emitVolume.lo[1], m.emitVolume.lo[2], m.emitVolume.hi[0],
-                            m.emitVolume.hi[1], m.emitVolume.hi[2], m.alignment, m.force2[0], m.force2[1], m.force2[2],
-                            m.force2a, m.screw, m.wiggles.size());
+                            m.emitVolume.hi[1], m.emitVolume.hi[2], m.alignment, m.bombCenter[0], m.bombCenter[1], m.bombCenter[2],
+                            m.drag, m.screw, m.colliderName.c_str(), m.wiggles.size());
                 for (const auto& w : m.wiggles)
                     std::printf(" (%g [%g %g %g] [%g %g %g])", w.timeRate, w.rateDirection[0], w.rateDirection[1],
                                 w.rateDirection[2], w.wiggleDirection[0], w.wiggleDirection[1], w.wiggleDirection[2]);
                 for (const auto& w : m.walks)
                     std::printf(" walk=%g..%g/%g..%g turn %g %g %g", w.delay[0], w.delay[1], w.strength[0],
                                 w.strength[1], w.turn[0], w.turn[1], w.turn[2]);
-                std::printf(" prefer=[%g %g %g] damp=%g bankWind=%g bank=%g attractor=[%g %g %g] %s %g tractors=%zu\n",
+                std::printf(" prefer=[%g %g %g] damp=%g bankWind=%g bank=%g attractor=[%g %g %g] %s %g path=%zu\n",
                             m.walkPreferDirection[0], m.walkPreferDirection[1], m.walkPreferDirection[2], m.alignDamp,
                             m.alignBankWind, m.alignBank, m.attractor[0], m.attractor[1], m.attractor[2],
-                            curveText(m.attractorStrength).c_str(), m.attractorRange, m.tractors.size());
+                            curveText(m.attractorStrength).c_str(), m.attractorRange, m.path.size());
                 if (auto i = lib.indexOf(m.baseEffect))
                     printEffect(lib, *i, depth + 2);
             }

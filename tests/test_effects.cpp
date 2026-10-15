@@ -121,7 +121,7 @@ static void testParse() {
     const Particles& p = lib.particles[0];
     check(p.material == "stinkSteam", "particle texture");
     check(p.rateCurve.size() == 1 && p.rateCurve[0] == 10, "rate curve");
-    check(p.force[2] == 1 && p.force2a == 0.5f, "force and drag");
+    check(p.force[2] == 1 && p.drag == 0.5f, "force and drag");
     check(p.colliderName == "plane", "collider without the optional byte");
     check(lib.visuals[0].components[0].offset[0] == 0.5f, "component offset");
 }
@@ -205,7 +205,7 @@ static EffectsLibrary metaLibrary() {
     visual("fishmodel", {comp(Block::Model, 0)});
     visual("deadmodel", {comp(Block::Model, 1)});
     MetaParticles swim;
-    swim.flags = 0x0100002200000000ull; // keep count, bounded
+    swim.flags = 0x01000022ull; // random walk, collision, maintain
     swim.life = {60000, 60000};
     swim.rateCurve = {1};
     swim.rateCurveTime = 1;
@@ -216,17 +216,17 @@ static EffectsLibrary metaLibrary() {
     swim.walks[0].strength = {0.0625f, 0.1875f};
     swim.walks[0].turn[0] = 0.02f, swim.walks[0].turn[2] = 0.1f;
     MetaParticles feed = swim;
-    feed.flags = 0x1900002200000000ull;
+    feed.flags = 0x19000022ull;
     MetaParticles die = swim;
-    die.flags = 0x1900002100000000ull;
+    die.flags = 0x19000021ull;
     die.life = {2, 2};
     die.baseEffect = "deadmodel";
     lib.metaParticles = {swim, feed, die};
     visual("tank", {comp(Block::MetaParticles, 0), comp(Block::MetaParticles, 1), comp(Block::MetaParticles, 2)});
     MetaParticles stand = swim, run = swim;
-    stand.flags = 0x0100002100000000ull;
+    stand.flags = 0x01000021ull;
     stand.life = {0.5f, 0.5f};
-    run.flags = 0x1900002100000000ull;
+    run.flags = 0x19000021ull;
     run.life = {0.5f, 0.5f};
     run.baseEffect = "deadmodel";
     lib.metaParticles.push_back(stand);

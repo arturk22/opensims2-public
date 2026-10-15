@@ -111,10 +111,13 @@ Particles readParticles(BinReader& r) {
     p.aspectVary = r.f32();
     p.rotateAxis = v3(r);
     v3(r);
-    r.u8();
-    r.skip(2 * 4);
-    p.rotateOffsetX = r.f32();
-    p.rotateOffsetY = r.f32();
+    p.rotateCount = r.u8();
+    for (auto& range : p.rotateRange) { // (version < 6: one float each)
+        const float x = r.f32();
+        range = x > 0 ? V2{-x, x} : V2{1, 1};
+    }
+    p.rotateOffset[0] = r.f32();
+    p.rotateOffset[1] = r.f32();
     p.rotateCurveX = curve(r);
     p.rotateCurveY = curve(r);
     p.alphaCurve = curve(r);
@@ -134,11 +137,11 @@ Particles readParticles(BinReader& r) {
     p.frameStart = r.u8();
     p.frameCount = r.u8();
     p.force = v3(r);
-    p.windStrength = r.f32();
+    p.globalWind = r.f32();
+    p.bomb = r.f32();
+    p.bombCenter = v3(r);
     p.drag = r.f32();
-    p.force2 = v3(r);
-    p.force2a = r.f32();
-    p.force2b = r.f32();
+    p.stretch = r.f32();
     p.screw = r.f32();
     p.wiggles = wiggles(r);
     for (auto& b : p.bloom)
@@ -166,8 +169,9 @@ MetaParticles readMeta(BinReader& r) {
     m.version = r.u16();
     if (m.version >= 3)
         throw FormatError("effects: meta particle version " + std::to_string(m.version) + " not supported");
-    const uint32_t lo = r.u32(), hi = r.u32();
-    m.flags = lo | (uint64_t(hi) << 32);
+    // std::bitset<34>: the first u32 holds bits 32-33, the second bits 0-31.
+    const uint32_t high = r.u32(), low = r.u32();
+    m.flags = low | (uint64_t(high & 3) << 32);
     m.life = v2(r);
     m.preRoll = r.f32();
     auto e = emission(r, m.version > 1, true);
@@ -193,14 +197,14 @@ MetaParticles readMeta(BinReader& r) {
     m.baseEffect = str32(r);
     m.alignment = r.u8();
     m.force = v3(r);
-    m.windStrength = r.f32();
+    m.globalWind = r.f32();
+    m.bomb = r.f32();
+    m.bombCenter = v3(r);
     m.drag = r.f32();
-    m.force2 = v3(r);
-    m.force2a = r.f32();
     m.screw = r.f32();
     m.wiggles = wiggles(r);
     r.skip(4);  // bloom
-    colliders(r);
+    m.colliderName = colliders(r);
     r.skip(8 * 4); // terrain
     v2(r);
     for (auto& w : m.walks) {
@@ -216,11 +220,11 @@ MetaParticles readMeta(BinReader& r) {
     m.attractor = v3(r);
     m.attractorStrength = curve(r);
     m.attractorRange = r.f32();
-    const uint32_t tractors = r.u32();
-    if (tractors > 4096)
-        throw FormatError("effects: too many tractor points");
-    m.tractors.resize(tractors);
-    for (auto& t : m.tractors)
+    const uint32_t points = r.u32();
+    if (points > 4096)
+        throw FormatError("effects: too many path points");
+    m.path.resize(points);
+    for (auto& t : m.path)
         t = {v3(r), v3(r), r.f32()};
     r.f32();
     return m;

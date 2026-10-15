@@ -49,9 +49,65 @@ struct Wiggle {
     V3 rateDirection{}, wiggleDirection{};
 };
 
+// Flag bits of a particle description (the binary's std::bitset<38> at
+// cTSParticlesDescription +0x158; a version <= 4 block stores bits 0-31 as
+// one u32), named after the effects script's options (docs/effects-mac.md
+// §4e.2).
+namespace pflag {
+constexpr uint64_t Inject = 1ull << 0;        // rate -> bursts at each cycle's start (InjectParticles)
+constexpr uint64_t Maintain = 1ull << 1;      // rate -> the count kept alive (MaintainParticles)
+constexpr uint64_t Sustain = 1ull << 2;       // rate -sustain: the last cycle is held, not ended
+constexpr uint64_t Radial = 1ull << 6;        // emit -radial: the direction is the birth point
+constexpr uint64_t Ellipsoid = 1ull << 8;     // source ellipse / ellipsoid
+constexpr uint64_t SizeScale = 1ull << 11;    // rate -sizeScale: emission x the effect's scale
+constexpr uint64_t AreaScale = 1ull << 12;    // ... x scale^2
+constexpr uint64_t VolumeScale = 1ull << 13;  // ... x scale^3
+constexpr uint64_t RandomWalk = 1ull << 20;   // randomWalk: one walking force for the whole effect
+constexpr uint64_t Shape = 1ull << 22;        // the "texture" is a shape (mesh)
+constexpr uint64_t Light = 1ull << 23;        // texture -light: lit by the scene
+constexpr uint64_t AcceptOverride = 1ull << 24; // the texture can be replaced (balloon icons)
+constexpr uint64_t CycleKill = 1ull << 30;    // rate -cycleKill: each new cycle clears the old ones
+constexpr uint64_t DirectLayer = 1ull << 31;  // texture -directLayer: the layer as it is, not x 8 + 7
+// Flags that need the full time-stepped physics (the binary's mask, built
+// in a __StaticInit at BV 0x26447f4): colliders 3/4, terrain 15/17, attractor 26.
+constexpr uint64_t NeedsTimeStep = (1ull << 3) | (1ull << 4) | (1ull << 15) | (1ull << 17) | (1ull << 26);
+} // namespace pflag
+
+// Flag bits of a meta particle description (std::bitset<34>; the file has
+// bits 32-33 in its first u32 and bits 0-31 in the second, as the binary's
+// operator>> reads them, BV 0x1c229d0).
+namespace mflag {
+constexpr uint64_t Inject = 1ull << 0;
+constexpr uint64_t Maintain = 1ull << 1;
+constexpr uint64_t Sustain = 1ull << 2;
+constexpr uint64_t Ellipsoid = 1ull << 11;
+constexpr uint64_t RandomWalkSync = 1ull << 23;
+constexpr uint64_t RandomWalk = 1ull << 24;   // two random walks per meta particle (cTSRWState)
+constexpr uint64_t RandomWalkWait = 1ull << 25;
+constexpr uint64_t Attractor = 1ull << 27;
+constexpr uint64_t Tractor = 1ull << 29;
+constexpr uint64_t Path = 1ull << 30;         // the particle follows the path points (SnapParticleToPath)
+constexpr uint64_t ResetIncoming = 1ull << 32;
+} // namespace mflag
+
+// Flag bits of a visual effect (the "effect" block's options, parser BV
+// 0x1a7e510) and of its components (CreateComponentFromDescription 0xc042e4).
+namespace vflag {
+constexpr uint32_t CameraFacing = 1u << 1;
+constexpr uint32_t HardStop = 1u << 4;
+constexpr uint32_t Rigid = 1u << 5;           // the particles live in the effect's frame and move with it
+constexpr uint32_t RealTime = 1u << 12;
+} // namespace vflag
+namespace cflag {
+constexpr uint32_t Chain = 1u << 1;           // the chain target of the chain component before it
+constexpr uint32_t ChainEnd = 1u << 2;        // ... and the last of that chain
+constexpr uint32_t StateChain = 1u << 3;      // the next ones (up to one with bit 4) are its states
+constexpr uint32_t StateChainEnd = 1u << 4;
+} // namespace cflag
+
 struct Particles {
     uint16_t version = 0;
-    uint64_t flags = 0;          // bit 8 ellipsoid emitter, 21 material, 22 shape, 23 material is light
+    uint64_t flags = 0;          // pflag::
     V2 life{};                   // seconds, random in [x, y]
     float preRoll = 0;           // seconds simulated before the first frame
     V2 rateDelay{}, rateTrigger{};
@@ -68,7 +124,12 @@ struct Particles {
     Curve aspectCurve;
     float aspectVary = 0;
     V3 rotateAxis{};
-    float rotateOffsetX = 0, rotateOffsetY = 0;
+    uint8_t rotateCount = 1;     // rotate commands (1 or 2)
+    // Per rotation: each particle's multiplier of its curve, random in
+    // this range (a stored x > 0 gives [-x, x], else [1, 1]), and a fixed
+    // offset in turns.
+    std::array<V2, 2> rotateRange{V2{1, 1}, V2{1, 1}};
+    std::array<float, 2> rotateOffset{};
     Curve rotateCurveX, rotateCurveY; // turns over life
     Curve alphaCurve;
     float alphaVary = 0;
@@ -79,13 +140,14 @@ struct Particles {
     DrawType drawType = DrawType::Decal;
     float layer = 0, frameSpeed = 0;
     uint8_t frameStart = 0, frameCount = 0;
-    // Physics: the two (vector, float, float) groups after the drawing block.
-    // The first is the constant force (gravity: z < 0 falls) with wind
-    // strength and drag; the second one OpenTS2 leaves unnamed.
+    // Physics (force command): the constant force (gravity and wind, one
+    // vector), the world wind's multiplier, the bomb (a speed away from its
+    // centre at birth) and the drag (v *= 1 - drag x dt); stretch along the
+    // velocity.
     V3 force{};
-    float windStrength = 0, drag = 0;
-    V3 force2{};
-    float force2a = 0, force2b = 0;
+    float globalWind = 0, bomb = 0;
+    V3 bombCenter{};
+    float drag = 0, stretch = 0;
     float screw = 0;
     std::vector<Wiggle> wiggles;
     std::array<uint8_t, 4> bloom{};
@@ -118,19 +180,18 @@ struct MetaParticles {
     std::string baseEffect;      // the visual effect each meta particle carries
     uint8_t alignment = 0;
     V3 force{};
-    float windStrength = 0, drag = 0;
-    // The second (vector, float) group: the float taken as the drag factor,
-    // as the particles' (inferred).
-    V3 force2{};
-    float force2a = 0;
+    float globalWind = 0, bomb = 0;
+    V3 bombCenter{};
+    float drag = 0;
     float screw = 0;
     std::vector<Wiggle> wiggles;
-    // Two random walks (OpenTS2's RandomWalk: delay range, strength range,
-    // three turn floats) and the direction they prefer.
+    // Two random walks (cRandomWalk: delay range, strength range, turn,
+    // minimum turn, vertical mix) and the direction they prefer.
     struct Walk {
         V2 delay{}, strength{};
         float turn[3]{};
     };
+    std::string colliderName;
     std::array<Walk, 2> walks{};
     V3 walkPreferDirection{};
     float alignDamp = 0, alignBankWind = 0, alignBank = 0;
@@ -138,12 +199,13 @@ struct MetaParticles {
     V3 attractor{};
     Curve attractorStrength;
     float attractorRange = 0;
-    // Tractor points (OpenTS2: two vectors and a float each).
-    struct Tractor {
-        V3 a{}, b{};
-        float f = 0;
+    // The path (version < 3; OpenTS2 calls them tractor points): position,
+    // velocity and time of each point, in the emitter's frame.
+    struct PathPoint {
+        V3 position{}, velocity{};
+        float time = 0;
     };
-    std::vector<Tractor> tractors;
+    std::vector<PathPoint> path;
 };
 
 struct Decal {

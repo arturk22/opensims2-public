@@ -18,10 +18,11 @@ constexpr uint64_t kMaintain = 0x2;       // bit 1: the rate is the count kept a
 constexpr uint64_t kEllipsoid = 1u << 8;  // emit volume is an ellipsoid (OpenTS2)
 constexpr uint64_t kRandomWalk = 1u << 20; // set on every effect with a real random walk
 constexpr uint64_t kIcon = 1u << 24;      // balloon icon: the texture is replaced
-// Meta particle flags (MetaParticles::flags, 64 bits; inferred from the data).
-constexpr uint64_t kMetaKeepCount = 1ull << 56;   // the rate is how many are kept alive (fish, cockroaches)
-constexpr uint64_t kMetaContinues = 0x18ull << 56; // continues the meta component before it
-constexpr uint64_t kMetaBounded = 1ull << 33;     // kept inside the first step's emit volume (the fish, not the cockroaches)
+// Meta particle flags (MetaParticles::flags, the binary's numbering; what
+// they meant here was inferred from the data).
+constexpr uint64_t kMetaKeepCount = mflag::RandomWalk;           // the rate is how many are kept alive (fish, cockroaches)
+constexpr uint64_t kMetaContinues = mflag::Attractor | (1ull << 28); // continues the meta component before it
+constexpr uint64_t kMetaBounded = mflag::Maintain;               // kept inside the first step's emit volume (the fish, not the cockroaches)
 constexpr size_t kMaxMetaParticles = 64;          // per chain
 
 V3 add(V3 a, V3 b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
@@ -286,7 +287,7 @@ void EffectSystem::spawn(const Instance& inst, Emitter& e) {
     for (int k = 0; k < 3; ++k)
         p.colorScale[size_t(k)] = random(1 - d.colorVary[size_t(k)], 1 + d.colorVary[size_t(k)]);
     p.walkTimer = random(d.randomWalkDelay[0], d.randomWalkDelay[1]);
-    p.spin = random(d.rotateOffsetX, d.rotateOffsetY) * kTwoPi;
+    p.spin = random(d.rotateOffset[0], d.rotateOffset[1]) * kTwoPi;
     e.particles.push_back(p);
 }
 
@@ -320,7 +321,7 @@ void EffectSystem::stepEmitter(const Instance& inst, Emitter& e, float dt, bool 
     // emission (the stove's smoke billows out of the front) but not the
     // force (it still rises). Inferred.
     const V3 force = e.localSpace ? d.force : rotate(inst.where, d.force);
-    const float drag = d.force2a;
+    const float drag = d.drag;
     // (Not for particles that move with the effect: the balloons' leader
     // bubbles would wander off. Inferred.)
     const bool walk = (d.flags & kRandomWalk) != 0 && !e.localSpace;
@@ -484,7 +485,7 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
                 p.velocity = add(p.velocity, mul(to, sampleCurve(d.attractorStrength, t, 0) * dt / dist));
         }
         p.velocity = add(p.velocity, mul(d.force, dt));
-        p.velocity = mul(p.velocity, std::max(0.0f, 1 - d.force2a * dt));
+        p.velocity = mul(p.velocity, std::max(0.0f, 1 - d.drag * dt));
         p.position = add(p.position, mul(p.velocity, dt));
         // Kept inside the first step's volume: turned back at its sides.
         if (root.flags & kMetaBounded)
