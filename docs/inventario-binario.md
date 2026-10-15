@@ -75,8 +75,8 @@ palavra.
 |---|---|---|---|---|
 | VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 8,5 / 11 = **77%** | 125 / 80 |
 | Rotas | 27 (12) | 113 / 622 = 18,2% | 6 / 8 = **75%** | 59 / 38 |
-| Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 4,5 / 9 = **50%** | 39 / 14 |
-| Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 6,5 / 10 = **65%** | 10 / 8 |
+| Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
+| Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 7,5 / 10 = **75%** | 10 / 8 |
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 7,5 / 11 = **68%** | 63 / 50 |
 | Corte de paredes | 11 (4) | 18 / 159 = 11,3% | 3,5 / 6 = **58%** | 4 / (na ui-live §8c) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (23) | 87 / 1.534 = 5,7% | 5,5 / 8 = **69%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 6,5 / 9 = **72%** | 43 / 52 |
-| **Total** | **816 (245)** | **1.357 / 13.977 = 9,7%** (só src: 699 = 5,0%) | **68 / 105 = 65%** | **519 em src** |
+| **Total** | **816 (245)** | **1.357 / 13.977 = 9,7%** (só src: 699 = 5,0%) | **70 / 105 = 67%** | **519 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -151,10 +151,10 @@ coreografia, expiração, peso dos canais, solucionador de IK; rodada n02),
 |---|---|---|---|
 | Arquivo ANIM: `cAnimResourceConst::ReadFrom` (67, 7) | `formats/anim.*` | inferido | Preenchimento das strings, unidade das tangentes e ordem de Euler são inferidos (`TODO.md` M3). |
 | Canais e deltas: `cActiveAnimSkeletal::SetupChannel`, `SetApplyDeltaDataToIK` | `formats/anim_player.cpp` | fiel | Rodada 15. |
-| Mistura por níveis: `cChannelUberOutlet`, `cChannelUber`, `cBlendFunction2` (29, 0) | `formats/anim_player.cpp` | inferido | O peso do delta e o `0x20` do `cChannelUber` não foram lidos. |
-| Fila de coreografia: `cChoreoQueue` (81, 0), `cChoreoRequest` (62, 3), `cChoreoHandler*` | — | faltando | Temos um `AnimPlayer` nosso; a fila do jogo nunca foi lida. |
+| Mistura por níveis: `cChannelUberOutlet`, `cChannelUber`, `cBlendFunction2` (29, 0) | `formats/anim_player.cpp` | inferido | Rodada n02: o peso do canal (`cChannelUber::Weight`: peso do pedido × peso de IK) e a memória do osso (osso sem canal fica como estava) lidos e feitos (`anim-mac.md` §2–3); a forma dos intervalos de blend (`cBlendInterval::Value`) não foi lida. |
+| Fila de coreografia: `cChoreoQueue` (81, 0), `cChoreoRequest` (62, 3), `cChoreoHandler*` | `formats/anim_player.cpp` | inferido | Rodada n02: ordem do quadro (pedidos → tratadores → outlets, IK no segundo passo), regras de expiração e a saída dos expirados lidas (`anim-mac.md` §1–2); o `AnimPlayer` segue isso, mas a sobreposição no fim de um pedido (nível −1) continua nossa. |
 | Locomoção: `cActiveAnimLoco::CreateStepCycle`, `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle` (63, 0) | `vm/locomotion.*`, `formats/anim_player.cpp` | inferido | Ciclos de passo lidos; transições e blends da locomoção não. |
-| IK: `cActiveAnimIK` (28, 5), `cIKChain` (47, 0), `cIKStrategy7DOF`, `ComputeIKRotationSolution` | `formats/anim_player.cpp` | inferido | O solucionador não foi lido; a mistura de alvos é linear e inferida. |
+| IK: `cActiveAnimIK` (28, 5), `cIKChain` (47, 0), `cIKStrategy7DOF`, `ComputeIKRotationSolution` | `formats/anim.cpp` (`applyIk`) | fiel | Rodada n02: o solucionador de duas juntas do binário (dobradiça em X, giro pelo polo, 65 %/75 % da torção) e a mistura de alvos pelo contato conferida (`anim-mac.md` §4–5). Sobras: ordem de Euler da torção, contato 0. |
 | Olhar: `cActiveAnimLookAt` (29, 1), `cIKStrategyLookAt` | `app/look_at.*` | inferido | A primitiva Look At é fiel; a cabeça no corpo não (o alvo a 0,75 do chão é inferido). |
 | Eventos: `cEventChannel`, `cActiveAnimEvent`, árvores de evento | `vm/animation.cpp` | inferido | As árvores de evento recebem só (evento, objeto IK); 20 marcadores em `animation.cpp`. |
 | Cinemáticas: `cCinematicScene::ReadFrom` (23, 9), `TryCinematic` | `formats/cinematic.*`, `app/cinematic_*` | inferido | Spots, velocidade forçada e "ObjectHiding" abertos. |
@@ -173,9 +173,9 @@ Docs: `docs/seat-mac.md` (leitura do binário, rodada n01), `docs/issues/001-sen
 | B. Snap Into e slot: `TrySnapInto`, `PlaceInSlot`, `AggregateOnPlaceInSlot`, `TestPlaceInSlot` | `vm/placement.cpp`, `routing_walk.cpp` | fiel | Falta a árvore 0x34 "allow in slot". |
 | C. Corpo no slot: `cObject::OnPlaceInSlot`, `ObjectSlotOffset`, `cTSPerson::UpdateSlotDisplacement` | `app/seat_module.*` | fiel | O grafo de cena prende ao osso do slot, como o app; a VM só tem a posição do contêiner. |
 | D. Salto da raiz: `PostSnap`, `cObject::ApplyAnimationOffsets`, `GlobalRootTransPosition` | `formats/anim_player.*` (`stayInWorld`) | inferido | Os od 108–111 nunca são escritos pelas árvores (zero); o `stayInWorld` segue inferido (rodada 2). |
-| E. Sentado e parado (idles da cadeira, fila vazia) | `app/lot_vm.cpp` | inferido | Regra nossa: segura a pose. |
+| E. Sentado e parado (idles da cadeira, fila vazia) | `app/lot_vm.cpp`, `formats/anim_player.cpp` | fiel | Rodada n02: o motor não tem idle; osso sem canal fica como estava (`anim-mac.md` §6). A idle em pé do app segue nossa. |
 | F. Animação de entrar/sair (STR# 0x92) | `vm/reach.cpp` | inferido | Ordem das listas fiel (só a superfície); a faixa pela altura em metros falta. |
-| G. IK das mãos e pés: `cChoreoHandlerIK::HandleChoreoRequest`, `FindIKTargetBone` | `formats/anim_player.cpp` | inferido | Mãos 6–10 cm curtas nos sociais. |
+| G. IK das mãos e pés: `cChoreoHandlerIK::HandleChoreoRequest`, `FindIKTargetBone` | `formats/anim.cpp` | fiel | Rodada n02: o solucionador do binário (`anim-mac.md` §4). |
 | H. Levantar: `TrySnap`, `RemoveFromWorld`, `DoesPathStartFromContainment` | `vm/reach.cpp`, `app/seat_module.*` | inferido | Direção fiel; o ponto único do Snap (sem o anel nosso) falta. |
 
 ### 3.5 Colocação e construção
@@ -356,7 +356,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | # | Rodada | Por que vem antes | Agentes | Ghidra |
 |---|---|---|---|---|
 | 1 | **Sentar** (issue 001, linhas A–H) — **feita** (n01): objetivos de sentar, Snap Into/PlaceInSlot, direção do Snap e lista 0x92 do binário; E, G, I ficam para a rodada 2 (`docs/seat-mac.md`). | Sentar aparece em toda refeição, sofá e privada; 7 de 10 partes inferidas. | 3 Opus (1 leitura + 2 código) | sim |
-| 2 | **Corpo do Sim: coreografia, mistura e IK** (`cChoreoQueue`, `cChannelUber*`, `cActiveAnimIK`, `cIKChain`, transições de locomoção) | Todo Sim, todo quadro. Junta com a parte G do sentar se rodar junto. | 2 Opus (1 leitura + 1 código) | sim |
+| 2 | **Corpo do Sim: coreografia, mistura e IK** (`cChoreoQueue`, `cChannelUber*`, `cActiveAnimIK`, `cIKChain`, transições de locomoção) — **feita** (n02): ordem da fila, expiração, peso dos canais e o solucionador de IK do binário; memória do osso; E, G, I da issue 001 (`docs/anim-mac.md`); transições de locomoção ficam no `TODO.md`. | Todo Sim, todo quadro. Junta com a parte G do sentar se rodar junto. | 2 Opus (1 leitura + 1 código) | sim |
 | 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
 | 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |
 | 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) | Visível em todo lote; rodada pequena. | 1 Opus | sim |

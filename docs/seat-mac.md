@@ -186,9 +186,10 @@ issue não muda nada. O `stayInWorld` continua a nossa leitura do `PostSnap`
 
 ## E. Sentado e parado
 
-Não lido nesta rodada: é a mistura da fila de coreografia
-(`cChannelUberOutlet`), da rodada 2 (corpo). A regra "segura a pose" continua
-inferida.
+Lido na rodada n02 (`docs/anim-mac.md` §2 e §6): o motor não tem idle
+próprio; um pedido expirado sai da fila no mesmo tick e o osso sem canal fica
+com o último valor. A regra "segura a pose" é a do jogo (e o `AnimPlayer` a
+aplica a qualquer osso que nenhuma camada escreve).
 
 ## F. Animação de entrar e sair (STR# 0x92)
 
@@ -214,7 +215,10 @@ raiz) e a distância até o centro da superfície (e não até o ponto).
 
 ## G. IK
 
-Fica para a rodada 2 (corpo: `cActiveAnimIK`, `cChoreoHandlerIK`). Nada mudou.
+Lido e feito na rodada n02 (`docs/anim-mac.md` §4–5): o solucionador de
+duas juntas do `cIKStrategy7DOF` (dobradiça em X, giro do braço pelo polo,
+65 %/75 % da torção no bíceps e no pulso) em `applyIk`; a mistura dos alvos
+pelo contato conferida.
 
 ## H. Levantar
 
@@ -238,7 +242,9 @@ fica no `TODO.md`. **A direção agora é a do binário**: só muda com a flag
 
 ## I. Sustos e expressões sentado
 
-Não lido (rodada 2).
+Lido na rodada n02 (`docs/anim-mac.md` §6): o Animate Sim não olha o slot e a
+escolha do nome só olha espécie, idade e sexo; o jogo toca o que a árvore
+pede, a partir da raiz no slot. Nada a mudar no motor.
 
 ## O que esta rodada mudou e o que sobrou
 
@@ -263,5 +269,5 @@ Feito (rodada n01, cada parte um commit, testes verdes):
 Sobras (no `TODO.md`): o Snap de um ponto só (o primeiro osso; sem o anel
 nosso nem a varredura para slots sem osso), a parede entre o lugar velho e o
 novo (erro 8), a árvore 0x34 "allow in slot", o +25/+20 dos objetivos em pé,
-a altura em metros do alcance, o índice explícito do Reach (flag 0x08), e as
-partes E, G e I (corpo: rodada 2).
+a altura em metros do alcance e o índice explícito do Reach (flag 0x08). As
+partes E, G e I foram feitas na rodada n02 (`docs/anim-mac.md`).
