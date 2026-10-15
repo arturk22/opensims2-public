@@ -4,8 +4,10 @@
 #include <cstdlib>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <queue>
 
@@ -154,6 +156,10 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
     }
     cells_ = static_;
     costs_ = staticCosts_;
+    for (const auto& level : staticCosts_)
+        for (const float c : level)
+            staticCostsExact_ = staticCostsExact_ && exactCost(c);
+    pyramids_.resize(static_.size());
 }
 
 void PathPlanner::stamp(std::vector<uint8_t>& grid, float x0, float y0, float x1, float y1, uint8_t bit) const {
@@ -193,28 +199,116 @@ void PathPlanner::addObstacle(int level, float x0, float y0, float x1, float y1,
     if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount())
         return;
     ops_.push_back({level, x0, y0, x1, y1, float(kind)});
-    stamp(cells_[size_t(level - world_->firstLevel())], x0 - kInflation, y0 - kInflation, x1 + kInflation,
-          y1 + kInflation, kind);
+    const int li = level - world_->firstLevel();
+    record(li, x0 - kInflation, y0 - kInflation, x1 + kInflation, y1 + kInflation, kind, 0);
     if (kind == kObject)
-        stamp(cells_[size_t(level - world_->firstLevel())], x0, y0, x1, y1, kObjectCore);
+        record(li, x0, y0, x1, y1, kObjectCore, 0);
 }
 
 void PathPlanner::clearObstacles() {
     ops_.clear();
-    cells_ = static_;
-    costs_ = staticCosts_;
+    stamps_.clear();
+    inexactStamps_ = 0;
+    gridsDirty_ = true;
 }
 
 void PathPlanner::addCost(int level, float x0, float y0, float x1, float y1, float cost) {
     if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount())
         return;
     ops_.push_back({level, x0, y0, x1, y1, -1.0f - cost}); // cost ops are negative, obstacle kinds are not
-    auto& grid = costs_[size_t(level - world_->firstLevel())];
+    record(level - world_->firstLevel(), x0, y0, x1, y1, 0, cost);
+}
+
+void PathPlanner::record(int li, float x0, float y0, float x1, float y1, uint8_t bits, float cost) {
+    // The cells whose inside overlaps the rectangle (as stamp()).
     const int cx0 = std::max(0, int(std::floor(x0 * K))), cy0 = std::max(0, int(std::floor(y0 * K)));
     const int cx1 = std::min(cw_, int(std::ceil(x1 * K))), cy1 = std::min(ch_, int(std::ceil(y1 * K)));
-    for (int cx = cx0; cx < cx1; ++cx)
-        for (int cy = cy0; cy < cy1; ++cy)
-            grid[cellIndex(cx, cy)] = std::max(grid[cellIndex(cx, cy)], cost);
+    if (cx0 >= cx1 || cy0 >= cy1)
+        return;
+    if (!bits && !exactCost(cost))
+        ++inexactStamps_;
+    stamps_.push_back({li, cx0, cy0, cx1, cy1, bits, bits ? 0u : std::bit_cast<uint32_t>(cost)});
+    gridsDirty_ = true;
+}
+
+void PathPlanner::updateGrids() const {
+    gridsDirty_ = false;
+    if (stamps_ == applied_)
+        return;
+    // The stamps of one list and not of the other (as multisets), past the
+    // head and tail both share (the obstacles come in the objects' order,
+    // so mostly a walking Sim's rectangles differ).
+    size_t head = 0, tail = 0;
+    while (head < stamps_.size() && head < applied_.size() && stamps_[head] == applied_[head])
+        ++head;
+    while (tail < stamps_.size() - head && tail < applied_.size() - head &&
+           stamps_[stamps_.size() - 1 - tail] == applied_[applied_.size() - 1 - tail])
+        ++tail;
+    std::vector<Stamp> was(applied_.begin() + ptrdiff_t(head), applied_.end() - ptrdiff_t(tail));
+    std::vector<Stamp> now(stamps_.begin() + ptrdiff_t(head), stamps_.end() - ptrdiff_t(tail));
+    std::sort(was.begin(), was.end());
+    std::sort(now.begin(), now.end());
+    std::vector<Stamp> changed;
+    std::set_symmetric_difference(was.begin(), was.end(), now.begin(), now.end(), std::back_inserter(changed));
+    applied_ = stamps_;
+    if (changed.empty())
+        return; // the same stamps in another order: the same grids
+    auto apply = [&](const Stamp& s, int x0, int y0, int x1, int y1) {
+        x0 = std::max(x0, s.x0), y0 = std::max(y0, s.y0), x1 = std::min(x1, s.x1), y1 = std::min(y1, s.y1);
+        if (s.bits) {
+            auto& grid = cells_[size_t(s.li)];
+            for (int cx = x0; cx < x1; ++cx)
+                for (int cy = y0; cy < y1; ++cy)
+                    grid[cellIndex(cx, cy)] |= uint8_t(s.bits);
+        } else {
+            auto& grid = costs_[size_t(s.li)];
+            const float cost = std::bit_cast<float>(s.cost);
+            for (int cx = x0; cx < x1; ++cx)
+                for (int cy = y0; cy < y1; ++cy)
+                    grid[cellIndex(cx, cy)] = std::max(grid[cellIndex(cx, cy)], cost);
+        }
+    };
+    for (size_t li = 0; li < cells_.size(); ++li) {
+        int64_t area = 0;
+        bool any = false;
+        for (const Stamp& s : changed)
+            if (size_t(s.li) == li)
+                any = true, area += int64_t(s.x1 - s.x0) * (s.y1 - s.y0);
+        if (!any)
+            continue;
+        Pyramid& p = pyramids_[li];
+        if (area * 4 > int64_t(cw_) * ch_) { // most of the level: all of it again
+            cells_[li] = static_[li];
+            costs_[li] = staticCosts_[li];
+            for (const Stamp& s : stamps_)
+                if (size_t(s.li) == li)
+                    apply(s, 0, 0, cw_, ch_);
+            p.valid = false;
+            p.dirty.clear();
+            continue;
+        }
+        // Each changed rectangle: its static cells, then every stamp over it.
+        for (const Stamp& r : changed) {
+            if (size_t(r.li) != li)
+                continue;
+            for (int cx = r.x0; cx < r.x1; ++cx) {
+                const size_t a = cellIndex(cx, r.y0), b = cellIndex(cx, r.y1);
+                std::copy(static_[li].begin() + ptrdiff_t(a), static_[li].begin() + ptrdiff_t(b),
+                          cells_[li].begin() + ptrdiff_t(a));
+                std::copy(staticCosts_[li].begin() + ptrdiff_t(a), staticCosts_[li].begin() + ptrdiff_t(b),
+                          costs_[li].begin() + ptrdiff_t(a));
+            }
+            for (const Stamp& s : stamps_)
+                if (s.li == r.li && s.x0 < r.x1 && r.x0 < s.x1 && s.y0 < r.y1 && r.y0 < s.y1)
+                    apply(s, r.x0, r.y0, r.x1, r.y1);
+            if (p.valid) {
+                if (p.dirty.size() >= 1024)
+                    p.valid = false, p.dirty.clear(); // built again in full when needed
+                else
+                    p.dirty.push_back({r.x0, r.y0, r.x1, r.y1});
+            }
+        }
+    }
 }
 
 void PathPlanner::addRouter(int level, float x, float y, int, bool walking, bool) {
@@ -248,10 +342,12 @@ uint8_t PathPlanner::cellAt(int level, int cx, int cy) const {
 }
 
 uint8_t PathPlanner::at(int level, Point2 p) const {
+    syncGrids();
     return cellAt(level, int(std::floor(p[0] * K)), int(std::floor(p[1] * K)));
 }
 
 float PathPlanner::costAt(int level, Point2 p) const {
+    syncGrids();
     const int cx = int(std::floor(p[0] * K)), cy = int(std::floor(p[1] * K));
     if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount() || cx < 0 || cy < 0 ||
         cx >= cw_ || cy >= ch_)
@@ -260,6 +356,7 @@ float PathPlanner::costAt(int level, Point2 p) const {
 }
 
 bool PathPlanner::clear(int level, Point2 a, Point2 b, uint8_t mask, float maxCost) const {
+    syncGrids();
     // The cells the segment crosses (Amanatides & Woo); through a corner,
     // both cells beside it count.
     const float ax = a[0] * K, ay = a[1] * K, bx = b[0] * K, by = b[1] * K;
@@ -296,6 +393,7 @@ bool PathPlanner::clear(int level, Point2 a, Point2 b, uint8_t mask, float maxCo
 }
 
 float PathPlanner::costAlong(int level, Point2 a, Point2 b, uint8_t mask) const {
+    syncGrids();
     if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount())
         return kInf;
     const auto& costs = costs_[size_t(level - world_->firstLevel())];
@@ -511,7 +609,69 @@ bool PathPlanner::nearFree(int level, Point2 p, uint8_t mask, Point2& out) const
     return best < kInf;
 }
 
+int PathPlanner::treeSide() const {
+    int n = 1;
+    while (n < std::max(cw_, ch_))
+        n *= 2;
+    return n;
+}
+
+void PathPlanner::updatePyramid(int li) {
+    Pyramid& p = pyramids_[size_t(li)];
+    const int n = treeSide();
+    int top = 0; // squares of 2^1 .. 2^top cells
+    while ((2 << top) <= n)
+        ++top;
+    if (!p.valid) {
+        p.blocked.resize(size_t(top));
+        p.sum.resize(size_t(top));
+        for (int k = 1; k <= top; ++k) {
+            const size_t m = size_t(n >> k);
+            p.blocked[size_t(k - 1)].assign(m * m, 0);
+            p.sum[size_t(k - 1)].assign(m * m, 0.0);
+        }
+        p.dirty.assign(1, {0, 0, n, n});
+        p.valid = true;
+    }
+    const auto& grid = cells_[size_t(li)];
+    const auto& cost = costs_[size_t(li)];
+    for (const auto& r : p.dirty)
+        for (int k = 1; k <= top; ++k) {
+            // The squares of 2^k cells over the rectangle, from their four
+            // quarters (cells past the grid count as blocked at cost 0, as
+            // in the summed-area tables).
+            const int m = n >> k, mc = n >> (k - 1);
+            auto& B = p.blocked[size_t(k - 1)];
+            auto& S = p.sum[size_t(k - 1)];
+            for (int i = r[0] >> k; i <= (r[2] - 1) >> k; ++i)
+                for (int j = r[1] >> k; j <= (r[3] - 1) >> k; ++j) {
+                    int32_t b = 0;
+                    double sum = 0;
+                    if (k == 1) {
+                        for (const int x : {2 * i, 2 * i + 1})
+                            for (const int y : {2 * j, 2 * j + 1}) {
+                                const bool inside = x < cw_ && y < ch_;
+                                b += !inside || grid[cellIndex(x, y)] != 0;
+                                sum += inside ? double(cost[cellIndex(x, y)]) : 0.0;
+                            }
+                    } else {
+                        const auto& Bc = p.blocked[size_t(k - 2)];
+                        const auto& Sc = p.sum[size_t(k - 2)];
+                        for (const int x : {2 * i, 2 * i + 1})
+                            for (const int y : {2 * j, 2 * j + 1}) {
+                                b += Bc[size_t(x) * size_t(mc) + size_t(y)];
+                                sum += Sc[size_t(x) * size_t(mc) + size_t(y)];
+                            }
+                    }
+                    B[size_t(i) * size_t(m) + size_t(j)] = b;
+                    S[size_t(i) * size_t(m) + size_t(j)] = sum;
+                }
+        }
+    p.dirty.clear();
+}
+
 std::shared_ptr<const PathPlanner::QuadTrees> PathPlanner::quadTrees(bool allLevels, int startLevel) {
+    syncGrids();
     const int first = world_->firstLevel(), levels = world_->levelCount();
     const int key = allLevels ? -1 : startLevel;
     for (auto it = treeCache_.begin(); it != treeCache_.end(); ++it)
@@ -525,20 +685,64 @@ std::shared_ptr<const PathPlanner::QuadTrees> PathPlanner::quadTrees(bool allLev
     std::vector<Quad>& quads = out->quads;
     std::vector<Tree>& trees = out->trees;
     trees.resize(static_cast<size_t>(levels));
+    // The sums are exact either way (integers of 2^-24 under 2^53) when the
+    // costs are; the pyramid's are those of the tables then, bit for bit.
+    const bool exact = staticCostsExact_ && inexactStamps_ == 0;
     for (int li = 0; li < levels; ++li) {
         const int level = first + li;
         if (!allLevels && level != startLevel)
             continue;
         Tree& t = trees[size_t(li)];
-        t.n = 1;
-        while (t.n < std::max(cw_, ch_))
-            t.n *= 2;
+        t.n = treeSide();
         const int n = t.n;
         if (t.leafOf.size() != size_t(n) * n)
             t.leafOf.assign(size_t(n) * n, -1);
-        // Summed area tables of the blocked cells and of the costs.
         const auto& grid = cells_[size_t(li)];
         const auto& cost = costs_[size_t(li)];
+        // Squares split until each is all free at one cost or all blocked,
+        // by the blocked cells and the cost in each (`blockedIn`, `costIn`).
+        auto split = [&](auto blockedIn, auto costIn) {
+            std::vector<std::array<int, 3>> stack{{0, 0, n}};
+            while (!stack.empty()) {
+                const auto [x, y, s] = stack.back();
+                stack.pop_back();
+                const int b = blockedIn(x, y, s);
+                if (b == s * s)
+                    continue;
+                if (b == 0) {
+                    const float c0 = cost[cellIndex(x, y)];
+                    if (s == 1 || std::fabs(costIn(x, y, s) - double(c0) * s * s) < 1e-3) {
+                        const int id = int(quads.size());
+                        quads.push_back({level, x, y, s, c0});
+                        for (int i = x; i < x + s; ++i)
+                            std::fill_n(t.leafOf.begin() + ptrdiff_t(size_t(i) * n + size_t(y)), s, id);
+                        continue;
+                    }
+                }
+                const int h = s / 2;
+                stack.push_back({x, y, h});
+                stack.push_back({x + h, y, h});
+                stack.push_back({x, y + h, h});
+                stack.push_back({x + h, y + h, h});
+            }
+        };
+        if (exact) {
+            updatePyramid(li);
+            const Pyramid& p = pyramids_[size_t(li)];
+            split(
+                [&](int x, int y, int s) -> int {
+                    if (s == 1)
+                        return !(x < cw_ && y < ch_) || grid[cellIndex(x, y)] != 0;
+                    const int k = std::countr_zero(unsigned(s));
+                    return p.blocked[size_t(k - 1)][size_t(x >> k) * size_t(n >> k) + size_t(y >> k)];
+                },
+                [&](int x, int y, int s) -> double {
+                    const int k = std::countr_zero(unsigned(s));
+                    return p.sum[size_t(k - 1)][size_t(x >> k) * size_t(n >> k) + size_t(y >> k)];
+                });
+            continue;
+        }
+        // Summed area tables of the blocked cells and of the costs.
         // Row 0 and column 0 stay zero; every other entry is written below.
         if (satBlocked_.size() != size_t(n + 1) * (n + 1)) {
             satBlocked_.assign(size_t(n + 1) * (n + 1), 0);
@@ -558,30 +762,8 @@ std::shared_ptr<const PathPlanner::QuadTrees> PathPlanner::quadTrees(bool allLev
         auto area = [&](auto& v, int x, int y, int s) {
             return sat(v, x + s, y + s) - sat(v, x, y + s) - sat(v, x + s, y) + sat(v, x, y);
         };
-        // Squares split until each is all free at one cost or all blocked.
-        std::vector<std::array<int, 3>> stack{{0, 0, n}};
-        while (!stack.empty()) {
-            const auto [x, y, s] = stack.back();
-            stack.pop_back();
-            const int b = area(blocked, x, y, s);
-            if (b == s * s)
-                continue;
-            if (b == 0) {
-                const float c0 = cost[cellIndex(x, y)];
-                if (s == 1 || std::fabs(area(csum, x, y, s) - double(c0) * s * s) < 1e-3) {
-                    const int id = int(quads.size());
-                    quads.push_back({level, x, y, s, c0});
-                    for (int i = x; i < x + s; ++i)
-                        std::fill_n(t.leafOf.begin() + ptrdiff_t(size_t(i) * n + size_t(y)), s, id);
-                    continue;
-                }
-            }
-            const int h = s / 2;
-            stack.push_back({x, y, h});
-            stack.push_back({x + h, y, h});
-            stack.push_back({x, y + h, h});
-            stack.push_back({x + h, y + h, h});
-        }
+        split([&](int x, int y, int s) -> int { return area(blocked, x, y, s); },
+              [&](int x, int y, int s) -> double { return area(csum, x, y, s); });
     }
     treeCache_.insert(treeCache_.begin(), {key, ops_, out});
     if (treeCache_.size() > kTreeCacheSize)
@@ -602,6 +784,7 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
 
 bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals,
                        PlannedPath& out, RouteFail& why, bool allLevels) {
+    syncGrids();
     out = {};
     why = RouteFail::Success;
     const int first = world_->firstLevel(), levels = world_->levelCount();
@@ -660,7 +843,9 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
     // the goal is on it, else all (stairs). Built from the grids alone, so
     // they are kept while the obstacles stay the same (the same calls since
     // clearObstacles(): compared exactly, not by hash) and reused by the
-    // next plans; the A* reads them and never changes them.
+    // next plans; the A* reads them and never changes them. New ones are
+    // split from the pyramid of sums, which only the cells that changed
+    // since the last ones update (a walking Sim's rectangles).
     const std::shared_ptr<const QuadTrees> built = quadTrees(allLevels, startLevel);
     const std::vector<Quad>& quads = built->quads;
     const std::vector<Tree>& trees = built->trees;

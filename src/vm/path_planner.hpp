@@ -185,14 +185,57 @@ private:
     size_t signature_ = 0;
     int cw_ = 0, ch_ = 0; // cells per level
     std::vector<std::vector<uint8_t>> static_; // [level - first][cx * ch + cy]
-    std::vector<std::vector<uint8_t>> cells_;  // static + obstacles
     std::vector<std::vector<float>> staticCosts_; // per cell: the floor
-    std::vector<std::vector<float>> costs_;       // floor and cost rectangles
+    // The grids with the obstacles and cost rectangles: brought up to date
+    // with the calls since clearObstacles() when they are read (syncGrids),
+    // only where they changed since the last time.
+    mutable std::vector<std::vector<uint8_t>> cells_;  // static + obstacles
+    mutable std::vector<std::vector<float>> costs_;    // floor and cost rectangles
     uint32_t noise_ = 1;
     float uniform(float hi); // U(0; hi)
     std::vector<Portal> portals_;
-    // Scratch of plan(), kept between plans (the quadtree's summed area
-    // tables and per-level leaf maps) so each plan does not allocate them.
+    // A rectangle of cells one obstacle or cost call writes (clipped to the
+    // grid, not empty): obstacle bits OR'ed into the cells, or a cost the
+    // cells take when it is more than theirs. A cell is its static value
+    // with every stamp over it, in whatever order (OR and max), so the same
+    // stamps give the same grids.
+    struct Stamp {
+        int32_t li;             // level - first
+        int32_t x0, y0, x1, y1; // cells [x0, x1) x [y0, y1)
+        uint32_t bits;          // obstacle bits; 0: a cost
+        uint32_t cost;          // the cost's float, bit for bit (0 for an obstacle)
+        bool operator==(const Stamp&) const = default;
+        auto operator<=>(const Stamp&) const = default;
+    };
+    std::vector<Stamp> stamps_;          // the calls since clearObstacles()
+    mutable std::vector<Stamp> applied_; // what cells_ and costs_ hold
+    mutable bool gridsDirty_ = false;
+    void record(int li, float x0, float y0, float x1, float y1, uint8_t bits, float cost);
+    void syncGrids() const {
+        if (gridsDirty_)
+            updateGrids();
+    }
+    void updateGrids() const;
+    // The quadtree's sums by square (a pyramid: blocked cells and cost per
+    // aligned square of 2^k cells, k >= 1) of each level, brought up to date
+    // over the rectangles of cells that changed; it replaces summed-area
+    // tables rebuilt from the whole grid at every new set of obstacles. Its
+    // sums are exact (as those of the tables were) when every cost is 0 or
+    // in [0.5, 16] (exactCosts); else the tables are used.
+    struct Pyramid {
+        bool valid = false;
+        std::vector<std::vector<int32_t>> blocked; // [k - 1][(x >> k) * (n >> k) + (y >> k)]
+        std::vector<std::vector<double>> sum;
+        std::vector<std::array<int32_t, 4>> dirty; // cell rectangles changed since
+    };
+    mutable std::vector<Pyramid> pyramids_; // per level
+    bool staticCostsExact_ = true;
+    int inexactStamps_ = 0; // cost stamps outside exactCosts
+    static bool exactCost(float c) { return c == 0.0f || (c >= 0.5f && c <= 16.0f); }
+    int treeSide() const; // the quadtree's padded side, a power of two
+    void updatePyramid(int li);
+    // Scratch of the summed area tables (costs outside exactCosts), kept
+    // between plans so each plan does not allocate them.
     std::vector<int32_t> satBlocked_;
     std::vector<double> satCost_;
     // A free square of a level's quadtree, and a level's squares by cell.
@@ -236,7 +279,7 @@ private:
     void buildRoomGroups() const;
 
     size_t cellIndex(int cx, int cy) const { return size_t(cx) * size_t(ch_) + size_t(cy); }
-    uint8_t cellAt(int level, int cx, int cy) const;
+    uint8_t cellAt(int level, int cx, int cy) const; // the grids must be synced (syncGrids)
     void stamp(std::vector<uint8_t>& grid, float x0, float y0, float x1, float y1, uint8_t bit) const;
     void stampDiagonal(std::vector<uint8_t>& grid, const World::Segment& s) const;
     bool escape(int level, Point2 start, Point2& out) const;

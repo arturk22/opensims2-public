@@ -673,6 +673,87 @@ static void testPathPlanner() {
           "planner: round a costly floor");
 }
 
+// The planner kept between plans brings its grids and quadtree up to date
+// only where the obstacles and Sims changed (path_planner.hpp, Stamp and
+// Pyramid): its plans must be those of a planner made anew for each set of
+// obstacles, and those of the summed-area tables (a cost outside [0.5, 16],
+// which changes no cell, sends a planner to them).
+static void testPlannerKept() {
+    World w(24, 20, 1, 2);
+    for (int y = 0; y < 14; ++y)
+        w.addWall(1, 12, y, 12, y + 1);
+    w.openDoor({11, 6, 1}, 0);
+    for (int x = 0; x < 24; ++x)
+        w.setQuarterCosts({x, 17, 1}, {1.0f, 1.0f, 4.0f, 2.0f});
+    for (int y = 0; y < 10; ++y)
+        w.setCost({5, y, 1}, 7.5f);
+    PathPlanner kept(w);
+    uint32_t rng = 12345;
+    auto next = [&](int n) {
+        rng = rng * 1103515245u + 12345u;
+        return int((rng >> 8) % uint32_t(n));
+    };
+    // Fixed objects, and Sims walking about.
+    std::vector<std::array<float, 4>> objects;
+    for (int i = 0; i < 25; ++i) {
+        const float x = float(next(23)), y = float(next(19));
+        objects.push_back({x, y, x + 0.4f + float(next(8)) * 0.1f, y + 0.4f + float(next(8)) * 0.1f});
+    }
+    std::array<Point2, 6> sims{};
+    for (auto& s : sims)
+        s = {float(next(230)) / 10, float(next(190)) / 10};
+    bool same = true, sameGrid = true;
+    int planned = 0;
+    for (int round = 0; round < 120; ++round) {
+        // One to three Sims move a step; now and then an object goes or comes.
+        for (int m = 1 + next(3); m > 0; --m) {
+            Point2& s = sims[size_t(next(int(sims.size())))];
+            s = {std::clamp(s[0] + float(next(11) - 5) * 0.1f, 0.2f, 23.8f),
+                 std::clamp(s[1] + float(next(11) - 5) * 0.1f, 0.2f, 19.8f)};
+        }
+        if (next(10) == 0)
+            objects[size_t(next(int(objects.size())))][0] += 1.0f;
+        PathPlanner fresh(w), tables(w);
+        for (PathPlanner* p : {&kept, &fresh, &tables}) {
+            p->clearObstacles();
+            for (const auto& o : objects)
+                p->addObstacle(1, o[0], o[1], o[2], o[3], PathPlanner::kObject);
+            for (size_t i = 1; i < sims.size(); ++i)
+                p->addRouter(1, sims[i][0], sims[i][1], 0, (round + int(i)) % 3 == 0);
+        }
+        tables.addCost(1, 0.0f, 0.0f, 1.0f, 1.0f, 0.25f);
+        for (int x = 0; x < 24 * 8 && sameGrid; ++x)
+            for (int y = 0; y < 20 * 8; ++y) {
+                const Point2 c{(float(x) + 0.5f) / 8, (float(y) + 0.5f) / 8};
+                if (kept.at(1, c) != fresh.at(1, c) || kept.costAt(1, c) != fresh.costAt(1, c)) {
+                    sameGrid = false;
+                    break;
+                }
+            }
+        const Point2 from = sims[0];
+        const std::vector<PlanGoal> goals{{float(next(230)) / 10, float(next(190)) / 10, 0},
+                                          {float(next(230)) / 10, float(next(190)) / 10, 0.5f}};
+        PlannedPath a, b, c;
+        RouteFail wa = RouteFail::Success, wb = RouteFail::Success, wc = RouteFail::Success;
+        kept.seed(uint32_t(round + 1)), fresh.seed(uint32_t(round + 1)), tables.seed(uint32_t(round + 1));
+        const bool ra = kept.plan(from, 1, 1, goals, a, wa), rb = fresh.plan(from, 1, 1, goals, b, wb),
+                   rc = tables.plan(from, 1, 1, goals, c, wc);
+        planned += ra;
+        auto equal = [](const PlannedPath& x, const PlannedPath& y) {
+            if (x.points.size() != y.points.size() || x.goal != y.goal || x.cost != y.cost || x.escaped != y.escaped)
+                return false;
+            for (size_t i = 0; i < x.points.size(); ++i)
+                if (x.points[i].x != y.points[i].x || x.points[i].y != y.points[i].y || x.points[i].portal != y.points[i].portal)
+                    return false;
+            return true;
+        };
+        same = same && ra == rb && rb == rc && wa == wb && wb == wc && equal(a, b) && equal(b, c) &&
+               kept.noise() == fresh.noise() && fresh.noise() == tables.noise();
+    }
+    check(sameGrid, "kept planner: its grids are those of a new planner");
+    check(same && planned > 60, "kept planner: its plans are those of a new planner and of the summed-area tables");
+}
+
 // A failed route writes the route result (person data 62) and the
 // primitive returns false.
 static void testRouteResult() {
@@ -1971,6 +2052,7 @@ int main() {
     testSetToNextTiles();
     testPlaceNearFree();
     testPathPlanner();
+    testPlannerKept();
     testEscapeDiagonal();
     testObjectPortals();
     testRouteResult();
