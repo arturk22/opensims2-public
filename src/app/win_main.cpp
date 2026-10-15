@@ -39,6 +39,8 @@
 #include "vm/interactions.hpp"
 #include "vm/world.hpp"
 #include "formats/ui_image.hpp"
+#include "formats/character_write.hpp"
+#include "vm/baby_character.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/particle_system.hpp"
 #include "formats/ui_script.hpp"
@@ -184,6 +186,8 @@ const os2::RgbaImage* firstUiImage(os2::UiResources& ui, os2::ResourceIndex& ind
 
 std::string idleFor(const os2::SkinnedModel& skin) {
     const std::string& name = skin.skeleton.name;
+    if (!name.empty() && std::tolower(static_cast<unsigned char>(name[0])) == 'b')
+        return "b-floor-idle-loopBreathe";
     if (!name.empty() && std::tolower(static_cast<unsigned char>(name[0])) == 'c')
         return "c-idle-neutral-armsSide-wtC-breatheLoop50";
     if (!name.empty() && std::tolower(static_cast<unsigned char>(name[0])) == 'p')
@@ -1039,6 +1043,17 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
 
         std::fprintf(stderr, "opensims2: placed %zu objects, starting SimAntics\n", objects);
         std::fflush(stderr);
+        // Babies born in play and the NPCs the VM makes get character files
+        // (vm/baby_character.hpp), kept with the session's until the game is saved.
+        static std::map<int16_t, std::filesystem::path> bornCharacters;
+        bornCharacters.clear();
+        std::filesystem::path lotCharactersDir;
+        try {
+            lotCharactersDir = os2::vm::charactersDirOf(lotFile);
+            os2::vm::installBabyCharacterWriter(index, lotCharactersDir, os2::sessionCharactersDir(), &bornCharacters);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: babies' characters: %s\n", e.what());
+        }
         os2::LotSimulation simulation(index, lot, package, lotFile);
         std::printf("opensims2: %s\n", simulation.summary().c_str());
         const auto parts = os2::loadSimParts(index);
@@ -1050,6 +1065,33 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             std::filesystem::path file; // the character file
         };
         std::vector<DrawnSim> sims;
+        // A Sim's actor from its character file, standing at `at` facing
+        // `heading`, its idle cued at `cueAt` (scene clock), driven by the VM.
+        auto spawnSim = [&](const std::filesystem::path& file, int16_t id, simd_float3 at, float heading, double cueAt,
+                            const std::string& label) {
+            try {
+                auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, parts, file));
+                actor->position = {at.x, at.y, at.z};
+                actor->heading = heading;
+                const std::string idle = idleFor(actor->skin);
+                actor->cue(cueAt, actor->animation(index, idle));
+                actor->update(cueAt + 0.05);
+                const int model = renderer.addObject(actor->skin.model, index, true);
+                actor->model = model;
+                const int instance = renderer.addInstance(model, matrix_identity_float4x4);
+                renderer.setInstanceLightSet(instance, 1);
+                renderer.updateObject(model, actor->posed);
+                os2::DbpfPackage characterPackage(file);
+                simulation.attach(*actor, id, os2::readCharacter(characterPackage, index), idle);
+                std::printf("opensims2: Sim %s (%s) at (%.2f, %.2f, %.2f), %zu parts, idle %s\n", file.stem().string().c_str(),
+                            label.c_str(), at.x, at.y, at.z, actor->skin.model.parts.size(), idle.c_str());
+                sims.push_back({std::move(actor), model, id, instance, file});
+                return true;
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: Sim %s: %s\n", label.c_str(), e.what());
+                return false;
+            }
+        };
         os2::LotObjects saved = os2::LotObjects::load(package);
         std::set<uint32_t> inWorld;
         for (const auto& state : saved.objects)
@@ -1059,31 +1101,20 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (!object.person || !inWorld.count(object.instance & 0xFFFF))
                 continue;
             const std::string stem = object.definition.substr(0, object.definition.find(" - "));
-            const std::filesystem::path file = lotFile.parent_path().parent_path() / "Characters" / (stem + ".package");
-            try {
-                auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, parts, file));
-                actor->position = {object.position[0], object.position[1], object.position[2]};
-                actor->heading = 2 * std::atan2(object.rotation[2], object.rotation[3]);
-                const std::string idle = idleFor(actor->skin);
-                actor->cue(0, actor->animation(index, idle));
-                actor->update(0.05);
-                const int model = renderer.addObject(actor->skin.model, index, true);
-                actor->model = model;
-                const int instance = renderer.addInstance(model, matrix_identity_float4x4);
-                renderer.setInstanceLightSet(instance, 1);
-                renderer.updateObject(model, actor->posed);
-                os2::DbpfPackage characterPackage(file);
-                const os2::Character character = os2::readCharacter(characterPackage, index);
-                simulation.attach(*actor, int16_t(object.instance & 0xFFFF), character, idle);
-                std::printf("opensims2: Sim %s at (%.2f, %.2f, %.2f), %zu parts, idle %s\n", stem.c_str(), object.position[0],
-                            object.position[1], object.position[2], actor->skin.model.parts.size(), idle.c_str());
-                sims.push_back({std::move(actor), model, int16_t(object.instance & 0xFFFF), instance, file});
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "opensims2: Sim %s: %s\n", object.definition.c_str(), e.what());
-            }
+            spawnSim(lotFile.parent_path().parent_path() / "Characters" / (stem + ".package"), int16_t(object.instance & 0xFFFF),
+                     simd_make_float3(object.position[0], object.position[1], object.position[2]),
+                     2 * std::atan2(object.rotation[2], object.rotation[3]), 0, object.definition);
         }
+        // The Sims the first day's "reset lot" made (a family moving in).
+        constexpr float kEighthTurn = 3.14159265f / 4;
+        for (const auto& [id, file] : simulation.arrivedSims())
+            if (const os2::vm::Object* o = simulation.machine().object(id))
+                spawnSim(file, id,
+                         simd_make_float3(o->position.x, o->position.y,
+                                          simulation.floorHeight(o->position.level, o->position.x, o->position.y)),
+                         float(o->data[os2::vm::objdata::Direction]) * kEighthTurn, 0, "arrived");
         if (sims.empty())
-            throw std::runtime_error("no Sim could be drawn");
+            std::printf("opensims2: no Sims on the lot\n");
 
         os2::VmObjectView objectView(renderer, index, simulation);
         simulation.seats.slot = [&](int16_t id, double now) { return objectView.slotPlacement(id, now); };
@@ -1760,6 +1791,115 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 return headlessClock;
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         };
+        // Sims the VM makes while the lot plays (a baby born, an NPC, a
+        // visitor): a person object the lot did not load gets an actor from
+        // its character file (a newborn's from the baby writer; anyone
+        // else's by its OBJD GUID in the session's or the neighborhood's
+        // Characters folder). Persons without a character file stay undrawn.
+        std::map<std::filesystem::path, std::map<uint32_t, std::filesystem::path>> characterFiles;
+        auto characterFileOf = [&](uint32_t guid) -> std::optional<std::filesystem::path> {
+            for (const std::filesystem::path& dir : {os2::sessionCharactersDir(), lotCharactersDir}) {
+                if (dir.empty())
+                    continue;
+                auto& files = characterFiles[dir];
+                std::error_code ec;
+                for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+                    if (e.path().extension() != ".package" ||
+                        std::any_of(files.begin(), files.end(), [&](const auto& f) { return f.second == e.path(); }))
+                        continue;
+                    try {
+                        os2::DbpfPackage pkg(e.path());
+                        for (const auto& x : pkg.entries())
+                            if (x.tgi.type == 0x4F424A44) { // OBJD
+                                files[os2::ObjectDefinition::parse(pkg.read(x)).guid()] = e.path();
+                                break;
+                            }
+                    } catch (const std::exception&) {
+                    }
+                }
+                if (auto it = files.find(guid); it != files.end())
+                    return it->second;
+            }
+            return std::nullopt;
+        };
+        std::set<int16_t> simsLookedAt; // person objects already adopted or given up on
+        for (const auto& s : sims)
+            simsLookedAt.insert(s.id);
+        std::map<uint32_t, std::optional<std::filesystem::path>> embeddedCharacters;
+        // Actors of Sims gone from the lot: kept (other views may still point at them), out of sight.
+        std::vector<std::unique_ptr<os2::SimActor>> goneActors;
+        double sceneNow = 0;
+        auto adoptVmSims = [&] {
+            os2::vm::VM& m = simulation.machine();
+            for (int16_t id : simulation.goneSims()) {
+                simulation.detach(id);
+                for (auto it = sims.begin(); it != sims.end();)
+                    if (it->id == id) {
+                        simd_float4x4 away = matrix_identity_float4x4;
+                        away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+                        renderer.setInstanceTransform(it->instance, away);
+                        goneActors.push_back(std::move(it->actor));
+                        it = sims.erase(it);
+                    } else {
+                        ++it;
+                    }
+                objectView.removeSim(id);
+                if (lotLighting)
+                    lotLighting->removeSim(id);
+                if (pie)
+                    pie->setMovingBox(os2::vm::ObjectId(id), simd_make_float3(0, 0, 0), simd_make_float3(0, 0, 0));
+                simsLookedAt.erase(id); // a Sim given the ID later is adopted anew
+                std::printf("opensims2: Sim %d leaves the lot (its object is gone)\n", id);
+            }
+            std::vector<int16_t> fresh;
+            for (const auto& [id, o] : m.objects())
+                if (o.person && (o.position.inWorld() || o.data[os2::vm::objdata::ContainerId] != 0) && !simsLookedAt.count(id))
+                    fresh.push_back(id);
+            for (int16_t id : fresh) {
+                simsLookedAt.insert(id);
+                if (std::any_of(sims.begin(), sims.end(), [&](const DrawnSim& s) { return s.id == id; }))
+                    continue;
+                const os2::vm::Object& o = *m.object(id);
+                const int16_t neighbor = o.person->data[os2::vm::persondata::NeighborId];
+                std::optional<std::filesystem::path> file;
+                if (auto it = bornCharacters.find(neighbor); it != bornCharacters.end())
+                    file = it->second;
+                else if (const os2::vm::Neighbor* n = m.neighbor(neighbor))
+                    file = characterFileOf(n->guid);
+                // The game's unique NPCs (the Grim Reaper, the Pollination
+                // Technician) keep their character in their object's group.
+                if (const os2::vm::Neighbor* n = m.neighbor(neighbor); !file && n && n->guid) {
+                    auto [it, first] = embeddedCharacters.try_emplace(n->guid);
+                    if (first)
+                        try {
+                            char stem[32];
+                            std::snprintf(stem, sizeof stem, "Unique_%08X.package", n->guid);
+                            const std::filesystem::path out = os2::sessionCharactersDir() / "NPCs" / stem;
+                            if (os2::cas::writeEmbeddedCharacter(index, n->guid, out))
+                                it->second = out;
+                        } catch (const std::exception& e) {
+                            std::fprintf(stderr, "opensims2: Sim %d (neighbor %d): %s\n", id, neighbor, e.what());
+                        }
+                    file = it->second;
+                }
+                if (!file) {
+                    std::fprintf(stderr, "opensims2: Sim %d (neighbor %d): no character file, not drawn\n", id, neighbor);
+                    continue;
+                }
+                const simd_float3 at = simd_make_float3(o.position.x, o.position.y,
+                                                        simulation.floorHeight(o.position.level, o.position.x, o.position.y));
+                if (!spawnSim(*file, id, at, -float(o.data[os2::vm::objdata::Direction]) * kEighthTurn, sceneNow, "joins"))
+                    continue;
+                os2::SimActor* actor = sims.back().actor.get();
+                objectView.addSim(id, actor);
+                if (lotLighting)
+                    lotLighting->addSim(id, actor);
+                lotAudio.attachSim(*actor, id, {});
+                std::printf("opensims2: Sim %d (neighbor %d) joins the lot at tick %llu: %s, skeleton %s\n", id, neighbor,
+                            (unsigned long long)m.ticks, file->filename().string().c_str(), actor->skin.skeleton.name.c_str());
+                std::fflush(stdout);
+            }
+        };
         // Runs the lot's VM `ticks` ticks headless (a --wait step).
         auto runTicks = [&](long ticks) {
             const uint64_t target = simulation.ticks() + uint64_t(std::max(0L, ticks));
@@ -1771,6 +1911,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 if (liveUi)
                     liveUi->tick(headlessClock);
             }
+            adoptVmSims();
             std::printf("opensims2: waited to VM tick %llu\n", (unsigned long long)simulation.ticks());
         };
         bool keys[4]{};
@@ -1779,6 +1920,8 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (liveUi)
                 liveUi->tick(now);
             const double scene = simulation.update(now);
+            sceneNow = scene;
+            adoptVmSims();
             for (auto& sim : sims) {
                 sim.actor->update(scene);
                 renderer.updateObject(sim.model, sim.actor->posed);
