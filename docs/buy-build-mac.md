@@ -2241,6 +2241,18 @@ beirada, postas depois do telhado (o teste só roda ao pôr o telhado).
 `FUN_001648ac` (tile de cima de piscina) também dá o `0x46` das paredes (os
 dois lados sobre piscina) e o teste 9 do `FUN_009e9550`.
 
+Piscinas (`cTSUserToolDeckFoundation`, a piscina é um deck): no
+`SelectionIsDegenerate` (`0x34ed54`) o `0x8A` "Pools only allowed on terrain"
+é **piscina com um canto acima do nível 0** (e `0x1A` o mesmo para
+fundações; `0x80` seleção degenerada). O `MayPlaceQuadrilateral` (`0x352a30`)
+pede o `FUN_009e9550` a cada vértice cuja altura difere da ferramenta e dá
+`0x81` "Can't level terrain" (`0x2F` acima do térreo) a qualquer recusa; o
+`CanPlaceTile` não olha piso. O app passou a dar `0x81` (não `0x8A`) para piso
+no chão sob a piscina (qual teste do vértice recusa segue inferido). E o
+`0x86` "Can't extend pool" vem do `MayPlaceQuadrilateral`: cada piscina que o
+arraste toca passa pelo `AreExpansionBoundsLegal`; se falha, `0x86` (ou `0x02`
+com um canto fora/travado) — confirmado.
+
 ### 7.23 Terreno: o teste de vértice `FUN_009e9550` (rodada n07, Ghidra MCP)
 
 `FUN_009e9550(altura, vértice, flags, erros)` (o "pode mudar este vértice"

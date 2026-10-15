@@ -675,7 +675,12 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
                 return fail(0x86, "pools only go in the terrain");
             for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
                 if (q)
-                    return fail(0x8A, "pools only go in the terrain"); // a floor on the ground (inferred: SelectionIsDegenerate's text)
+                    // A ground floor: its corners cannot be dug, and
+                    // MayPlaceQuadrilateral reports every vertex that
+                    // FUN_009e9550 refuses as 0x81 "Can't level terrain"
+                    // (0x8A is SelectionIsDegenerate's pool above the
+                    // ground). Which of the vertex tests refuses is inferred.
+                    return fail(0x81, "a floor is on the ground there");
             for (int cx = x; cx <= x + 1; ++cx)
                 for (int cy = y; cy <= y + 1; ++cy)
                     if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
@@ -695,8 +700,10 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
     // 0xc22dfc): every pool whose rectangle meets the drag's R (R grown by
     // 0.01: touching counts) must make one rectangle with R (the bounding
     // box's area = R's + the pool's: no overlap, a whole side shared), and R
-    // with those pools may not pass 900 tiles. The refusal code 0x86 "Can't
-    // extend pool" is inferred (its caller is not found).
+    // with those pools may not pass 900 tiles. MayPlaceQuadrilateral (BV
+    // 0x352a30) asks it of each pool the drag meets (the tool's list at
+    // +0x9c) and refuses with 0x86 "Can't extend pool" (0x02 when a corner
+    // is off the lot or locked, tested before here).
     const int rx0 = ax, ry0 = ay, rx1 = bx + 1, ry1 = by + 1;
     {
         const float rArea = float((rx1 - rx0) * (ry1 - ry0));
