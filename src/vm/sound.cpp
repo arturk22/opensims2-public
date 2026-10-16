@@ -1,29 +1,20 @@
 // Play / Stop Sound Event (0x17) and Stop ALL Sounds (0x30).
 //
-// Operands of 0x17, from the 318 uses in the game's trees (none of the
-// editor's labels name them; the disassembly strings in Sims2.exe are "Play
-// Sound " / "Stop Sound ", ", volume %d", ", sampled at %f", ", auto vary",
-// ", with stack obj as source"), laid out as The Sims 1's (FreeSO
-// VMPlaySound): event ID s16 at 0, sample rate u16 at 2 (always 0), flags u8
-// at 4, volume u8 at 5 (always 0 = full). Flags: bit 6 (0x40) stops the event
-// instead of playing it ("Alarm Ring" 0x02 / "Alarm Shutoff" 0x42, "Start
-// Drive Sound" 0x02 / "Stop Drive Sound" 0x42), bit 1 (0x02) takes the stack
-// object as the source (The Sims 1's "StackObjAsSource"), bit 0 loops. Bytes
-// 6-7 are a data owner and value: my object ID (3, 11) on the fireplace,
-// literal 0 mostly; with a negative event ID the event comes from it: -1 =
-// that value (temp 0 in "Vox - Choose and Play"), -N = N + the value (the
-// stereo: -20000 + the station in its attribute 11). The Mac binary
-// (TryPlaySound; docs/primitives-mac.md §4) settles the negative case: the
-// index comes from (owner u8 at 6, data u16 at 7) and |n| still picks the
-// table, so the event is (|n| rounded down to 0, 10000 or 20000) + the
-// value. It also takes the stack object as the source only with 0x02 and a
-// flags byte other than 0xFF, and always returns true. Which table is which:
-// the doc reads 20000+ as the global table and 10000+ as the semi-global
-// one, but the game's data says the opposite ("Pregnancy - Make Pregnant",
-// a global tree, plays 10002 = the global table's "sting_playin_make_preg";
-// the phones' "CT - Ring" play 20001 and have no table of their own), so the
-// mapping below is kept. Events whose track name ends in "_lp" loop (the
-// game's naming; whether the track settings say so is not decoded).
+// Operands of 0x17 as the Mac binary reads them (cTSObject::TryPlaySound, BV
+// 0xe41844; docs/primitives-mac.md §4j): event ID s16 at 0, flags u8 at 4,
+// and with a negative event ID a data owner u8 at 6 and value u16 at 7. The
+// sample rate (u16 at 2) and volume (u8 at 5) of The Sims 1's layout
+// (FreeSO VMPlaySound) are not read (always 0 in the game's trees). Flags:
+// bit 6 (0x40) stops the event (the message the binary sends is the one
+// cTSAudioEventHandler::DoEvent, BV 0x6108a4, stops with), bit 1 (0x02)
+// takes the stack object as the source when the byte is not 0xFF. |n| picks
+// the code owner's table: 20000+ the semi-global one (n - 20000), 10000+ the
+// global one (n - 10000), else its own; with a negative n the index in that
+// table is the value of (owner, data): -1 = temp 0 in "Vox - Choose and
+// Play", -20000 + the station in the stereo's attribute 11. Always true.
+// Looping is the track's, not the primitive's (inferred here: flag bit 0,
+// which only the smoke alarm sets and the binary does not read, or a track
+// name ending in "_lp").
 #include "sound.hpp"
 
 #include "vm.hpp"
@@ -79,11 +70,11 @@ std::string tableEntry(VM& vm, uint32_t group, size_t index) {
 Exit playStopSoundEvent(Context& c) {
     const auto& o = c.instruction.operands;
     int id = int16_t(le16(&o[0]));
-    const uint8_t flags = o[4], volume = o[5];
-    if (id < 0) {
+    const uint8_t flags = o[4];
+    if (id < 0) { // the value is the index in the table |n| picks
         const int value = c.get(o[6], int16_t(le16(&o[7])));
         const int n = -id;
-        id = (n >= 20000 ? 20000 : n >= 10000 ? 10000 : 0) + value;
+        id = value >= 0 && value < 10000 ? (n >= 20000 ? 20000 : n >= 10000 ? 10000 : 0) + value : -1;
     }
     Object* source = &c.me();
     if ((flags & kFlagStackObjectSource) && flags != 0xFF)
@@ -102,7 +93,7 @@ Exit playStopSoundEvent(Context& c) {
     r.source = source->id;
     r.event = name;
     r.flags = flags;
-    r.volume = volume ? volume / 255.0f : 1.0f;
+    r.volume = 1.0f; // the volume byte is not read
     if (flags & kFlagStop) {
         r.kind = SoundRequest::Kind::Stop;
         loops.erase(name);
