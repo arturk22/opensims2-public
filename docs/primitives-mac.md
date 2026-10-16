@@ -3540,7 +3540,7 @@ cima). Nada disso mexe nas causas (rotas), e as medidas mostram isso:
 
 | | antes | depois |
 |---|---|---|
-| `N003_Lot192` 12 h: "Leave" começados por Juliette / Tybalt | 122 / 120, não saem | 117 / 112, não saem (com `OS2_STAIR_ONE_PORTAL=1`: saem 00:02 / 23:57) |
+| `N003_Lot192` 12 h: "Leave" começados por Juliette / Tybalt | 122 / 120, não saem | 117 / 112, não saem (com `OS2_STAIR_ONE_PORTAL=1`: saem 23:52 / 00:13) |
 | `N001_Lot11` sementes 1–6: mortes sem fogo; social ≥ 10 h | 1; "Contar Piada" 25 h+ (s3) | 0; nenhum |
 | `N001_Lot68` sementes 1–6: mortes sem fogo / no fogo; social ≥ 10 h | 3 / 4; "Estapear" 61 h+ (s2), "Tapa na Mão" 19 h (s5) | 0 / 4; "Estapear" 61 h+ (s2) |
 | `N003_Lot52` sementes 1–12: mortes sem fogo / no fogo (sementes com fogo); social ≥ 10 h | 5 / 17 (5); 3 (21–22 h) | 6 / 20 (6); 4 (18–23 h) |
