@@ -1431,7 +1431,10 @@ do byte 2, o temp 2). Isso explica o "0x20 em 96% dos usos" do código atual.
 Animate Sim (binário): na primeira execução resolve o nome (lista byte 6;
 0x80 = global da idade; senão a lista privada e, se não achar, as outras),
 nome vazio → 0x43, tipo errado → 0x73; guarda o pedido no frame e **devolve
-2 até a animação acabar, depois 1**; árvore de animação que não existe →
+2 até a animação acabar, depois 1** (rodada n43, `anim-mac.md` §13.3: até o
+fim da *ação* do pedido, quando ele começa a sair — `T` antes do fim, ou
+no fim sem blend de saída —; o pedido segue tocando e saindo enquanto a
+árvore segue); árvore de animação que não existe →
 verdadeiro na hora ("missing animation tree"). Byte 13 / 100 é um peso de
 blend (0 ou fora de 0–1 = 1,0). Animate Object/Overlay devolvem 1 logo depois
 de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → erro

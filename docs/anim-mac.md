@@ -676,7 +676,8 @@ do Animate Overlay e do Animate Object recebem os 5 parâmetros do
 abortado), rodam no objeto animado com os temps dele **postos de volta**
 (o Animate Sim não compartilha mais os temps da thread com a árvore), e a
 do Animate Sim recebe também 9997 (no começo do fade de saída, `kBlendTicks`
-antes do fim; no fim com a flag 0x40 "sem blend de saída"), 9998 e 9999 no
+antes do fim; no fim com a flag 0x40 "sem blend de saída" — rodada n43,
+§13.3: sem blend de saída o jogo não manda 9997), 9998 e 9999 no
 fim. O `AnimationState` guarda o stack object do quadro (`eventStackObject`,
 também ao recarregar) e o objeto de IK continua só para o IK e o save.
 `OS2_DEBUG_ANIM_EVENTS=1` lista cada árvore com os parâmetros; `s2pkg
