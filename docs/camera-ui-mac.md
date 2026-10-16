@@ -379,10 +379,9 @@ selecionada centra e para (`live_ui.cpp`); Return centra com a regra de
 andar. A comparação usa o ponto do piso do Sim no andar dele
 (`Lot::elevationAt`) e o tamanho real da janela em pixels (o jogo, em
 800×600: a zona morta de 30 pixels vale mais, relativamente, aqui).
-**Inferido:** o osso `root_trans` é a posição lógica do Sim na VM; a
-velocidade do teclado (`0x3b6c780f`: `sqrt(largura·30) · eixo · distância ·
-constante · aceleração por repetição`) é outra fórmula que a do app
-(§1.4/TODO), não tocada nesta rodada.
+**Inferido:** o osso `root_trans` é a posição lógica do Sim na VM. (O
+`0x3b6c780f`/`0xbb6c7808` é o passo da borda da janela, `sqrt(fov·30)`, não da
+largura; o teclado vai pelo pedido de mover: §1.11, rodada n39.)
 
 ### 1.9 Tab: a câmera livre "CameraMan" (binário, rodada n11)
 
@@ -466,16 +465,11 @@ em `app_view.mm`, os passos headless `--key tab`, `--key hold-<w|a|s|d|q|e>:<s>`
 `--key look:<dx>,<dy>` e `--key fov:<±n>` (captura:
 `docs/screenshots/n11-camera-camera-livre.jpg`, a 4 de altura, olhando o alpendre da `Tutorial_Lot14`). Sem a câmera livre o seguimento do
 andar do Sim (`followSelectedSim`) pára (é outro controlador).
-**Inferido:** o olhar com o mouse (o mapa de eixos do mouse do controlador
-não foi lido): o deslocamento em pontos × `mouseheadingsensitivity` ×
-`FreeCamera::kMouseUnit` (6); o app só olha com o botão direito (ou do meio)
-apertado, como o giro da câmera do lote, em vez de sempre; o pitch preso a
-35°/−80°; a posição e a direção de partida (os da câmera que sai) e o FOV de
-partida (o mais perto de 45 da tabela). **Não feito:** a órbita (Shift +
-teclas: `PickOrbitCenter`, `0x7a6590`, lança um raio na cena e orbita o ponto
-atingido; a conta da órbita, `0x7a7784`, tem constantes não lidas), o
-"CameraManNH" no bairro, a "First", o `ShowPIP(false)` e o modo/andar nas
-posições salvas.
+**Inferido:** o pitch preso a 35°/−80°; a posição e a direção de partida (os
+da câmera que sai) e o FOV de partida (o mais perto de 45 da tabela). O olhar
+com o mouse, a órbita e a "CameraManNH" foram feitos na rodada n39 (§1.11).
+**Não feito:** a "First" (nenhuma tecla chega a ela), o `ShowPIP(false)` e o
+modo/andar nas posições salvas.
 
 ### 1.10 Fade de objetos perto da câmera (`objectFade*`; binário, rodada n11)
 
@@ -686,6 +680,48 @@ centro)`), olhando para longe dele. Com a posição suavizada (7 passos) isso
 leva a câmera para dentro do centro escolhido, e cada repetição da tecla
 escolhe um centro novo à frente.
 
+**O olhar com o mouse da câmera livre.** O `FillDeviceMap` da CameraMan é o da
+base de primeira pessoa (`FUN_00d90018`, vazio): o mouse não passa por mapa
+nenhum. Quem olha é o `HandleNotification` da base (`FUN_00d92cd4`): na
+notificação de mouse `0x1b637482` (as `OnLButtonDown`/`OnMouseMove`... da
+janela, BV `0x5dbxxx`) com tipo `0xd` (mover), com o olhar ligado (`+0x2a6`, 1 no
+construtor) e sem o bloqueio `+0x2d5`, se o cursor saiu do meio da janela
+(`+0x294/+0x298` menos `+0x29c/+0x2a0`): **rumo −= dx · `mouseheadingsensitivity`**
+e **pitch −= dy · `mousepitchsensitivity`** (pixels desde o meio; `+0x28c`/`+0x290`,
+padrões do construtor **0,0045** e **0,001** em `0xd92110`; a CameraMan só tem o do
+rumo, 0,0005, então o pitch anda 0,001 por pixel). `FUN_00d90164`, a cada
+atualização, põe o cursor de volta no meio e o esconde enquanto o app está
+ativo (`+0x2d6`, a notificação `0x1b637474` do `OnActivateApp`): **o olhar está
+sempre ligado, sem botão**. A "First" usa a mesma base (0,00005 / 0,00001).
+
+**A câmera livre do bairro.** `cCameraNeighborhood::DoMessage` (BV `0x765134`)
+pede a "CameraManNH" no Tab (o mapa de teclas do bairro, `0x6A9362F3`, só tem
+Tab, não Y) e também troca `,`/`.` como o `cCameraLive`; a `ConstrainTranslation`
+(`0x7a6330`) só segura a câmera livre no estado de lote.
+
+**No app (rodada n39).** `LotCamera` (`render/camera.*`): `setKeyMove`/
+`setKeyRotate`/`setKeyZoom` (as velocidades), `moveRequest` (o `0x9b66110a`, o
+arrasto com o botão direito também, 0 ao soltar), `stepSideways`/`stepForward`
+(os passos da borda, com o contador), `rotateRequest`/`mouseRotate` e
+`setRotateSims1Mode` (o app não tem a opção na tela: fica desligada, o padrão);
+o pivô e o pitch suavizados em 7 passos; `pivotheightabovefloor` 1,2 sem o
+parâmetro nas câmeras Live/Build e 0 nas outras. `CameraMouseInput::edgeSteps`
+(`app/camera_input.*`): margens 4/16 e 1,25. `FreeCamera` (`render/free_camera.*`):
+`setOrbit` e a conta da órbita ao pé da letra, `look` sem o fator 6 e com o
+0,001 do pitch; `app_view.mm` esconde e prende o cursor enquanto a câmera livre
+está ligada e a janela é a principal, e escolhe o centro da órbita no piso sob
+o raio da vista (`floorUnderRay`; inferido: o jogo também pára nos objetos).
+`--hood <N> --key tab` mostra a CameraManNH (captura
+`docs/screenshots/n39-camera-livre-bairro.jpg`). Testes: `test_camera`
+(pedido de mover, passos da borda, giro e troca, zoom segurado, pivô do Build,
+órbita, olhar) e `test_camera_input` (margens da borda). Medido sem janela
+(`--lot N001_Lot11 --ui live --pivot 20,20`): seta para cima 0,5 s leva o pivô
+~20 tiles (com o deslizar depois de soltar, o alvo ficava `v·5` à frente);
+`.` 0,5 s gira 77°. **Inferido / não feito:** as setas do mapa de dispositivo
+(o acelerador as consome); a taxa de quadros (a borda e o zoom segurado andam
+por quadro, como no jogo, e o app desenha a 60 Hz); o sentido da órbita (a
+convenção do `operator*` vetor × matriz).
+
 
 ## 2. Menu de pie (`cTSWinPieMenu`)
 
@@ -755,7 +791,7 @@ modificadores nos bits 24–25; botão 1 esquerdo, 2 direito, 4 do meio):
 |---|---|---|
 | `0x03000001` (esquerdo) | `0x692EE271` (ação padrão) | escolher, menu de pie |
 | `0x80000002` (direito) e aliases `0x82000002`, `0x83000002` | `cTSUserToolCameraRightClick` (`0x692EE7EE`) | **pan contínuo**: segura e afasta o mouse do ponto onde clicou (mostra a âncora); a câmera anda com velocidade = deslocamento em pixels × 0,25 (`DragCamera`, BV `0x34c764`, evento `0x9B66110A`); soltar manda velocidade 0 |
-| `0x80000004` (meio) e aliases `0x81000004`, `0x82000004`, `0x83000004`, **`0x81000002` (direito + modificador 1)** | `cTSUserToolCameraMiddleClick` (`0x4BB0EF8E`) | **girar**: no clique manda `0x9C17E418` (começo) e mostra o cursor de giro; cada movimento manda `0xBC17E41C` com (dx, dy) desde o clique (dx invertido por uma opção global) e devolve o cursor ao ponto do clique (arrasto infinito); o `cCameraLive` faz o giro de §1.4 |
+| `0x80000004` (meio) e aliases `0x81000004`, `0x82000004`, `0x83000004`, **`0x81000002` (direito + modificador 1)** | `cTSUserToolCameraMiddleClick` (`0x4BB0EF8E`) | **girar**: no clique manda `0x9C17E418` (começo) e mostra o cursor de giro; cada movimento manda `0xBC17E41C` com (dx, dy) desde o clique (dx invertido com a opção `rotateCameraSims1Mode` desligada, o padrão: §1.11) e devolve o cursor ao ponto do clique (arrasto infinito); o `cCameraLive` faz o giro de §1.4 |
 | — | `cTSUserToolCameraHandDrag` (`0x69518882`) | pan 1:1 pelo deslocamento em pixels entre movimentos (mesmo evento `0x9B66110A`); usada quando outra parte da UI a ativa |
 | roda | `cCameraLive::FillDeviceMap` (BV `0x6a4474`): eixo da roda × 1/120 por "clique" (`0xBC17E412`, `0x9C17E415`) | zoom (§1.4) |
 
@@ -911,6 +947,7 @@ tabelas acima (setas e WASD → `LotCamera::pan`, `,`/`.` → `rotateHeld`) e o
 passo headless `--key hold-<left|right|up|down|a|d|w|s|comma|period>:<s>`
 (a tecla segurada quadro a quadro de 50 ms, como o laço de desenho) mostra o
 pan sem giro: `key left held 0.50 s: pivot (15.00, 25.00) -> (35.74, 10.48),
-yaw 55.0 -> 55.0`, e só `comma` muda o yaw. Não reproduzido sem janela; o
+yaw 55.0 -> 55.0`, e só `comma` muda o yaw. (Rodada n39: a conta do binário, §1.11, trocou
+os 50 px por quadro de 50 ms.) Não reproduzido sem janela; o
 pan é rápido (`keyboardtranslationspeed` 50 px por quadro de 50 ms) e com a
 perspectiva pode parecer um giro. Teste: `test_camera` "pan right".
