@@ -2138,6 +2138,123 @@ sobram (sementes 3, 6 e 10 em 12.000 ticks). As falhas das rotas de quem
 anda ficam no mesmo nível (as sementes presas mudam: 2, 4, 10, 12 → 3, 6,
 10).
 
+## 9.4 Rodada n31b (a escada do deque e o passo bloqueado): o que foi lido
+
+Leitura de 2026-10-16, **Ghidra MCP** (só leitura; as funções que o
+projeto não tem como função lidas com `disassemble_bytes` em `dry_run`).
+Endereços BV; os nomes de métodos sem símbolo vêm da `baserom.sym` (a
+posição na vtable conferida pela vizinhança, como na §9.3). As duas causas
+de rota que a rodada n31 achou (`docs/primitives-mac.md` §4g "Rodada n31").
+
+### A ponta de baixo das faixas de uma escada que acaba no meio do tile
+
+O cenário: no `N003_Lot192` o deque do andar 2 (x 21–27, y 24–28) só desce
+pelas escadas modulares de 6 degraus (x 26/27 e 12/13): o "Portal - A" em
+y = 26,25 (andar 2), as "Bridge" em 26,50…27,25 e a "End" em 27,50 (andar
+1). As faixas (§8.6) acabam embaixo em y = 27,71 (`OS2_OBJECT_PORTALS=1`:
+568 slot 0 (27,67; 25,81; 2) → 600 slot 1 (27,67; 27,71; 1)).
+
+- **`PortalAddToPathPlannerImpl` (BV `0xe22a44`), lido inteiro**: os pontos
+  das duas pontas (`PortalGetLocationOfSlot`, BV `0xe21b6c`: o lugar do
+  objeto mais o vetor do slot guardado pelo `PortalGatherSlotInformation`,
+  vtable `0x12c` do objeto, girado pelo quatérnio da direção; andar do
+  objeto − 1) vão ao `AddPortal` do gerente (vtable `0x84`) **como estão**:
+  nenhum ajuste e nenhum teste de passagem. Nos tipos 10–12 a mão única do
+  slot 0 (§8.6). As portas (tipo 8) vão pelo `AddDoorPortal` (vtable `0x68`)
+  com um retângulo de ±0,2 em volta do meio (dois mais, deslocados 0,25,
+  numa porta diagonal) e os retângulos da folha (`TSObjectIndexedWorld
+  SpaceFootprint` índices 0 e 2, vtable `0x70` do gerente).
+- **`cPathPlanner::AddPortal`** (BV `0x6064b4`) → **`MakeNodesForPortal`**
+  (BV `0x604584`): um `cAStarPortalNode` em cada ponta; uma ponta com dado
+  de nó (`cPathNodeData`, `+0x40`/`+0x44` do `cPortal`) se junta ao nó já
+  registrado com o mesmo dado (mapa `+0x6c` do planejador): portais que
+  dividem um slot dividem o nó.
+- **`cQuadTree::ConnectPortalNode`** (BV `0xba45b4`, chamado por
+  `InternalUpdateDirtyPortalConnections`): liga o nó da ponta, nos dois
+  sentidos, à célula de custo uniforme que contém o ponto
+  (`GetQTUniformCostCell`, BV `0xba43e8`: desce a quadtree até uma folha de
+  custo uniforme) e às dos quatro pontos a ±0,0625 em x e y (as diagonais).
+  Ir a uma célula bloqueada custa `FLT_MAX` (§4): a ponta tem caminho se uma
+  dessas cinco células passa.
+- **O que bloqueia ali**: só pegadas, paredes e piso. As peças da escada
+  entram pela pegada (§2, rodada 15: tipos 10 e 11; o "Portal - A", tipo 12,
+  não). **O binário não tem regra de "tile debaixo dos degraus"**: o
+  roteador não tem função de escada além dos portais
+  (`IsNextPathNodeAStairStart`/`End`, `AreAtStairStart`), o piso do térreo é
+  o terreno em todo tile e os de cima são os retângulos de piso. No
+  `N003_Lot192` as pegadas (do modelo, lista "footprint") são: "End" 600
+  [27,00; 27,25 – 28,00; 27,50], "Bridge" 598 [27,00–27,25], 593
+  [26,75–27,00] etc.; infladas 0,12499 acabam em y = 27,625. As pontas
+  (27,33 e 27,67; 27,71) e os pontos a ±0,0625 (y 27,65) ficam **livres**: no
+  jogo o deque desce por elas. O "Deck - Hi Stub" (27,5; 28,0; 1) deixa
+  pessoas passar (od 8 `0x04`): fora do planejador.
+- **No VM**: `World::addStair` marca sem piso os tiles debaixo dos degraus,
+  no andar de baixo (de antes da rodada 15, quando as escadas não entravam
+  no planejador; inferido), e o planejador fecha esses tiles inteiros mais
+  0,125 (`kNoFloor`). Numa escada que acaba no meio do tile (os 6 degraus
+  do Lot192 vão de y 26,0 a 27,5) isso fecha também a metade livre (27,5 –
+  28,0, mais 0,125): a ponta em 27,71 fica dentro e o portal sai do plano
+  (`leafAt` −1). Daí o deque sem caminho para baixo. As escadas de 3 degraus
+  e as retas cobrem tiles inteiros (as pegadas dos "Lo" das retas são tiras
+  de 0,1 a cada 0,125, que a inflação junta), e lá dá o mesmo.
+- **Os retângulos de custo 10** (§9.1, §9.2) não bloqueiam: o
+  `AddObjectRectangle` vai com passagem 0 (sem a cópia inflada de
+  `FLT_MAX`). O "tipo de modelo" (`TSObjectGetModelType`, BV `0xe1ec30`: a
+  entrada 48 do OBJf, temp 0) é o **modelo do corrimão** (1 nenhum, 2/3 de
+  um lado, 4 dos dois; `docs/buy-build-mac.md` §7.13.1): são os pés do
+  corrimão nas pontas. As escadas dos lotes medidos aqui ("No Railings",
+  "Deck") são modelo 1: nenhum retângulo. A ordem dos eixos, lida de novo:
+  o `AddObjectRectangle` exige p1 ≤ p3 e p2 ≤ p4; a ponta de cima vai com
+  (r1 − 0,325; r0 − 0,325; r1 + 0,125; r0) (modelo 2/4) e (r3 − 0,125;
+  r0 − 0,325; r3 + 0,325; r0) (3/4), a de baixo com (r1 − 0,325; r2; r1 +
+  0,125; r2 + 0,325) e (r3 − 0,125; r2; r3 + 0,325; r2 + 0,325), sendo r a
+  caixa em `+0xc..+0x18` do que a vtable `0x100` devolve; com o planejador em
+  (y, x) (o `FindPathWithPlanner` passa o `FTilePt` trocado), a ponta de cima
+  ganha os retângulos do lado de x menor e a de baixo do de x maior,
+  qualquer que seja a direção (inferido que a caixa é no mundo; não feito).
+
+### O goal check do bloqueio
+
+- **`DoBlocked`** (BV `0x5762a4`), relido na listagem: com bloqueador
+  (`GetBlockingObjectID`, rota vtable `0x1a8`) e caminho de mais de um nó,
+  se o gerente de rotas deixa as árvores (vtable `0x20`, byte `+0x20`, 1 do
+  construtor BV `0x4f9294`), o **contador por tick** do roteador
+  (`cTSRoutingObjectAggregate +0x3c`) sobe; se ele passou de 1 neste tick
+  (com o byte `+0x21` do gerente, vtable `0x28`, também 1 do construtor e
+  sem gravador fora da vtable, e o `IsPreSimulatorTickEnabled` de quem anda,
+  vtable `0x39c` = byte `+0x284`, que o construtor do `cTSObject`, BV
+  `0xb0c7a8`, põe em 1 e o `SetPreSimulatorTickEnabled` do `cTSPerson`, BV
+  `0xaca0bc`, não muda), **devolve 1 sem mudar de estado**: o `DoBlocked`
+  roda de novo no tick seguinte, com o mesmo bloqueador. Senão
+  `DoAlongRouteCheckTest` forçado e `TriggerGoalCheckTree` → estado 0x19
+  (`+4` = 3); sem goal check, direto a 0x1A (`+4` = 2). Sem bloqueador: a
+  1ª vez pausa (0x1D), depois 0x14 com o código 15 (`+0x40` = 7); caminho de
+  um nó: código 2 (`+0x40` = 8).
+- **O contador por tick**: `OnPreSimulatorTick` do agregado (BV `0x56ee34`,
+  só pela vtable) zera `+0x34..+0x40` e chama `FlushManagedDestinationObjects
+  (0)` (BV `0x56e9b0`). O `DoWalking` (BV `0x576c40`) sobe o mesmo `+0x3c`
+  antes do goal check do andar e, passando de 1, devolve 1 **sem dar o
+  passo** (o `DoAlongRouteCheckTest` já anotou: esse goal check se perde).
+  Ou seja: **um goal check por tick por Sim**; o do bloqueio que seria o
+  segundo espera o tick seguinte.
+- **`DoBlockedWaitingForGoalCheckTree`** (BV `0x56da50`): a árvore voltou
+  verdadeira (pessoa vtable `0x18` → `0x70`) → estado **0x1A**
+  (`DoBlockedGoalStillAvailable`), `+4` = 2. **Não passa pelo `DoWalking`**:
+  o passo não é testado de novo e o bloqueador é o que o locomotor guardou.
+  Falsa (`0x2a0`) → 0x14 com o código 13 (§9.2).
+- **`DoBlockedGoalStillAvailable`** (BV `0x57a8d4`), o começo: bloqueador 0 →
+  0x14, `+0x40` = 0xC, código 1; o objeto do bloqueador não existe mais
+  (`0x74` do gerente de objetos nulo) → `+0x40` = 0xD, código **1**; não é
+  pessoa (sem a interface `0xfa1c39f7`) → `+0x40` = 0xE, código **15**
+  "blocked by object"; pessoa: os ramos da §6/§9.3.
+- **No VM**: de volta do goal check do bloqueio (`r.check = 3`) o `advance`
+  recomeçava do alto: testava o passo de novo com o Sim parado (a locomoção
+  morta no bloqueio), não achava o bloqueio, esquecia o bloqueador e andava;
+  no tick seguinte o passo entrava no objeto de novo. O contador nunca subia
+  e a rota nunca falhava: os sociais presos da rodada n31 (o Daniel do
+  `N001_Lot68` com o passo dentro do balcão 151, a Cassandra do `N001_Lot11`
+  no 691), e a "Wait - Person X State" do outro Sim também não acabava.
+
 ## 10. O que falta
 
 - Os retângulos de custo 10 junto das pontas das escadas reta e modular
