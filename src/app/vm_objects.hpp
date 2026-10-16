@@ -17,6 +17,7 @@
 // slot are saved at (0, 0) in the lot's cObjects, so this is the only place
 // they are drawn.
 
+#include "formats/object_shadow.hpp"
 #include "formats/xform.hpp"
 
 #include <cstdint>
@@ -112,6 +113,21 @@ public:
     // chair's slot, and the paper read in the chair is still his.
     int16_t holder(int16_t id) const;
 
+    // The objects' ground and wall shadow planes (GUOB, nTSSG::cShadow;
+    // docs/lighting-mac.md 12): each object's are worked out again when the
+    // game's shadow would do it: it moved (cShadow::OnMove), it shows again
+    // (SetIsVisible), a wall beside it came or went
+    // (UpdateShadowsAdjacentToWall), or the wall mode or the level shown
+    // changed and a wall of that level is beside it (the 0xCB46C21D message,
+    // UpdateLevelShadows). guobView gives update() the wall mode
+    // (cITSMainToolbar's 0..3) and the level shown (the lot's numbering;
+    // LotViewOptions::kAllLevels for all); setWalls takes the lot's walls,
+    // once at the start and when Build mode changes them. Without guobView
+    // the objects keep every plane on (the lot as saved: OnPreSave).
+    std::function<std::pair<int, int>()> guobView;
+    void setGuobView(int wallMode, int shownLevel);
+    void setWalls(LotWallEdges walls);
+
     // Every object drawn here: its ID, renderer instance (-1 if none) and
     // actor (null unless the VM animates it).
     void forEachDrawn(const std::function<void(int16_t id, int instance, SimActor* actor)>& fn) const {
@@ -163,6 +179,11 @@ private:
         bool hidden = false;
         bool debugMoved = false; // OS2_DEBUG_PLACE
         std::string debugMaterials;
+        // The GUOB planes as last worked out (updateGuobs): where, with
+        // which model, and whether a wall or view change asks again.
+        std::optional<Xform> guobAt;
+        int guobModel = -1;
+        bool guobShown = false, guobDirty = true;
     };
     const Skeleton* skeleton(const std::string& cres);
     std::string cresFor(int16_t id); // drawn, else from the object's OBJD
@@ -177,6 +198,10 @@ private:
     int16_t modelFrame(int16_t id) const;
     void place(Drawn& d, const std::optional<Xform>& at);
     void addCreated(int16_t id);
+    // Works out the object's GUOB planes again when its shadow would (see setGuobView).
+    void updateGuobs(int16_t id, Drawn& d, const std::optional<Xform>& at);
+    // Marks the objects on these tiles (level, x, y; the lot's numbering) for updateGuobs.
+    void markGuobs(const std::set<std::tuple<int, int, int>>& tiles);
     // Redraws an object with the materials the VM set on it (Change Material).
     void updateMaterials(int16_t id, Drawn& d);
     // The VM's "change graphic" (object data 0 written: the error string 0x48
@@ -208,6 +233,8 @@ private:
     std::map<int16_t, bool> triedCreate_;
     std::set<int16_t> suppressed_;
     std::map<int16_t, std::optional<Xform>> frame_; // this update's placements
+    std::optional<LotWallEdges> walls_;              // the lot's partitions (setWalls)
+    int guobMode_ = -1, guobLevel_ = -2;             // setGuobView's, as last seen
 };
 
 } // namespace os2

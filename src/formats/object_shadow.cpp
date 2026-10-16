@@ -55,8 +55,9 @@ GuobModelInfo guobModelInfo(const ObjectModel& model) {
     // The shapes' bounds (their GMDCs' bounding meshes); a model built
     // without them (tests, generated models): its vertices.
     for (const auto& b : model.bounds)
-        for (const auto& p : b.points)
-            grow(p);
+        if (!b.hidden)
+            for (const auto& p : b.points)
+                grow(p);
     for (const auto& part : model.parts) {
         if (model.bounds.empty())
             for (const auto& p : part.mesh.positions)

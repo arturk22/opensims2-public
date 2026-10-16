@@ -611,6 +611,7 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
             ObjectModel::Bound bound;
             bound.shape = shape.resource.fileName;
             bound.fromBoundingMesh = !geometry.boundingMesh.vertices.empty();
+            bound.hidden = true; // until a part of it is drawn
             for (const auto& v : geometry.boundingMesh.vertices)
                 bound.points.push_back(toObject.apply(v));
 
@@ -647,6 +648,11 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                             Xform{{t.rotation[0], t.rotation[1], t.rotation[2], t.rotation[3]}, t.translation});
                 if (!bound.fromBoundingMesh)
                     bound.points.insert(bound.points.end(), mesh.positions.begin(), mesh.positions.end());
+                // A mirror's reflection volume is never drawn: its shape
+                // grows no box (GrowGlobalBBox skips nodes whose vtable 0x114
+                // says so; inferred to be these).
+                if (part.material != "mirrorboundingboxmaterial")
+                    bound.hidden = false;
                 part.mesh = std::move(mesh);
                 model.parts.push_back(std::move(part));
             }

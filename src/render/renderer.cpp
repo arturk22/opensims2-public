@@ -7,6 +7,7 @@
 #include "formats/image.hpp"
 #include "formats/lighting_config.hpp"
 #include "formats/model.hpp"
+#include "formats/object_shadow.hpp"
 #include "formats/resindex.hpp"
 
 #include <Foundation/Foundation.hpp>
@@ -311,6 +312,7 @@ struct Renderer::Part {
 struct Renderer::Model {
     std::string name;
     std::vector<Part> parts;
+    GuobModelInfo guob; // its GUOB subsets and bounds (formats/object_shadow.hpp)
     ~Model() {
         for (auto& p : parts) {
             for (auto* b : p.slots)
@@ -738,6 +740,7 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     auto out = std::make_unique<Model>();
     out->name = model.name;
+    out->guob = guobModelInfo(model);
     for (size_t source = 0; source < model.parts.size(); ++source) {
         const auto& part = model.parts[source];
         const MeshGroup& mesh = part.mesh;
@@ -985,6 +988,10 @@ void Renderer::setInstanceAlpha(int instance, float alpha) {
 void Renderer::setInstanceGuobs(int instance, uint8_t on) {
     if (instance >= 0 && size_t(instance) < instances_.size())
         instances_[size_t(instance)].guobs = on;
+}
+
+const GuobModelInfo* Renderer::guobInfo(int model) const {
+    return model >= 0 && size_t(model) < models_.size() ? &models_[size_t(model)]->guob : nullptr;
 }
 
 uint8_t Renderer::instanceGuobs(int instance) const {

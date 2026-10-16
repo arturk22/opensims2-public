@@ -94,6 +94,13 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     perfLap("  LotSimulation");
     gObjectView = std::make_unique<os2::VmObjectView>(renderer, index, *gSimulation);
+    // The objects' ground and wall shadow planes follow the wall mode, the
+    // level shown and the lot's walls (docs/lighting-mac.md 12.3).
+    if (gLotShape)
+        gObjectView->setWalls(os2::LotWallEdges(*gLotShape));
+    // (OS2_GUOB_AS_SAVED=1: the planes as the lot saved them, all on.)
+    if (!std::getenv("OS2_GUOB_AS_SAVED"))
+        gObjectView->guobView = [] { return std::pair<int, int>{gWallView.mode(), viewLevel()}; };
     // Look At's "default 3/4 height" of an object: its model's box where it
     // is drawn (LotSimulation::lookTarget).
     gSimulation->objectLookPoint = [](int16_t id) -> std::optional<os2::Vec3> {

@@ -69,6 +69,7 @@ struct ObjectModel {
     struct Bound {
         std::string shape;              // SHPE resource name
         bool fromBoundingMesh = false;  // the GMDC's bounding mesh, else its vertices
+        bool hidden = false;            // a mirror's reflection volume: grows no box
         std::vector<std::array<float, 3>> points;
     };
     std::vector<Bound> bounds;

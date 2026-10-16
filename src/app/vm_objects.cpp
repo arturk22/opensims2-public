@@ -1,5 +1,6 @@
 #include "vm_objects.hpp"
 #include "formats/log_once.hpp"
+#include "formats/lot_model.hpp"
 
 #include "lot_vm.hpp"
 
@@ -624,6 +625,10 @@ void VmObjectView::update() {
             (o.position.inWorld() || o.data[vm::objdata::ContainerId]))
             addCreated(id);
     static const bool debug = std::getenv("OS2_DEBUG_PLACE") != nullptr;
+    if (guobView) {
+        const auto [mode, level] = guobView();
+        setGuobView(mode, level);
+    }
     for (auto& [id, d] : drawn_) {
         const auto at = compute(id, 0);
         if (debug) {
@@ -650,7 +655,103 @@ void VmObjectView::update() {
         }
         updateGraphic(id, d);
         updateMaterials(id, d);
-        place(d, suppressed_.count(id) || (at && visible && !visible(id, *at)) ? std::nullopt : at);
+        const std::optional<Xform> shownAt = suppressed_.count(id) || (at && visible && !visible(id, *at)) ? std::nullopt : at;
+        place(d, shownAt);
+        if (guobView)
+            updateGuobs(id, d, shownAt);
+    }
+}
+
+void VmObjectView::setGuobView(int wallMode, int shownLevel) {
+    // SetWallMode and SetCurrentLevel post 0xCB46C21D with the current
+    // level; the shadow manager then updates the objects beside that
+    // level's walls (UpdateLevelShadows, Mac BV 0x6f0c64).
+    if (wallMode == guobMode_ && shownLevel == guobLevel_)
+        return;
+    const bool first = guobMode_ < 0;
+    guobMode_ = wallMode, guobLevel_ = shownLevel;
+    if (first || !walls_)
+        return; // every object works its planes out on its first update
+    if (shownLevel == LotViewOptions::kAllLevels)
+        markGuobs(walls_->tilesBeside());
+    else
+        markGuobs(walls_->tilesBeside(shownLevel));
+}
+
+void VmObjectView::setWalls(LotWallEdges walls) {
+    if (walls_ && *walls_ == walls)
+        return;
+    // A wall put up or taken down: the objects on the tiles on both sides
+    // (cShadowManager::UpdateShadowsAdjacentToWall, Mac BV 0x6f0a10).
+    if (walls_)
+        markGuobs(LotWallEdges::tilesBesideChanges(*walls_, walls));
+    else
+        for (auto& [id, d] : drawn_)
+            d.guobDirty = true;
+    walls_ = std::move(walls);
+}
+
+void VmObjectView::markGuobs(const std::set<std::tuple<int, int, int>>& tiles) {
+    if (tiles.empty())
+        return;
+    // The objects on a tile (WorldDB ObjectOnTile): those standing on it,
+    // each part of a multi-tile object on its own tile, drawn by its lead.
+    for (const auto& [id, o] : sim_.machine().objects()) {
+        if (o.person || !o.position.inWorld())
+            continue;
+        if (!tiles.count({o.position.level - 1, int(std::floor(o.position.x)), int(std::floor(o.position.y))}))
+            continue;
+        if (auto d = drawn_.find(modelFrame(id)); d != drawn_.end())
+            d->second.guobDirty = true;
+    }
+}
+
+void VmObjectView::updateGuobs(int16_t id, Drawn& d, const std::optional<Xform>& at) {
+    if (d.actor || d.instance < 0)
+        return;
+    const bool shown = at.has_value();
+    if (!shown) {
+        d.guobShown = false; // hidden: drawn with none; works them out when it shows again
+        return;
+    }
+    const int model = renderer_.instanceModel(d.instance);
+    const GuobModelInfo* info = renderer_.guobInfo(model);
+    if (!info || !info->present)
+        return;
+    const bool moved = !d.guobAt || !(d.guobAt->t == at->t) || d.guobAt->q.x != at->q.x || d.guobAt->q.y != at->q.y ||
+                       d.guobAt->q.z != at->q.z || d.guobAt->q.w != at->q.w;
+    if (!moved && d.guobShown && !d.guobDirty && d.guobModel == model)
+        return;
+    const vm::Object* o = sim_.machine().object(id);
+    // UpdateGUOBs leaves them as they are for an object whose data 34
+    // (0x22) has bit 0 (the base 1.0's test of its vtable 0x1f4 is not read).
+    if (o && (o->data[34] & 1))
+        return;
+    d.guobAt = at, d.guobModel = model, d.guobShown = true, d.guobDirty = false;
+    GuobWorld world;
+    world.wallMode = guobMode_ < 0 ? 1 : guobMode_;
+    if (walls_)
+        world.wallExists = [this](int x0, int y0, int x1, int y1, int level) { return (*walls_)(x0, y0, x1, y1, level); };
+    // The object's level (its VM position's, the lot's numbering) and
+    // whether the camera shows it (cSceneManager vtable 0x50, inferred:
+    // the levels up to the one shown); its direction (object data 1).
+    const int level = o ? o->position.level - 1 : 0;
+    const bool levelShown = guobLevel_ == LotViewOptions::kAllLevels || level <= guobLevel_;
+    const int direction = o ? o->data[vm::objdata::Direction] : 0;
+    std::array<float, 3> lo, hi;
+    guobWorldBox(*at, info->lo, info->hi, lo, hi);
+    const uint8_t sides = info->hasBounds ? guobWallSides(guobTileRect(lo, hi), direction, level, levelShown, world) : 0;
+    const uint8_t on = guobsOn(info->present, true, sides, world);
+    // The planes the model has are drawn by the mask; the others stay as they are.
+    renderer_.setInstanceGuobs(d.instance, uint8_t(on | (kAllGuobs & ~info->present)));
+    static const bool debug = std::getenv("OS2_DEBUG_GUOB") != nullptr;
+    if (debug) {
+        std::string planes;
+        for (int i = 0; i < kGuobCount; ++i)
+            if ((info->present >> i) & 1)
+                planes += std::string(" ") + guobSubsetName(i) + ((on >> i) & 1 ? "+" : "-");
+        std::fprintf(stderr, "opensims2: guob: object %d (%s) level %d dir %d mode %d%s\n", id, d.cres.c_str(), level,
+                     direction, world.wallMode, planes.c_str());
     }
 }
 

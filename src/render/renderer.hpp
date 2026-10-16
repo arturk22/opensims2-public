@@ -34,6 +34,8 @@ class MetalDrawable;
 
 namespace os2 {
 
+struct GuobModelInfo;
+
 class ResourceIndex;
 struct LightingState;
 struct RgbaImage;
@@ -135,6 +137,8 @@ public:
     // until set (formats/object_shadow.hpp says which).
     void setInstanceGuobs(int instance, uint8_t on);
     uint8_t instanceGuobs(int instance) const;
+    // A model's GUOB subsets and bounds, null for no such model.
+    const GuobModelInfo* guobInfo(int model) const;
     // The instance's bounding box in the world (the model's parts' boxes
     // carried by its transform: what an object's world bound is), if it has a model.
     std::optional<std::pair<simd_float3, simd_float3>> instanceBounds(int instance) const;

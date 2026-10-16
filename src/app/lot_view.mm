@@ -511,6 +511,8 @@ void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
     renderer.replaceObject(gLotModel, model, index);
     renderer.setGroundClip(os2::lotSkirtBottom(*gLotShape)); // the terrain may have been lowered
     gLotView = view;
+    if (gObjectView) // a wall put up or taken down: the shadow planes beside it
+        gObjectView->setWalls(os2::LotWallEdges(*gLotShape));
     placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr, view);
     if (gLighting) {
         gLighting->setLightMapLayout(*gLightMapLayout);
