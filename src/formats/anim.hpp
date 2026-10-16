@@ -238,9 +238,14 @@ struct IkReach {
     float weight = 0;
     uint32_t chain = 0; // the chain's begin bone CRC (for reports)
 };
+// The last solution of each chain of a request (its IK channels' values:
+// cActiveAnimIK keeps them while the request lives; docs/anim-mac.md §14.2),
+// by chain index: the local rotations of the chain's bones, begin to end.
+using IkMemory = std::map<size_t, std::vector<Quat>>;
 void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local,
              const std::vector<Xform>* goals = nullptr, const Xform& modelFrame = Xform{},
-             const IkObjectBone* ikObjectBone = nullptr, bool mirrored = false, std::vector<IkReach>* reach = nullptr);
+             const IkObjectBone* ikObjectBone = nullptr, bool mirrored = false, std::vector<IkReach>* reach = nullptr,
+             IkMemory* memory = nullptr);
 
 // The look-at strategy's solution (cIKStrategyLookAt::
 // ComputeIKTranslationSolution, Mac BV 0xd46cdc; docs/anim-mac.md §12.2): the

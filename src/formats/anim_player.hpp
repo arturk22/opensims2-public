@@ -214,6 +214,8 @@ private:
         bool expires = true;       // Options::expires
         bool ownFade = false;      // Options::fadeOut: fadeOutStart is its own blend out (not a cut)
         bool overHeld = false;     // Options::overHeld
+        // Each chain's last IK solution (its request's IK channels; applyIk).
+        mutable IkMemory ikMemory;
     };
     // When the layer was cut (replaced, stopped; its events stop there), -1 never.
     static double cutAt(const Layer& l) { return l.ownFade ? -1 : l.fadeOutStart; }

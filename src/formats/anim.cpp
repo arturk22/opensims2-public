@@ -543,9 +543,19 @@ Quat quatFromAxes(const Vec3& x, const Vec3& y, const Vec3& z) {
 Quat rotY(float a) { return {0, std::sin(a / 2), 0, std::cos(a / 2)}; }
 Quat rotX(float a) { return {std::sin(a / 2), 0, 0, std::cos(a / 2)}; }
 // The angle q turns about the bone's own Y axis (its twist; the bones lie
-// along +Y): the Y component of the solution's Euler angles in the binary,
-// whose exact Euler order (0x01020100) was not decoded (inferred).
+// along +Y). Used for the wrist's share, inferred: the binary takes the
+// middle angle of the order 0xff010200 there, which by the decomposition as
+// read is the angle about Z (docs/anim-mac.md §14.1).
 float twistY(const Quat& q) { return 2 * std::atan2(q.y, q.w); }
+// The Y angle of q's Euler XYZ decomposition (q = qz * qy * qx, R = Rz Ry Rx:
+// quatFromEulerXYZ's inverse), the middle angle of ConvertToEulerAngles with
+// the order 0x01020100 (Mac BV 0x1003ee0 -> FUN_00edd840: atan2(-M[2][0],
+// sqrt(M[0][0]^2 + M[1][0]^2)), M the rotation by rows).
+float eulerY(const Quat& q) {
+    const float r20 = 2 * (q.x * q.z - q.w * q.y);
+    const float r00 = 1 - 2 * (q.y * q.y + q.z * q.z), r10 = 2 * (q.x * q.y + q.w * q.z);
+    return std::atan2(-r20, std::sqrt(r00 * r00 + r10 * r10));
+}
 
 } // namespace
 
@@ -581,7 +591,7 @@ std::optional<Quat> lookAtIkRotation(const Xform& beginWorld, const Quat& parent
 
 void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local,
              const std::vector<Xform>* goals, const Xform& modelFrame, const IkObjectBone* ikObjectBone,
-             bool mirrored, std::vector<IkReach>* reach) {
+             bool mirrored, std::vector<IkReach>* reach, IkMemory* memory) {
     if (target.ikChains.empty())
         return;
     std::unordered_map<uint32_t, int> byCrc;
@@ -648,7 +658,8 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
     // §12.2; 338 animations of the base game, the sink's cleaning, the
     // chessboard's, the shelves'). The dog's look at is not in the base game.
     constexpr uint32_t k7Dof = 0x48EE7A41, kLookAt = 0x09F9E87E;
-    for (const auto& chain : target.ikChains) {
+    for (size_t chainIndex = 0; chainIndex < target.ikChains.size(); ++chainIndex) {
+        const auto& chain = target.ikChains[chainIndex];
         if ((chain.strategy != k7Dof && chain.strategy != kLookAt) || chain.targets.empty())
             continue;
         const int b0 = bone(chain.crcs[0]), b2 = bone(chain.crcs[2]);
@@ -775,7 +786,20 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
                 endRotation = endRotation ? nlerp(*endRotation, *g->q, k) : *g->q;
         }
         float contact = std::min(total, 1.0f);
+        if (total <= 0 && memory) {
+            // No weight on the goal's outlet: cActiveAnimIK does not solve
+            // (ComputeIKTranslationSolution, BV 0xd1e698) and the IK channels
+            // keep their last solution, mixed with the animation by the
+            // chain's IK weight (docs/anim-mac.md §14.2).
+            if (const auto it = memory->find(chainIndex); it != memory->end() && it->second.size() == bones.size()) {
+                for (size_t i = 0; i < bones.size(); ++i)
+                    local[size_t(bones[i])].q = weight < 1 ? nlerp(local[size_t(bones[i])].q, it->second[i], weight) : it->second[i];
+                continue;
+            }
+        }
         if (total <= 0) {
+            // None solved yet (or no memory): the first target (inferred: the
+            // IK channels' value before a first solution was not read).
             const auto g = targetGoal(chain.targets[0], true);
             if (!g)
                 continue;
@@ -835,12 +859,14 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         for (size_t i = 0; i < bones.size(); ++i)
             before[i] = local[size_t(bones[i])].q;
         local[size_t(b0)].q = normalized(conjugate(parentWorld(s, world, b0).q) * quatFromAxes(X, v, Z));
-        // The upper twist bone (type 3, the bicep) takes 0.65 of the upper
-        // bone's twist (FLOAT_0274b6cc), which keeps the rest.
+        // The upper twist bone (type 3, the bicep) takes 0.65 (FLOAT_0274b6cc)
+        // of the Y angle of the upper bone's Euler XYZ angles (order
+        // 0x01020100), which keeps the rest (Ry(-0.65 y) taken off: Mac BV
+        // 0xd3812c-0xd381c0; docs/anim-mac.md §14.1).
         constexpr float kUpperTwist = 0.65f, kLowerTwist = 0.75f;
         for (size_t i = 0; i < bones.size(); ++i)
             if (types[i] == 3) {
-                const float t = twistY(local[size_t(b0)].q);
+                const float t = eulerY(local[size_t(b0)].q);
                 local[size_t(b0)].q = normalized(local[size_t(b0)].q * rotY(-kUpperTwist * t));
                 local[size_t(bones[i])].q = rotY(kUpperTwist * t);
             }
@@ -865,6 +891,12 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
             } else {
                 local[size_t(b2)].q = normalized(conjugate(parentWorld(s, world, b2).q) * *endRotation);
             }
+        }
+        if (memory && total > 0) {
+            std::vector<Quat>& kept = (*memory)[chainIndex];
+            kept.resize(bones.size());
+            for (size_t i = 0; i < bones.size(); ++i)
+                kept[i] = local[size_t(bones[i])].q;
         }
         if (weight < 1)
             for (size_t i = 0; i < bones.size(); ++i)

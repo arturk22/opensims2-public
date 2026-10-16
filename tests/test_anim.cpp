@@ -470,9 +470,9 @@ static void testArmIk() {
     check(near(local[4].q.y, 0, 1e-4f) && near(local[4].q.z, 0, 1e-4f) && local[4].q.x > 0.1f,
           "arm IK: the joint turns about its X only (a hinge)");
     {
-        // The twist split: the bicep takes 0.65 of the upperarm's twist and
-        // the wrist 0.75 of the hand's; the hand still ends on the control's
-        // rotation.
+        // The twist split: the bicep takes 0.65 of the Y angle of the
+        // upperarm's Euler XYZ angles (order 0x01020100) and the wrist 0.75
+        // of the hand's twist; the hand still ends on the control's rotation.
         auto l = s.restPose();
         l[7].t = {0.3f, 0, 0.6f};
         l[8].q = quatFromEulerXYZ(0, 0, 0.6f); // the hand control turned
@@ -482,9 +482,17 @@ static void testArmIk() {
         const Quat diff = conjugate(goalQ) * wl[6].q;
         check(std::fabs(diff.w) > 0.9999f, "arm IK, twist split: the hand on the control's rotation");
         auto twist = [](const Quat& q) { return 2 * std::atan2(q.y, q.w); };
+        auto eulerY = [](const Quat& q) { // q = qz qy qx
+            const float r20 = 2 * (q.x * q.z - q.w * q.y), r00 = 1 - 2 * (q.y * q.y + q.z * q.z), r10 = 2 * (q.x * q.y + q.w * q.z);
+            return std::atan2(-r20, std::sqrt(r00 * r00 + r10 * r10));
+        };
         const Quat upper = l[2].q * l[3].q, end = l[5].q * l[6].q;
-        check(near(twist(l[3].q), 0.65f * twist(upper), 1e-3f) && near(l[3].q.x, 0, 1e-4f) && near(l[3].q.z, 0, 1e-4f) && near(l[5].q.x, 0, 1e-4f) && near(l[5].q.z, 0, 1e-4f),
-              "arm IK, twist split: the bicep takes 0.65 of the upperarm's twist, it and the wrist about their Y only");
+        const Quat zx = quatFromEulerXYZ(0.6f, 0, 0.7f); // Rz Rx: no Y angle, yet a twist about Y
+        check(near(eulerY(quatFromEulerXYZ(0.3f, 0.4f, 0.5f)), 0.4f, 1e-4f) && near(eulerY(zx), 0, 1e-4f) &&
+                  std::fabs(twist(zx)) > 0.1f,
+              "Euler XYZ Y angle (not the twist about Y)");
+        check(std::fabs(eulerY(upper)) > 0.01f && near(twist(l[3].q), 0.65f * eulerY(upper), 1e-3f) && near(l[3].q.x, 0, 1e-4f) && near(l[3].q.z, 0, 1e-4f) && near(l[5].q.x, 0, 1e-4f) && near(l[5].q.z, 0, 1e-4f),
+              "arm IK, twist split: the bicep takes 0.65 of the upperarm's Euler Y, it and the wrist about their Y only");
         check(std::fabs(twist(end)) > 0.1f && near(twist(l[5].q), 0.75f * twist(end), 1e-3f),
               "arm IK, twist split: the wrist takes 0.75 of the hand's twist");
     }
@@ -550,6 +558,21 @@ static void testArmIk() {
     const Vec3 h0 = handAt(0), h1 = handAt(1000), hHalf = handAt(500);
     check(near(h0[1], 0, 1e-3f) && near(h1[1], 0.1f, 1e-3f), "arm IK: the target in contact (own goal, then the IK object's)");
     check(near(hHalf[1], 0.05f, 2e-3f), "arm IK: halfway, between the two targets");
+
+    // Every contact at 0: cActiveAnimIK does not solve and the IK channels
+    // keep the last solution (docs/anim-mac.md §14.2), not the first target.
+    t.channels = {contact("handcontrol_a", 1, 0), contact("handcontrol_b", 0, 0)};
+    IkMemory memory;
+    auto handWith = [&](float ticks, float goalX, IkMemory* m) {
+        auto l = s.restPose();
+        l[7].t = {goalX, 0, 0.6f};
+        applyIk(t, s, ticks, l, nullptr, Xform{}, &other, false, nullptr, m);
+        return s.world(l)[6].t;
+    };
+    const Vec3 first = handWith(0, 0.3f, &memory);
+    const Vec3 kept = handWith(1000, 0.35f, &memory), fresh = handWith(1000, 0.35f, nullptr);
+    check(near(first[0], 0.3f, 1e-3f) && near(kept[0], 0.3f, 1e-3f) && near(fresh[0], 0.35f, 1e-3f),
+          "arm IK: no contact, the last solution kept (without one, the first target)");
 }
 
 static void testSnaps() {
@@ -903,6 +926,21 @@ static void testDeltaIk() {
     q.play(bounce, 0, {.fade = 0, .priority = 61});
     foot = s.world(q.pose(0.1))[3].t;
     check(near(foot[2], 0.4f, 1e-3f), "delta IK: the goal node's delta moves the foot");
+
+    // The goal is the node's outlet, the blend of every request keying it
+    // (docs/anim-mac.md §14.3): a higher level keying the goal node alone
+    // moves the chain of the one below.
+    Animation lift;
+    lift.duration = 1000;
+    lift.skeletonTag = "skel";
+    lift.targets.resize(1);
+    lift.targets[0].tag = "skel";
+    lift.targets[0].channels.push_back(translation("goal", 0, 0, 0.2f, false));
+    AnimPlayer r(&s);
+    r.play(base, 0, {.fade = 0, .level = 1});
+    r.play(lift, 0, {.fade = 0, .priority = 5, .level = 2});
+    foot = s.world(r.pose(0.1))[3].t;
+    check(near(foot[2], 0.2f, 1e-3f), "IK: the goal from the node's outlet (the blend), not the layer's own");
 }
 
 // Body shape morphs from person data 81 (body flags) and 58 (age).

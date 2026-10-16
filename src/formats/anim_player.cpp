@@ -581,6 +581,10 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     std::vector<float> ikCum(n);
     for (size_t b = 0; b < n; ++b)
         ikCum[b] = std::max(0.0f, 1 - ikTotal[b]); // the blend's own share
+    // The goal and pole nodes as their channel outlets have them, the blend
+    // of every layer keying them with their deltas (cActiveAnimIK reads the
+    // nodes' outlets; docs/anim-mac.md §14.3), before any chain is solved.
+    const std::vector<Xform> blended = out;
     for (const IkLayer& k : ikLayers) {
         const Layer& l = layers_[k.layer];
         const std::vector<float>& own = owns[size_t(posedOf[k.layer])];
@@ -605,10 +609,20 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                     for (int c = 0; c < 3; ++c)
                         goals[b].t[size_t(c)] += applied[b].t[size_t(c)];
             }
+        // What the blend wrote is the outlet's value (deltas in): the nodes
+        // under the top node taken back out of this layer's frame and turn,
+        // which applyIk puts on again (the blend has each layer's own).
+        const Xform modelFrame = l.frame.then(Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}});
+        const Xform unturn = modelFrame.inverse();
+        for (size_t b = 0; b < n && b < goals.size(); ++b) {
+            if (!written[b])
+                continue;
+            const int parent = skeleton_->bones[b].parent;
+            goals[b] = parent >= 0 && skeleton_->bones[size_t(parent)].parent < 0 ? unturn.then(blended[b]) : blended[b];
+        }
         std::vector<Xform> solved = out;
         std::vector<IkReach> reach;
-        applyIk(*l.target, *skeleton_, ticks, solved, &goals, l.frame.then(Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}}),
-                &l.ikObjectBone, false, &reach);
+        applyIk(*l.target, *skeleton_, ticks, solved, &goals, modelFrame, &l.ikObjectBone, false, &reach, &l.ikMemory);
         for (size_t b = 0; b < n; ++b) {
             if (k.mask[b] <= 0)
                 continue;
