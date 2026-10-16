@@ -536,8 +536,9 @@ penumbra e alcance depois da queda) iluminam só dentro do cone:
 `Renderer::spotCosines` (ângulo e penumbra absolutos, soma presa em π;
 cheio dentro de cos(ângulo/2), nada fora de cos((ângulo + penumbra)/2),
 linear no cosseno entre os dois, o falloff 1 do D3D, inferido) e o
-shader (`lightVector`). Para onde o spot aponta: o **−Z** da luz (inferido
-dos modelos: os `lightingCeilingCanister` sem rotação apontam para baixo,
+shader (`lightVector`). Para onde o spot aponta: o **−Z** da luz
+(confirmado na rodada n34 pelo `cSpotLight` medindo a luz num ponto, BV
+`0xc9f3ac`, `docs/cinematics-mac.md` §9; era inferido dos modelos: os `lightingCeilingCanister` sem rotação apontam para baixo,
 os `gardenuplight` para cima, os `_n_light`/`_s_light` das portas para
 dentro do seu lado e para baixo, a lâmpada da geladeira para fora). Vale
 para as luzes práticas dos objetos (no jogo base: canister de teto,

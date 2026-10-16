@@ -264,7 +264,8 @@ void CinematicPlayer::update(double now) {
             p[0] = -p[0];
         out.position = origin.apply(p);
         if (l.spot) {
-            // Where the spot shines: its bone's -Z (as the models' spots).
+            // Where the spot shines: its bone's -Z (cSpotLight measures its
+            // light at a point by -z / d in its own frame, Mac BV 0xc9f3ac).
             Vec3 d = world[size_t(l.bone)].rotate({0, 0, -1});
             if (mirror_)
                 d[0] = -d[0];

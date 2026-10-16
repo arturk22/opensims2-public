@@ -15,7 +15,8 @@
 //   1, 2 and 3: "diffuse" x "diffuseScale"), and the actors whose
 //   cinematic render groups have bit 0x1/0x2/0x4 ("Cinematic1/2/3", the
 //   binary's FUN_0097cbe4 render-group switch) are lit by rig 1/2/3.
-//   Spots are lit as points (inferred).
+//   Spots shine inside their cone along their bone's -Z (cSpotLight's
+//   light at a point, Mac BV 0xc9f3ac: docs/cinematics-mac.md §9).
 // - The scene is over when the camera's animation is (IsCinematicSceneActive:
 //   the camera's animation request still running); the created actors go
 //   away and the moved ones go back.

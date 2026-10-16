@@ -139,7 +139,8 @@ private:
         Vec3 color{1, 1, 1};
         float intensity = 1, falloff = 1;
         // A cSpotLight: its cone and penumbra (radians) and where it shines
-        // (the light's -Z, model space; inferred from the models: ceiling
+        // (the light's -Z, model space: cSpotLight's light at a point, Mac BV
+        // 0xc9f3ac, docs/cinematics-mac.md §9; so the models have it: ceiling
         // canisters down, garden uplights up, the portals' lights into their room).
         bool spot = false;
         float cone = 0, penumbra = 0;
