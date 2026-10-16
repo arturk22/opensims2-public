@@ -767,7 +767,7 @@ static void testResumeAnimateSim() {
 // How an Animate Sim's request hands over to what comes next
 // (docs/anim-mac.md §13): its weight function's blend in and out, its
 // action ending as it starts to blend out while the request plays on with
-// its events and the next one synced to its end.
+// its events, the next one synced to its end, and object data 85 hurrying it.
 static void testTransitions() {
     // The blend in and out: the blend time each, shrunk to 0.9999 of a short
     // request in proportion, under 1 ms none.
@@ -834,6 +834,27 @@ static void testTransitions() {
               s.animation.previousActionEndMs == AnimationState::kNoTicks,
           "the last blocking primitive's ends cleared");
 
+    // Object data 85 "Hurry Speed" 100: twice as fast from the next tick;
+    // not hurryable (byte 8 0x20): as it was.
+    code.add(kGroup, 0x1008, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0, 0, 0x80})}));
+    t = vm.start(s.id, 0x1008);
+    vm.run(t);
+    s.data[85] = 100;
+    tickHurry(vm);
+    check(s.animation.speed == 2 && s.animation.hurry == 2 && s.animation.ticksLeft == 8 && s.animation.actionTicksLeft == 1,
+          "hurried: speed 2, 250 ms left, its action ends in a tick (the blend out keeps its length)");
+    tickHurry(vm);
+    check(s.animation.speed == 2, "hurried once by the same factor");
+    s.data[85] = 0;
+    tickHurry(vm);
+    check(s.animation.speed == 2, "data 85 back to 0: stays hurried");
+    code.add(kGroup, 0x1009, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0, 0, 0x80, 0, 0x20})}));
+    t = vm.start(s.id, 0x1009);
+    vm.run(t);
+    s.data[85] = -50;
+    tickHurry(vm);
+    check(s.animation.speed == 1 && s.animation.hurry == 0, "not hurryable");
+    s.data[85] = 0;
 }
 
 static void testThreadState() {

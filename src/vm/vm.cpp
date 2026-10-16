@@ -1053,6 +1053,7 @@ void VM::tick() {
     tickMotives(*this); // motives.cpp (and the memories every 60 ticks)
     tickWants(*this);   // wants.cpp
     handleTimers();
+    tickHurry(*this); // animation.hpp: object data 85 hurries the requests (OnPreSimulatorTick)
     // Objects created or removed during the tick: the IDs are read first;
     // new objects get their turn from the next tick on.
     std::vector<ObjectId> ids;

@@ -502,6 +502,13 @@ void registerAnimationPrimitives(VM& vm);
 // and the Animate Sim requests blending out after their action ended
 // (AnimationState::tails).
 void tickOverlayEvents(VM& vm);
+// Once per VM tick, before the objects run (cAnimatable::OnPreSimulatorTick,
+// BV 0x6980d8, base 0x94765c; docs/anim-mac.md §13.4): object data 85
+// "Hurry Speed" p (percent) hurries the object's requests: the factor is
+// 1 + p/100, or 1/(1 - p/100) for p < 0 (p = 0: none, and what is hurried
+// stays so); each request not yet hurried by it whose hurry is not 0 (not
+// hurryable) plays the rest at speed x factor / hurry.
+void tickHurry(VM& vm);
 // The VM's animation clock (ms): the scene graph's, which runs with the
 // simulator (docs/anim-mac.md §8.1).
 double animationClockMs(const VM& vm);

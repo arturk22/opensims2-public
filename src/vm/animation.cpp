@@ -1398,6 +1398,47 @@ int8_t oeTypeOfRole(const std::string& role) {
     return oetype::Normal;
 }
 
+void tickHurry(VM& vm) {
+    constexpr int16_t kHurrySpeed = 85; // object data 85 "Hurry Speed" (STR# 0x8D)
+    const float msPerTick = float(1000.0 / vm.clock.ticksPerSecond);
+    for (Object* po : vm.objectTable()) {
+        if (!po || po->data[kHurrySpeed] == 0)
+            continue;
+        const float f = float(po->data[kHurrySpeed]) / 100.0f;
+        const float factor = f > 0 ? 1 + f : 1 / (1 - f);
+        // A request hurried by another factor (its hurry 0: not hurryable)
+        // plays the rest at its speed x factor / hurry (FUN_00a4757c: what
+        // played stays, its weight function is made again for the rest).
+        auto hurry = [&](float& by, float& speed) {
+            if (!(by > 0) || by == factor)
+                return false;
+            speed = speed * factor / by;
+            by = factor;
+            return true;
+        };
+        AnimationState& a = po->animation;
+        if (a.playing() && a.requestId && hurry(a.hurry, a.speed)) {
+            a.ticksPerVmTick = msPerTick * a.speed;
+            retimeAnimateSim(vm, a);
+        }
+        for (auto& t : a.tails)
+            if (hurry(t.hurry, t.speed)) {
+                t.perTick = msPerTick * t.speed;
+                t.ticksLeft = ticksForMs(vm, std::max(0.0, double(t.length - t.played) / double(t.speed)));
+            }
+        for (auto& ov : a.overlays) {
+            float speed = ov.perTick / msPerTick;
+            if (ov.perTick > 0 && hurry(ov.hurry, speed))
+                ov.perTick = msPerTick * speed;
+        }
+        for (auto& ev : a.overlayEvents) {
+            float speed = ev.perTick / msPerTick;
+            if (ev.perTick > 0 && hurry(ev.hurry, speed))
+                ev.perTick = msPerTick * speed;
+        }
+    }
+}
+
 void tickOverlayEvents(VM& vm) {
     const float msPerTick = float(1000.0 / vm.clock.ticksPerSecond);
     struct Fire {
