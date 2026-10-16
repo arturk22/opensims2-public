@@ -132,6 +132,13 @@ public:
     // tiles under the steps are not walkable on the lower level.
     void addStair(const Stair& s);
     const std::vector<Stair>& stairs() const { return stairs_; }
+    // The stair whose steps stand on a tile that has a floor (addStair's
+    // tiles), -1 for none. The binary has no rule for these tiles: its
+    // floor is there and the stair's pieces block by their footprints
+    // (docs/routing-mac.md §9.4), which the path planner follows when the
+    // stair's objects make its portals; walkable() and hasFloor() still
+    // leave them out (Go Here, placement).
+    int stairOver(TilePos t) const;
 
     // A portal an object's model makes (cTSObject::PortalAddToPathPlannerImpl,
     // BV 0xe22a44: a pair of its portal routing slots, docs/routing-mac.md
@@ -196,6 +203,7 @@ private:
     int firstLevel_ = 1, levelCount_ = 0;
     uint32_t revision_ = 0;
     std::vector<uint8_t> walkable_;   // [level][x][y]
+    std::vector<int16_t> underSteps_; // [level][x][y]: 1 + the stair whose steps stand on it, 0 none
     std::set<size_t> pools_;          // cells over pools
     std::vector<ObjectPortal> objectPortals_;
     std::vector<int16_t> rooms_;      // [level][x][y]

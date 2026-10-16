@@ -450,6 +450,9 @@ set_tests_properties(stair_lanes PROPERTIES PASS_REGULAR_EXPRESSION "stair lanes
 # With the game's data: the stair-top standoff of N001_Lot11 (seed 2) stays gone (tests/stair_top.sh).
 add_test(NAME stair_top COMMAND sh ${CMAKE_SOURCE_DIR}/tests/stair_top.sh $<TARGET_FILE:s2pkg>)
 set_tests_properties(stair_top PROPERTIES PASS_REGULAR_EXPRESSION "stair top: ok" TIMEOUT 300)
+# With the game's data: the visitors on N003_Lot192's deck get down its 6-step stairs and leave (tests/deck_stairs.sh).
+add_test(NAME deck_stairs COMMAND sh ${CMAKE_SOURCE_DIR}/tests/deck_stairs.sh $<TARGET_FILE:s2pkg>)
+set_tests_properties(deck_stairs PROPERTIES PASS_REGULAR_EXPRESSION "deck stairs: ok" TIMEOUT 300)
 # With the game's data: the invited visitor walks up and rings, is greeted and comes in (N001_Lot68);
 # every door leaf of N001_Lot11 is drawn closed again (tests/front_door.sh).
 add_test(NAME front_door COMMAND sh ${CMAKE_SOURCE_DIR}/tests/front_door.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/front_door)

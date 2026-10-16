@@ -31,6 +31,7 @@ World::World(uint32_t width, uint32_t height, int firstLevel, int levelCount)
     : width_(width), height_(height), firstLevel_(firstLevel), levelCount_(levelCount) {
     const size_t levels = size_t(std::max(levelCount, 0));
     walkable_.assign(levels * width * height, 1);
+    underSteps_.assign(levels * width * height, 0);
     rooms_.assign(levels * width * height, 0);
     diagonals_.assign(levels * width * height, 0);
     costs_.assign(levels * width * height, {1.0f, 1.0f, 1.0f, 1.0f});
@@ -319,7 +320,9 @@ void World::addStair(const Stair& s) {
     // The tiles the steps stand on, on the lower level.
     for (int i = 0; i < s.steps; ++i) {
         const auto p = s.at(0.125f + 0.25f * float(i));
-        setWalkable({int(std::floor(p[0])), int(std::floor(p[1])), s.bottom.level}, false);
+        const TilePos t{int(std::floor(p[0])), int(std::floor(p[1])), s.bottom.level};
+        if (contains(t) && !underSteps_[cell(t)])
+            underSteps_[cell(t)] = int16_t(stairs_.size() + 1);
     }
     stairs_.push_back(s);
 }
@@ -340,10 +343,14 @@ size_t World::yEdge(int level, int x, int y) const {
 }
 
 bool World::walkable(TilePos t) const {
-    return contains(t) && walkable_[cell(t)] && diagonals_[cell(t)] != 1;
+    return contains(t) && walkable_[cell(t)] && !underSteps_[cell(t)] && diagonals_[cell(t)] != 1;
 }
 
-bool World::hasFloor(TilePos t) const { return contains(t) && walkable_[cell(t)]; }
+bool World::hasFloor(TilePos t) const { return contains(t) && walkable_[cell(t)] && !underSteps_[cell(t)]; }
+
+int World::stairOver(TilePos t) const {
+    return contains(t) && walkable_[cell(t)] ? int(underSteps_[cell(t)]) - 1 : -1;
+}
 
 float World::cost(TilePos t) const {
     if (!contains(t))

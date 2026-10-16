@@ -37,6 +37,21 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
     static_.assign(size_t(std::max(levels, 0)), std::vector<uint8_t>(size_t(cw_) * size_t(ch_), 0));
     staticCosts_.assign(size_t(std::max(levels, 0)), std::vector<float>(size_t(cw_) * size_t(ch_), 1.0f));
     const float e = kInflation;
+    // The tiles under a stair's steps keep their floor when the stair's
+    // pieces are objects making its portals (World::objectPortals): the
+    // binary has no rule for those tiles, the pieces block by their
+    // footprints (types 10 and 11 go into the planner, AddThisToPathPlanner)
+    // and the floor stays (docs/routing-mac.md §9.4). Closing them whole
+    // shut the lower lane ends of a stair whose steps end mid-tile: the
+    // 6-step deck stairs of N003_Lot192 end at y 27.5, their lanes at 27.71,
+    // and the deck had no way down. Stairs without objects (worlds built
+    // without them) and OS2_STAIRS_OUT_OF_PLANNER=1 (the pieces left out)
+    // still close them.
+    static const bool stairsByFootprints = std::getenv("OS2_STAIRS_OUT_OF_PLANNER") == nullptr;
+    std::vector<uint8_t> stairObjects(world.stairs().size(), 0);
+    for (const World::ObjectPortal& o : world.objectPortals())
+        if (o.stair >= 0 && size_t(o.stair) < stairObjects.size())
+            stairObjects[size_t(o.stair)] = stairsByFootprints;
     for (int li = 0; li < levels; ++li) {
         const int level = world.firstLevel() + li;
         auto& grid = static_[size_t(li)];
@@ -51,7 +66,8 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
                     for (int j = 0; j < K; ++j)
                         cost[cellIndex(x * K + i, y * K + j)] =
                             world.cost(t, float(x) + (float(i) + 0.5f) / K, float(y) + (float(j) + 0.5f) / K);
-                if (!world.hasFloor(t))
+                const int stair = world.stairOver(t);
+                if (!world.hasFloor(t) && !(stair >= 0 && stairObjects[size_t(stair)]))
                     stamp(grid, float(x) - e, float(y) - e, float(x + 1) + e, float(y + 1) + e, kNoFloor);
             }
         // The lot's edge.
