@@ -2,6 +2,7 @@
 
 #include "formats/image.hpp"
 #include "formats/lighting_config.hpp"
+#include "formats/object_shadow.hpp"
 #include "formats/resindex.hpp"
 #include "render/particle_system.hpp"
 
@@ -93,12 +94,13 @@ struct GpuLight {
     float color[4]{};
     float params[4]{};
     float spot[4]{0, 0, -1, -2};
+    float plane[4]{};
 };
 
 static_assert(sizeof(Vertex) == 44, "vertex pitch");
 static_assert(sizeof(DrawUniforms) % 16 == 0, "vertex uniform alignment");
 static_assert(sizeof(FragmentUniforms) == sizeof(DrawUniforms) + 112, "fragment uniform layout");
-static_assert(sizeof(GpuLight) == 64, "light layout");
+static_assert(sizeof(GpuLight) == 80, "light layout");
 
 constexpr size_t kMaxLights = 16;
 
@@ -194,6 +196,7 @@ struct GpuRenderer::Gpu {
         int alphaOrder = 0;
         bool depthWrite = true; // blended parts: StandardMaterial::depthWrite
         bool twoSided = false;
+        int guob = -1; // its GUOB subset (formats/object_shadow.hpp): drawn while the instance has it on
         bool mirror = false;
         float center[3]{};
         float normal[3]{0, 0, 1};
@@ -205,10 +208,12 @@ struct GpuRenderer::Gpu {
     };
     struct Model {
         std::vector<Part> parts;
+        GuobModelInfo guob; // its GUOB subsets and bounds (formats/object_shadow.hpp)
     };
     struct Instance {
         int model = -1;
         int lightSet = 0;
+        uint8_t guobs = 0x3F; // the GUOB parts drawn (setInstanceGuobs)
         float transform[16]{};
     };
 
@@ -469,6 +474,7 @@ void GpuRenderer::Gpu::fillPart(Part& part, const ObjectModel::Part& source, con
             }
         }
     }
+    part.guob = source.guob;
     if (source.mask >= 0 && size_t(source.mask) < model.masks.size()) {
         const auto& mask = model.masks[size_t(source.mask)];
         if (mask.width && mask.height && mask.values.size() == size_t(mask.width) * mask.height) {
@@ -503,12 +509,16 @@ void GpuRenderer::Gpu::fillPart(Part& part, const ObjectModel::Part& source, con
     if ((part.flags & kLightMapped) && mesh.uvs2.size() != mesh.positions.size())
         part.flags &= ~kLighting;
     part.cpu.resize(mesh.positions.size());
+    float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f}; // the mesh's box (a mirror's stands, mirrorAnchor)
     for (size_t i = 0; i < part.cpu.size(); ++i) {
         Vertex& v = part.cpu[i];
         if (i < mesh.colors.size())
             v.color = mesh.colors[i];
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 3; ++k) {
             v.position[k] = mesh.positions[i][size_t(k)];
+            lo[k] = std::min(lo[k], mesh.positions[i][size_t(k)]);
+            hi[k] = std::max(hi[k], mesh.positions[i][size_t(k)]);
+        }
         if (i < mesh.normals.size()) {
             for (int k = 0; k < 3; ++k)
                 v.normal[k] = mesh.normals[i][size_t(k)];
@@ -522,6 +532,13 @@ void GpuRenderer::Gpu::fillPart(Part& part, const ObjectModel::Part& source, con
         if (i < mesh.uvs2.size()) {
             v.uv2[0] = mesh.uvs2[i][0];
             v.uv2[1] = mesh.uvs2[i][1];
+        }
+    }
+    if (!part.mirror && !mesh.positions.empty()) {
+        for (int k = 0; k < 3; ++k) {
+            part.lo[k] = lo[k];
+            part.hi[k] = hi[k];
+            part.center[k] = (lo[k] + hi[k]) * 0.5f;
         }
     }
     part.dynamic = dynamic;
@@ -941,6 +958,8 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
             const float* m = instance.transform;
             for (const auto& part : models[size_t(instance.model)].parts) {
                 if (part.indexCount == 0 || (reflected && part.mirror))
+                    continue;
+                if (part.guob >= 0 && !((instance.guobs >> part.guob) & 1))
                     continue;
                 float distance = 0;
                 if (part.blend) {
@@ -1502,6 +1521,7 @@ int GpuRenderer::addObject(const ObjectModel& model, ResourceIndex& index, bool 
             continue;
         stored.parts.push_back(std::move(gpuPart));
     }
+    stored.guob = guobModelInfo(model);
     gpu_->models.push_back(std::move(stored));
     return int(gpu_->models.size() - 1);
 }
@@ -1519,6 +1539,7 @@ void GpuRenderer::replaceObject(int model, const ObjectModel& replacement, Resou
             continue;
         stored.parts.push_back(std::move(gpuPart));
     }
+    stored.guob = guobModelInfo(replacement);
     // SDL_GPU frees released buffers once the frames using them are done.
     for (auto& part : gpu_->models[size_t(model)].parts) {
         if (part.vertices)
@@ -1549,6 +1570,20 @@ void GpuRenderer::updateObject(int model, const ObjectModel& posed) {
                 gpuPart.cpu[i].position[k] = part.mesh.positions[i][size_t(k)];
                 if (i < part.mesh.normals.size())
                     gpuPart.cpu[i].normal[k] = part.mesh.normals[i][size_t(k)];
+            }
+        }
+        // The posed box: the box of the pose (the Mac updateObject's).
+        if (!gpuPart.cpu.empty()) {
+            float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+            for (const auto& v : gpuPart.cpu)
+                for (int k = 0; k < 3; ++k) {
+                    lo[k] = std::min(lo[k], v.position[k]);
+                    hi[k] = std::max(hi[k], v.position[k]);
+                }
+            for (int k = 0; k < 3; ++k) {
+                gpuPart.lo[k] = lo[k];
+                gpuPart.hi[k] = hi[k];
+                gpuPart.center[k] = (lo[k] + hi[k]) * 0.5f;
             }
         }
         gpuPart.dirty = true;
@@ -1657,6 +1692,7 @@ void GpuRenderer::setLightSets(std::vector<LightSet> sets) {
             g.color[0] = p.color.x, g.color[1] = p.color.y, g.color[2] = p.color.z, g.color[3] = p.specular;
             g.params[0] = p.falloff, g.params[1] = p.range, g.params[2] = 1, g.params[3] = p.cosInner;
             g.spot[0] = spot.x, g.spot[1] = spot.y, g.spot[2] = spot.z, g.spot[3] = p.cosOuter;
+            g.plane[0] = p.plane.x, g.plane[1] = p.plane.y, g.plane[2] = p.plane.z, g.plane[3] = p.plane.w;
         }
     }
 }
@@ -1682,6 +1718,38 @@ void GpuRenderer::setEye(simd_float3 eye) {
 void GpuRenderer::setInstanceLightSet(int instance, int set) {
     if (instance >= 0 && size_t(instance) < gpu_->instances.size())
         gpu_->instances[size_t(instance)].lightSet = std::max(0, set);
+}
+
+void GpuRenderer::setInstanceGuobs(int instance, uint8_t on) {
+    if (instance >= 0 && size_t(instance) < gpu_->instances.size())
+        gpu_->instances[size_t(instance)].guobs = on;
+}
+
+const GuobModelInfo* GpuRenderer::guobInfo(int model) const {
+    return model >= 0 && size_t(model) < gpu_->models.size() ? &gpu_->models[size_t(model)].guob : nullptr;
+}
+
+uint8_t GpuRenderer::instanceGuobs(int instance) const {
+    return instance >= 0 && size_t(instance) < gpu_->instances.size() ? gpu_->instances[size_t(instance)].guobs : 0x3F;
+}
+
+std::optional<std::pair<simd_float3, simd_float3>> GpuRenderer::instanceBounds(int instance) const {
+    if (instance < 0 || size_t(instance) >= gpu_->instances.size())
+        return std::nullopt;
+    const Gpu::Instance& inst = gpu_->instances[size_t(instance)];
+    if (inst.model < 0 || size_t(inst.model) >= gpu_->models.size() || gpu_->models[size_t(inst.model)].parts.empty())
+        return std::nullopt;
+    const float* m = inst.transform;
+    float lo[3] = {INFINITY, INFINITY, INFINITY}, hi[3] = {-INFINITY, -INFINITY, -INFINITY};
+    for (const Gpu::Part& p : gpu_->models[size_t(inst.model)].parts)
+        for (int k = 0; k < 8; ++k) {
+            const float x = k & 1 ? p.hi[0] : p.lo[0], y = k & 2 ? p.hi[1] : p.lo[1], z = k & 4 ? p.hi[2] : p.lo[2];
+            const float w[3] = {m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13],
+                                m[2] * x + m[6] * y + m[10] * z + m[14]};
+            for (int c = 0; c < 3; ++c)
+                lo[c] = std::min(lo[c], w[c]), hi[c] = std::max(hi[c], w[c]);
+        }
+    return std::pair{simd_make_float3(lo[0], lo[1], lo[2]), simd_make_float3(hi[0], hi[1], hi[2])};
 }
 
 void GpuRenderer::setLighting(const LightingState& state) {

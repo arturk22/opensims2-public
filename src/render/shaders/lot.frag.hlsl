@@ -29,6 +29,7 @@ struct Light {
     float4 color;
     float4 params;
     float4 spot;
+    float4 plane;
 };
 
 static const uint kMaxLights = 16;
@@ -128,6 +129,10 @@ float3 lightVector(Light light, float3 world, out float att) {
     if (light.spot.w >= -1.0) {
         const float rho = dot(-delta / safe, light.spot.xyz);
         att *= saturate((rho - light.spot.w) / max(light.params.w - light.spot.w, 1e-4));
+    }
+    // A half-space point light (the windows' spill): nothing behind its plane.
+    if (dot(light.plane.xyz, world) + light.plane.w < 0.0) {
+        att = 0.0;
     }
     return delta / safe;
 }

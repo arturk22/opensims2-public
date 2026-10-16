@@ -16,7 +16,9 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct SDL_Window;
@@ -24,6 +26,7 @@ struct SDL_Window;
 namespace os2 {
 
 class ResourceIndex;
+struct GuobModelInfo;
 
 // A camera's view and projection (as render/renderer.hpp's).
 struct FrameView {
@@ -74,6 +77,9 @@ public:
             float specular = 1;
             simd_float3 spotDirection{0, 0, -1};
             float cosOuter = -2, cosInner = -1; // cosOuter < -1: a point light
+            // A half-space light (the windows' spill): lights only where
+            // dot(plane.xyz, p) + plane.w >= 0; all zero: everywhere.
+            simd_float4 plane{0, 0, 0, 0};
         };
         simd_float3 ambient{0, 0, 0};
         std::vector<Directional> lights;
@@ -95,6 +101,13 @@ public:
     int objectLightCount() const;
     int simLightCount() const;
     void setInstanceLightSet(int instance, int set);
+    // The instance's GUOB parts (ObjectModel::Part::guob; kAllGuobs: all) and
+    // a model's GUOB subsets and bounds (formats/object_shadow.hpp).
+    void setInstanceGuobs(int instance, uint8_t on);
+    uint8_t instanceGuobs(int instance) const;
+    const GuobModelInfo* guobInfo(int model) const;
+    // The instance's parts' box in world space (the app's grow boxes).
+    std::optional<std::pair<simd_float3, simd_float3>> instanceBounds(int instance) const;
     void setEye(simd_float3 eye);
     // A Sim's shadow (nTSSG::cShadow): the silhouette is drawn into an atlas
     // from the light and multiplied onto upward floors.
