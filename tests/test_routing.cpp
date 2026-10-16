@@ -1041,14 +1041,55 @@ static void testRouteInGoalCheck() {
           "a goal check that routes again: the inner route walks, the outer one fails with 13 (not 11) after it");
 }
 
+// The move-out-of-way slot (CreateMoveOutOfWayDestination type 0,
+// docs/routing-mac.md §9.3): one direction 45 degrees off the asker's, on
+// the side the mover stands; distances 0.0625 to 0.3, optimal 0.3,
+// gradient 100, spacing 1/16: two rows (0.3 and 0.2375 out) of three points
+// (the cone leaves the rows' ends out), the cheapest 0.3 straight out; the
+// facing towards the asker; none when the two are more than 4 tiles apart.
+static void testMoveOutOfWaySlot() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(10, 10);
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& asker = vm.instantiate(kGroup, 0x81);
+    asker.position = {3.5f, 5.5f, 1};
+    asker.data[objdata::Direction] = 4; // +X
+    Object& mover = vm.instantiate(kGroup, 0x81);
+    mover.position = {4.5f, 5.7f, 1}; // ahead of it, on its +Y side (direction 2, d + 6)
+    int direction = -1;
+    const auto slot = routing_internal::moveOutOfWaySlot(mover, asker, 0, direction);
+    check(slot.has_value() && (slot->flags & 0xFF) == (1u << 3), "move-out-of-way slot: direction d + 7 on the mover's side");
+    Object spot;
+    spot.position = mover.position;
+    spot.data[objdata::Direction] = int16_t(direction);
+    const VM::RouteGoals g = slot ? vm.routingGoals(*slot, spot, true, mover.id) : VM::RouteGoals{};
+    size_t best = 0;
+    for (size_t i = 1; i < g.goals.size(); ++i)
+        if (g.goals[i].cost < g.goals[best].cost)
+            best = i;
+    const float s2 = 0.3f / std::sqrt(2.0f);
+    check(g.goals.size() == 6 && std::fabs(g.points[best][0] - (4.5f + s2)) < 1e-3f &&
+              std::fabs(g.points[best][1] - (5.7f + s2)) < 1e-3f,
+          "move-out-of-way slot: six places, the cheapest 0.3 out at 45 degrees");
+    check(!g.facings.empty() && g.facings[best] == directionOf(asker.position.x - g.points[best][0], asker.position.y - g.points[best][1]),
+          "move-out-of-way slot: facing the asker");
+    mover.position = {9.5f, 9.5f, 1};
+    check(!routing_internal::moveOutOfWaySlot(mover, asker, 0, direction), "move-out-of-way slot: none past 4 tiles");
+}
+
 // A Sim standing in a corridor is asked to move (MoveOutOfWay): a
-// destination object (GUID 0x7C4) is made on it, with a routing slot 0 in
-// the alcove a tile past it (an alcove right beside it was a way round it
-// for the walker, whose predicted way follows the frame's curve), and its
-// "Interaction - Move Out Of Way" (action 0x100B: Go To Routing Slot 0 of
-// the destination) goes on the blocker's queue with the walker's priority
-// less one; the blocker's Main runs it, it steps aside and the walker gets
-// through. With the blocker's priority as high, it is not asked.
+// destination object (GUID 0x7C4) is made on it with that slot whether or
+// not the slot will give a place (CreateMoveOutOfWayDestination always makes
+// it), and its "Interaction - Move Out Of Way" (action 0x100B: Go To Routing
+// Slot 0 of the destination) goes on the blocker's queue with the walker's
+// priority less one; the blocker's Main runs it: its 0.3-tile step at 45
+// degrees, on its side of the walker's way, opens the corridor, and the
+// walker, told as soon as the blocker's route ends, plans again and gets
+// through; the destination goes. With the blocker's
+// priority as high, it is not asked. (Until round n30 the VM searched a
+// row up to 6 tiles wide for a free place, ours, and the blocker walked a
+// tile into an alcove.)
 static void testMoveOutOfWay() {
     for (const bool lowPriority : {true, false}) {
         CodeLibrary code;
@@ -1056,12 +1097,8 @@ static void testMoveOutOfWay() {
         vm.world = World(12, 4);
         for (int x = 0; x < 12; ++x) {
             vm.world->addWall(1, x, 1, x + 1, 1);
-            if (x != 7)
-                vm.world->addWall(1, x, 2, x + 1, 2);
+            vm.world->addWall(1, x, 2, x + 1, 2);
         }
-        vm.world->addWall(1, 7, 2, 7, 3);
-        vm.world->addWall(1, 8, 2, 8, 3);
-        vm.world->addWall(1, 7, 3, 8, 3);
         constexpr uint32_t kDestGroup = 0x7F000002;
         code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
         ObjectDefinition simDef = definition(0xAAAA0002, 0, true);
@@ -1072,15 +1109,10 @@ static void testMoveOutOfWay() {
         code.add(kGroup, 0x81, mainOnly);
         // The Sims' Main: Idle for Input with "allow push", over and over.
         code.add(kGroup, 0x1002, tree({expr(0x09, 0, Assign, Lit, 1, go(1), E), instr(0x11, go(0), E, {0, 0, 1, 0})}, 1));
-        // The destination: one routing slot on itself, the move-out-of-way interaction.
+        // The destination: the move-out-of-way interaction.
         ObjectDefinition destDef = definition(0x000007C4, 0x80);
         destDef.fields[(0x4E - 0x44) / 2] = 1; // its TTAB
         code.add(kDestGroup, 0x80, destDef);
-        Slots slots;
-        Slots::Slot here;
-        here.type = 3;
-        slots.slots = {here};
-        code.add(kDestGroup, 0x80, slots);
         InteractionTable ttab;
         ttab.version = 0x4D;
         InteractionTable::Interaction e;
@@ -1100,7 +1132,7 @@ static void testMoveOutOfWay() {
         walker.position = {0.5f, 1.5f, 1};
         walker.person->data[33] = 50; // user driven
         Object& other = vm.instantiate(kGroup, 0x81);
-        other.position = {6.5f, 1.5f, 1};
+        other.position = {6.5f, 1.6f, 1};
         other.data[objdata::Direction] = 0; // facing the walker
         other.person->data[33] = lowPriority ? 0 : 50;
         vm.startMain(other.id);
@@ -1109,25 +1141,31 @@ static void testMoveOutOfWay() {
         Object& wallSim = vm.instantiate(kGroup, 0x81);
         wallSim.position = {6.5f, 1.15f, 1};
         wallSim.person->data[33] = 100;
-        other.position.y = 1.6f;
         code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0xFF, 0xFE, 0, 0, 0x02})})); // anywhere near: goals
         vm.threads.insert_or_assign(walker.id, vm.start(walker.id, 0x1000, {}, lamp.id));
-        for (int i = 0; i < 3000 && vm.threads.at(walker.id).status == Thread::Status::Running; ++i)
+        bool asked = false, destination = false;
+        for (int i = 0; i < 3000 && vm.threads.at(walker.id).status == Thread::Status::Running; ++i) {
             vm.tick();
-        const Thread& t = vm.threads.at(walker.id);
+            for (const auto& q : other.queue)
+                asked = asked || q.action == 0x100B;
+            for (const auto& [id, o] : vm.objects())
+                destination = destination || (o.syntheticSlot && o.syntheticSlot->minDistance == 0.0625f);
+        }
+        const Thread t = vm.threads.at(walker.id);
+        for (int i = 0; i < 10; ++i) // the destination goes at the next flush
+            vm.tick();
         if (std::getenv("DEBUG_MOVE"))
-            std::fprintf(stderr, "move: status %d result %d walker %.2f,%.2f other %.2f,%.2f queue %zu objects %zu main %d %s rr %d\n",
+            std::fprintf(stderr, "move: status %d result %d walker %.2f,%.2f other %.2f,%.2f queue %zu objects %zu main %d %s rr %d asked %d\n",
                          int(t.status), t.result, walker.position.x, walker.position.y, other.position.x, other.position.y,
                          other.queue.size(), vm.objects().size(), int(vm.threads.at(other.id).status),
-                         vm.threads.at(other.id).error.c_str(), walker.person->data[62]);
-        if (lowPriority)
-            check(t.status == Thread::Status::Finished && t.result && walker.position.x > 9 && other.position.y > 2,
-                  "a Sim in the way is asked to move: it steps into the alcove and the walker gets through");
-        if (lowPriority)
+                         vm.threads.at(other.id).error.c_str(), walker.person->data[62], int(asked));
+        if (lowPriority) {
+            check(asked && destination && t.status == Thread::Status::Finished && t.result && walker.position.x > 9,
+                  "a Sim in the way is asked to move (its destination has the move-out-of-way slot): it steps 0.3 aside and the walker gets through");
             check(vm.objects().size() == 4, "the move-out-of-way destination is gone once its interaction is");
-        else // not asked: the walker goes round it through the alcove
-            check(t.status == Thread::Status::Finished && other.position.y < 2 && other.queue.empty(),
-                  "a Sim of the same priority is not asked to move");
+        } else {
+            check(!asked && t.status == Thread::Status::Finished && other.queue.empty(), "a Sim of the same priority is not asked to move");
+        }
     }
 }
 
@@ -2085,6 +2123,7 @@ int main() {
     testDoorPortalTree();
     testPreRouteTree();
     testRouteInGoalCheck();
+    testMoveOutOfWaySlot();
     testMoveOutOfWay();
     testGoHere();
     testPoolRoom();

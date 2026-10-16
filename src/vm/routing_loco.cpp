@@ -229,80 +229,70 @@ bool askedToMove(VM& vm, const Object& sim) {
 
 namespace routing_internal {
 
-// Where a blocker steps aside to (CreateMoveOutOfWayDestination, type 0,
-// BV 0x57dcac; docs/routing-mac.md §8.3): the synthetic slot looks from the
-// blocker 45 degrees off the asker's direction d: d+7 when the blocker is
-// nearer the point a tenth of a tile to the asker's left (d+6), else d+1;
-// its row is 0.3 tile out (minimum and maximum distance 0.3) on a grid of
-// 1/16 tile, as wide as wanted (width 100), the nearest the middle first.
-// Here: the first point of that row, outwards from its middle up to 6
-// tiles either way, that is free, reachable and clear of the asker's way
-// (0.75 tile of its line from it to 2 tiles past the blocker; inferred, the
-// binary leaves that to the slot's costs).
-std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker, int type) {
-    PathPlanner& planner = plannerOf(vm);
-    const std::vector<ObjectId> ignore{me.id, blocker.id};
-    addObstacles(vm, planner, blocker, ignore);
+// The routing slot a Sim steps aside to (CreateMoveOutOfWayDestination, BV
+// 0x57dcac; docs/routing-mac.md §9.3). The binary picks no point: it makes a
+// destination object where the mover (`mover`, the Sim that steps aside)
+// stands, with a synthetic routing slot as its slot 0, and the route to that
+// slot finds the place by the common scan of the slot's cone and the A*
+// (routingGoals). The slot (cTSRoutingSlot's setters: 0xD0 SetDistances(min,
+// max, optimal), 0xCC SetGradient, 0xD4 SetSpacing, 0x20 AllowDirection,
+// 0x40 SetFacingDirection):
+// - type 0 (asked by a walker, or TryGetSelfOutOfWay): none when the two are
+//   more than 4 tiles apart; one direction, 45 degrees off the asker's
+//   direction d: d+7 when the mover is nearer (or as near) the point a tenth
+//   of a tile to the asker's d+6 side, else d+1, absolute (inferred: it is
+//   worked out from the asker's direction); 0.0625 to 0.3 tile, optimal 0.3,
+//   gradient 100, spacing 0.025 (the scan takes at least 1/16): two rows,
+//   0.3 and 0.2375 out, of three points each, the one 0.3 straight out
+//   first; facing the asker; no random scoring, no stationary bonus, rooms
+//   and walls count;
+// - type 1 (the blocker stands within 1.5 tiles of the asker's goal object):
+//   directions 1, 2, 6 and 7, 1 to 3 tiles, optimal 1, spacing 0.25,
+//   gradient 0.625, random scoring, no stationary bonus; type 2 (MoveOutOfWay
+//   without an asker): 1 to 6 tiles, rooms and walls ignored. Their
+//   directions are taken relative to the asker's (the destination's
+//   direction: inferred), their facing any (inferred: the 0x28 mode is not
+//   decoded), and AllowOtherDirectionsAtLowerScore (0x70) is not done.
+// The slot's standing multiplier is 1 (0xDC(0, 1)).
+std::optional<Slots::Slot> moveOutOfWaySlot(const Object& mover, const Object& asker, int type, int& destinationDirection) {
     auto unit = [](int d) {
         const auto [sx, sy] = directionStep(((d % 8) + 8) % 8);
         const float n = std::hypot(float(sx), float(sy));
         return Point2{float(sx) / n, float(sy) / n};
     };
-    const int d = ((me.data[objdata::Direction] % 8) + 8) % 8;
-    const Point2 l = unit(d + 6), rgt = unit(d + 2);
-    const Point2 pl{me.position.x + 0.1f * l[0], me.position.y + 0.1f * l[1]};
-    const Point2 pr{me.position.x + 0.1f * rgt[0], me.position.y + 0.1f * rgt[1]};
-    const bool nearerLeft = std::hypot(blocker.position.x - pl[0], blocker.position.y - pl[1]) <=
-                            std::hypot(blocker.position.x - pr[0], blocker.position.y - pr[1]);
-    const int dir = nearerLeft ? d + 7 : d + 1;
-    const Point2 f = unit(dir), side = unit(dir + 2);
-    const float lx = blocker.position.x - me.position.x, ly = blocker.position.y - me.position.y;
-    const float ll = std::max(std::hypot(lx, ly), 1e-3f);
-    const Point2 a{me.position.x, me.position.y}, b{blocker.position.x + lx / ll * 2, blocker.position.y + ly / ll * 2};
-    auto nearWay = [&](Point2 q) {
-        const float vx = b[0] - a[0], vy = b[1] - a[1], len2 = vx * vx + vy * vy;
-        const float u = len2 > 0 ? std::clamp(((q[0] - a[0]) * vx + (q[1] - a[1]) * vy) / len2, 0.0f, 1.0f) : 0;
-        return std::hypot(a[0] + vx * u - q[0], a[1] + vy * u - q[1]) < 0.75f;
-    };
-    for (int j = 0; type == 0 && j <= 96; ++j)
-        for (const int sign : {1, -1}) {
-            if (j == 0 && sign == -1)
-                continue;
-            const float lat = float(sign * j) * 0.0625f;
-            const Point2 q{blocker.position.x + f[0] * 0.3f + side[0] * lat, blocker.position.y + f[1] * 0.3f + side[1] * lat};
-            if (!planner.free(blocker.position.level, q) || nearWay(q))
-                continue;
-            PlannedPath path;
-            RouteFail why;
-            if (planner.plan({blocker.position.x, blocker.position.y}, blocker.position.level, blocker.position.level,
-                             {{q[0], q[1], 0}}, path, why))
-                return q;
-        }
-    // Type 1 (the blocker stands on my goal; §8.3: directions 1, 2, 6 and 7,
-    // 1 to 3 tiles out, a step of 1 tile), and the fallback of type 0 when
-    // its row has no place (inferred, as the wider slot of type 2: up to 6
-    // tiles). The directions are taken relative to the asker's (inferred:
-    // the slot's object is not decoded), so the blocker steps aside off the
-    // asker's way.
-    const int facing = type == 1 ? d : ((blocker.data[objdata::Direction] % 8) + 8) % 8;
-    for (int dist = 1; dist <= (type == 1 ? 3 : 6); ++dist)
-        for (const int rel : {2, 6, 1, 7}) {
-            const Point2 u = unit(facing + rel);
-            const Point2 q{blocker.position.x + u[0] * float(dist), blocker.position.y + u[1] * float(dist)};
-            if (!planner.free(blocker.position.level, q) || nearWay(q))
-                continue;
-            PlannedPath path;
-            RouteFail why;
-            if (planner.plan({blocker.position.x, blocker.position.y}, blocker.position.level, blocker.position.level,
-                             {{q[0], q[1], 0}}, path, why))
-                return q;
-        }
-    return std::nullopt;
+    Slots::Slot slot;
+    slot.type = 3;
+    slot.standing = 1;
+    slot.flags = 0x40000; // HasStationaryBonus false
+    const int d = ((asker.data[objdata::Direction] % 8) + 8) % 8;
+    if (type == 0) {
+        if (std::hypot(mover.position.x - asker.position.x, mover.position.y - asker.position.y) > 4)
+            return std::nullopt;
+        const Point2 l = unit(d + 6), rgt = unit(d + 2);
+        const Point2 pl{asker.position.x + 0.1f * l[0], asker.position.y + 0.1f * l[1]};
+        const Point2 pr{asker.position.x + 0.1f * rgt[0], asker.position.y + 0.1f * rgt[1]};
+        const bool nearerLeft = std::hypot(mover.position.x - pl[0], mover.position.y - pl[1]) <=
+                                std::hypot(mover.position.x - pr[0], mover.position.y - pr[1]);
+        slot.flags |= (1u << ((nearerLeft ? d + 7 : d + 1) % 8)) | 0x200;
+        slot.minDistance = 0.0625f, slot.maxDistance = 0.3f, slot.optimalDistance = 0.3f;
+        slot.resolutionTiles = 0.025f, slot.gradient = 100;
+        destinationDirection = 0; // the facing below is then absolute
+        slot.facing = directionOf(asker.position.x - mover.position.x, asker.position.y - mover.position.y);
+        if (slot.facing < 0)
+            slot.facing = -3;
+        return slot;
+    }
+    slot.flags |= 0x02 | 0x04 | 0x40 | 0x80 | 0x2000;
+    if (type == 2)
+        slot.flags |= 0x800 | 0x80000;
+    slot.minDistance = 1, slot.maxDistance = type == 2 ? 6.0f : 3.0f, slot.optimalDistance = 1;
+    slot.resolutionTiles = 0.25f, slot.gradient = 0.625f;
+    slot.facing = -3;
+    destinationDirection = d;
+    return slot;
 }
 
-// The destinations the engine made ("move out of the way", "go here") go
-// once no Sim has their interaction queued or running any more
-// (flushDestinations, go_here.hpp). Once a tick.
+// flushDestinations, once a tick.
 void flushMoveOutOfWayDestinations(VM& vm) {
     auto& last = vm.moveOutOfWayFlushedAt;
     if (last == vm.ticks + 1)
@@ -311,13 +301,17 @@ void flushMoveOutOfWayDestinations(VM& vm) {
     flushDestinations(vm);
 }
 
-// AskBlockerToMove → the blocker's MoveOutOfWay (docs/routing-mac.md §8.1):
-// refused when the blocker is already asked or is blocked by me, unless its
-// person data 159 has bit 0x02 its priority (person data 33) must be below
-// mine less one (at least 1), my route must have more than one goal, we
-// must be within 4 tiles and a place to step aside to must exist. Accepted:
-// the move-out-of-way interaction goes on its queue with that priority.
-bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocker) {
+// AskBlockerToMove → the blocker's MoveOutOfWay (BV 0x57d8e8, 0x57ee3c;
+// docs/routing-mac.md §8.1, §9.3): refused when a route of mine already
+// asked the blocker (no cycle), when it is asked already (IsAskedToMove),
+// unless its person data 159 has bit 0x02 its priority (person data 33) must
+// be below mine less one (at least 1), my route must have more than one goal,
+// both in the world and within 4 tiles, and its own current route must not
+// have asked someone to move (0x188). Accepted (whether or not its slot will
+// give a place: CreateMoveOutOfWayDestination always makes the destination),
+// the move-out-of-way interaction goes on its queue with that priority, and
+// my route keeps who was asked and that interaction (0x190).
+bool askBlockerToMove(VM& vm, Object& me, Object::Route& r, Object& blocker) {
     // DoBlockedGoalStillAvailable asks with type 1 when the route has a
     // destination object and the blocker is within 1.5 tiles of it (on my
     // goal: the cook at the stove when the other comes for the oven), else
@@ -328,16 +322,23 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
         type = 1;
     if (!me.person || !blocker.person || askedToMove(vm, blocker))
         return false;
-    if (blocker.route && (blocker.route->blocker == me.id || blocker.route->blocker != 0))
+    if (r.asked == blocker.id)
+        return false;
+    for (const auto& outer : me.outerRoutes)
+        if (outer.asked == blocker.id)
+            return false;
+    if (blocker.route && blocker.route->asked)
         return false;
     const int16_t priority = int16_t(std::max(1, me.person->data[persondata::Priority] - 1));
     if (!(blocker.person->data[159] & 0x02) && blocker.person->data[persondata::Priority] >= priority)
         return false;
-    if (r.goals.size() < 2 || blocker.position.level != me.position.level ||
+    if (r.goals.size() < 2 || !me.position.inWorld() || !blocker.position.inWorld() ||
+        blocker.position.level != me.position.level ||
         std::hypot(blocker.position.x - me.position.x, blocker.position.y - me.position.y) > 4)
         return false;
-    const auto spot = moveOutOfWayPoint(vm, me, blocker, type);
-    if (!spot)
+    int direction = 0;
+    const auto slot = moveOutOfWaySlot(blocker, me, type, direction);
+    if (!slot)
         return false;
     std::vector<ObjectId> existing;
     for (const auto& [id, o] : vm.eachObject())
@@ -346,19 +347,13 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
     if (!dest)
         return false;
     // The destination stands where the blocker is ("Interaction - Move Out
-    // Of Way" walks only when it is on it), and its routing slot 0 is the
-    // place to step aside to (the binary attaches a synthetic slot; here a
-    // point offset from the destination).
+    // Of Way" walks only when it is on it), with the synthetic slot.
     const ObjectId destId = dest->id;
-    auto place = [&](Object& d) {
-        moveTo(vm, d, blocker.position.x, blocker.position.y, blocker.position.level);
-        d.data[objdata::Direction] = 0; // model +Y = world +X: offset (dy, -dx)
-        Slots::Slot slot;
-        slot.type = 3;
-        slot.facing = -3;
-        slot.offset = {(*spot)[1] - blocker.position.y, blocker.position.x - (*spot)[0], 0};
-        d.syntheticSlot = slot;
-        vm.noteDestination(d);
+    auto place = [&](Object& x) {
+        moveTo(vm, x, blocker.position.x, blocker.position.y, blocker.position.level);
+        x.data[objdata::Direction] = int16_t(direction);
+        x.syntheticSlot = *slot;
+        vm.noteDestination(x);
     };
     place(*dest);
     vm.initialize(destId, existing);
@@ -373,11 +368,27 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
                 if (auto q = makeInteraction(vm, destId, uint16_t(e.stringIndex))) {
                     q->priority = priority;
                     q->pushedBy = me.id;
-                    enqueue(vm, blocker, *q);
-                    return true;
+                    if (const uint16_t uid = enqueue(vm, blocker, *q)) {
+                        r.asked = blocker.id, r.askedUid = uid;
+                        return true;
+                    }
                 }
     vm.removeObject(destId);
     return false;
+}
+
+// A route ends (arrived or failed; not a step aside): DoPostFailedOrSucceeded
+// (BV 0x56f610) tells every router whose current route asked this Sim to
+// move, for the interaction it runs now (0x188 and 0x18c against the Sim's
+// current interaction), that the request is over (0x198, 0x190(0, 0)): the
+// asker plans again at once (DoWaitingForPersonToMove).
+void moveOutOfWayRouteEnded(VM& vm, const Object& me) {
+    if (!me.person || me.activeInteraction < 0 || size_t(me.activeInteraction) >= me.queue.size())
+        return;
+    const uint16_t uid = me.queue[size_t(me.activeInteraction)].uid;
+    for (const ObjectId id : vm.people())
+        if (Object* o = vm.object(id); o && o->id != me.id && o->route && o->route->asked == me.id && o->route->askedUid == uid)
+            o->route->asked = 0, o->route->askedUid = 0;
 }
 
 // A route point the walker walks to over the floor (not a stair or turn

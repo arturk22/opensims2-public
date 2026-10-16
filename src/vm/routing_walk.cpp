@@ -550,6 +550,10 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                              (unsigned long long)vm.ticks, me.id, b, blocker.route ? "routing" : "standing",
                              blocker.route ? blocker.route->blocker : 0, counter, me.position.x, me.position.y,
                              blocker.position.x, blocker.position.y);
+            if (std::getenv("OS2_DEBUG_BLOCK_POINTS")) {
+                for (const auto& p : r.points)
+                    std::fprintf(stderr, "   point (%.2f,%.2f,%d)%s%s\n", p.x, p.y, p.level, p.portal ? " portal" : "", p.ticks ? " phase" : "");
+            }
             const bool base = c.thread.stack.size() == r.depth; // the route stack holds only this route
             const TilePos blockerTile = VM::tileOf(blocker);
             const bool offRecordedTile = int(std::floor(r.blockerX)) != blockerTile.x ||
@@ -608,33 +612,52 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 r.pausing = false;
                 return replan();
             };
-            // TryGetSelfOutOfWay (BV 0x57e9ac): both in the world and at most
-            // 4 tiles apart, a move-out-of-way place for me away from the
-            // blocker's way (CreateMoveOutOfWayDestination type 0), walked as
-            // a route of its own before this one goes on.
-            auto selfOutOfWay = [&]() {
-                if (!me.position.inWorld() || !blocker.position.inWorld() || d > 4)
-                    return false;
-                const auto spot = moveOutOfWayPoint(vm, blocker, me, 0);
-                if (std::getenv("OS2_DEBUG_BLOCK"))
-                    std::fprintf(stderr, "t%llu %d gets out of %d's way: %s\n", (unsigned long long)vm.ticks, me.id, blocker.id,
-                                 spot ? "a place" : "no place");
-                if (!spot)
-                    return false;
-                Object::Route aside = r;
-                aside.goals = {{(*spot)[0], (*spot)[1], 0}};
-                aside.facings.clear();
-                aside.multi.clear();
-                aside.level = me.position.level;
-                RouteFail w;
-                if (!planRoute(vm, me, aside, w))
-                    return false;
-                r.points = std::move(aside.points), r.plans = aside.plans;
-                r.aside = r.asideTried = true;
-                r.asideFrom = blocker.id;
+            // TryGetSelfOutOfWay (BV 0x57e9ac; docs/routing-mac.md §9.3): both
+            // in the world and at most 4 tiles apart, the route's step-aside
+            // count goes up (0xd8/0xdc) and a route of its own goes to a
+            // move-out-of-way destination where I stand
+            // (CreateMoveOutOfWayDestination type 0: a 0.3-tile step at 45
+            // degrees off the blocker's way, the slot's scan and the A*);
+            // then this one plans again (DoInitial). With no place in the
+            // slot (its scan finds no valid point, or no way there), that
+            // route fails at once and this one plans again all the same.
+            // (The destination object the binary makes is not made here: the
+            // scan stands on a stand-in at my place; its end turn to face the
+            // blocker is not done.)
+            auto selfOutOfWay = [&]() -> std::optional<Step> {
+                if (!me.position.inWorld() || !blocker.position.inWorld())
+                    return std::nullopt;
+                int direction = 0;
+                const auto slot = moveOutOfWaySlot(me, blocker, 0, direction);
+                if (!slot)
+                    return std::nullopt;
+                r.asideTried = true;
                 r.blocker = 0, r.blockedTicks = 0;
                 r.waiting = false;
-                return true;
+                Object spot;
+                spot.position = me.position;
+                spot.data[objdata::Direction] = int16_t(direction);
+                const VM::RouteGoals g = vm.routingGoals(*slot, spot, true, me.id);
+                Object::Route aside = r;
+                aside.goals.clear();
+                for (size_t i = 0; i < g.goals.size(); ++i)
+                    aside.goals.push_back({g.points[i][0], g.points[i][1], g.goals[i].cost});
+                aside.facings = g.facings;
+                aside.multi.clear();
+                aside.chairs.clear();
+                aside.level = g.level;
+                RouteFail w;
+                const bool way = !aside.goals.empty() && planRoute(vm, me, aside, w);
+                if (std::getenv("OS2_DEBUG_BLOCK"))
+                    std::fprintf(stderr, "t%llu %d gets out of %d's way: %zu places%s\n", (unsigned long long)vm.ticks, me.id,
+                                 blocker.id, aside.goals.size(), way ? "" : ", no way: plans again");
+                if (way) {
+                    r.points = std::move(aside.points), r.plans = aside.plans;
+                    r.aside = true;
+                    r.asideFrom = blocker.id;
+                    return Step::Walking;
+                }
+                return replan();
             };
             // An object in the way (the per-step test): not a person, so
             // "blocked by object" (DoBlockedGoalStillAvailable, §6).
@@ -649,14 +672,18 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 // plan again once, else "blocked by object").
                 if (counter < 2 && offRecordedTile)
                     return replan();
-                if (counter <= kAskToMoveTries && askBlockerToMove(vm, me, r, *vm.object(b))) {
+                // Up to the third try, while no request of this route is
+                // pending (0x188): ask it to move, else step aside myself
+                // once a route.
+                if (counter <= kAskToMoveTries && !r.asked && askBlockerToMove(vm, me, r, *vm.object(b))) {
                     r.blockedTicks = 1; // DoWaitingForPersonToMove
                     if (runWalkTree(c, "CT - Route Ask To Move Animation", {b, 0, 0, 0}))
                         return Step::Call;
                     return Step::Walking;
                 }
-                if (!r.asideTried && selfOutOfWay())
-                    return Step::Walking;
+                if (counter <= kAskToMoveTries && !r.asked && !r.asideTried)
+                    if (const auto step = selfOutOfWay())
+                        return *step;
                 return routeBlocked();
             }
             // Its route's blocking object: the one its locomotor stopped for
@@ -678,8 +705,9 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             if (itsBlocker == me.id) { // it routes and I block it: the two block each other
                 if (!base || r.aside)
                     return routeBlocked();
-                if (!r.asideTried && counter < 3 && selfOutOfWay())
-                    return Step::Walking;
+                if (!r.asideTried && counter < 3)
+                    if (const auto step = selfOutOfWay())
+                        return *step;
                 // It is stepping aside (its route is a step-aside one, route
                 // vtable 0xd0, set by TryGetSelfOutOfWay through 0xd4): pause
                 // for it without counting the try (the counter goes back
@@ -710,7 +738,10 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         // and the waiting animation's ticks when it is called.)
         const int limit = blocker.data[8] & 0x40 ? kWaitForPersonLongTicks : kWaitForPersonTicks;
         ++r.blockedTicks;
-        if (d > kPersonMovedAway) { // it moved off: plan again (DoInitial) and walk on
+        // Its route in the move-out-of-way interaction ended (it stepped
+        // aside, or found no place): the request is over and the walker
+        // plans again at once (DoWaitingForPersonToMove without 0x188).
+        if (d > kPersonMovedAway || !r.asked) { // it moved off: plan again (DoInitial) and walk on
             r.blockedTicks = 0;
             r.blocker = 0;
             Object::Route next = r;
@@ -1009,6 +1040,9 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
 Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan, bool failureTrees) {
     const Exit e = walkStep(c, target, plan, failureTrees);
     if (e != Exit::Yield && e != Exit::Call) {
+        // The route is over (DoPostFailedOrSucceeded): a Sim that asked this
+        // one to move hears the request is over.
+        moveOutOfWayRouteEnded(c.vm, c.me());
         c.frame.preRouteRan = false; // the instruction is done
         c.frame.postRoute = 0;
         c.frame.routeSlot = -1;

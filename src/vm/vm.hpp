@@ -651,6 +651,11 @@ struct Object {
         // that route's blocker, route vtable 0x140, when TryGetSelfOutOfWay
         // pushes it).
         ObjectId asideFrom = 0;
+        // The Sim this route asked to move (AskBlockerToMove accepted; route
+        // vtable 0x188) and the uid of that move-out-of-way interaction
+        // (0x18c); cleared when the asked Sim's route in it ends.
+        ObjectId asked = 0;
+        uint16_t askedUid = 0;
         int pauses = 0;
         bool inPortal = false;    // a portal tree runs (routing_walk.cpp)
         // The goal check / along route trees (routing_walk.cpp): which one runs

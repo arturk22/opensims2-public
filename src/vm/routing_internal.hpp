@@ -77,12 +77,16 @@ struct SimAhead {
     float at = 0;
 };
 SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r);
-// Where a blocker steps aside to (CreateMoveOutOfWayDestination).
-std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker, int type);
+// The routing slot `mover` steps aside to for `asker` (CreateMoveOutOfWayDestination,
+// types 0-2), and the direction of its destination; none when too far.
+std::optional<Slots::Slot> moveOutOfWaySlot(const Object& mover, const Object& asker, int type, int& destinationDirection);
 // flushDestinations, once a tick.
 void flushMoveOutOfWayDestinations(VM& vm);
-// AskBlockerToMove: the blocker's MoveOutOfWay queued, or false.
-bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocker);
+// AskBlockerToMove: the blocker's MoveOutOfWay queued (the route keeps who
+// was asked), or false.
+bool askBlockerToMove(VM& vm, Object& me, Object::Route& r, Object& blocker);
+// A route of `me` ended: the routes that asked it to move hear the request is over.
+void moveOutOfWayRouteEnded(VM& vm, const Object& me);
 // A route point the walker walks to over the floor.
 bool floorPoint(const Object::Route::Point& p);
 

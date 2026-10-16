@@ -16,7 +16,10 @@ namespace {
 // 2: a route's asideFrom (the Sim a step-aside route gives way to).
 // 3: the locomotion's planned stop foot, short way, fade and halt walk.
 // 4: the route's remembered blocker (DoBlockedGoalStillAvailable's +0x3e).
-constexpr uint32_t kVersion = 5;
+// 5: the goal check's notes (DoAlongRouteCheckTest).
+// 6: the Sim a route asked to move and that interaction's uid; the move-out-
+//    of-way slot's directions, distances, spacing, gradient and weight.
+constexpr uint32_t kVersion = 6;
 uint32_t readingVersion = kVersion; // of the state being read
 bool knownVersion(uint32_t v) {
     readingVersion = v;
@@ -108,6 +111,7 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     w.i16(r.lastBlocker);
     w.u32(r.plans), w.u32(r.checkPlans), w.i32(r.checkRoom), w.i32(r.checkLevel), w.f32(r.checkWalked);
     w.u8(r.blockCheckDone);
+    w.i16(r.asked), w.u16(r.askedUid);
 }
 
 Object::Route readRoute(BinReader& r, size_t& frame) {
@@ -176,6 +180,8 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
     if (readingVersion >= 5)
         x.plans = r.u32(), x.checkPlans = r.u32(), x.checkRoom = r.i32(), x.checkLevel = r.i32(), x.checkWalked = r.f32(),
         x.blockCheckDone = r.u8();
+    if (readingVersion >= 6)
+        x.asked = r.i16(), x.askedUid = r.u16();
     return x;
 }
 
@@ -218,6 +224,8 @@ std::optional<std::vector<uint8_t>> writeThreadState(VM& vm, const Object& o) {
         if (o.syntheticSlot) {
             const auto& slot = *o.syntheticSlot;
             w.u16(slot.type), w.f32(slot.offset[0]), w.f32(slot.offset[1]), w.f32(slot.offset[2]), w.i32(slot.facing);
+            w.u32(slot.flags), w.f32(slot.minDistance), w.f32(slot.maxDistance), w.f32(slot.optimalDistance);
+            w.f32(slot.resolutionTiles), w.f32(slot.gradient), w.i32(slot.standing);
         }
     }
     return std::move(w.bytes());
@@ -263,6 +271,11 @@ bool applyThreadState(VM& vm, Object& o, std::span<const uint8_t> bytes) {
                 slot.type = r.u16();
                 slot.offset = {r.f32(), r.f32(), r.f32()};
                 slot.facing = r.i32();
+                if (readingVersion >= 6) {
+                    slot.flags = r.u32(), slot.minDistance = r.f32(), slot.maxDistance = r.f32(),
+                    slot.optimalDistance = r.f32();
+                    slot.resolutionTiles = r.f32(), slot.gradient = r.f32(), slot.standing = r.i32();
+                }
                 o.syntheticSlot = slot;
             }
             vm.noteDestination(o);
