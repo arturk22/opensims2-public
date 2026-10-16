@@ -671,6 +671,15 @@ sensibilidade trocada por `keyboardzoomscale` (2): **por atualização**,
 `d += Δ · 2 · (d + 10) / −50`, com `Δ` = ±1 (`keyboardzoomlerpminchange` 1 faz o
 valor saltar para ±1).
 
+**Zoom de um nível depois da roda.** O pedido da roda deixa o nível de zoom
+(`+0x70`) no primeiro nível não mais longe que a distância a que chegou e liga
+o flag `this[500]` (com ele o `Update` usa a distância da roda, `+0x74`). O `z`
+(`0x9b65fb1f`) com o flag ligado só o apaga: a câmera vai àquele nível (nada,
+se a roda parou num nível, como no mais longe) e só o `z` seguinte avança. O `x`
+(`0x7b65fb6b`) chama `SetZoomLevel(nível − 1)` (BV `0x86b74c`, que prende o nível
+à tabela e apaga o flag): o nível mais longe seguinte, como antes. No app:
+`LotCamera::zoomBy`/`wheelBy`.
+
 **A câmera "Build"**: `cCameraLive::Reset` (BV `0x6a3c70`) põe
 `pivotheightabovefloor` (`+0x490`) = **1,2** antes de ler a especificação; o
 `BuildCamera.txt` não tem o parâmetro, então o Build usa 1,2 (era inferido 1).
