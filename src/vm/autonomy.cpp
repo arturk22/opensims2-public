@@ -614,7 +614,7 @@ Exit gosubFoundAction(Context& c) {
     sim.person->data[persondata::Priority] = kPriorityAutonomous;
     // try_gosub_action_found (BV 0xade17c): SetCurrentAction, then
     // UpdateObjectOwnership.
-    setCurrentAction(sim);
+    setCurrentAction(c.vm, sim);
     const ObjectId me = sim.id;
     updateObjectOwnership(c.vm, me, item.object);
     c.vm.call(c.thread, item.object, item.action, item.args);

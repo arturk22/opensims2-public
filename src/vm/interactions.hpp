@@ -132,16 +132,18 @@ bool cancelInteraction(VM& vm, Object& sim, uint16_t uid);
 // `object` from every queue and cancels the running ones.
 void cancelInteractionsWith(VM& vm, ObjectId object);
 
-// cTSPerson::ClearSubActions: empties the sub-queue and drops the current
-// sub-action (person data 26, 75-78 and 157 go to 0).
-void clearSubActions(Object& sim);
+// cTSPerson::ClearSubActions (Mac BV 0xadc4f4): undoes the links of every
+// waiting sub-action (cTSInteraction::UnLinkInteractions), empties the
+// sub-queue and drops the current sub-action (person data 26, 75-78 and 157
+// go to 0).
+void clearSubActions(VM& vm, Object& sim);
 // cTSPerson::SetCurrentAction (Mac BV 0xadc6d8), once the Sim's running
 // interaction is set (Idle for Input's next entry, Gosub Found Action):
 // besides the queue's person data (syncQueueData) it zeroes person data 39,
 // 71 (non-interruptible), 73 (the footprint's trim) and 110 (the "notified"
 // flag "Wait For Notify" reads) and clears the sub-actions. Not done: 164
 // (a flag of the interaction's object, not read).
-void setCurrentAction(Object& sim);
+void setCurrentAction(VM& vm, Object& sim);
 
 // Whether the interaction a Sim is running was cancelled (for primitives
 // that wait, like animations).
@@ -164,12 +166,15 @@ CheckResult checkInteraction(VM& vm, ObjectId sim, const QueuedInteraction& q, s
                              bool autonomous = false, size_t maxTurns = 100,
                              std::vector<ActionString>* strings = nullptr);
 
-// Idle for Input with "allow push": runs the next queued interaction whose
-// priority beats the running one (person data 33; autonomous ones fall
-// through to each other) and whose guard passes, dropping the ones whose
-// guard fails or whose object is gone. Its action tree is pushed onto the
-// thread as an interaction root. False if nothing was started.
-bool attemptPush(VM& vm, Thread& t, bool nested = false);
+// Idle for Input with "allow push": takes the next queued interaction when
+// its priority beats the running one (person data 33; autonomous ones fall
+// through to each other). Its guard passes: its action tree is pushed onto
+// the thread as an interaction root (Started). It fails, or it has no action
+// tree: it leaves the queue with its links undone (cTSPerson::ActionSkipped,
+// Mac BV 0xaca0cc) and Idle for Input waits a tick (Skipped, the binary's 2);
+// its object is gone: it leaves the queue (Skipped too). None: nothing taken.
+enum class PushOutcome { None, Started, Skipped };
+PushOutcome attemptPush(VM& vm, Thread& t, bool nested = false);
 
 // Called by the VM when an interaction root returns: removes the entry
 // (unless Generic Sims Call 13 already did), resets the priority and

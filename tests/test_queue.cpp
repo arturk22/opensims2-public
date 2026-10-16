@@ -508,7 +508,7 @@ static void testSubQueue() {
     check(s.subQueue.size() == 2 && cancelInteraction(fx.vm, s, b) && s.subQueue.size() == 1 &&
               s.subQueue[0].uid == a && s.person->data[persondata::SubQueueCount] == 1,
           "cancelling a waiting sub-action takes it out of the sub-queue");
-    clearSubActions(s);
+    clearSubActions(fx.vm, s);
     check(s.subQueue.empty() && !s.subAction && s.person->data[persondata::SubQueueCount] == 0 &&
               s.person->data[persondata::SubQueueMasterObject] == tv &&
               s.person->data[persondata::CurrentRunningObject] == tv,
@@ -754,6 +754,46 @@ static void testAutonomousBits() {
     check(s2.queue.empty() && s2.activeInteraction == -1, "Idle for Input runs its check tree with parameter 0 = 0: refused");
 }
 
+// Round n31: an entry Idle for Input takes and refuses (its check tree
+// fails) leaves the queue with its links undone (cTSPerson::ActionSkipped,
+// BV 0xaca0cc: the Sim its link reaches stops waiting, person data 110), and
+// the Idle for Input waits a tick before the next entry (TryIdleForInput
+// returns 2). ClearSubActions (BV 0xadc4f4) undoes the waiting sub-actions'
+// links too.
+static void testSkippedEntryUnlinks() {
+    Fixture fx;
+    const ObjectId b = fx.vm.instantiate(kSimGroup, 0x80).id;
+    fx.vm.startMain(b);
+    const uint16_t ua = enqueue(fx.vm, fx.s(), fx.make(1)); // A runs "Clean" (long)
+    fx.vm.tick();
+    check(fx.s().activeInteraction == 0 && fx.s().person->data[110] == 0, "A runs its interaction");
+    Object& sb = *fx.vm.object(b);
+    auto refused = fx.make(3); // its check tree says no
+    enqueue(fx.vm, sb, refused);
+    auto snack = fx.make(0);
+    enqueue(fx.vm, sb, snack);
+    sb.queue[0].link = ua; // linked to A's interaction (a social's chain)
+    fx.vm.tick();
+    check(fx.s().person->data[110] == 1, "B's refused entry undoes its link: A gets person data 110");
+    check(sb.queue.size() == 1 && sb.activeInteraction == -1 && (fx.o().attributes.empty() || fx.o().attributes[0] != 7),
+          "B's Idle for Input waits a tick after the refused entry");
+    fx.vm.tick();
+    check(fx.o().attributes.size() > 0 && fx.o().attributes[0] == 7, "the next entry runs the next tick");
+
+    Fixture fy;
+    const ObjectId c = fy.vm.instantiate(kSimGroup, 0x80).id;
+    const uint16_t ua2 = enqueue(fy.vm, fy.s(), fy.make(1));
+    fy.vm.tick();
+    Object& sc = *fy.vm.object(c);
+    auto sub = fy.make(0);
+    sub.uid = newInteractionId(fy.vm, sc);
+    sub.link = ua2;
+    sc.subQueue.push_back(sub);
+    clearSubActions(fy.vm, sc);
+    check(sc.subQueue.empty() && fy.s().person->data[110] == 1,
+          "ClearSubActions undoes the waiting sub-actions' links");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -772,6 +812,7 @@ int main() {
     testRunImmediately();
     testStarEntryStringsFromNamedTree();
     testAutonomousBits();
+    testSkippedEntryUnlinks();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

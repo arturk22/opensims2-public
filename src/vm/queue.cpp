@@ -353,7 +353,8 @@ Exit handleSubQueue(Context& c) {
         return Exit::True;
     const QueuedInteraction item = me.subQueue.front();
     me.subQueue.erase(me.subQueue.begin());
-    bool ok = c.vm.object(item.object) != nullptr && item.action != 0;
+    const bool exists = c.vm.object(item.object) != nullptr;
+    bool ok = exists && item.action != 0;
     if (ok) {
         const CheckResult r = checkInteraction(c.vm, c.thread.me, item);
         ok = r == CheckResult::NoGuard || r == CheckResult::True;
@@ -369,13 +370,29 @@ Exit handleSubQueue(Context& c) {
         }
     }
     if (!ok) {
-        sim->subQueue.clear();
-        syncQueueData(*sim);
+        // ClearSubActions, and ActionSkipped for the refused one when its
+        // object exists (its links undone; TryIdleForInput's sub-queue mode).
+        const ObjectId id = sim->id;
+        clearSubActions(c.vm, *sim);
+        if (exists)
+            unlinkInteraction(c.vm, id, item);
+        if (Object* s = c.vm.object(id))
+            syncQueueData(*s);
         return Exit::True;
     }
     Frame& f = c.thread.stack.back();
     f.stackObject = item.object;
     f.subInteraction = true;
+    // The sub-action it replaces has its links undone (vtable 0x10c with
+    // no person, before SetCurrentSubAction).
+    if (sim->subAction) {
+        const QueuedInteraction before = *sim->subAction;
+        sim->subAction.reset();
+        unlinkInteraction(c.vm, 0, before);
+        sim = c.vm.object(c.thread.me);
+        if (!sim)
+            return Exit::Call;
+    }
     sim->subAction = item;
     updateObjectOwnership(c.vm, c.thread.me, item.object);
     syncQueueData(*sim);
@@ -459,10 +476,15 @@ Exit idleForInput(Context& c) {
     if (allowPush && waiting && mayInterrupt) {
         c.set(kOwnerParam, param, 0); // before the push, which may move this frame
         const size_t depth = t.stack.size();
-        if (attemptPush(c.vm, t, inAction))
+        const PushOutcome took = attemptPush(c.vm, t, inAction);
+        if (took == PushOutcome::Started)
             return Exit::Call;
         if (t.stack.size() == depth) // nothing could run: the counter is left as it was
             t.stack.back().params[size_t(param)] = ticks;
+        // An entry was taken and refused: the binary returns 2 and comes
+        // back next tick (the next entry waits for it).
+        if (took == PushOutcome::Skipped)
+            return Exit::Yield;
     }
     return Exit::True;
 }
@@ -813,25 +835,29 @@ CheckResult checkInteraction(VM& vm, ObjectId sim, const QueuedInteraction& q, s
     }
 }
 
-bool attemptPush(VM& vm, Thread& t, bool nested) {
+PushOutcome attemptPush(VM& vm, Thread& t, bool nested) {
     Object* sim = vm.object(t.me);
     if (!sim)
-        return false;
+        return PushOutcome::None;
     int compare = currentPriority(*sim);
     if (compare <= kPriorityAutonomous && !nested)
         compare -= 1; // autonomous interactions fall through to other ones
-    for (;;) {
+    {
         const size_t next = size_t(sim->activeInteraction + 1);
         if (sim->queue.size() <= next)
-            return false;
+            return PushOutcome::None;
         const QueuedInteraction item = sim->queue[next];
         if (item.priority <= compare)
-            return false;
+            return PushOutcome::None;
         // Taking the next entry clears the sub-actions, whether it passes its
         // check or not (cTSPerson::TryIdleForInput calls ClearSubActions before
         // the test; SetCurrentAction does it again).
-        clearSubActions(*sim);
-        bool ok = vm.object(item.object) != nullptr;
+        clearSubActions(vm, *sim);
+        sim = vm.object(t.me);
+        if (!sim)
+            return PushOutcome::None;
+        const bool exists = vm.object(item.object) != nullptr;
+        bool ok = exists;
         if (ok) {
             // The check tree's parameter 0: the entry's "test as autonomous"
             // bit (TryIdleForInput BV 0xadeb6c: cEdithObjectTestSim::Init
@@ -841,13 +867,14 @@ bool attemptPush(VM& vm, Thread& t, bool nested) {
             ok = r == CheckResult::NoGuard || r == CheckResult::True;
             sim = vm.object(t.me); // the check tree may have removed the Sim
             if (!sim)
-                return false;
+                return PushOutcome::None;
         }
-        // The check tree may have changed the queue: find the entry again.
+        // The check tree may have changed the queue: find the entry again
+        // (the binary has already taken it out: gone, it was taken).
         auto it = std::find_if(sim->queue.begin(), sim->queue.end(),
                                [&](const QueuedInteraction& x) { return x.uid == item.uid; });
         if (it == sim->queue.end())
-            continue;
+            return PushOutcome::Skipped;
         if (ok) {
             try {
                 vm.call(t, item.object, item.action, item.args);
@@ -856,9 +883,17 @@ bool attemptPush(VM& vm, Thread& t, bool nested) {
             }
         }
         if (!ok) {
+            // ActionSkipped (Mac BV 0xaca0cc): out of the queue with its
+            // links undone, so the Sim on the other side of a social stops
+            // waiting (person data 110); not for an entry whose object is gone.
+            // (Its object event 4 is not done.)
+            const ObjectId id = sim->id;
             sim->queue.erase(it);
-            syncQueueData(*sim);
-            continue;
+            if (exists)
+                unlinkInteraction(vm, id, item);
+            if (Object* s = vm.object(id))
+                syncQueueData(*s);
+            return PushOutcome::Skipped;
         }
         Frame& f = t.stack.back();
         f.stackObject = item.object;
@@ -872,14 +907,14 @@ bool attemptPush(VM& vm, Thread& t, bool nested) {
         }
         sim->activeInteraction = int(next);
         setPriority(*sim, item.priority);
-        setCurrentAction(*sim);
+        setCurrentAction(vm, *sim);
         updateObjectOwnership(vm, t.me, item.object);
         sim = vm.object(t.me);
         if (!sim)
-            return true;
+            return PushOutcome::Started;
         evaluatePriorities(vm, *sim);
         syncQueueData(*sim);
-        return true;
+        return PushOutcome::Started;
     }
 }
 
@@ -909,24 +944,28 @@ void endInteraction(VM& vm, Thread& t) {
     syncQueueData(*sim);
 }
 
-void setCurrentAction(Object& sim) {
+void setCurrentAction(VM& vm, Object& sim) {
     if (sim.person) {
         auto& d = sim.person->data;
         for (size_t k : {size_t(39), size_t(persondata::NonInterruptible), size_t(73), size_t(110)})
             if (k < d.size())
                 d[k] = 0;
     }
-    sim.subQueue.clear(); // ClearSubActions
-    sim.subAction.reset();
+    clearSubActions(vm, sim);
     syncQueueData(sim);
 }
 
-void clearSubActions(Object& sim) {
+void clearSubActions(VM& vm, Object& sim) {
     if (sim.subQueue.empty() && !sim.subAction)
         return;
+    const ObjectId id = sim.id;
+    const std::vector<QueuedInteraction> waiting = std::move(sim.subQueue);
     sim.subQueue.clear();
     sim.subAction.reset();
-    syncQueueData(sim);
+    for (const QueuedInteraction& q : waiting)
+        unlinkInteraction(vm, id, q);
+    if (Object* s = vm.object(id))
+        syncQueueData(*s);
 }
 
 void endSubInteraction(VM& vm, Thread& t) {
