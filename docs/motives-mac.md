@@ -525,7 +525,9 @@ não (o teste acima põe todo Sim no escuro à noite: −20 sempre depois das
   começo da rota, e 0 em `0xc55514`, quando a pilha de rotas esvazia; no BV,
   `cTSRoutingObjectAggregate::UpdatePersonDataFields` BV `0x570674`, o 39
   sumiu. Então no jogo base só quem **anda** escapa do "Afastar-se"; quem
-  frita parado leva, como no VM, que deixa o 39 em 0 sempre: `TODO.md`.) No
+  frita parado leva, como no VM, que deixava o 39 em 0 sempre. Rodada n41:
+  o VM o mantém como o base, `primitives-mac.md` §4j; o 1 do começo vem do
+  `ProcessGoto`, e no BV o `PopRoute` ainda grava o 0.) No
   N001_Lot68 o lugar do forno (21,5; 25,25) e o das bocas (21,5; 25,75)
   ficam no mesmo tile, e o "Afastar-se" interrompe quem frita: a panela fica
   no fogão, queima e pega fogo 30 min depois (`Tuning - Cook Fire Time`).

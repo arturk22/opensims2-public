@@ -4064,6 +4064,26 @@ Routing?", "Fire - Another Fighter Routing to Fire?", "Sub - Wait for Cop &
 Burglar done route", "Stand - Try Scoot", "TV - Clear View of Screen?",
 "Sub - Reaction Sim is Routing?" e mais alguns.
 
+**No código** (`persondata::RouteStatus`): o `walkStep` grava 1 quando a
+instrução de rota começa sem rota na pilha (`routeStackDepth` = 1, o
+`ProcessGoto`); o `planRoute` (que já era o `InitRoute`) grava 1 com
+caminho e 0 sem; o `walkStep` grava 0 também sem objetivos (o `FindPath`
+falha); o fim da instrução (`walk`, o `DoPostFailedOrSucceeded`) grava 0 se
+a rota era a única da pilha; o `VM::resetObject` grava 0 (o
+`ClearRouteStack`: o 39 só é 1 com rota na pilha) e a sub-ação nova também
+(`queue.cpp`). Antes o 39 ficava 0 sempre, e os "Shoo" enxotavam também
+quem passava andando pelo tile. Teste: `test_routing` (`testRouteStatus`).
+
+Medido no N001_Lot68 (`s2pkg autonomy --ticks 129600`, `S2PKG_FIRES=1`,
+sementes 0–12; incêndio = um fogo que aparece sem outro aceso): **antes 2
+incêndios (sementes 7 e 9) e 13 mortes ("Falecer"), depois 2 (sementes 0 e
+7) e 8**; "Afastar-se" 9 → 7. Os incêndios dos dois lados são do sorteio de
+quem cozinha ou do jantar congelado no forno (o Daniel), não de quem foi
+enxotado; fora dos incêndios morrem 5 antes (sementes 0, 1, 6, 12) e 1
+depois (semente 4). Cada semente é caótica; a mudança não aumenta nem
+incêndios nem mortes. N001_Lot11, sementes 1–6: nenhum incêndio nem morte
+antes e depois, "Afastar-se" 2 → 0, os mesmos 6 resets por erro.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
