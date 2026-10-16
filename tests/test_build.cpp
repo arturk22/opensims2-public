@@ -1104,6 +1104,26 @@ static void testDeckLevelling() {
         // The start on the far side: the pool takes that corner's ground.
         r = ed.drawPool(9, 6, 8, 7);
         check(r.ok && lot.elevation(0, 8, 6) == 0.1875f * 10, "a drag from its right takes the right corner's height");
+        // TestPlacementCommon's floor test (FUN_0016d518 with its pool
+        // argument, FUN_00164c40): over a pool's marker there is no floor,
+        // even on the ground (0x8E); in the air (0x200) or p2 & 4 it may.
+        ObjectDefinition chairDef;
+        chairDef.fields.resize(60);
+        chairDef.fields[(0x5C - 0x44) / 2] = 0x0002, chairDef.fields[(0x5E - 0x44) / 2] = 0x7F00;
+        code.add(0x7F7F7F7F, 0x80, chairDef);
+        Object& lawnChair = vm.instantiate(0x7F7F7F7F, 0x80);
+        lawnChair.data[objdata::PlacementFlags] = 0x3;
+        lawnChair.data[objdata::AllowedHeightFlags] = 0x1;
+        vm.placementLot = &lot;
+        Placement p = checkPlacement(vm, lawnChair.id, {3, 3, 1}, 0);
+        check(!p.ok && p.error == placementerror::NoFloor, "an object over the pool: no floor (0x8E)");
+        p = checkPlacement(vm, lawnChair.id, {3, 4, 1}, 0);
+        check(p.ok, "beside it, on the ground the pool levelled");
+        lawnChair.data[objdata::PlacementFlags2] = 0x4;
+        p = checkPlacement(vm, lawnChair.id, {3, 3, 1}, 0);
+        check(!p.ok && p.error == 0x8F, "with p2 & 4 the floor test passes; the pool still wants p & 0x800 (0x8F)");
+        vm.placementLot = nullptr;
+        vm.removeObject(lawnChair.id);
     }
 }
 

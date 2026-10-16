@@ -59,6 +59,20 @@ bool floorWhole(const Lot& lot, TilePos t) {
     return true;
 }
 
+// FUN_00164c40 on the tile a level under `t` (Mac BV): a quarter with a
+// pool's marker (3ARY 0x14, IsPool: products of type 3); without the lot's
+// geometry, or a lot read without markers, the world's pool tiles of the
+// ground.
+bool poolUnder(const VM& vm, const World& w, TilePos t) {
+    if (const Lot* lot = vm.placementLot; lot && !lot->deckFoundationStyles.empty()) {
+        for (int q = 0; q < 4; ++q)
+            if (lot->deckFoundationStyle(t.level - 2, t.x, t.y, q) == 3)
+                return true;
+        return false;
+    }
+    return t.level == 1 && w.pool(t);
+}
+
 // nTSWorld::IsFlat (BV 0x165af8): the tile's four grid points (on its lot
 // level) at exactly the same height. A level the lot does not keep counts as
 // flat.
@@ -278,6 +292,16 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         if (t.level != 1 && t.level > w.firstLevel() && !(pf & 0x200) && !(pf2 & 0x04) &&
             !(vm.placementLot ? floorWhole(*vm.placementLot, t) : w.hasFloor(t)))
             return fail(placementerror::NoFloor, "no floor");
+        // ... and, the call's last argument set for objects, the tile a level
+        // down without a pool's marker in any quarter (FUN_00164c40: IsPool
+        // of each quarter's DeckFoundationStyle; docs/buy-build-mac.md
+        // §7.25): over a pool there is no floor, even on the ground. The
+        // game passes it for every object, but N001_Lot82's pool lamp (od 42
+        // 0x0800 only, od 82 0) stands on the ground over its pool: pool
+        // objects (p & 0x800) are let through here (inferred; how the game
+        // lets them is not found).
+        if (!(pf & 0x200) && !(pf2 & 0x04) && !(pf & 0x800) && poolUnder(vm, w, t))
+            return fail(placementerror::NoFloor, "over a pool");
         // 5 a pool tile needs p & 0x800 (0x8F); pool objects need no floor there.
         const bool inPool = w.pool(t);
         // (Parts in the air, p & 0x200, or on the water, 0x4000, may hang over it: inferred.)

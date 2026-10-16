@@ -231,8 +231,11 @@ int cmdPlacementSweep(const std::vector<std::string>& args) {
             ++after[p1.ok ? 0 : p1.error];
             static std::map<int, int> shown;
             if (std::getenv("S2PKG_SWEEP_WHY") && !p0.ok && shown[p0.error]++ < 3)
-                std::printf("  %d \"%s\" od4 %04X od42 %04X at (%d,%d,%d) dir %d: 0x%02X %s\n", id, o.definition->fileName.c_str(), uint16_t(o.data[vm::objdata::AllowedHeightFlags]), uint16_t(o.data[vm::objdata::PlacementFlags]), t.x, t.y,
-                            t.level, o.data[vm::objdata::Direction], p0.error, p0.reason.c_str());
+                std::printf("  %s: %d \"%s\" od4 %04X od42 %04X od82 %04X at (%d,%d,%d) dir %d: 0x%02X %s\n",
+                            lotFile.filename().string().c_str(), id, o.definition->fileName.c_str(),
+                            uint16_t(o.data[vm::objdata::AllowedHeightFlags]), uint16_t(o.data[vm::objdata::PlacementFlags]),
+                            uint16_t(o.data[vm::objdata::PlacementFlags2]), t.x, t.y, t.level, o.data[vm::objdata::Direction],
+                            p0.error, p0.reason.c_str());
             // The staircases' CeilingTooHighForObject (0x30), which reads
             // the lot's support (the build editor's HasSupport).
             if (p1.ok && o.definition->objectType() == 10) {
