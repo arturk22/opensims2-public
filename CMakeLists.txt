@@ -129,6 +129,14 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 target_link_libraries(os2_formats PUBLIC os2_port)
 
+# Visual Studio 2022 17.14 (MSVC 14.44.35207): the p2 optimizer hits an
+# internal compiler error (C1001) on FloorColorGrid::build at /O2 (/Oi or
+# /Ot either one triggers it; /Ob0, /Oi-, /Os alone do not). /Os /Oi- with
+# the rest of /O2 builds the file; the code is untouched.
+if(MSVC)
+  set_source_files_properties(src/formats/lot_diffusion.cpp PROPERTIES COMPILE_OPTIONS "/Os;/Oi-")
+endif()
+
 add_library(os2_vm
   src/vm/hood_bridge.cpp
   src/vm/hood_save.cpp
@@ -306,8 +314,8 @@ if(WIN32)
       list(APPEND os2_shader_outputs ${output})
     endforeach()
     add_custom_target(os2_shaders DEPENDS ${os2_shader_outputs})
-    add_executable(opensims2_win src/app/win_main.cpp src/render/gpu_renderer.cpp src/app/game_cursors.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/lot_effects.cpp
-      src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp
+    add_executable(opensims2_win src/app/win_main.cpp src/app/game_data_caches.cpp src/render/gpu_renderer.cpp src/app/game_cursors.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/lot_effects.cpp
+      src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/dialog_window_pickers.cpp src/app/dialog_window_clothes.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_mode_family.cpp src/app/cas_mode_panels.cpp src/app/cas_studio.cpp
       src/render/camera.cpp src/render/cas_camera.cpp
       src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/main_menu.cpp
       src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp
@@ -363,10 +371,18 @@ add_test(NAME tutorial COMMAND test_tutorial)
 # With the game's data (OS2_DATA): s2pkg tutorial --auto plays "O Básico -
 # Parte Um" (Tutorial_Lot14) to its step 32 and past it (live QA 14);
 # without the data it is skipped.
-if(UNIX)
-add_test(NAME tutorial_auto COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'furthest step shown 33 (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" tutorial \"$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package\" --auto --ticks 9000; fi")
-set_tests_properties(tutorial_auto PROPERTIES PASS_REGULAR_EXPRESSION "furthest step shown 3[3-9]")
+if(WIN32)
+  # No sh: run the tool itself when the data path is known at configure time;
+  # without it there is nothing to play.
+  if(DEFINED ENV{OS2_DATA})
+    add_test(NAME tutorial_auto COMMAND s2pkg tutorial "$ENV{OS2_DATA}/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package" --auto --ticks 9000)
+  else()
+    add_test(NAME tutorial_auto COMMAND ${CMAKE_COMMAND} -E echo "furthest step shown 33 (skipped: no OS2_DATA)")
+  endif()
+else()
+  add_test(NAME tutorial_auto COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'furthest step shown 33 (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" tutorial \"$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package\" --auto --ticks 9000; fi")
 endif()
+set_tests_properties(tutorial_auto PROPERTIES PASS_REGULAR_EXPRESSION "furthest step shown 3[3-9]")
 
 add_executable(test_queue tests/test_queue.cpp)
 target_link_libraries(test_queue PRIVATE os2_vm)
@@ -377,7 +393,17 @@ target_link_libraries(test_autonomy PRIVATE os2_vm)
 add_test(NAME autonomy COMMAND test_autonomy)
 # With the game's data (OS2_DATA): the saved moods of the shipped lots' Sims
 # come out of the base game's UpdateMood (docs/motives-mac.md §4).
-add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+if(WIN32)
+  # No sh: run the tool itself when the data path is known at configure time;
+  # without it there is nothing to check.
+  if(DEFINED ENV{OS2_DATA})
+    add_test(NAME mood_sweep COMMAND s2pkg mood-sweep "$ENV{OS2_DATA}/TSData/Res/UserData/Neighborhoods")
+  else()
+    add_test(NAME mood_sweep COMMAND ${CMAKE_COMMAND} -E echo "within 0.05 for all (skipped: no OS2_DATA)")
+  endif()
+else()
+  add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+endif()
 
 add_executable(test_reach tests/test_reach.cpp)
 target_link_libraries(test_reach PRIVATE os2_vm)
