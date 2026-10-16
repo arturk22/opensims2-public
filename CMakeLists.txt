@@ -439,6 +439,9 @@ set_tests_properties(glides PROPERTIES PASS_REGULAR_EXPRESSION "glides: ok" TIME
 # With the game's data: Buy mode places, charges, holds another chair and turns by a drag (tests/buy_place.sh).
 add_test(NAME buy_place COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buy_place.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/buy_place)
 set_tests_properties(buy_place PROPERTIES PASS_REGULAR_EXPRESSION "buy place: ok" TIMEOUT 300)
+# With the game's data: the objects' wall shadow planes by wall mode, Buy mode moves and Build mode walls (tests/guob_walls.sh).
+add_test(NAME guob_walls COMMAND sh ${CMAKE_SOURCE_DIR}/tests/guob_walls.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/guob_walls)
+set_tests_properties(guob_walls PROPERTIES PASS_REGULAR_EXPRESSION "guob walls: ok" TIMEOUT 300)
 # With the game's data: Build mode's undo and redo give the lot back byte for byte (tests/build_undo.sh, round n20).
 add_test(NAME build_undo COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build_undo.sh $<TARGET_FILE:s2pkg> ${CMAKE_BINARY_DIR}/build_undo)
 set_tests_properties(build_undo PROPERTIES PASS_REGULAR_EXPRESSION "build undo: ok" TIMEOUT 600)
