@@ -156,10 +156,12 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         // --lamps <0-100>: test aid, lamps Change Light has not touched shine at that level.
         if (auto lamps = argument(@"--lamps"))
             gLighting->setDefaultLampLevel(std::stoi(*lamps));
-        // The environment motive's light (vm/environment.hpp): the floor light map under the Sim.
+        // The environment motive's light (vm/environment.hpp): the floor light map under the Sim,
+        // made before the first tick (the first 60-tick step comes on it: docs/motives-mac.md 8.5).
         gSimulation->machine().floorIllumination = [](int level, float x, float y) -> std::optional<float> {
             return gLighting ? gLighting->floorIllumination(level, x, y) : std::nullopt;
         };
+        gLighting->update(0.0);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: lighting: %s\n", e.what());
     }

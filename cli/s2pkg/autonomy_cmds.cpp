@@ -934,8 +934,8 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
                 header = true;
             }
             const std::string what = same ? "" : near ? " (close)" : byLight ? " (light?)" : " (DIFFERENT)";
-            std::printf("  %-28s room %3d key %6d at (%.1f, %.1f, %d): saved %8.3f (old %8.3f), room score %8.3f%s",
-                        (o.definition ? o.definition->fileName : std::string("?")).c_str(), room, key,
+            std::printf("  %-28s #%-4d room %3d key %6d at (%.1f, %.1f, %d): saved %8.3f (old %8.3f), room score %8.3f%s",
+                        (o.definition ? o.definition->fileName : std::string("?")).c_str(), id, room, key,
                         double(o.position.x), double(o.position.y), o.position.level, double(savedEnv), double(oldEnv),
                         double(score), what.c_str());
             if (byLight)
