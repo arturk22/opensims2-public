@@ -551,8 +551,59 @@ static void testColliders() {
     }
 }
 
+// cTSSequenceEffect (BV 0xf5ac84): items one after another, the one before
+// stopped (here hard: -hardStop), looping with -loop; an item of time < 0
+// waits for its effect to end by itself.
+static void testSequence() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    lib.particles[0].preRoll = 0;
+    Sequence seq;
+    seq.items = {{{1, 1}, "Smoke"}, {{1, 1}, ""}};
+    seq.flags = sflag::Loop | sflag::HardStop;
+    lib.sequences = {seq};
+    VisualEffect v;
+    Component c;
+    c.type = Block::Sequence;
+    c.index = 0;
+    v.components = {c};
+    lib.names["seq"] = uint32_t(lib.visuals.size());
+    lib.visuals.push_back(v);
+    auto count = [](EffectSystem& sys) {
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        return q.size();
+    };
+    EffectSystem sys(lib, 3);
+    const int h = sys.start("seq", {});
+    auto run = [&](float s) {
+        for (float t = 0; t < s; t += 1.0f / 30)
+            sys.update(1.0f / 30);
+    };
+    run(0.5f);
+    check(count(sys) > 0, "sequence: the first item plays");
+    run(1.0f);
+    check(count(sys) == 0 && sys.alive(h), "sequence: the pause (the item before stopped hard)");
+    run(1.0f);
+    check(count(sys) > 0, "sequence: -loop plays the first item again");
+    // An item of time -1 waits until its effect ends: a burst of one cycle.
+    lib.particles[0].rateCurveCycles = 1;
+    lib.particles[0].life = {0.5f, 0.5f};
+    lib.sequences[0].items = {{{-1, -1}, "Smoke"}, {{1, 1}, ""}};
+    lib.sequences[0].flags = 0;
+    EffectSystem once(lib, 3);
+    const int h2 = once.start("seq", {});
+    for (int i = 0; i < 30; ++i)
+        once.update(1.0f / 30);
+    check(once.alive(h2), "sequence: waiting for the burst to end");
+    for (int i = 0; i < 90; ++i)
+        once.update(1.0f / 30);
+    check(!once.alive(h2), "sequence: no -loop, over after its last item");
+}
+
 int main() {
     try {
+        testSequence();
         testParse();
         testLod();
         testColliders();

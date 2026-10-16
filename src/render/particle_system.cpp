@@ -195,20 +195,18 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
             }
             break;
         case Block::Sequence:
-            // Items play one after another, each for a time in its range
-            // (-1: until the effect stops).
+            // A cTSSequenceEffect: its items as child effects, one after another.
             if (c.index >= 0 && size_t(c.index) < lib_.sequences.size()) {
-                float t = delay;
-                for (const auto& item : lib_.sequences[size_t(c.index)].items) {
-                    auto child = lib_.indexOf(item.effect);
-                    const float d = item.activateTime[0] < 0 ? -1 : random(item.activateTime[0], item.activateTime[1]);
-                    if (child)
-                        addEffect(inst, *child, here, lc, ts, t, d < 0 ? stopAt : t + d, depth + 1, rigid);
-                    chain = nullptr; // (the vector may have moved)
-                    if (d < 0)
-                        break;
-                    t += d;
-                }
+                SequencePart sq;
+                sq.desc = &lib_.sequences[size_t(c.index)];
+                sq.local = here;
+                sq.lod = lc;
+                sq.lodOn = on;
+                sq.rigid = rigid;
+                sq.timeScale = ts;
+                sq.depth = depth + 1;
+                inst.sequences.push_back(std::move(sq));
+                chain = nullptr; // (the vector may have moved)
             }
             break;
         case Block::Decal:
@@ -238,10 +236,10 @@ int EffectSystem::start(std::string_view name, const Placement& where, bool hard
     inst.where = facing(inst);
     inst.id = nextId_++;
     addEffect(inst, *visual, Placement{}, Lod{}, 1, 0, -1, 0, false);
-    // cTSVisualEffect::Start starts every component with the same
-    // transition; a sequence's later items start soft when their time comes
-    // (inferred: cTSSequenceEffect not read). The first ApplyEffect runs at
-    // once (with the pre-roll of a hard start), so the effect shows from the start.
+    // cTSVisualEffect::Start (BV 0xeb102c) starts every component with the
+    // same transition (a sequence's items start soft unless -hardStart:
+    // stepSequence). The first ApplyEffect runs at once (with the pre-roll
+    // of a hard start), so the effect shows from the start.
     // (Only the parts in the LOD's range: UpdateVisualEffect creates the others when it comes to them.)
     for (auto& e : inst.emitters)
         if (e.startDelay <= 0 && e.lodOn) {
@@ -252,6 +250,11 @@ int EffectSystem::start(std::string_view name, const Placement& where, bool hard
         if (m.startDelay <= 0 && m.lodOn) {
             startChain(m, hard);
             stepChain(inst, m, 0, true);
+        }
+    for (auto& sq : inst.sequences)
+        if (sq.lodOn) {
+            startSequence(sq);
+            stepSequence(inst, sq, 0);
         }
     const int h = next_++;
     instances_.emplace(h, std::move(inst));
@@ -1352,6 +1355,132 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
         m.stopping = true;
 }
 
+// cTSSequenceEffect::Start (BV 0xf5a330): with items it runs from the start.
+void EffectSystem::startSequence(SequencePart& sq) {
+    sq.running = !sq.desc->items.empty();
+    sq.time = 0, sq.nextTime = 0, sq.index = 0, sq.waiting = false;
+}
+
+// cTSSequenceEffect::Stop (BV 0xf5a5f0): the item playing stops (hard: the
+// ones still finishing too).
+void EffectSystem::stopSequence(SequencePart& sq, bool hard) {
+    if (sq.current) {
+        sq.current->stopped = true;
+        if (!hard)
+            sq.dying.push_back(std::move(sq.current));
+        sq.current.reset();
+    }
+    if (hard)
+        sq.dying.clear();
+    sq.running = false;
+}
+
+// cTSSequenceEffect::ApplyEffect (BV 0xf5ac84): an item ends when the clock
+// passes its time, or, for an item of time < 0, when its effect is over by
+// itself; then the next one (past the last: the first again with -loop, else
+// the sequence stops); the one before is stopped (hard with -hardStop; a
+// soft one finishes its particles; with -overlap it is not stopped at all);
+// the new one's time is drawn in its range, an empty name is a pause, and
+// its effect starts (hard with -hardStart).
+void EffectSystem::stepSequence(Instance& inst, SequencePart& sq, float dt) {
+    dt *= sq.timeScale;
+    const Placement where = compose(inst.where, sq.local);
+    auto place = [&](Instance& c) {
+        c.where = where;
+        c.source = inst.source;
+        c.alpha = inst.alpha;
+        c.icon = inst.icon;
+        c.iconFrame = inst.iconFrame;
+        c.iconHidden = inst.iconHidden;
+        c.state = inst.state;
+    };
+    for (auto& c : sq.dying) {
+        place(*c);
+        stepInstance(*c, dt, false);
+    }
+    std::erase_if(sq.dying, [](const std::unique_ptr<Instance>& c) { return !busy(*c); });
+    if (sq.current) {
+        place(*sq.current);
+        if (inst.stopped)
+            sq.current->stopped = true;
+        stepInstance(*sq.current, dt, !inst.stopped);
+    }
+    if (inst.stopped && sq.running)
+        stopSequence(sq, inst.hardStop);
+    if (!sq.running)
+        return;
+    const uint32_t flags = sq.desc->flags;
+    for (int guard = 0; guard < 64; ++guard) {
+        sq.time += dt;
+        dt = 0;
+        bool done;
+        if (sq.waiting) {
+            done = !sq.current || !busy(*sq.current);
+            sq.nextTime = sq.time;
+        } else {
+            done = sq.nextTime <= sq.time;
+        }
+        if (!done)
+            return;
+        if (sq.nextTime > 0) {
+            if (++sq.index >= sq.desc->items.size()) {
+                if (!(flags & sflag::Loop)) {
+                    stopSequence(sq, (flags & sflag::HardStop) != 0);
+                    return;
+                }
+                sq.index = 0;
+            }
+            if (sq.current) {
+                if (flags & sflag::Overlap) {
+                    sq.dying.push_back(std::move(sq.current));
+                } else {
+                    sq.current->stopped = true;
+                    if (!(flags & sflag::HardStop))
+                        sq.dying.push_back(std::move(sq.current));
+                }
+                sq.current.reset();
+            }
+        }
+        const Sequence::Item& item = sq.desc->items[sq.index];
+        if (item.activateTime[0] < 0) {
+            sq.waiting = true;
+        } else {
+            sq.waiting = false;
+            sq.nextTime += rng_.range(item.activateTime);
+        }
+        if (auto child = item.effect.empty() ? std::nullopt : lib_.indexOf(item.effect)) {
+            auto c = std::make_unique<Instance>();
+            c->id = nextId_++;
+            place(*c);
+            Lod lod;
+            float e = 1, s = 1, a = 1;
+            lodScales(sq.lod, e, s, a);
+            lod.emit = e, lod.size = s, lod.alpha = a;
+            addEffect(*c, *child, Placement{}, lod, sq.timeScale, 0, -1, sq.depth, sq.rigid);
+            const bool hard = (flags & sflag::HardStart) != 0;
+            for (auto& em : c->emitters)
+                if (em.startDelay <= 0 && em.lodOn) {
+                    startEmitter(*c, em, hard);
+                    applyEmitter(*c, em, 0);
+                }
+            for (auto& m : c->metas)
+                if (m.startDelay <= 0 && m.lodOn) {
+                    startChain(m, hard);
+                    stepChain(*c, m, 0, true);
+                }
+            for (auto& s2 : c->sequences)
+                if (s2.lodOn) {
+                    startSequence(s2);
+                    stepSequence(*c, s2, 0);
+                }
+            sq.current = std::move(c);
+        }
+        // (An item of time 0 would start again at once: one a frame.)
+        if (!sq.waiting && sq.nextTime <= 0)
+            return;
+    }
+}
+
 // UpdateVisualEffect (BV 0xc04544) when the LOD changes: the components
 // out of the new range go (stopped soft: their particles finish; the game
 // stops them hard unless effectLODSoftChange, whose default was not found:
@@ -1387,6 +1516,16 @@ void EffectSystem::updateLod(Instance& inst) {
         }
     }
     float e, s, a;
+    for (auto& sq : inst.sequences) {
+        const bool on = lodScales(sq.lod, e, s, a);
+        if (on == sq.lodOn)
+            continue;
+        sq.lodOn = on;
+        if (!on && sq.running)
+            stopSequence(sq, false);
+        else if (on && !sq.running && !inst.stopped)
+            startSequence(sq);
+    }
     for (auto& d : inst.decals)
         d.lodOn = lodScales(d.lod, e, d.sizeScale, d.alphaScale);
     for (auto& m : inst.models)
@@ -1401,7 +1540,8 @@ void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
     for (auto& e : inst.emitters) {
         const float edt = dt * e.timeScale;
         e.time += edt;
-        // A sequence's later item starts when its time comes.
+        // (A part with a start delay starts when its time comes; none since
+        // sequences run as their own child effects.)
         if (!e.started && e.startDelay > 0 && e.time >= e.startDelay && !inst.stopped && e.lodOn &&
             (e.stopAt < 0 || e.time < e.stopAt))
             startEmitter(inst, e, false);
@@ -1415,9 +1555,17 @@ void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
         sp.age += dt;
     for (auto& m : inst.metas)
         stepChain(inst, m, dt, !inst.stopped);
+    for (auto& sq : inst.sequences)
+        stepSequence(inst, sq, dt);
 }
 
 bool EffectSystem::busy(const Instance& inst) {
+    for (const auto& sq : inst.sequences) {
+        if ((sq.current && busy(*sq.current)) || !sq.dying.empty())
+            return true;
+        if (!inst.stopped && (sq.running || !sq.lodOn))
+            return true;
+    }
     for (const auto& dp : inst.decals) {
         const float life = dp.desc->life;
         if (dp.age < dp.delay || (life > 0 ? dp.age - dp.delay < life : !inst.stopped))
@@ -1437,7 +1585,7 @@ bool EffectSystem::busy(const Instance& inst) {
             continue;
         if (e.started && !e.stopping)
             return true;
-        if (!e.started && e.startDelay > 0 && (e.stopAt < 0 || e.time < e.stopAt)) // a sequence item to come
+        if (!e.started && e.startDelay > 0 && (e.stopAt < 0 || e.time < e.stopAt)) // a part to come
             return true;
         if (!e.lodOn || e.lodOff) // out of the LOD's range: back when the camera comes to it
             return true;
@@ -1505,6 +1653,9 @@ void EffectSystem::collectModelsOf(int handle, const Instance& inst, std::vector
         for (const auto& p : mc.particles)
             if (p.child)
                 collectModelsOf(handle, *p.child, out);
+    for (const auto& sq : inst.sequences)
+        if (sq.current)
+            collectModelsOf(handle, *sq.current, out);
 }
 
 void EffectSystem::collectSoundsOf(int handle, const Instance& inst, std::vector<EffectSound>& out) const {
@@ -1520,6 +1671,9 @@ void EffectSystem::collectSoundsOf(int handle, const Instance& inst, std::vector
         for (const auto& p : mc.particles)
             if (p.child)
                 collectSoundsOf(handle, *p.child, out);
+    for (const auto& sq : inst.sequences)
+        if (sq.current)
+            collectSoundsOf(handle, *sq.current, out);
 }
 
 void EffectSystem::collectSounds(std::vector<EffectSound>& out) const {
@@ -1630,6 +1784,12 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
             if (p.child)
                 collectInstance(*p.child, group, out);
         for (const auto& c : mc.dying)
+            collectInstance(*c, group, out);
+    }
+    for (const auto& sq : inst.sequences) {
+        if (sq.current)
+            collectInstance(*sq.current, group, out);
+        for (const auto& c : sq.dying)
             collectInstance(*c, group, out);
     }
 }

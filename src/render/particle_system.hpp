@@ -221,7 +221,7 @@ private:
         float emitScale = 1, sizeScale = 1, alphaScale = 1, timeScale = 1;
         bool icon = false; // the texture is the instance's icon
         float time = 0;    // since the instance started (scaled)
-        float startDelay = 0, stopAt = -1; // sequences
+        float startDelay = 0, stopAt = -1; // a part's window (0 / -1: sequences run their items as child effects)
         int order = 0; // draw order of the rigid effects' components (component order)
         // Start / Stop / ApplyEffect state.
         bool started = false, stopping = false, preRollPending = false;
@@ -313,6 +313,22 @@ private:
         // and run until their particles are gone (FUN_00f64084, +0x1c0).
         std::vector<std::unique_ptr<Instance>> dying;
     };
+    // cTSSequenceEffect (vtable BV 0x286d538): its items one after another,
+    // each its own effect (a child instance placed with the sequence).
+    struct SequencePart {
+        const Sequence* desc = nullptr;
+        Placement local;  // relative to the instance
+        Lod lod;
+        bool lodOn = true;
+        bool rigid = false;
+        float timeScale = 1;
+        int depth = 0;
+        bool running = false, waiting = false;
+        float time = 0, nextTime = 0;
+        size_t index = 0;
+        std::unique_ptr<Instance> current;
+        std::vector<std::unique_ptr<Instance>> dying; // stopped soft (or overlapping) items still running
+    };
     struct Instance {
         Placement where;  // the effect's transform (its node's), turned to the camera if it faces it
         Placement placed; // as it was placed (start / move)
@@ -327,6 +343,7 @@ private:
         std::vector<ModelPart> models;
         std::vector<SoundPart> sounds;
         std::vector<MetaChain> metas;
+        std::vector<SequencePart> sequences;
         bool stopped = false;
         std::string icon;
         int iconFrame = -1;
@@ -345,6 +362,9 @@ private:
     void stepInstance(Instance& inst, float dt, bool emit);
     void stepChain(Instance& inst, MetaChain& m, float dt, bool emit);
     void retireMeta(const Instance& inst, MetaChain& m, MetaParticle& p);
+    void startSequence(SequencePart& sq);
+    void stopSequence(SequencePart& sq, bool hard);
+    void stepSequence(Instance& inst, SequencePart& sq, float dt);
     void startChain(MetaChain& m, bool hard);
     void generateMeta(Instance& inst, MetaChain& m, float dt);
     void spawnMeta(Instance& inst, MetaChain& m, float age);

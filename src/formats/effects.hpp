@@ -253,8 +253,16 @@ struct Sequence {
         std::string effect;
     };
     std::vector<Item> items;
-    uint32_t flags = 0;          // bit 0 loop
+    // The sequence command's options (its ReadDescription, BV FUN_01c0f0a0):
+    // bit 0 -loop, 1 -hardStart, 2 -hardStop / -noOverlap, 3 -noStop / -overlap.
+    uint32_t flags = 0;
 };
+namespace sflag {
+constexpr uint32_t Loop = 1u << 0;
+constexpr uint32_t HardStart = 1u << 1;
+constexpr uint32_t HardStop = 1u << 2;
+constexpr uint32_t Overlap = 1u << 3;
+} // namespace sflag
 
 struct Sound {
     uint32_t flags = 0, audioId = 0;
