@@ -67,12 +67,12 @@ static void testYesNoCancel() {
              strings({"Title", "$Me works $TimeLocal:0 to $TimeLocal:1 for $$Local:2, $Unknown:3 stays", "Take", "Again",
                       "Stop"}));
     // Local 0..2 := 9, 17, 45; then a three-choice dialog (title 1, message
-    // 2, buttons 3/4/5, choice into temp 4, private strings).
+    // 2, buttons 3/4/5, choice into temp 4, private strings: byte 8 0).
     auto assign = [](uint8_t local, uint8_t value) {
         return instr(0x02, {local, 0, value, 0, 0, 5, 0x19, 0x07});
     };
     auto b = tree({assign(0, 9), assign(1, 17), assign(2, 45),
-                   instr(0x24, {5, 0, 0, 3, 4, 2, 1, 0x40, 0x01, 0, 0, 0, 0, 2, 0})},
+                   instr(0x24, {5, 0, 0, 3, 4, 2, 1, 0x40, 0x00, 0, 0, 0, 0, 2, 0})},
                   3);
     b.instructions[0].onTrue = {Kind::Instruction, 1};
     b.instructions[1].onTrue = {Kind::Instruction, 2};
@@ -624,6 +624,34 @@ static void testTokens() {
     check(it->second.iconNeighbor == 7, "tokens: $Neighbor gives the icon");
 }
 
+// The file a dialog's strings come from (SetParams BV 0x1d2b20, TryDialog
+// BV 0xe2bb64): the code owner's private group, not the tree's; byte 8 bit
+// 0x01 its semi-global's. A semi-global tree (0x2000) the object calls, as
+// "Sub - Chance Card - Dialog" of JobDataGlobals on the job object.
+static void testDialogStringFile() {
+    constexpr uint32_t kSemi = 0x7F000002;
+    for (uint8_t flags : {uint8_t(0x00), uint8_t(0x01)}) {
+        CodeLibrary code;
+        VM vm{code};
+        code.add(kObjGroup, 0x12D, strings({"the object's card"}));
+        code.add(kSemi, 0x12D, strings({"the semi-global's offer"}));
+        code.add(kSemi, 0x2000, tree({instr(0x24, {0, 0, 0, 0, 0, 0, 0, 0x00, flags, 0, 0, 0, 0, 1, 0})}));
+        code.add(kObjGroup, 0x1000, tree({instr(0x2000, {})}));
+        Object& me = vm.createObject(kObjGroup);
+        me.semiGroup = kSemi;
+        Thread t = vm.start(me.id, 0x1000);
+        vm.run(t);
+        auto it = vm.dialogs.find(me.id);
+        check(it != vm.dialogs.end(), "string file: a dialog");
+        if (it == vm.dialogs.end())
+            continue;
+        if (flags == 0)
+            check(it->second.message == "the object's card", "string file: the code owner's group, not the tree's");
+        else
+            check(it->second.message == "the semi-global's offer", "string file: byte 8 bit 0, the semi-global");
+    }
+}
+
 // The language utility's MakeNumberString (BV 0x138448) and MakeTimeString
 // (BV 0x137700) as ParseUIString asks for them.
 static void testLanguageFormat() {
@@ -679,6 +707,7 @@ int main() {
     testTokens();
     testChanceCardTemps();
     testLanguageFormat();
+    testDialogStringFile();
     testNotification();
     testSpecialDialogs();
     testLightAndOutfit();

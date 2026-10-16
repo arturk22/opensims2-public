@@ -68,7 +68,7 @@ struct Fixture {
     explicit Fixture(int type) {
         code.add(kObjGroup, 0x12D, strings({"Title", "Pick a name for the baby", "Yes", "No", "Cancel"}));
         code.add(kObjGroup, 0x1000,
-                 tree({instr(0x24, {0, 0, 2, 3, 4, uint8_t(type), 1, 0x00, 0x01, 0, 0, 0, 0, 2, 0})}));
+                 tree({instr(0x24, {0, 0, 2, 3, 4, uint8_t(type), 1, 0x00, 0x00, 0, 0, 0, 0, 2, 0})}));
         me = &vm.createObject(kObjGroup);
         t = vm.start(me->id, 0x1000);
         vm.run(t);

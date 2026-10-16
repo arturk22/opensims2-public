@@ -150,23 +150,28 @@ std::string dayFlags(int bits) {
     return out;
 }
 
-const StringTable* scopeStrings(VM& vm, const Object& owner, uint32_t frameGroup, int scope, uint16_t table) {
-    CodeLibrary& code = vm.code();
+// The group a dialog's strings come from (cTSObjectDialog::SetParams BV
+// 0x1d2b20 and TryDialog BV 0xe2bb64; docs/primitives-mac.md "Dialog",
+// round n45): the frame's cTSBehavior (+0x20) is the one of the object whose
+// code runs (the code owner), and its private group (vtable 0x28) is the
+// default, not the group the tree is in: the career's chance cards ("Sub -
+// Chance Card - Dialog" of JobDataGlobals, byte 8 0x0E) run on the job
+// object read its STR# 0x12D, which has the cards, not the semi-global's,
+// which has the job offers. Byte 8 bit 0x01 takes the semi-global of the
+// owner's definition (vtable 0x118; none: no strings), else 0x40 the global
+// one; the semi-global's own trees that want its strings set bit 0 ("CT -
+// Offer Job").
+uint32_t scopeGroup(const Object& owner, int scope) {
     switch (scope) {
-    case 0: // private: the group the tree is in (a semi-global tree's own
-        // strings: "CT - Offer Job" of the job semi-global, run on a job
-        // object, finds its offer in the semi-global's STR# 0x12D, not in
-        // the job object's, which holds its chance cards), else the code owner's
-        if (const StringTable* t = code.strings(frameGroup, table))
-            return t;
-        return code.strings(owner.group, table);
-    case 1:
-        if (owner.semiGroup)
-            if (const StringTable* t = code.strings(owner.semiGroup, table))
-                return t;
-        return code.strings(frameGroup, table);
-    default: return code.strings(kGlobalGroup, table);
+    case 0: return owner.group;
+    case 1: return owner.semiGroup;
+    default: return kGlobalGroup;
     }
+}
+
+const StringTable* scopeStrings(VM& vm, const Object& owner, int scope, uint16_t table) {
+    const uint32_t group = scopeGroup(owner, scope);
+    return group ? vm.code().strings(group, table) : nullptr;
 }
 
 std::string stringAt(const StringTable* t, int oneBased) {
@@ -969,23 +974,23 @@ Exit dialog(Context& c) {
         vm.dialogs.erase(it); // left behind by a tree that was reset
     }
 
-    // TryDialog (BV 0xe2bb64): byte 8 bit 0x01 takes the STR# 0x12D from
-    // the tree's own resource (vtable 0x118), 0x40 the global one, neither
-    // from the tree's file (vtable 0x48 -> 0x3c): the group the tree is in,
-    // so a controller's private tree ("Age Transition" of Controller - Age,
-    // run on the Sim by Run Tree by Name) finds its own strings and not
-    // its OBJD's semi-global's (PhoneCallGlobals). 0x02 takes the message
+    // TryDialog (BV 0xe2bb64) / SetParams: the STR# 0x12D of the code
+    // owner's private group (a controller's private tree, "Age Transition"
+    // of Controller - Age, run by Run Tree by Name with the controller as
+    // the code owner, finds its own strings and not those of its OBJD's
+    // semi-global, PhoneCallGlobals), of its semi-global with byte 8 bit
+    // 0x01, of the global one with 0x40 (scopeGroup). 0x02 takes the message
     // from temp 0: + 1 for the text notifications (TryDialog reads it
     // itself), as it is for the dialogs cTSObjectDialog::SetParams (BV
     // 0x1d2b20) reads, which also take button 1 from temp 1 with 0x04,
     // button 2 from temp 2 with 0x08 and button 3 from temp 4 with 0x20 (the
     // career's chance cards: "Sub - Chance Card - Dialog", byte 8 0x0E).
     const uint8_t flags = o[8];
-    const int scope = flags & 0x40 ? 2 : 0;
+    const int scope = flags & 0x01 ? 1 : flags & 0x40 ? 2 : 0; // bit 0 before 0x40, as SetParams tests them
     const Object* owner = vm.object(c.frame.codeOwner);
     if (!owner)
         owner = &me;
-    const StringTable* strings = scopeStrings(vm, *owner, c.frame.group, scope, kDialogStrings);
+    const StringTable* strings = scopeStrings(vm, *owner, scope, kDialogStrings);
     const bool notification = type == dialogtype::TextNotification || type == dialogtype::ModifyTextNotification ||
                               type == dialogtype::TnsBirthday;
     const int messageIndex = flags & 0x02 ? c.thread.temps[0] + (notification ? 1 : 0)
@@ -1053,9 +1058,7 @@ Exit dialog(Context& c) {
         // (tutorial.hpp), shown or hidden at once.
         --vm.nextDialogId;
         // The group scopeStrings took the STR# 0x12D from.
-        const uint32_t group = scope == 2                                           ? kGlobalGroup
-                               : vm.code().strings(c.frame.group, kDialogStrings) ? c.frame.group
-                                                                                  : owner->group;
+        const uint32_t group = scopeGroup(*owner, scope);
         return Exit(tutorialNextDialog(c, type, group));
     }
     default: break;
