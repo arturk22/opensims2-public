@@ -541,9 +541,12 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     if (!planned && std::getenv("OS2_ROUTE_FAILS_NEAR")) // the portals locked for the walker
         for (size_t i = 0; i < planner.portals().size(); ++i)
             for (const bool forward : {true, false})
-                if (planner.portalLocked(i, forward))
-                    std::fprintf(stderr, "  portal %zu (%s) locked %s for %d\n", i,
-                                 planner.portals()[i].door >= 0 ? "door" : planner.portals()[i].object >= 0 ? "object" : "stair", forward ? "a->b" : "b->a", me.id);
+                if (planner.portalLocked(i, forward)) {
+                    const auto& p = planner.portals()[i];
+                    std::fprintf(stderr, "  portal %zu (%s) (%.2f, %.2f, %d) - (%.2f, %.2f, %d) locked %s for %d\n", i,
+                                 p.door >= 0 ? "door" : p.object >= 0 ? "object" : "stair", p.a[0], p.a[1], p.levelA, p.b[0],
+                                 p.b[1], p.levelB, forward ? "a->b" : "b->a", me.id);
+                }
     if (!planned && std::getenv("OS2_ROUTE_FAILS_MAP")) { // the planner's cells around the walker, half a tile each
         const int lv = me.position.level;
         std::fprintf(stderr, "  map of %d at (%.2f, %.2f, %d), goals on level %d:", me.id, me.position.x, me.position.y, lv, r.level);
@@ -559,6 +562,13 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
                                          o.definition ? o.definition->fileName.c_str() : "?", f[0], f[1], f[2], f[3], int(VM::blocksRouting(o)));
                             break;
                         }
+        for (const auto& [oid, o] : vm.eachObject()) // and the blocking objects within 2 tiles of the walker
+            if (!o.person && o.position.inWorld() && o.position.level == lv && o.data[objdata::ContainerId] == 0 &&
+                VM::blocksRouting(o) && std::fabs(o.position.x - me.position.x) < 2.5f &&
+                std::fabs(o.position.y - me.position.y) < 2.5f)
+                for (const auto& f : vm.routingFootprint(o))
+                    std::fprintf(stderr, "    near: %d %s footprint (%.2f,%.2f)-(%.2f,%.2f)\n", oid,
+                                 o.definition ? o.definition->fileName.c_str() : "?", f[0], f[1], f[2], f[3]);
         // OS2_ROUTE_FAILS_MAP=N: N half tiles each way up and down (12), N * 4 / 3 across.
         const int ry = std::max(12, std::atoi(std::getenv("OS2_ROUTE_FAILS_MAP"))), rx = ry * 4 / 3;
         for (int qy = int(me.position.y * 2) + ry; qy >= int(me.position.y * 2) - ry; --qy) {
