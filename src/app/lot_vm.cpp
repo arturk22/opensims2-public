@@ -545,7 +545,18 @@ std::optional<Vec3> LotSimulation::lookTarget(const vm::Object& o) const {
 
 double LotSimulation::speedScale() const {
     const auto& g = vm_->globals;
-    if (g[vm::global::Paused])
+    // Paused, by the player or by a dialog that blocks the game ("engage
+    // and block": the simulator waits for the answer), the scene clock the
+    // actors' animations run on stops with the VM's. The scene graph's
+    // animation timer (nTSSG::cCustomAnimTimer2: elapsed ticks a frame) runs
+    // on the simulator's ticks, and the locomotion's phases are timed on it
+    // (docs/anim-mac.md §8.1); inferred for the dialog's pause, as for the
+    // player's. Until round n30 a dialog stopped the VM only: a Sim's clip
+    // played on to its end while the dialog waited, and once it was
+    // answered the VM walked the Sim along the rest of the clip's way with
+    // its legs held in the last frame (tests/glides.sh: N001_Lot68, tick
+    // 4603, the turnAndGo of a teen leaving a social).
+    if (g[vm::global::Paused] || vm::dialogPausesGame(*vm_))
         return 0;
     switch (g[vm::global::Speed]) {
     case 3: return speedScales[1];
