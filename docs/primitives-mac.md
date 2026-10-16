@@ -4035,7 +4035,11 @@ lugares; nenhum outro código o grava, fora o `SetCurrentAction` e o
 - Na pessoa, `SetCurrentAction` (base `0xb83f54`, a gravação em `0xb841d8`)
   e `SetCurrentSubAction` (base `0xb849ec`, em `0xb84ac0`): com ação,
   **39 := 0** (vtable `0x640` da pessoa). O VM já fazia o do
-  `SetCurrentAction`; o da sub-ação não.
+  `SetCurrentAction`; o da sub-ação não. O `SetCurrentSubAction` grava
+  ainda: 157 := o objeto da sub-ação (0 sem ele); 73 := 0 (se ≠ 0, e marca
+  a pegada suja, vtable `0x2e8`), 71 := 0, 110 := 0 e 109 := vtable `0xec`
+  da sub-ação; `+0x558` := `+0x540`. O VM agora zera 39, 73, 71 e 110 na
+  sub-ação nova; o 109 continua o da ação (`syncQueueData`; `TODO.md`).
 
 Então, no jogo base, o 39 é 1 do começo da rota (antes mesmo da pré-rota)
 até o fim dela, inclusive na pré-rota, na pós-rota e no feedback de falha
