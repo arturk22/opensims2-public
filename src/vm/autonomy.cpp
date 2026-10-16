@@ -267,7 +267,9 @@ struct Candidate {
 };
 
 // Runs a candidate's check tree for autonomy (cEdithObjectTestSim set up
-// for autonomy: parameter 0 = 1), the ads in the thread for data owners
+// for autonomy: FBA_FindStaticInteractions, BV 0xad4130, and
+// FBA_RunCheckTree, BV 0xae24e4, call FUN_004c5cb0 with "autonomous" 1, and
+// TestInteraction passes it as parameter 0), the ads in the thread for data owners
 // 0x0C/0x1C/0x1D; true if it passes (or there is none). `ads` gets what the
 // tree left. The action strings it adds go to `made` (when given) whatever
 // the tree returns: each is a dynamic interaction with the ads of that

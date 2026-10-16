@@ -388,8 +388,52 @@ static void testVisitorEntries() {
     check(!availableToAge(*fx.vm.object(fx.sim), table, closed), "an NPC (person type 2) neither");
 }
 
+// Check trees get parameter 0 = 1 from autonomy and 0 from the pie menu
+// (the cEdithObjectTestSim's "autonomous" byte +0x10: FBA_FindStaticInteractions
+// and FBA_RunCheckTree set it to 1, TestInteraction passes it as parameter 0;
+// docs/primitives-mac.md §4f, round n32). The Fire's "Interaction -
+// Extinguish - TEST" refuses with parameter 0 = 1: the household never puts
+// a fire out on its own, only when the player says so.
+static void testAutonomousParameter() {
+    constexpr uint32_t kFireGroup = 0x7F000050;
+    Fixture fx;
+    fx.p().motives[7] = -60;
+    fx.p().motives[9] = 100;
+    fx.code.add(kFireGroup, 0x80, definition(4, 1, 0x0F00D003));
+    InteractionTable table;
+    table.version = 0x4E;
+    table.interactions = {adEntry(0x1001, 0x1002, 0, 7, 90, 0, 0)}; // a bigger hunger ad than the food's
+    fx.code.add(kFireGroup, 1, std::move(table));
+    fx.code.add(kFireGroup, 0x1001, tree({expr(SAttr, 0, Assign, Lit, 5, T, E)}));
+    // The guard: parameter 0 == 1 -> false, else true (Extinguish - TEST's node 2).
+    fx.code.add(kFireGroup, 0x1002, tree({expr(0x09, 0, 2, Lit, 1, F, T)}, 1));
+    Object& o = fx.vm.instantiate(kFireGroup, 0x80);
+    o.position = {6.5f, 5.5f, 1};
+    const ObjectId fire = o.id;
+    QueuedInteraction q;
+    q.object = fire;
+    q.guard = 0x1002;
+    check(checkInteraction(fx.vm, fx.sim, q, nullptr, false) == CheckResult::True,
+          "the pie menu's check tree gets parameter 0 = 0");
+    check(checkInteraction(fx.vm, fx.sim, q, nullptr, true) == CheckResult::False,
+          "an autonomous check gets parameter 0 = 1");
+    AutonomyDecision seen;
+    autonomyObserver() = [&](const AutonomyDecision& d) { seen = d; };
+    fx.code.add(kSimGroup, 0x1100, tree({instr(0x03, T, F, {0, 0, 0, 0})}));
+    Thread t = fx.vm.start(fx.sim, 0x1100);
+    fx.vm.run(t);
+    autonomyObserver() = nullptr;
+    bool fireConsidered = false;
+    for (const auto& c : seen.considered)
+        fireConsidered |= c.object == fire && c.checked && !c.passed;
+    check(t.result && fireConsidered && !seen.best.empty() && seen.best[0].object == fx.food &&
+              fx.p().data[persondata::FindBestActionObject] == fx.food,
+          "Find Best Interaction runs the check tree with parameter 0 = 1: the entry that refuses autonomy loses");
+}
+
 int main() {
     testVisitorEntries();
+    testAutonomousParameter();
     testCurves();
     testMotiveChangeAndDecay();
     testMood();

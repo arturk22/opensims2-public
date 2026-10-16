@@ -153,8 +153,10 @@ bool shouldInterrupt(const Object& sim);
 
 // Runs an entry's guard (check) tree for `sim` to completion, as a check
 // tree: in a thread of its own, with the Sim's temps, the object as stack
-// object and code owner, parameter 0 = 1 when autonomous (FreeSO). True if
-// there is no guard or it returns true; on failure `error` gets why.
+// object and code owner, parameter 0 = 1 when autonomous (the binary's
+// cEdithObjectTestSim byte +0x10, which TestInteraction, BV 0x4c6214, passes
+// as parameter 0; docs/primitives-mac.md §4f, round n32). True if there is
+// no guard or it returns true; on failure `error` gets why.
 enum class CheckResult { NoGuard, True, False, Failed, Running };
 // Pie menu entries the check tree adds (Add/Change the Action String) go to
 // `strings` if given.
