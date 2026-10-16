@@ -659,6 +659,31 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 } else {
                     ++it;
                 }
+            // Every person (household, visitors, NPCs) that catches fire or
+            // stops burning (object data 8 bit 0x200, set by the Fire's
+            // "Main - Set on Fire" trees), and every NPC that comes on the
+            // lot with its person data 155 "NPC type" (the firefighter is
+            // the one the smoke alarm's "Sub - Call Fire Fighter" schedules).
+            static std::map<vm::ObjectId, bool> burning;
+            static std::map<vm::ObjectId, uint32_t> npcSeen; // id -> GUID when seen
+            for (vm::ObjectId id : machine.people()) {
+                const vm::Object* s = machine.object(id);
+                if (!s || !s->person || !s->position.inWorld())
+                    continue;
+                const bool now = (s->data[vm::objdata::Flags] & 0x200) != 0;
+                if (auto [it, fresh] = burning.try_emplace(id, now); fresh ? now : it->second != now) {
+                    std::printf("  tick %6llu %s %s %s at (%.2f, %.2f, %d)\n", static_cast<unsigned long long>(machine.ticks),
+                                clockText(machine).c_str(), simName(*s).c_str(), now ? "catches fire" : "stops burning",
+                                s->position.x, s->position.y, s->position.level);
+                    it->second = now;
+                }
+                if (const int16_t npc = s->person->data[155]; npc != 0 && npcSeen[id] != s->guid()) {
+                    npcSeen[id] = s->guid();
+                    std::printf("  tick %6llu %s NPC %s (type %d) on the lot at (%.2f, %.2f, %d)\n",
+                                static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                                simName(*s).c_str(), npc, s->position.x, s->position.y, s->position.level);
+                }
+            }
         }
         // Bills the mailman brings (the "Bills" object, its attribute 0 the
         // amount: docs/primitives-mac.md §4e) and the lot and objects values
