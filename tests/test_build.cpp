@@ -943,7 +943,29 @@ static void testNoCharge() {
     check(!noCharge(vm) && !canAfford(vm, 1) && canAfford(vm, 0), "a family's lot charges (CanAfford: cost <= 0 or <= the funds)");
 }
 
+// Round n37 (docs/buy-build-mac.md §7.25): undo gives the whole price back
+// and redo charges it again without a funds test (AdjustFunds ->
+// cTSSimulator::Spend; RedoIt asks nothing): the funds may go below zero.
+static void testRedoFunds() {
+    Lot lot = flatLot();
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetDiv10000] = 0;
+    vm.globals[global::BudgetMod10000] = 1000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    auto r = ed.drawWalls(1, 2, 2, 6, 2);
+    check(r.ok && r.cost == 4 * kWallSectionPrice && funds(vm) == 1000 - 280, "four walls paid");
+    check(ed.undo() && funds(vm) == 1000, "undo gives the whole price back");
+    addFunds(vm, -900);
+    check(funds(vm) == 100 && !canAfford(vm, 280), "the funds spent elsewhere");
+    check(ed.redo() && funds(vm) == 100 - 280, "redo is not refused for money: the funds go below zero");
+    check(lot.walls.size() == 4, "the walls are back");
+}
+
 int main() {
+    testRedoFunds();
     testNoCharge();
     testStairs();
     testAutoRoofRects();

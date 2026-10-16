@@ -844,8 +844,9 @@ bool BuyMode::redoOwn() {
     redo_.pop_back();
     switch (op.kind) {
     case Op::Kind::Created:
-        if (!vm::canAfford(vm_, op.cost))
-            return redo_.push_back(op), false;
+        // RedoIt charges again (AdjustFunds -> cTSSimulator::Spend) without
+        // a funds test: the funds may go below zero (docs/buy-build-mac.md
+        // §7.25).
         vm::applyPlacement(vm_, op.id, op.placement);
         vm::chargeFunds(vm_, -op.cost);
         break;
@@ -861,8 +862,6 @@ bool BuyMode::redoOwn() {
         break;
     }
     case Op::Kind::Design:
-        if (!vm::canAfford(vm_, op.cost))
-            return redo_.push_back(op), false;
         DesignTool::apply(vm_, view_, op.id, op.after);
         vm::chargeFunds(vm_, -op.cost);
         break;

@@ -654,9 +654,11 @@ bool BuildEditor::undo() {
 bool BuildEditor::redo() {
     if (redo_.empty())
         return false;
+    // RedoIt (Mac BV 0x9b519c) charges again through AdjustFunds
+    // (cTSSimulator::Spend) without asking the funds, nor does the manager's
+    // RedoLastCommand: a redo is never refused for money and the funds may go
+    // below zero (docs/buy-build-mac.md §7.25).
     Op op = std::move(redo_.back());
-    if (!canAfford(vm_, op.cost))
-        return false;
     redo_.pop_back();
     restore(op.after);
     for (const Sold& x : op.sold)

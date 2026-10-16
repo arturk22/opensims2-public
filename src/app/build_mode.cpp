@@ -523,7 +523,8 @@ bool BuildMode::redoOwn() {
             editorDepth_ = editor_->undoDepth();
             break;
         case Entry::Kind::Object:
-            if (vm_.object(e.id) && vm::canAfford(vm_, e.cost)) {
+            // No funds test: RedoIt never asks (docs/buy-build-mac.md §7.25).
+            if (vm_.object(e.id)) {
                 vm::applyPlacement(vm_, e.id, e.placement);
                 vm::chargeFunds(vm_, -e.cost);
                 if (e.cobject)
@@ -533,11 +534,9 @@ bool BuildMode::redoOwn() {
             }
             break;
         case Entry::Kind::Design:
-            if (vm::canAfford(vm_, e.cost)) {
-                DesignTool::apply(vm_, view_, e.id, e.after);
-                vm::chargeFunds(vm_, -e.cost);
-                ok = true;
-            }
+            DesignTool::apply(vm_, view_, e.id, e.after);
+            vm::chargeFunds(vm_, -e.cost);
+            ok = true;
             break;
         }
         if (ok)
