@@ -146,6 +146,19 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     machine.autoDialogAnswer = gDialogAnswer;
     machine.dialogTimeouts = !gNoDialogTimeout;
     machine.autonomySkipsFailures = gSkipFailures;
+    // S2PKG_LIGHT=day[:night]: a test aid for the environment's light term,
+    // which headless runs leave out (no light maps, docs/motives-mac.md
+    // §8.6): every Sim stands in that illuminance (the day one from 7:00 to
+    // 18:59, as Lighting.txt's states; the night one otherwise), e.g. 0.55
+    // for the full -20 of a dark room.
+    if (const char* light = std::getenv("S2PKG_LIGHT")) {
+        const float day = std::strtof(light, nullptr);
+        const char* colon = std::strchr(light, ':');
+        const float night = colon ? std::strtof(colon + 1, nullptr) : day;
+        machine.floorIllumination = [&machine, day, night](int, float, float) {
+            return std::optional<float>(machine.clock.hour >= 7 && machine.clock.hour < 19 ? day : night);
+        };
+    }
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
