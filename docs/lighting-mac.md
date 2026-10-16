@@ -686,8 +686,8 @@ de cinco estilos (`GetShadowStyleFromEdithMode` `0x65480c`,
 |---|---|---|---|
 | 0 | — | nenhuma | — |
 | 1 | **Sims** (tipo de objeto 2) | silhueta renderizada numa textura e projetada no chão | `simShadows` (Shadows `$High`) |
-| 2 | objetos | os planos de sombra do modelo (`groundshadow`, `*wallshadow`: "GUOB", `InitGUOBs` `0x6747c8`) | `guob` |
-| 3 | objetos de fora | a sombra do sol no height map (§5.3) | `heightMapShadows` |
+| 2 | objetos | sombra projetada de objeto (só com os bits 1 e 3; o 3 nunca liga: não aparece) | `objectShadows` + bit 3 |
+| 3 | objetos | os planos de sombra do modelo (`groundshadow`, `*wallshadow`: "GUOB", `InitGUOBs` `0x6747c8`; §12) | `guob` (bit 2) |
 | 4 | objetos com `+0x102 == 3` | como o 1, grupo "Props" | `objectShadows` |
 
 **Quem escolhe o estilo** (rodada 16, binário): `GetShadowStyleFromEdithMode`
@@ -699,10 +699,12 @@ tem (vtable `0x88`/`+0x7a`), senão 0; os outros, com a flag `+0x79`: 3 se
 põe 1). `GetDesiredShadowStyle` (`0x65492c`): `+0x102 == 1` → nenhuma; um 2
 sem GUOB → 3, com GUOB e `+0x81` (fora) → 4 só com uma flag global
 (`PTR_Release`, desligada). `UpdateCurrentStyle` (`0x678710`) liga cada
-estilo pela opção: 1 → bit 0, 4 → bit 1 (`objectShadows`), 3 → bit 2
-(`heightMapShadows`), 2 → bits 1 e 3; um 3 dentro de casa vira 0. O 3, no
-`UpdateGUOBs` (`0x678488`), são as **GUOB** do objeto (o chão sempre, as de
-parede onde há parede), não o height map do lote. O estilo 4 é o 1 com o
+estilo pela opção: 1 → bit 0 (`simShadows`), 4 → bit 1 (`objectShadows`),
+3 → bit 2 (**`guob`**, não `heightMapShadows`: rodada n40, §12.1), 2 → bits 1
+e 3, e um dono 2 sem os bits 1 e 3 vira 3. O 3, no `UpdateGUOBs`
+(`0x678488`), são as **GUOB** do objeto (o chão sempre, as de parede onde há
+parede; §12.2), não o height map do lote. (A coluna "opção" da tabela e o
+"+0x81 (fora)" eram leituras erradas, corrigidas na n40.) O estilo 4 é o 1 com o
 grupo de render "Props" em vez de "Sims" (`CreateShadow` `0x677390`).
 Nos lotes `N001_Lot11/36/68/82`, `N002_Lot10/22`, `N003_Lot192` nenhum
 objeto tem o dado 68 = 3 (só 0, e 1 nas alianças e no PlumbBob): o estilo
@@ -739,7 +741,7 @@ bairro). O **estilo 1** (`cShadow::CreateShadow` `0x677390`,
   dstFactor(zero)`, sem escrita de z); o quad mostra só o miolo
   `(resolução − 2·blur)/resolução` da textura (a margem do borrão).
 - **Fora**: o viewer olha ao longo de `−(direção de sombra do gerenciador
-  de luz)` (vtable `0x78` do `cLightingManager`; inferido: a do `sun`),
+  de luz)` (vtable `0x78` do `cLightingManager`: a do `sun` do estado, conferido na n40, §12.4),
   com a caixa ±W, alturas H0..H1 projetadas; a silhueta vai para
   sobreposições no **piso e no terreno** (`+0x48`/`+0x4c`,
   `OverlayShadowMaterial`: a sombra inteira na cor de sombra onde o alfa
@@ -753,8 +755,8 @@ bairro). O **estilo 1** (`cShadow::CreateShadow` `0x677390`,
   `max(0, 1 − s·hmSunLightTransitionZone)` (`0x7047e4`) dividida, canal a
   canal e com as duas presas em [0, 1], pela mesma luz sem sombra (`+0x28c`;
   zona 0 → branco). De dia dá (0,80, 0,78, 0,75), à noite ≈ (0,86, 0,86,
-  0,83): sombras claras. Inferido: que é essa a cor que a vtable `0x7c`
-  entrega às sobreposições.
+  0,83): sombras claras. É essa a cor que a vtable `0x7c` entrega às
+  sobreposições (conferido na n40, §12.4).
 
 **No código** (`Renderer::ShadowCaster`, `LotLighting::update`, e no
 estúdio do CAS `CasMode::update`, uma sala): cada Sim
@@ -766,11 +768,11 @@ silhueta borrada (dentro) ou pela cor de sombra onde ela cobre (fora);
 dentro, como o quad do jogo cobre o que não passa da altura dos pés, as
 faces de cima dos objetos opacos até 0,03 acima dos pés (tapetes, o
 pódio do CAS) também (`docs/screenshots/r15-cas-sombra-sim.jpg`).
-A cor de fora como acima (`LotLighting::update`). Inferido: a direção de
-fora = a do `sun` do estado; o borrão como uma
+A cor e a direção de fora como acima (`LotLighting::update`; conferidas na
+n40). Inferido: o borrão como uma
 caixa de 5 × 5 amostras bilineares; projetar nas superfícies em vez de
 num quad plano (o quad do jogo flutua sobre um chão mais baixo, ex. o Sim
-na escada); os estilos 3 e 4 nos lotes ainda faltam. Captura:
+na escada); o estilo 4 nos lotes falta (o 3 são as GUOB, §12). Captura:
 `docs/screenshots/r15-fov-sombras-sims.jpg`.
 
 ## 10. Rodada n16 (luz e light maps): o que foi lido
@@ -1311,3 +1313,131 @@ texels por tile; e os materiais que leem o `floorLightMap_0` (pisos,
 terreno, sobreposições) não dão `textureFilterHint` ao estágio do light map
 (o filtro padrão, bilinear, como o app amostra). Não há outra resolução nem
 outro filtro a seguir.
+
+## 12. Rodada n40 (sombras): o que foi lido
+
+Ghidra MCP, só leitura, nos dois programas: o BV (`sims2_bv.ppc`, com os
+nomes do `symxfer`) e o **base 1.0** (`sims2_base_1.0.ppc`, sem nomes,
+achado pelas strings `GUOBOff`/`VisGUOBMaterial`/`groundshadow` e pelos
+mesmos campos). Onde os dois diferem vale o base, que é o jogo de 2004 (como
+nas outras rodadas: "0x58 no base (= o opensims2)"); o BV fica anotado.
+
+### 12.1 As opções e os estilos, corrigidos
+
+As opções de sombra são um bitset no `+0x2c` das `ShadowProperties` do
+`cShadowManager` (o objeto em `+0x40` do gerente; padrões no construtor BV
+`0x6f3d30`: `shadowSize` 1, distância 10, borrão 3/2, resolução 128/128,
+W0/H0/W1/H1 0,7/−1/0,7/2, e os bits 4 e 6 ligados, 5 desligado). O
+tratamento das variáveis de configuração do `cTSSGSystem` (BV `0x7c0900`,
+o `SetFlag` é a vtable `0x18` do gerente em `+0xac`) dá: **bit 0 =
+`simShadows`** (`0x8BE5F77B`), **bit 1 = `objectShadows`** (`0x8BE5F77C`),
+**bit 2 = `guob`** (`0x0BE33684`). Os bits 3, 7 (`VisGUOBMaterial`) e 9
+("todas as GUOB") nenhum arquivo liga: são de depuração. O §9 trocava os
+estilos 2 e 3; o certo (`UpdateCurrentStyle`, BV `0x678710`, base
+`0xa8e4ac`, iguais):
+
+| dono (`+0x18`) | estilo atual (`+0x1c`) |
+|---|---|
+| 1 (Sims) | 1 com o bit 0, senão 0 |
+| 2 (objetos comuns) | 2 com os bits 1 **e** 3; senão 3 com o bit 2 (`guob`); senão 0 |
+| 3 | 3 com o bit 2, senão 0 |
+| 4 (dado 68 = 3) | 4 com o bit 1, senão 0 |
+
+Com os bits 2 e 9, 3. O **estilo 3 são as GUOB** (`UpdateGUOBs` só liga
+alguma com o estilo atual 3); o 2 é a sombra projetada de objeto, que com o
+bit 3 sempre desligado não aparece no jogo base. Ou seja, com `Shadows`
+Médio ou Alto todo objeto tem as GUOB, com Baixo nenhum (como o app já
+fazia). Um estilo 3 ainda vira 0 por uma função do objeto (base: vtable
+`0x1a0` do objeto; BV: o byte `+0x81` com o tipo fora de 8–12 e sem as
+vtables `0x2e4`/`0x238`, ligado ao sistema de sombras estáticas que só o BV
+tem): **não lido no base**; o app continua dando GUOB a todo objeto.
+
+### 12.2 `UpdateGUOBs` (BV `0x678488`, base `0xa8e138`)
+
+Seis subconjuntos, nesta ordem (`kGUOBSubsetNames`, BV `0x277a8c0`, base
+`0x15d6210`; o `roof-fence-water-mac.md` §4 tinha a ordem errada): 0
+`groundshadow`, 1 `wallshadow`, 2 `northwallshadow`, 3 `southwallshadow`, 4
+`eastwallshadow`, 5 `westwallshadow`. `InitGUOBs` (BV `0x6747c8`, base
+`0xa8df88`) guarda o material de cada um (`FindGUOBMaterialFromSubset`, BV
+`0x673ea4`: o material ligado ao subconjunto; um `GUOBOff` salvo, comparado
+sem caixa, conta como **sem material**, e o subconjunto deixa de ser GUOB:
+nunca mais liga) e desliga os de 2 a 5. `EnableGUOB(i, liga, vis)` (BV
+`0x67417c`, base `0xa8e6d8`) põe no subconjunto o material guardado, o
+`VisGUOBMaterial` (bit 7) ou o `GUOBOff`.
+
+`UpdateGUOBs`: nada sem objeto, sem `InitGUOBs`, com dono 1 (Sim) ou com o
+bit 0 do dado de objeto 34 (`0x22`); o base ainda sai com a vtable `0x1f4`
+do objeto do jogo (não lida). Com o estilo atual 3 e a sombra visível
+(`+0xc`, `SetIsVisible`): o chão (0) liga; o `wallshadow` (1) liga se o
+**modo de parede** não é 0 (`cITSMainToolbar`, vtable `0x6c` da interface
+`+0x1c` = o `+0x60` do BV / `+0x5c` do base, 0 baixas, 1 cortadas, 2
+erguidas, 3 erguidas com telhado); os de 2 a 5 pela presença de parede
+abaixo. Com o bit 9 todos ligam. Fora disso (outro estilo, invisível) todos
+desligam.
+
+**Presença de parede, base 1.0** (`FUN_00a8e9ac`, as quatro de uma vez):
+todas falsas se o andar do objeto não está visível (`cSceneManager`, vtable
+`0x50`: inferido "andar mostrado", pelo vizinho `SetLevelVisible`) ou se o
+modo de parede **não é 2** (o 3, com telhado, desliga). Senão:
+
+1. a caixa do objeto inteiro no mundo (`GrowGlobalBBox(caixa, −1, objeto)`,
+   todas as formas, os planos de sombra inclusive);
+2. o retângulo de tiles que a cobre: `x0 = floor(xmin)`, `x1 = ceil(xmax)`,
+   `y0`, `y1` igual (feito com o truque do `+12582912` e a correção do
+   inteiro exato);
+3. quatro lados, cada um verdadeiro se **todo** segmento de um tile dele tem
+   parede (`WorldDB` → gerente de partições → `WallExists`, o grafo de
+   paredes e cercas, BV `0xc2ef54`): A ao longo de `y = y0`, B de `y = y1`,
+   C de `x = x0`, D de `x = x1` (o laço para no primeiro que falta; lado sem
+   segmento conta como verdadeiro);
+4. pela direção do objeto (dado 1), `r = (−dir / 2) & 3` (divisão
+   truncada): r 0 → norte C, sul D, leste B, oeste A; r 1 → norte A, sul B,
+   leste C, oeste D; r 2 → norte D, sul C, leste A, oeste B; r 3 → norte B,
+   sul A, leste D, oeste C. Isto é: os nomes são lados do modelo (norte =
+   +y, leste = +x do modelo) girados pela direção (direção 0 gira o modelo
+   90°: o +y do modelo cai em −x do mundo, o lado C).
+
+**No BV** (`FindObjectWallPresence` `0x675d20`, uma por subconjunto): o
+modo 2 **ou 3**; a caixa é a do **próprio subconjunto**
+(`GrowGlobalBBoxForSubset` `0x6751a0`) arredondada ao inteiro mais próximo
+(`GetBBoxIntExtents` `0x674d3c`: o plano curto demais estica um tile para o
+lado de que está mais perto); um só lado (x constante: segmentos em y; senão
+em x no `y` mínimo); sem a direção.
+
+### 12.3 Quem recalcula (`cShadow::OnMove`, `cShadowManager`)
+
+- **O objeto mexeu**: `cObject::OnObjectMoved` (BV `0x664854`) e
+  `ForceToEdithLocation` (BV `0x6678f8`, o objeto indo para onde a VM o pôs)
+  chamam o `OnMove` da sombra (vtable `0x34`, BV `0x6789a0`): estilo,
+  andar, visibilidade, dentro/fora, posição e `UpdateGUOBs` (vtable `0x3c`).
+  Vale para o objeto na mão do modo Comprar (ele anda pela VM): a sombra de
+  parede liga e desliga ao vivo.
+- **A sombra ficou visível** (`SetIsVisible`, BV `0x674378`): `UpdateGUOBs`.
+- **Paredes** (`cShadowManager::DoMessage`, BV `0x6f0d40`, base `0xa90f8c`;
+  mensagens `0x0B4CF313`/`0x2B4CF319`, parede posta e tirada):
+  `UpdateShadowsAdjacentToWall` (BV `0x6f0a10`, base `0xa92f10`) pega os dois
+  tiles dos lados da parede (`OppositeWallLocator`), e cada objeto em cada um
+  (`WorldDB` `NumObjectsOnTile`/`ObjectOnTile`) roda `UpdateGUOBs`.
+- **Modo de parede e andar** (`0xCB46C21D`, que `SetWallMode` e
+  `SetCurrentLevel` postam com o andar atual): o andar entra num conjunto; o
+  `OncePerFrameUpdate` do gerente (BV `0x6f2840`) roda
+  `UpdateLevelShadows(andar)` (BV `0x6f0c64`): toda parede com uma ponta
+  naquele andar faz o mesmo que acima.
+- **Salas de luz** (`0x2B4D18FB`): os objetos dos tiles da sala (definição
+  0) rodam o `OnMove` inteiro.
+- Salvar: `OnPreSave` (BV `0x674aec`, base `0xa8e3a8`) liga todas e
+  `OnPostSave` volta: **o lote salvo tem todas as GUOB ligadas** (as
+  `GUOBOff` salvas são de outro caminho). Por isso o estado salvo não diz o
+  que o jogo mostra.
+
+### 12.4 A sombra dos Sims, conferida
+
+O `OncePerFrameUpdate` do `cShadow` (BV `0x678ba0`) pega a direção do
+gerente de luz (vtable `0x78`, BV `0x6ff23c`: o **`+0x20` do estado de luz
+atual normalizado**, que é a direção da luz 0, o `sun` (§1)) e a cor da
+vtable `0x7c` (BV `0x6fdeac`: o `+0x28c..+0x294` que o `0x705f70` grava, a
+cor de sombra de fora do §9) e as passa às sobreposições `+0x48`/`+0x4c`
+(vtable `0x14`). Os dois "inferido" do §9 (direção do `sun`, cor da `0x7c`)
+ficam confirmados. O estado vem do `FUN_01807a48` (o elemento `+0xcc` da
+lista de estados do gerente, ou o `+0x298`); qual dos dois numa transição
+dia/noite não foi lido.

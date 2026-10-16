@@ -607,11 +607,12 @@ cáusticas. Antes e depois: `docs/screenshots/n06-piscina-antes-depois.jpg`.
 
 As sombras dos objetos são os planos GUOB do próprio modelo (seis
 subconjuntos, tabela `0x277a8c0`: `groundshadow`, `wallshadow`,
-`northwallshadow`, `eastwallshadow`, `westwallshadow`,
-`southwallshadow`). `cShadow::UpdateGUOBs` (BV `0x678488`) liga, no
-estilo 3: o do chão sempre, o `wallshadow` conforme uma consulta da vista
-(vtable `0x6c`), e os de parede onde há parede daquele lado
-(`FindObjectWallPresence` `0x675d20`); com o bit 9 das opções todos;
+`northwallshadow`, `southwallshadow`, `eastwallshadow`,
+`westwallshadow`; ordem corrigida na rodada n40). `cShadow::UpdateGUOBs`
+(BV `0x678488`) liga, no estilo 3: o do chão sempre, o `wallshadow` com o
+modo de parede ≠ 0 (vtable `0x6c` da barra), e os de parede onde há parede
+daquele lado (`FindObjectWallPresence` `0x675d20`; no base 1.0 outra conta,
+`docs/lighting-mac.md` §12.2); com o bit 9 das opções todos;
 `EnableGUOB` (`0x67417c`) troca o material do subconjunto pelo do objeto,
 por `VisGUOBMaterial` (bit 7, depuração) ou por `GUOBOff`. O
 `InitGUOBs` (`0x6747c8`) guarda o material original de cada subconjunto
@@ -624,6 +625,9 @@ aparecem nos lotes (`N001_Lot11`: diferença de até 136/255 por pixel com e
 sem eles; são sombras claras na grama). Corrigido: as pinturas do terreno
 iam na mesma camada (7) que os planos e, ordenadas pela distância,
 podiam ser desenhadas por cima deles; agora vão com o terreno (camada 6),
-como no jogo, onde são passadas do shader do terreno. **Inferido / falta**:
-recalcular quais GUOB de parede ligam quando um objeto muda de lugar (hoje
-vale o estado salvo) e a condição do `wallshadow` e do `this+0xc`.
+como no jogo, onde são passadas do shader do terreno. ~~**Inferido /
+falta**: recalcular quais GUOB de parede ligam quando um objeto muda de lugar
+(hoje vale o estado salvo) e a condição do `wallshadow` e do `this+0xc`.~~
+Rodada n40: lido inteiro (`docs/lighting-mac.md` §12: o `wallshadow` é o
+modo de parede ≠ 0, o `+0xc` é a sombra visível; o lote salvo tem todas
+ligadas, o `OnPreSave` as liga antes de gravar).
