@@ -691,11 +691,13 @@ struct Object {
         uint32_t plans = 0, checkPlans = 0;
         int checkRoom = -1, checkLevel = -999;
         float checkWalked = 0;
-        // Blocked, the goal check has run and said go on (DoBlocked ->
-        // DoBlockedWaitingForGoalCheckTree -> DoBlockedGoalStillAvailable):
-        // the next step of the walk is the try counter with `blocker`, not
-        // a new step test.
-        bool blockCheckDone = false;
+        // Blocked by `blocker` (DoBlocked, routing_walk.cpp): kBlockChecked,
+        // the goal check has run and said go on (DoBlockedWaitingForGoalCheckTree
+        // -> DoBlockedGoalStillAvailable), so the next step of the walk is the
+        // try counter, not a new step test; kBlockPending, DoBlocked waits for
+        // the next tick (this tick's goal check was spent). Saved as a byte.
+        static constexpr uint8_t kBlockChecked = 1, kBlockPending = 2;
+        uint8_t blockCheckDone = 0;
         struct Climb {
             std::string animation; // empty between phases
             uint32_t serial = 0;   // bumped as each phase starts
@@ -802,6 +804,12 @@ struct Object {
     // walk's goal check. When the inner route ends the outer one is current
     // again (routing_walk.cpp). Not saved (a save resumes the inner one).
     std::vector<Route> outerRoutes;
+    // The routing aggregate's goal checks this tick (cTSRoutingObjectAggregate
+    // +0x3c, zeroed by its OnPreSimulatorTick, BV 0x56ee34; DoWalking and
+    // DoBlocked count it): one goal check a tick (routing_walk.cpp), counted
+    // per turn of the walker's thread (Thread::turn). Not saved (a tick's own).
+    uint64_t goalCheckTurn = ~uint64_t(0);
+    int goalChecks = 0;
     // The walker's "Routing - Eye Attractor" (routing_walk.cpp): the object the
     // along route tree's parameter 5 names, kept on the way ahead.
     ObjectId eyeAttractor = 0;
@@ -955,6 +963,10 @@ struct Thread {
     bool result = false;   // return value of the root tree once Finished
     std::string error;     // once Failed: the message and the stack at the failure
     size_t instructions = 0; // total executed
+    // Which VM::run call runs it now (VM::treeRuns as it started): one turn
+    // of its object a tick (the routing aggregate's goal checks a tick,
+    // routing_walk.cpp countGoalCheck). Not saved.
+    uint64_t turn = 0;
     // Set when a queued interaction's action tree returned to the Idle for
     // Input that ran it (1, or 2 when it said "no continuation"), which runs
     // again at once (queue.cpp).

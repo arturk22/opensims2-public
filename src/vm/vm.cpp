@@ -1397,6 +1397,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
 
 void VM::run(Thread& t, size_t maxInstructions) {
     ++treeRuns;
+    t.turn = treeRuns;
     for (size_t budget = maxInstructions; t.status == Thread::Status::Running;) {
         if (budget-- == 0) {
             fail(t, "instruction budget exhausted (" + std::to_string(maxInstructions) + ")");

@@ -1033,6 +1033,12 @@ static void testRouteInGoalCheck() {
     sim.position = {1.5f, 2.5f, 1};
     code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
     Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    vm.run(t);
+    // One goal check a tick (a turn of the thread; docs/routing-mac.md §9.4):
+    // the inner route's first one, due in the same turn as the outer's that
+    // started it, is not run (DoWalking stands that turn).
+    check(t.status == Thread::Status::Running && vm.globals[10] == 1 && vm.globals[11] == 0,
+          "one goal check a tick: the inner route's first check, in the outer's turn, is not run");
     for (int i = 0; i < 3000 && t.status == Thread::Status::Running; ++i)
         vm.run(t);
     check(t.status == Thread::Status::Finished && !t.result && vm.globals[11] == 1 && vm.globals[10] >= 2 &&

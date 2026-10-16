@@ -112,6 +112,22 @@ void callRouteTree(Context& c, ObjectId owner, uint16_t tree, ObjectId stackObje
     f.routeCallback = true;
 }
 
+// One goal check a tick for a router (docs/routing-mac.md §9.4): its
+// aggregate counts them (cTSRoutingObjectAggregate +0x3c, zeroed by its
+// OnPreSimulatorTick, BV 0x56ee34) where DoWalking (BV 0x576c40) and DoBlocked
+// (BV 0x5762a4) would trigger one, and past the first in a tick (with the
+// route manager's byte +0x21 and the router's IsPreSimulatorTickEnabled,
+// both 1 in the game) neither runs it: DoWalking stands that tick (the check
+// noted by DoAlongRouteCheckTest is lost), DoBlocked waits for the next
+// tick. A tick here is a turn of the walker's thread (VM::run, once a VM
+// tick; the tests run a thread turn by turn without ticking). False past the
+// first.
+bool countGoalCheck(const Context& c, Object& me) {
+    if (me.goalCheckTurn != c.thread.turn)
+        me.goalCheckTurn = c.thread.turn, me.goalChecks = 0;
+    return ++me.goalChecks <= 1;
+}
+
 // While walking, when DoAlongRouteCheckTest says so (docs/routing-mac.md §6
 // and §8.3, DoWalking BV 0x576acc; advance()): the goal check tree (OBJf entry 0x27, "goal
 // check" of STR# 0xC9; TriggerGoalCheckTree BV 0x575e34) of the object
@@ -306,7 +322,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         // 0x1A) with the blocker the locomotor stored, below: the step is not
         // tried again (docs/routing-mac.md §9.4).
         if (which == 3)
-            r.blockCheckDone = true;
+            r.blockCheckDone = Object::Route::kBlockChecked;
         else if (which == 1 && startAlongRoute(c, me, r))
             return Step::Call;
     }
@@ -320,7 +336,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.loco.moving = false;
         r.loco.onCurve = false;
         r.blocker = 0, r.blockedTicks = 0;
-        r.blockCheckDone = false;
+        r.blockCheckDone = 0;
         Object::Route next = r;
         RouteFail w;
         if (!planRoute(vm, me, next, w)) {
@@ -455,6 +471,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             std::fabs(walked - r.checkWalked) > 1.0f) {
             r.checkPlans = r.plans, r.checkRoom = room, r.checkLevel = me.position.level, r.checkWalked = walked;
             r.lastCheck = vm.ticks;
+            if (!countGoalCheck(c, me))
+                return Step::Walking; // the tick's goal check is spent: no step this tick
             if (startGoalCheck(c, me, r) || startAlongRoute(c, me, r))
                 return Step::Call;
         }
@@ -494,15 +512,18 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     // seen in the way now; gone, the walk goes on (re-routed).
     ObjectId b = waitingForPerson ? r.blocker : 0;
     if (r.blockCheckDone) {
-        // DoBlockedGoalStillAvailable after the blocked goal check: the
-        // stored blocker, not this tick's step (which, the walker standing
-        // since the block, went free and walked on: the walk stepped into
-        // the counter again the next tick, the try counter never rose and
-        // the route never failed; N001_Lot68's and N001_Lot11's socials stuck
-        // for days, round n31). No blocker, or its object gone (the object
-        // manager's 0x74 finds none): fails with 1 "unknown".
+        // DoBlockedGoalStillAvailable after the blocked goal check, or
+        // DoBlocked waiting for its goal check: the stored blocker, not this
+        // tick's step (which, the walker standing since the block, went free
+        // and walked on: the walk stepped into the counter again the next
+        // tick, the try counter never rose and the route never failed;
+        // N001_Lot68's and N001_Lot11's socials stuck for days, round n31).
+        // No blocker, or its object gone (the object manager's 0x74 finds
+        // none): fails with 1 "unknown" (DoBlockedGoalStillAvailable's; a
+        // DoBlocked still waiting would run the goal check first: inferred
+        // as the same).
         if (!r.blocker || !vm.object(r.blocker)) {
-            r.blockCheckDone = false;
+            r.blockCheckDone = 0;
             why = RouteFail::Unknown;
             return Step::Failed;
         }
@@ -567,8 +588,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         // not come here.)
         if (b != r.blocker)
             r.blocker = b, r.blockedTicks = 0;
-        const bool checked = std::exchange(r.blockCheckDone, false);
-        if (r.blockedTicks == 0 && !checked && !r.aside) {
+        const uint8_t state = std::exchange(r.blockCheckDone, uint8_t(0));
+        if (r.blockedTicks == 0 && state != Object::Route::kBlockChecked && !r.aside) {
             // DoBlocked (BV 0x5762a4), a blocker found: DoAlongRouteCheckTest
             // forced (its last argument 1) and the goal check tree first
             // (DoBlockedWaitingForGoalCheckTree, state 0x19): its false fails
@@ -576,7 +597,13 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             // tiles of the other: the lead-in starts where the walker stands,
             // instead of the two blocking each other on a stoop), its true
             // goes on to DoBlockedGoalStillAvailable (0x1A). Not during a step
-            // aside (inferred, as for the walk's checks).
+            // aside (inferred, as for the walk's checks). This tick's goal
+            // check spent (countGoalCheck): DoBlocked again next tick, with
+            // the same blocker.
+            if (!countGoalCheck(c, me)) {
+                r.blockCheckDone = Object::Route::kBlockPending;
+                return Step::Walking;
+            }
             const auto& L = r.loco;
             r.checkPlans = r.plans, r.checkRoom = me.data[objdata::Room], r.checkLevel = me.position.level;
             r.checkWalked = L.moving && L.onCurve && L.curve ? L.curve->total() - L.curve->remaining(L.segment, L.arc) : 0;
@@ -856,7 +883,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     if (r.blocker) { // the way is free again
         r.blocker = 0, r.blockedTicks = 0;
     }
-    r.blockCheckDone = false;
+    r.blockCheckDone = 0;
     r.waiting = false;
     if (!r.points.empty() && floorPoint(r.points.front())) {
         applyLocoStep(vm, me, r, pending ? *pending : locoStep(vm, me, r));
