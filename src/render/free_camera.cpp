@@ -18,7 +18,7 @@ FreeCamera::FreeCamera(const CameraDef& def) {
     p.nearClip = def.nearClip.empty() ? 0.15f : def.nearClip.front();
     p.farClip = def.farClip.empty() ? 2000.0f : def.farClip.front();
     p.mouseHeading = def.param("mouseheadingsensitivity", p.mouseHeading);
-    p.mousePitch = def.param("mousepitchsensitivity", p.mouseHeading); // inferred: the heading's when absent
+    p.mousePitch = def.param("mousepitchsensitivity", p.mousePitch);
     p.upperPitch = def.param("upperpitchlimit", p.upperPitch);
     p.lowerPitch = def.param("lowerpitchlimit", p.lowerPitch);
     p.maxVelocity = def.param("maxvelocity", p.maxVelocity);
@@ -74,8 +74,8 @@ void FreeCamera::start(simd_float3 eye, simd_float3 forward, float fovDegrees) {
 }
 
 void FreeCamera::look(float dx, float dy) {
-    heading_ -= dx * params_.mouseHeading * kMouseUnit;
-    pitch_ -= dy * params_.mousePitch * kMouseUnit;
+    heading_ -= dx * params_.mouseHeading;
+    pitch_ -= dy * params_.mousePitch;
     pitch_ = std::clamp(pitch_, radians(params_.lowerPitch), radians(params_.upperPitch));
 }
 

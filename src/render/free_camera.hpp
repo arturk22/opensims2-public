@@ -29,13 +29,16 @@
 // maxvelocity * 1000 / (50 * 7) tiles a second at full height (28.6 with 10),
 // a tenth of that at the minimum height.
 //
-// Inferred: the mouse look (the controller's mouse axes were not read: the
-// heading and pitch move by the mouse's points times mouseheadingsensitivity
-// (pitch: mousepitchsensitivity, else the heading's) times kMouseUnit; the
-// orientation's own smoothing, orientationsteps 5 / minchange 0.1 on a
-// quaternion, snaps small turns, so the look is immediate here); the pitch
-// held to upperpitchlimit .. lowerpitchlimit; where the view starts (the previous
-// camera's eye and direction, the fov table's nearest entry).
+// The mouse look (round n39: the first-person base's HandleNotification
+// FUN_00d92cd4 on the mouse's move, 0x1b637482): always on while the app is
+// active (no button; the cursor hidden and put back at the window's middle,
+// FUN_00d90164), heading -= dx x mouseheadingsensitivity and pitch -= dy x
+// mousepitchsensitivity per pixel (the constructor's 0.0045 / 0.001 without
+// them: CameraMan has only the heading's, 0.0005). Inferred: the orientation's
+// own smoothing (orientationsteps 5 / minchange 0.1 on a quaternion) left out,
+// the look is immediate; the pitch held to upperpitchlimit .. lowerpitchlimit;
+// where the view starts (the previous camera's eye and direction, the fov
+// table's nearest entry).
 //
 // The orbit (Shift + a d w s, round n39, docs/camera-ui-mac.md 1.11): each of
 // those key-downs (repeats too) picks a centre (PickOrbitCenter 0x7a6590: a ray
@@ -61,16 +64,13 @@ class FreeCamera {
 public:
     explicit FreeCamera(const CameraDef& def); // the "CameraMan" camera
 
-    // Mouse points to the controller's units (inferred, see above).
-    static constexpr float kMouseUnit = 6.0f;
-
     // Starts at a view: the eye and direction of the camera it replaces
     // (MatchThisControllerWith), the fov of its table nearest `fovDegrees`.
     void start(simd_float3 eye, simd_float3 forward, float fovDegrees);
     // The key state: right (d / Right), forward (w / Up), up (e), each -1, 0
     // or 1 (Start / Stop Move ...; q lowers, e raises).
     void setMove(float right, float forward, float up) { dir_ = {right, forward, up}; }
-    // Mouse points (x right, y down).
+    // Mouse pixels (x right, y down): the move from the window's middle.
     void look(float dx, float dy);
     // A step of the fov table: +1 zooms in (narrower), -1 out ("Zoom in" /
     // "Zoom Out", 0x8d377398 / 0x8d37738a).
@@ -103,7 +103,7 @@ public:
     struct Params {
         std::vector<float> fov; // degrees
         float nearClip = 0.15f, farClip = 2000;
-        float mouseHeading = 0.0005f, mousePitch = 0.0005f;
+        float mouseHeading = 0.0045f, mousePitch = 0.001f; // the constructor's (BV 0xd92110)
         float upperPitch = 35, lowerPitch = -80; // degrees
         float maxVelocity = 10, velocitySensitivityMin = 0.1f;
         int translationSteps = 7, velocitySteps = 5, fovSteps = 3;

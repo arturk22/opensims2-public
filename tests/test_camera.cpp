@@ -703,7 +703,9 @@ setparam constraintwidth         -10
             FreeCamera m(*def);
             m.start(simd_make_float3(0, 0, 10), simd_make_float3(1, 0, 0), 45);
             m.look(100, 0);
-            check(m.heading() < 0 && near(m.heading(), -100 * 0.0005f * FreeCamera::kMouseUnit), "mouse right turns right");
+            check(m.heading() < 0 && near(m.heading(), -100 * 0.0005f), "mouse right turns right: 0.0005 rad a pixel");
+            m.look(0, 10);
+            check(near(m.pitch(), -10 * 0.001f), "the pitch: the constructor's 0.001 (CameraMan has no mousepitchsensitivity)");
             m.look(0, -10000);
             check(near(m.pitch(), 35 * float(M_PI) / 180), "pitch held to upperpitchlimit");
             m.look(0, 100000);

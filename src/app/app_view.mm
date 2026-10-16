@@ -156,6 +156,7 @@ using namespace os2app;
     bool _leftRotated;  // ... and it moved (else the release is a plain click)
     float _leftMoved;   // points dragged since that press
     NSEvent* _leftPress; // that press, replayed as a click if it never moved
+    bool _lookCaptured; // the free camera holds the mouse (cursor hidden, deltas only)
 }
 
 - (os2::LotCamera*)camera {
@@ -187,6 +188,17 @@ static std::optional<simd_float3> pickOrbitCentre() {
 
 - (void)applyHeldKeys:(double)dt {
     _camera->setViewport(float(self.bounds.size.width), float(self.bounds.size.height));
+    // The free camera looks with the mouse with no button, the cursor hidden and kept at the
+    // window's middle while the app is active (FUN_00d92cd4 / FUN_00d90164).
+    const bool capture = freeCameraActive() && self.window.isKeyWindow && NSApp.isActive && !gSceneLoading;
+    if (capture != _lookCaptured) {
+        _lookCaptured = capture;
+        if (capture)
+            [NSCursor hide];
+        else
+            [NSCursor unhide];
+        CGAssociateMouseAndMouseCursorPosition(capture ? false : true);
+    }
     if (gCas)
         return; // the CAS camera only follows the Sim and the zoom buttons
     // The free camera ("CameraMan", Tab): the movement keys steer it (Shift does not speed it up),
@@ -459,7 +471,7 @@ static std::optional<simd_float3> pickOrbitCentre() {
 - (void)dragRotate:(NSEvent*)e {
     if (gSceneLoading)
         return;
-    if (freeCameraActive()) { // the free camera looks round with the mouse (while a button is held: inferred)
+    if (freeCameraActive()) { // the free camera looks round with the mouse (buttons or not)
         gFreeCamera->look(float(e.deltaX), float(e.deltaY));
         return;
     }
@@ -554,7 +566,7 @@ static std::optional<simd_float3> pickOrbitCentre() {
 // While rotating the cursor stays where it was clicked (the game warps it
 // back after each move: an endless drag); the deltas keep coming.
 - (void)holdCursor:(BOOL)hold {
-    CGAssociateMouseAndMouseCursorPosition(hold ? false : true);
+    CGAssociateMouseAndMouseCursorPosition(hold || _lookCaptured ? false : true);
 }
 
 - (void)otherMouseDown:(NSEvent*)e {
@@ -706,6 +718,10 @@ static std::optional<simd_float3> pickOrbitCentre() {
     [self trackMouse:e];
     if (gSceneLoading) {
         [self refreshCursor:e];
+        return;
+    }
+    if (_lookCaptured && freeCameraActive()) { // the free camera's mouse look
+        gFreeCamera->look(float(e.deltaX), float(e.deltaY));
         return;
     }
     if (gHood)
