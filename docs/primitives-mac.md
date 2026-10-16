@@ -620,7 +620,8 @@ Execução (binário):
   0x14). Flag 0x40: liga a nova à interação de ID (dono 8, dado u16 9).
   Byte 14 bit 0: copia os 4 primeiros parâmetros da árvore atual (ou menos).
 - Se eu sou Sim (e não é o caso do Find Best Interaction), a interação herda
-  algo da minha interação atual (slot 0xBC; inferido: o "dono"/grupo).
+  o bit "autônoma" (`+0x54` `0x400`, slot `0xBC` → `0xC0`) da minha interação
+  atual (rodada n31, §4g; era "inferido: o dono/grupo").
 - Verdadeiro quando a entrada vai para a fila (ou sub-fila) do alvo.
 
 ### 0x00 Sleep (`cTSObject::TryIdle`)
@@ -3497,6 +3498,59 @@ recusada). Passou tudo: sem check tree ou sem "forçar" → passou; senão roda 
 check tree com {autônomo, join, argumento, 0}. O `TryPushAction` sempre chama
 o `TestInteraction` (forçando a check tree só com o byte 3 bit 0x20) e falha
 com resultado 2 quando ele recusa.
+
+**7. A volta da interação.** Na nova execução do Idle for Input depois que a
+interação que ele rodou volta (o `0x48` do elemento da pilha, o mesmo
+"re-run" que o `0x4c(1)` liga), o binário só começa a próxima entrada se ela
+é "continue as current" (`0x84`, `+0x54` bit `0x02`) e a que acabou (o
+`+0x5d8` da pessoa) **não** tem o bit `0x4000` (vtable `0x8c`; o
+`TryPushAction` o liga com o byte 14 bit `0x10` pela `0x90`, BV `0x4c51ac`;
+nenhuma árvore do jogo base usa esse bit: só os bits 0x01, 0x02, 0x04 e 0x08
+do byte 14 aparecem nos dados). O VM pedia "não cancelada" (inferido).
+
+**O que mudou no código** (um commit por parte, `ctest -j2` verde, 57 testes):
+
+1. Os bits `0x400`/`0x800` (`QueuedInteraction::autonomous`/`testAutonomous`,
+   `vm.hpp`): o Gosub Found Action e o Push Interaction com o byte 14 bit 0x02
+   ligam os dois; o push de um Sim sem ele herda o `0x400` da interação atual
+   dele; o dado de pessoa 166 é o `0x400` da interação atual (`syncQueueData`)
+   e o da imediata enquanto ela roda (`runImmediately`); o teste do Idle for
+   Input passa o `0x800` como parâmetro 0, o teste forçado do Push o byte 14
+   bit 0x02; salvos e lidos no `+0x54`. Teste: `test_queue` (uma entrada cuja
+   check tree só aceita a autonomia roda quando o Find Best Interaction a
+   empurrou e é recusada quando um objeto a empurrou; o 166 segue o bit).
+2. `ActionSkipped` e `ClearSubActions`: a entrada recusada sai com os vínculos
+   desfeitos e o Idle for Input espera um tick (`PushOutcome::Skipped` →
+   `Exit::Yield`); `clearSubActions(vm, sim)` desfaz os vínculos da sub-fila;
+   a sub-ação nova desfaz os da que ela substitui. Teste: a recusada ligada à
+   interação de outro Sim lhe dá o dado 110, a próxima roda no tick seguinte.
+3. Os testes do `TestInteraction` antes da check tree (`entryAvailable`:
+   depuração, idade, visitante) no Push Interaction (sempre, resultado 2, depois
+   do erro 0x6F e antes dos limites da fila), no Idle for Input, no modo da
+   sub-fila e na imediata. Num dia de seis lotes isso recusou 8 pushes (sete no
+   `N003_Lot192`, um banho no `N001_Lot36`); nenhum empurra entrada de
+   depuração. Teste: depuração nunca entra, visitante só com "allow visitors".
+4. A volta da interação pelo bit `0x4000` (`noContinuation`), salvo no
+   `+0x54`. Teste: a continuação roda na volta antes do Main seguir, e depois
+   dele com o bit.
+
+**Medidas** (`s2pkg autonomy`, `S2PKG_VISITORS=1 S2PKG_FIRES=1`; antes =
+main `8bfebd80`, depois = os quatro commits). Nada disso mexe nas causas
+(rotas), e as medidas mostram isso:
+
+| | antes | depois |
+|---|---|---|
+| `N003_Lot192` 12 h: "Leave" começados por Juliette / Tybalt | 135 / 123, não saem | 130 / 124, não saem (com `OS2_STAIR_ONE_PORTAL=1`: 1 / 1, saem 00:02 / 23:57) |
+| `N001_Lot68` sementes 1–6, mortes (com fogo) e social preso ≥ 10 h | 9 (7: s4, s6); s5 beijo 28,1 h (2 mortes), s1 "Repudiar" 10,9 h | 12 (7: s4, s6); s5 beijo 44,0 h (3), s2 beijo 24,3 h (2) |
+| `N001_Lot11` sementes 1–6 | 2 (Cassandra s1, s2: piada 25,4 h e 23,1 h); s4 piada 12,8 h | 1 (Cassandra s1: piada 25,4 h) |
+| `N003_Lot52` sementes 1–12, mortes: no fogo / no cercado das urnas / outras | 8 / 4 / 4 (fogo em 2 sementes) | 14 / 4 / 4 (fogo em 4 sementes) |
+
+As mortes fora do fogo ficam iguais; os fogos (a comida esquecida no forno,
+cozinhar com pouca habilidade) mudam de semente quando a ordem dos eventos
+muda. Os sociais presos continuam o laço do bloqueio da locomoção (item 2),
+agora em outras sementes. O cercado das urnas do `N003_Lot52` (x 44–55,
+y 39–45) prende Sims à noite: as rotas de lá falham com 2 (o planejador sem
+os Sims, `S2PKG_ROUTE_TRY`, acha caminho; a causa dinâmica não foi lida).
 
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
