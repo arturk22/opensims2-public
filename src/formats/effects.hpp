@@ -290,7 +290,10 @@ struct Component {
     float scale = 1;
     std::array<float, 9> rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
     V3 offset{};
-    uint8_t lodBegin = 0, lodEnd = 0;
+    // Shown with lodBegin <= LOD < lodEnd (the effect parser's default 1 and
+    // 5 without -lod, BV FUN_00bff648); the scales from their begin values
+    // (the farthest) to their end ones (EffectSystem::lodScales).
+    uint8_t lodBegin = 1, lodEnd = 5;
     V2 emitScale{1, 1}, sizeScale{1, 1}, alphaScale{1, 1};
     uint16_t selectionGroup = 0, selectionChance = 0;
     float timeScale = 1;

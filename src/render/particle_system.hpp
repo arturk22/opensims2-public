@@ -89,6 +89,17 @@ class EffectSystem {
 public:
     explicit EffectSystem(const EffectsLibrary& library, uint32_t seed = 1);
 
+    // The effects' level of detail (cTSEffectsManager::SetLOD(float), BV
+    // 0xc061b0): the lot camera's zoom level + its fraction + 1
+    // (cTSCameraSmoothSims1Controller::Update, BV 0x86ffb8), less the
+    // particleLODOffset (0), held in [1, 4.9999]. A component shows only
+    // with lodBegin <= int(LOD) < lodEnd and its scales go from its begin
+    // ones to its end ones (SetCurveCoefficients BV 0xc021c8 and the
+    // ApplyEffect's blend by the fraction). By default the closest.
+    static constexpr float kMaxLod = 4.9999f;
+    void setLod(float lod);
+    float lod() const { return lod_; }
+
     // Starts the named effect; -1 if the library has no such effect. A hard
     // start (cTSParticlesEffect::Start with a transition) runs the pre-roll
     // and leaves out the emitters with a finite number of cycles; a soft
@@ -127,6 +138,18 @@ public:
     void collectSounds(std::vector<EffectSound>& out) const;
 
 private:
+    // A part's components from the effect started down to it (each
+    // nested effect's component, then its own): their LOD ranges and
+    // scales multiply; `emit`/`size`/`alpha` are the scales handed in (a
+    // meta particle's carried effect).
+    struct Lod {
+        std::vector<const Component*> path;
+        float emit = 1, size = 1, alpha = 1;
+    };
+    // The scales at the current LOD; false when a component of the path is
+    // out of its range (the part is not there at this distance).
+    bool lodScales(const Lod& l, float& emit, float& size, float& alpha) const;
+
     // cTSParticle: position and velocity in its emitter's frame (the
     // world, or the effect's own with a rigid effect), and what
     // InitParticle draws for it.
@@ -145,6 +168,8 @@ private:
         // A rigid visual effect (vflag::Rigid) at any level keeps the
         // particles in the instance's frame; otherwise they live in the world.
         bool rigid = false;
+        Lod lod;
+        bool lodOn = true, lodOff = false; // in its LOD range; stopped by leaving it
         float emitScale = 1, sizeScale = 1, alphaScale = 1, timeScale = 1;
         bool icon = false; // the texture is the instance's icon
         float time = 0;    // since the instance started (scaled)
@@ -172,16 +197,22 @@ private:
         const Decal* desc = nullptr;
         Placement local;
         float sizeScale = 1, alphaScale = 1, delay = 0, age = 0;
+        Lod lod;
+        bool lodOn = true;
     };
     struct ModelPart {
         const Model* desc = nullptr;
         Placement local;
         float sizeScale = 1, alphaScale = 1, delay = 0, stopAt = -1, age = 0;
+        Lod lod;
+        bool lodOn = true;
     };
     struct SoundPart {
         const Sound* desc = nullptr;
         Placement local;
         float delay = 0, stopAt = -1, age = 0;
+        Lod lod;
+        bool lodOn = true;
     };
     struct Instance;
     // cTSMetaParticle: a whole effect (its own instance) moving as a
@@ -213,6 +244,8 @@ private:
         bool byState = false;
         Placement local;        // relative to the instance
         bool rigid = false;
+        Lod lod;
+        bool lodOn = true, lodOff = false;
         float emitScale = 1, sizeScale = 1, alphaScale = 1, timeScale = 1;
         float time = 0, startDelay = 0, stopAt = -1;
         int orderBase = 0;
@@ -247,8 +280,11 @@ private:
         int id = 0;       // unique among the instances and their meta particles' (model keys)
     };
 
-    void addEffect(Instance& inst, uint32_t visual, const Placement& local, float emitScale, float sizeScale,
-                   float alphaScale, float timeScale, float delay, float stopAt, int depth, bool rigid);
+    void addEffect(Instance& inst, uint32_t visual, const Placement& local, const Lod& lod, float timeScale,
+                   float delay, float stopAt, int depth, bool rigid);
+    // The parts' scales and presence at the current LOD; a part that leaves
+    // its range stops emitting, one that comes into it starts (soft).
+    void updateLod(Instance& inst);
     void stepInstance(Instance& inst, float dt, bool emit);
     void stepChain(Instance& inst, MetaChain& m, float dt, bool emit);
     void startChain(MetaChain& m, bool hard);
@@ -289,6 +325,7 @@ private:
     SwarmRandom rng_;
     V3 eye_{}, up_{0, 0, 1};
     bool hasView_ = false;
+    float lod_ = kMaxLod;
     std::unordered_map<int, Instance> instances_;
     int next_ = 1;
     int nextId_ = 1;

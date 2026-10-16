@@ -64,6 +64,9 @@ public:
     int start(const std::string& name, const fx::Placement& at, bool hard = true) { return system_->start(name, at, hard); }
     // The camera (position, up axis), for the effects that face it (balloons).
     void setView(const fx::V3& eye, const fx::V3& up) { system_->setView(eye, up); }
+    // The effects' level of detail from the lot camera: its fractional zoom
+    // level + 1 (cTSCameraSmoothSims1Controller::Update -> SetLOD(float)).
+    void setLod(float lod) { system_->setLod(lod); }
     void move(int handle, const fx::Placement& at) { system_->move(handle, at); }
     void stop(int handle, bool hard) { system_->stop(handle, hard); }
 

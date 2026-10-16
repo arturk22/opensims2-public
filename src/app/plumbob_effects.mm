@@ -197,6 +197,9 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
         const simd_float3 eye = gCamera->eye();
         const simd_float4x4 v = gCamera->view();
         gEffects->setView({eye.x, eye.y, eye.z}, {v.columns[0].y, v.columns[1].y, v.columns[2].y});
+        // The effects' LOD: the zoom table's level of the camera's distance and
+        // its fraction, + 1 (BV 0x86ffb8 -> cTSEffectsManager::SetLOD(float)).
+        gEffects->setLod(gCamera->zoom() + 1);
     }
     gEffects->update(seconds, gSimulation ? &gSimulation->machine() : nullptr, gObjectView.get(),
                      [](int16_t id) -> const os2::SimActor* {

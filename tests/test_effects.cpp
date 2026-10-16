@@ -410,9 +410,66 @@ static void testCurves() {
     check(sampleColors({{0, 0, 0}, {1, 1, 1}}, 0.25f)[1] == 0.25f, "colour interpolation");
 }
 
+// The LOD (cTSEffectsManager::SetLOD(float) from the camera's zoom level + 1,
+// UpdateVisualEffect, SetCurveCoefficients): a component shows only in its
+// range and its scales go from its begin ones (far) to its end ones (near).
+static void testLod() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    auto& c = lib.visuals[0].components[0];
+    lib.particles[0].flags = 0;
+    lib.particles[0].sizeVary = 0;
+    lib.particles[0].sizeCurve = {1};
+    lib.particles[0].alphaCurve = {0.25f};
+    c.lodBegin = 1, c.lodEnd = 5;
+    c.emitScale = {0.25f, 1}, c.sizeScale = {2, 1}, c.alphaScale = {2, 1};
+    auto run = [&](float lod) {
+        EffectSystem sys(lib, 5);
+        sys.setLod(lod);
+        sys.start("Smoke", {});
+        for (int i = 0; i < 60; ++i)
+            sys.update(1.0f / 30);
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        return q;
+    };
+    const auto near = run(EffectSystem::kMaxLod), far = run(1);
+    check(!near.empty() && !far.empty(), "particles at both distances");
+    check(far.size() * 3 < near.size(), "far: a quarter of the emission");
+    check(!far.empty() && std::fabs(far[0].width - 2 * near[0].width) < 1e-3f, "far: twice the size");
+    check(!far.empty() && std::fabs(far[0].color[3] - 0.5f) < 1e-3f && std::fabs(near[0].color[3] - 0.25f) < 2e-3f,
+          "far: twice the alpha");
+    // LOD 3 of a 1-5 range: halfway between the two.
+    const auto mid = run(3);
+    check(!mid.empty() && std::fabs(mid[0].width - 1.5f * near[0].width) < 1e-3f, "LOD 3: halfway");
+    // A component of the near levels only (2-5) is not there from the farthest zoom.
+    c.lodBegin = 2;
+    check(run(1).empty() && !run(2.5f).empty(), "a 2-5 component shows from LOD 2");
+    // Zooming out stops it (its particles finish), zooming in starts it again.
+    {
+        EffectSystem sys(lib, 5);
+        const int h = sys.start("Smoke", {});
+        for (int i = 0; i < 30; ++i)
+            sys.update(1.0f / 30);
+        sys.setLod(1);
+        for (int i = 0; i < 90; ++i)
+            sys.update(1.0f / 30);
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        check(q.empty() && sys.alive(h), "out of its range: no particles, the effect still there");
+        sys.setLod(4);
+        for (int i = 0; i < 30; ++i)
+            sys.update(1.0f / 30);
+        q.clear();
+        sys.collect(q);
+        check(!q.empty(), "back in its range it emits again");
+    }
+}
+
 int main() {
     try {
         testParse();
+        testLod();
         testSimulation();
         testMaintainedCount();
         testFramesAndStarts();

@@ -65,9 +65,32 @@ EffectSystem::EffectSystem(const EffectsLibrary& library, uint32_t seed) : lib_(
 
 float EffectSystem::random(float a, float b) { return rng_.range(a, b); }
 
-void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& local, float emitScale,
-                             float sizeScale, float alphaScale, float timeScale, float delay, float stopAt,
-                             int depth, bool rigid) {
+void EffectSystem::setLod(float lod) { lod_ = std::clamp(lod, 1.0f, kMaxLod); }
+
+// SetCurveCoefficients (BV 0xc021c8) and ApplyEffect's blend by the LOD's
+// fraction (0xebb7c8): over a range of more than one level the scale is the
+// begin one to the end one by (LOD - begin) / (end - begin); over one level,
+// by the fraction. Nested effects' components multiply (inferred: a nested
+// cTSVisualEffect's scales handed down).
+bool EffectSystem::lodScales(const Lod& l, float& emit, float& size, float& alpha) const {
+    emit = l.emit, size = l.size, alpha = l.alpha;
+    const int level = int(lod_);
+    const float fraction = lod_ - float(level);
+    for (const Component* c : l.path) {
+        if (!(int(c->lodBegin) <= level && level < int(c->lodEnd)))
+            return false;
+        const float t = int(c->lodEnd) - int(c->lodBegin) > 1
+                            ? (lod_ - float(c->lodBegin)) / float(int(c->lodEnd) - int(c->lodBegin))
+                            : fraction;
+        emit *= c->emitScale[0] + (c->emitScale[1] - c->emitScale[0]) * t;
+        size *= c->sizeScale[0] + (c->sizeScale[1] - c->sizeScale[0]) * t;
+        alpha *= c->alphaScale[0] + (c->alphaScale[1] - c->alphaScale[0]) * t;
+    }
+    return true;
+}
+
+void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& local, const Lod& lod,
+                             float timeScale, float delay, float stopAt, int depth, bool rigid) {
     if (visual >= lib_.visuals.size() || depth > 8)
         return;
     // A rigid effect (cTSVisualEffect::SetTransforms BV 0xeb1760 with bit 5)
@@ -110,18 +133,23 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
         p.rotation = c.rotation;
         p.scale = c.scale > 0 ? c.scale : 1;
         const Placement here = compose(local, p);
-        // The scales at full detail (the component's LOD end).
-        const float es = emitScale * c.emitScale[1], ss = sizeScale * c.sizeScale[1], as = alphaScale * c.alphaScale[1];
+        // Its LOD range and scales, under the ones of the effects that hold it.
+        Lod lc = lod;
+        lc.path.push_back(&c);
+        float es = 1, ss = 1, as = 1;
+        const bool on = lodScales(lc, es, ss, as);
         const float ts = timeScale * (c.timeScale > 0 ? c.timeScale : 1);
         switch (c.type) {
         case Block::Visual:
-            addEffect(inst, uint32_t(c.index), here, es, ss, as, ts, delay, stopAt, depth + 1, rigid);
+            addEffect(inst, uint32_t(c.index), here, lc, ts, delay, stopAt, depth + 1, rigid);
             break;
         case Block::Particles:
             if (c.index >= 0 && size_t(c.index) < lib_.particles.size()) {
                 Emitter e;
                 e.desc = &lib_.particles[size_t(c.index)];
                 e.local = here;
+                e.lod = lc;
+                e.lodOn = on;
                 e.emitScale = es, e.sizeScale = ss, e.alphaScale = as, e.timeScale = ts;
                 e.icon = (e.desc->flags & pflag::AcceptOverride) != 0;
                 e.rigid = rigid;
@@ -151,6 +179,8 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                 mc.byState = (c.flags & cflag::StateChain) != 0;
                 mc.rigid = rigid;
                 mc.local = here;
+                mc.lod = lc;
+                mc.lodOn = on;
                 mc.emitScale = es, mc.sizeScale = ss, mc.alphaScale = as, mc.timeScale = ts;
                 mc.startDelay = delay;
                 mc.stopAt = stopAt;
@@ -171,7 +201,7 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                     auto child = lib_.indexOf(item.effect);
                     const float d = item.activateTime[0] < 0 ? -1 : random(item.activateTime[0], item.activateTime[1]);
                     if (child)
-                        addEffect(inst, *child, here, es, ss, as, ts, t, d < 0 ? stopAt : t + d, depth + 1, rigid);
+                        addEffect(inst, *child, here, lc, ts, t, d < 0 ? stopAt : t + d, depth + 1, rigid);
                     chain = nullptr; // (the vector may have moved)
                     if (d < 0)
                         break;
@@ -181,15 +211,15 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
             break;
         case Block::Decal:
             if (c.index >= 0 && size_t(c.index) < lib_.decals.size())
-                inst.decals.push_back({&lib_.decals[size_t(c.index)], here, ss, as, delay, 0});
+                inst.decals.push_back({&lib_.decals[size_t(c.index)], here, ss, as, delay, 0, lc, on});
             break;
         case Block::Model:
             if (c.index >= 0 && size_t(c.index) < lib_.models.size())
-                inst.models.push_back({&lib_.models[size_t(c.index)], here, ss, as, delay, stopAt, 0});
+                inst.models.push_back({&lib_.models[size_t(c.index)], here, ss, as, delay, stopAt, 0, lc, on});
             break;
         case Block::Sound:
             if (c.index >= 0 && size_t(c.index) < lib_.sounds.size())
-                inst.sounds.push_back({&lib_.sounds[size_t(c.index)], here, delay, stopAt, 0});
+                inst.sounds.push_back({&lib_.sounds[size_t(c.index)], here, delay, stopAt, 0, lc, on});
             break;
         default: break; // cameras, screens, water: not here (screens: the host's)
         }
@@ -205,18 +235,19 @@ int EffectSystem::start(std::string_view name, const Placement& where, bool hard
     inst.flags = lib_.visuals[*visual].flags;
     inst.where = facing(inst);
     inst.id = nextId_++;
-    addEffect(inst, *visual, Placement{}, 1, 1, 1, 1, 0, -1, 0, false);
+    addEffect(inst, *visual, Placement{}, Lod{}, 1, 0, -1, 0, false);
     // cTSVisualEffect::Start starts every component with the same
     // transition; a sequence's later items start soft when their time comes
     // (inferred: cTSSequenceEffect not read). The first ApplyEffect runs at
     // once (with the pre-roll of a hard start), so the effect shows from the start.
+    // (Only the parts in the LOD's range: UpdateVisualEffect creates the others when it comes to them.)
     for (auto& e : inst.emitters)
-        if (e.startDelay <= 0) {
+        if (e.startDelay <= 0 && e.lodOn) {
             startEmitter(inst, e, hard);
             applyEmitter(inst, e, 0);
         }
     for (auto& m : inst.metas)
-        if (m.startDelay <= 0) {
+        if (m.startDelay <= 0 && m.lodOn) {
             startChain(m, hard);
             stepChain(inst, m, 0, true);
         }
@@ -693,8 +724,11 @@ void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int dep
         p.child = std::make_unique<Instance>();
         p.child->id = nextId_++;
         if (base >= 0)
-            addEffect(*p.child, uint32_t(base), Placement{}, m.emitScale, m.sizeScale, m.alphaScale, m.timeScale, 0, -1,
-                      depth + 1, false);
+        {
+            Lod carried;
+            carried.emit = m.emitScale, carried.size = m.sizeScale, carried.alpha = m.alphaScale;
+            addEffect(*p.child, uint32_t(base), Placement{}, carried, m.timeScale, 0, -1, depth + 1, false);
+        }
         // InitParticle (meta, BV 0xf63310): the carried effect starts soft.
         for (auto& e : p.child->emitters)
             if (e.startDelay <= 0)
@@ -1065,7 +1099,8 @@ void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParti
 void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) {
     dt *= m.timeScale;
     m.time += dt;
-    if (!m.started && m.startDelay > 0 && m.time >= m.startDelay && !inst.stopped && (m.stopAt < 0 || m.time < m.stopAt))
+    if (!m.started && m.startDelay > 0 && m.time >= m.startDelay && !inst.stopped && m.lodOn &&
+        (m.stopAt < 0 || m.time < m.stopAt))
         startChain(m, false);
     if (m.preRollPending) {
         m.preRollPending = false;
@@ -1108,13 +1143,57 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
         m.stopping = true;
 }
 
+// UpdateVisualEffect (BV 0xc04544) when the LOD changes: the components
+// out of the new range go (stopped soft: their particles finish; the game
+// stops them hard unless effectLODSoftChange, whose default was not found:
+// inferred), the ones in it come (started soft, as a running effect's new
+// components), and every part takes the scales of the new LOD.
+void EffectSystem::updateLod(Instance& inst) {
+    for (auto& e : inst.emitters) {
+        const bool on = lodScales(e.lod, e.emitScale, e.sizeScale, e.alphaScale);
+        if (on == e.lodOn)
+            continue;
+        e.lodOn = on;
+        if (!on && e.started && !e.stopping) {
+            e.stopping = true;
+            e.lodOff = true;
+        } else if (on && (!e.started || e.lodOff) && !inst.stopped && e.startDelay <= 0 &&
+                   (e.stopAt < 0 || e.time < e.stopAt)) {
+            startEmitter(inst, e, false);
+            e.lodOff = false;
+        }
+    }
+    for (auto& m : inst.metas) {
+        const bool on = lodScales(m.lod, m.emitScale, m.sizeScale, m.alphaScale);
+        if (on == m.lodOn)
+            continue;
+        m.lodOn = on;
+        if (!on && m.started && !m.stopping) {
+            m.stopping = true;
+            m.lodOff = true;
+        } else if (on && (!m.started || m.lodOff) && !inst.stopped && m.startDelay <= 0 &&
+                   (m.stopAt < 0 || m.time < m.stopAt)) {
+            startChain(m, false);
+            m.lodOff = false;
+        }
+    }
+    float e, s, a;
+    for (auto& d : inst.decals)
+        d.lodOn = lodScales(d.lod, e, d.sizeScale, d.alphaScale);
+    for (auto& m : inst.models)
+        m.lodOn = lodScales(m.lod, e, m.sizeScale, m.alphaScale);
+    for (auto& snd : inst.sounds)
+        snd.lodOn = lodScales(snd.lod, e, s, a);
+}
+
 void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
     (void)emit; // (the emitters look at inst.stopped)
+    updateLod(inst);
     for (auto& e : inst.emitters) {
         const float edt = dt * e.timeScale;
         e.time += edt;
         // A sequence's later item starts when its time comes.
-        if (!e.started && e.startDelay > 0 && e.time >= e.startDelay && !inst.stopped &&
+        if (!e.started && e.startDelay > 0 && e.time >= e.startDelay && !inst.stopped && e.lodOn &&
             (e.stopAt < 0 || e.time < e.stopAt))
             startEmitter(inst, e, false);
         applyEmitter(inst, e, edt);
@@ -1151,6 +1230,8 @@ bool EffectSystem::busy(const Instance& inst) {
             return true;
         if (!e.started && e.startDelay > 0 && (e.stopAt < 0 || e.time < e.stopAt)) // a sequence item to come
             return true;
+        if (!e.lodOn || e.lodOff) // out of the LOD's range: back when the camera comes to it
+            return true;
     }
     for (const auto& m : inst.metas) {
         for (const auto& p : m.particles)
@@ -1159,6 +1240,8 @@ bool EffectSystem::busy(const Instance& inst) {
         if (inst.stopped)
             continue;
         if (m.started && !m.stopping)
+            return true;
+        if (!m.lodOn || m.lodOff)
             return true;
         if (!m.started && m.startDelay > 0 && (m.stopAt < 0 || m.time < m.stopAt))
             return true;
@@ -1184,7 +1267,7 @@ void EffectSystem::update(float seconds) {
 void EffectSystem::collectModelsOf(int handle, const Instance& inst, std::vector<EffectModel>& out) const {
     for (size_t i = 0; i < inst.models.size(); ++i) {
         const ModelPart& m = inst.models[i];
-        if (inst.stopped || m.age < m.delay || (m.stopAt >= 0 && m.age >= m.stopAt))
+        if (!m.lodOn || inst.stopped || m.age < m.delay || (m.stopAt >= 0 && m.age >= m.stopAt))
             continue;
         EffectModel em;
         em.handle = handle;
@@ -1205,7 +1288,7 @@ void EffectSystem::collectModelsOf(int handle, const Instance& inst, std::vector
 void EffectSystem::collectSoundsOf(int handle, const Instance& inst, std::vector<EffectSound>& out) const {
     for (size_t i = 0; i < inst.sounds.size(); ++i) {
         const SoundPart& sp = inst.sounds[i];
-        if (inst.stopped || sp.age < sp.delay || (sp.stopAt >= 0 && sp.age >= sp.stopAt))
+        if (!sp.lodOn || inst.stopped || sp.age < sp.delay || (sp.stopAt >= 0 && sp.age >= sp.stopAt))
             continue;
         // (part: a key unique among the instance's and its meta particles' sounds)
         out.push_back({handle, inst.id * 64 + int(i % 64), sp.desc->audioId,
@@ -1237,7 +1320,7 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
     for (const auto& dp : inst.decals) {
             const Decal& d = *dp.desc;
             const float age = dp.age - dp.delay;
-            if (age < 0 || (d.life > 0 && age >= d.life) || (d.life <= 0 && inst.stopped))
+            if (!dp.lodOn || age < 0 || (d.life > 0 && age >= d.life) || (d.life <= 0 && inst.stopped))
                 continue;
             const float t = d.life > 0 ? age / d.life : 0;
             const Placement w = compose(inst.where, dp.local);
