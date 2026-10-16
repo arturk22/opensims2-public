@@ -35,6 +35,7 @@
 #include "formats/neighborhood.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/lot.hpp"
+#include "vm/lot_light.hpp"
 #include "vm/vm.hpp"
 
 #include <algorithm>
@@ -901,6 +902,13 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                 mains += e.created && machine.startMain(e.id);
         } else {
             mains = resumed->stacks + resumed->freshMains;
+        }
+        // The environment's light term from the lot's light maps, made
+        // without a window as the app's (vm/lot_light.hpp; S2PKG_NO_LIGHT=1: left out).
+        std::unique_ptr<vm::HeadlessLotLighting> lighting;
+        if (!std::getenv("S2PKG_NO_LIGHT")) {
+            lighting = std::make_unique<vm::HeadlessLotLighting>(index, lot, pkg, root, machine);
+            lighting->install();
         }
         for (long i = 0; i < ticks; ++i)
             machine.tick();

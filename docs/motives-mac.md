@@ -431,8 +431,9 @@ primeiro tique** e os seguintes a cada 60 a partir dele.
   o app liga ao light map de piso mostrado (`LotLighting::floorIllumination`:
   o texel em `floorTexel`, os dois mapas na mistura do crossfade, × 2,
   `ColourToIlluminance`; os light maps são feitos antes do primeiro tique).
-  **Sem host (s2pkg, testes) a luz fica de fora**: o termo é 0 (como um
-  cômodo claro).
+  Sem o app, o `s2pkg` (`env-sweep`, `autonomy`, `lot-run`) monta os mesmos
+  light maps sem janela (rodada n42, §8.8); só os testes com VM sintética
+  (sem lote) ficam sem luz: o termo é 0 (como um cômodo claro).
 - **O passo de 60** usa `VM::simulatorTicks` (o `+0xa0` do simulador: lido
   do SIMI, sobe no fim de cada tique, gravado de volta pelo lot-save) contra
   `Person::memoriesTick` (0 ao carregar, não gravado). Nos lotes do jogo o
@@ -545,3 +546,45 @@ pela atenuação, posse, `GetAutonomyBias`, relacionamento, tempo e
 temperatura, e nada ali olha a interação atual. O ambiente (13) entra na
 conta: a `GetCurrentScore` do base (`0xb92a68`) soma os motivos fora da
 máscara `0x1C07`, do 4 e do 11, isto é 3, 5–9 e 13–15, vezes `1/(16 − 6)`.
+
+### 8.8 Os light maps sem janela (rodada n42)
+
+O termo da luz (§8.4) só existia no app, que tem os light maps do
+`LotLighting`. Agora o `s2pkg` os monta sem janela nem Metal, pelo mesmo
+caminho:
+
+- `src/formats/lot_lamps.*`: o que o `LotLighting` fazia sem renderizador,
+  agora compartilhado (o app chama estas funções, nada muda nele): as luzes
+  do modelo de um CRES (`cPointLight`/`cSpotLight` com os overrides do
+  `LotLights.txt` e os atributos `diffusionSource*`), a lâmpada posta
+  (`placedLamp`), as luzes do light map e a chave do cache
+  (`lightMapLights`), o estado da hora (`lightingStateOfHour`) e a luz sob o
+  ponto (`floorIlluminationAt`: o texel do piso × 2, `ColourToIlluminance`).
+- `src/vm/lot_light.*`: o nível de cada luz (`lampLevel`: portal 100, o do
+  Change Light, senão o semiatributo 2; também usado pelo app) e o
+  `HeadlessLotLighting`: o atlas do `buildLotModel` (depois do
+  `dropLeftoverCObjects`, como o `loadLot` do app; o atlas não depende da
+  vista), as lâmpadas dos objetos que o app desenha (os cObjects cujo objeto
+  da VM tem o mesmo OBJD, mais os que a VM cria depois; o gráfico novo pelo
+  STR# `0x85`), postos como o `VmObjectView` os põe (o lugar salvo enquanto
+  a VM não os move, o osso do slot do contêiner no pose salvo ou de
+  repouso, a posição da VM), o `computeLotLightMap` do estado da hora, e o
+  `VM::floorIllumination`, refeito quando a VM andou um tique.
+  **Diferenças do app** (inferidas sem efeito na nota): nada na mão de um
+  Sim nem num contêiner que a VM anima (o app usa os atores; nenhuma
+  lâmpada fica assim), e a troca de estado às 7:00/19:00 é imediata (o app
+  faz o crossfade de 2 s do relógio dele).
+- `s2pkg env-sweep`, `autonomy` e `lot-run` usam os light maps por padrão;
+  `S2PKG_NO_LIGHT=1` deixa a luz de fora (como antes); o `S2PKG_LIGHT`
+  (luz fixa de dia/noite, §8.7) continua como ajuda de teste e vence os
+  light maps no `autonomy`.
+
+**Prova** (`s2pkg env-sweep`, ctest `env_sweep`): dos 55 Sims salvos,
+**24 exatos, 34 a menos de 0,5 e 40 a menos de 2** (sem a luz: 14, 17 e 20).
+Tirando os 3 lotes do tutorial (5 Sims, que o app da n33 não mediu), são 24
+dos 50 exatos e 38 a menos de 2, **os números do app da rodada n33, Sim por
+Sim**: o Johnny e a Jill (N002_Lot10) 1,276 acima, os de fora do
+N003_Lot192 0,04–0,06 acima, a Angela (N001_Lot68 #11) 12,556 abaixo, a
+Circe (N002_Lot3 #147) 14,904 abaixo. O resto é a diferença dos nossos light
+maps para os do jogo (§8.6). Leva ~6 s para os 69 lotes.
+

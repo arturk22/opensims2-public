@@ -148,11 +148,12 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     machine.autoDialogAnswer = gDialogAnswer;
     machine.dialogTimeouts = !gNoDialogTimeout;
     machine.autonomySkipsFailures = gSkipFailures;
-    // S2PKG_LIGHT=day[:night]: a test aid for the environment's light term,
-    // which headless runs leave out (no light maps, docs/motives-mac.md
-    // §8.6): every Sim stands in that illuminance (the day one from 7:00 to
-    // 18:59, as Lighting.txt's states; the night one otherwise), e.g. 0.55
-    // for the full -20 of a dark room.
+    // The environment's light term comes from the lot's light maps, made
+    // without a window as the app makes them (vm/lot_light.hpp, below; S2PKG_NO_LIGHT=1:
+    // left out). S2PKG_LIGHT=day[:night], a test aid, stands every Sim in
+    // that illuminance instead (the day one from 7:00 to 18:59, as
+    // Lighting.txt's states; the night one otherwise), e.g. 0.55 for the
+    // full -20 of a dark room.
     if (const char* light = std::getenv("S2PKG_LIGHT")) {
         const float day = std::strtof(light, nullptr);
         const char* colon = std::strchr(light, ':');
@@ -177,6 +178,13 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     // The lot is ready: "CT - Lot Loaded" (the move-in scene after a move).
     if (std::string err; !vm::runLotLoaded(machine, &err) && !err.empty())
         std::printf("CT - Lot Loaded: %s\n", err.c_str());
+    // The light maps (docs/motives-mac.md §8.8): made once the lot is set up,
+    // as the app's object view and LotLighting are.
+    std::unique_ptr<vm::HeadlessLotLighting> lighting;
+    if (!std::getenv("S2PKG_LIGHT") && !std::getenv("S2PKG_NO_LIGHT")) {
+        lighting = std::make_unique<vm::HeadlessLotLighting>(index, lot, pkg, resRoot(lotFile), machine);
+        lighting->install();
+    }
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
     vm::gMotiveDecay = !noDecay;
