@@ -44,10 +44,13 @@ OS2_DEBUG_DOORS=2 OS2_DEBUG_VM=1 "$app" --data "$OS2_DATA" --lot N001_Lot11 --ru
     -ApplePersistenceIgnoreState YES > "$doors" 2>&1
 # An opening in the run's last 60 ticks (a Sim passing a door as it ends)
 # has had no time to close: left out of the count.
+# A door opened again before it closed (the VM's door 600 opens one way and
+# then the other for two Sims crossing) closes once: what counts is that
+# each door's last opening is followed by a closing.
 opens=$(awk '/^tick [0-9]+ / { t = $2 + 0; if (t > last) last = t } /starts o-door-open/ { n++; at[n] = t } END { c = 0; for (i = 1; i <= n; i++) if (at[i] < last - 60) c++; print c }' "$doors")
-closes=$(grep -c "starts o-door-close" "$doors")
+left=$(awk '/^tick [0-9]+ / { t = $2 + 0; if (t > last) last = t } /starts o-door-open/ { open[$3] = t } /starts o-door-close/ { delete open[$3] } END { for (d in open) if (open[d] < last - 60) print d }' "$doors")
 [ "$opens" -gt 0 ] || { echo "FAIL: no door opened"; fail=1; }
-[ "$closes" -ge "$opens" ] || { echo "FAIL: $opens openings, $closes closings"; fail=1; }
+[ -z "$left" ] || { echo "FAIL: opened and never closed: $left"; fail=1; }
 open=$(awk '/^door [0-9]+ at/ { r[$2] = $6; l[$2] = $8 } END { for (d in r) if (r[d] + 0 > 5 || r[d] + 0 < -5 || l[d] + 0 > 5 || l[d] + 0 < -5) print d }' "$doors")
 [ -z "$open" ] || { echo "FAIL: drawn open at the end: $open"; fail=1; }
 [ $fail = 0 ] && echo "front door: ok ($opens doors opened and closed)"

@@ -161,6 +161,21 @@ inline int8_t ofOverlay(int priority) {
 // to blend out (event 9997).
 constexpr float kBlendTicks = 233.33333f;
 
+// A request's blend in and out (real ms) by its weight function
+// (CreateWeightBlendFunction, FUN_00a46c00; docs/anim-mac.md §13.2): the
+// blend time each, 0 without; when the two do not fit in the request's
+// `durationMs` both shrink to 0.9999 x durationMs in proportion, and one
+// under 1 ms is 0. The weight rises linearly over the blend in from the
+// request's start and falls linearly over the blend out to its end
+// (cBlendInterval::Value is linear, BV 0xd28880).
+struct RequestFades {
+    float in = 0, out = 0;
+};
+RequestFades requestFades(float durationMs, bool blendIn, bool blendOut);
+// How far a sync to the previous blocking primitive's end reaches (ms):
+// farther, the request starts now (try_animate_sim; base 1.0 0x1581bec).
+constexpr double kSyncWindowMs = 140;
+
 // An animation playing over an object (Animate Overlay, Animate Object, the
 // carry poses of what a Sim holds).
 struct Overlay {
@@ -182,6 +197,12 @@ struct Overlay {
     // parameter 3): temp 1 with flag 0x20 (-1: until stopped), else 1.
     int16_t requestLoops = 1;
     bool flipped = false; // played mirrored (Animate Object/Overlay's flip: a chair pulled out to the Sim's side)
+    float hurry = 1;      // the request's HurrySpeed (0: not hurryable; tickHurry)
+    // Its weight function's blend in and out (real ms; requestFades): the
+    // blend time unless byte 2 says 0x80 "no blend in" / 0x40 "no blend
+    // out" (as Animate Sim's; inferred for the overlays), shrunk in a short
+    // one; none out for one that holds or loops until stopped.
+    float fadeInMs = kBlendTicks, fadeOutMs = kBlendTicks;
     int16_t ikObject = 0; // the object its IK targets of type 2 name bones of (0: none)
     float headingOffset = 0; // the request's heading offset, radians (headingOfDirections)
     // Its event tree (Animate Overlay's u16 at 4) and where it runs: the
@@ -203,6 +224,10 @@ struct AnimationState {
     int8_t level = animlevel::SimLow; // its channels' priority (animlevel::ofSim)
     float weight = 1;                 // the request weight: byte 13 / 100 (0 or outside 0-1: 1)
     int ticksLeft = 0;      // VM ticks until it ends
+    // VM ticks until its action ends, when its request starts to blend out
+    // (or ends, without a blend out): Animate Sim returns then, and the
+    // request plays on, blending out, as a tail (docs/anim-mac.md §13.3).
+    int actionTicksLeft = 0;
     bool playing() const { return !name.empty(); }
     // The instruction waiting for it: its thread's stack depth, tree and node.
     size_t depth = 0;
@@ -219,8 +244,17 @@ struct AnimationState {
     // object and parameter 1.
     int16_t eventStackObject = 0;
     float lengthTicks = 0;     // the animation's length (animation ticks)
-    bool noBlendOut = false;   // byte 2 flag 0x40: 9997 comes at the end
+    // Its weight function (CreateTransitionBlend, docs/anim-mac.md §13.2):
+    // how long it blends in from its start and out to its end, real ms: the
+    // blend time, 0 with byte 2's 0x80 "no blend in" / 0x40 "no blend out",
+    // both shrunk when they do not fit in it (requestFades). 9997 comes as
+    // the blend out starts; without one, never.
+    float fadeInMs = 0, fadeOutMs = 0;
     bool blendOutSent = false; // 9997 sent
+    // How much it is hurried (cAnimRequest::HurrySpeed): 1, or 0 when not
+    // hurryable (byte 8 flag 0x20); tickHurry scales its speed by object
+    // data 85 "Hurry Speed".
+    float hurry = 1;
     float headingOffset = 0;  // the request's heading offset, radians (byte 8 bit 0x04: temp 4)
     float playedTicks = 0, ticksPerVmTick = 0;
     float speed = 1; // Animate Sim's speed (byte 3 / 32, or temp 2)
@@ -231,6 +265,29 @@ struct AnimationState {
     // the request into the Sim's animation queue (formats/scene_anim.hpp),
     // and the reload goes on from it (resumeAnimateSim).
     uint32_t requestId = 0;
+
+    // The last blocking primitive's request (cAnimatable +0x13C, +0x140,
+    // +0x144: EndTicks, EndActionTicks, FinalCyclePortionCompleted
+    // OfPreviousBlockingPrimitive): when it ends and when its action ended
+    // on the VM's animation clock (VM::animationMs; kNoTicks: none), set as
+    // its action ends; the next Animate Sim may start there (byte 8 flags
+    // 0x02 and 0x08) and clears them.
+    static constexpr double kNoTicks = 2147483392.0; // 0x7FFFFF00
+    double previousEndMs = kNoTicks, previousActionEndMs = kNoTicks;
+    float previousPortion = 0.5f;
+    // Animate Sim requests whose action has ended and that play on to their
+    // end, blending out, while the Sim's tree goes on: their tree events,
+    // and 9998 and 9999 at the end (tickOverlayEvents).
+    struct Tail {
+        std::string name;
+        int16_t me = 0, codeOwner = 0, stackObject = 0;
+        uint16_t eventTree = 0;
+        std::vector<std::pair<int, int16_t>> pending;
+        float played = 0, perTick = 0, length = 0, speed = 1, hurry = 1;
+        int ticksLeft = 0;
+        uint64_t madeAt = 0; // the VM tick it began (it goes on from the next)
+    };
+    std::vector<Tail> tails;
 
     // Animations that play over the object without blocking (Animate
     // Overlay on a Sim or an object, Animate Object), oldest first; Animate
@@ -265,6 +322,7 @@ struct AnimationState {
         std::vector<std::pair<int, int16_t>> pending;
         float played = 0, perTick = 0, length = 0;
         int16_t requestLoops = 1; // the request's loop count (-1: until stopped)
+        float hurry = 1;          // its request's HurrySpeed (tickHurry)
     };
     std::vector<OverlayEvents> overlayEvents;
 
@@ -440,8 +498,13 @@ float walkTilesPerTick(VM& vm, const Object& sim);
 // Locomotion Animations (0x72).
 void registerAnimationPrimitives(VM& vm);
 // Once per VM tick: advances the Animate Object animations that have an
-// event tree and runs it for the events they reach (all left at the end).
+// event tree and runs it for the events they reach (all left at the end),
+// and the Animate Sim requests blending out after their action ended
+// (AnimationState::tails).
 void tickOverlayEvents(VM& vm);
+// The VM's animation clock (ms): the scene graph's, which runs with the
+// simulator (docs/anim-mac.md §8.1).
+double animationClockMs(const VM& vm);
 
 // Starts a scripted walk in `sim`'s Main thread, replacing what it runs: a
 // tree (added to the code library under a group of its own) that goes to

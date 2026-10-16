@@ -158,7 +158,9 @@ static void testAnimateSim() {
     int turns = 1;
     while (t.status == Thread::Status::Running && s.animation.serial == 1 && turns < 100)
         vm.run(t), ++turns;
-    check(turns == 16, "0.5 s = 15 ticks after the turn it starts on");
+    // Blended out: its action ends as its request starts to blend out,
+    // 233.3 ms before its 0.5 s end: 8 ticks (docs/anim-mac.md §13.3).
+    check(turns == 9, "0.5 s blended out: true 8 ticks after the turn it starts on");
     check(s.animation.serial == 2 && s.animation.playing(), "the second one starts on the same turn");
     while (t.status == Thread::Status::Running && turns < 100)
         vm.run(t), ++turns;
@@ -199,7 +201,8 @@ static void testAnimateSim() {
     Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 3, 0x00, 0x09})});
     ev.argCount = 5;
     code.add(kGroup, 0x1005, ev);
-    // No blend out (byte 2 flag 0x40): the engine's 9997 comes at the end.
+    // No blend out (byte 2 flag 0x40): true at the end, and no 9997
+    // (cActiveAnimEvent posts it only once the blend out starts).
     code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0x40, 0x20, 0x05, 0x10, 0x80})}));
     t = vm.start(s.id, 0x1006);
     vm.run(t);
@@ -209,8 +212,8 @@ static void testAnimateSim() {
     check(s.attributes[0] == 7, "the first event at 250 ms");
     while (t.status == Thread::Status::Running && turns < 200)
         vm.run(t), ++turns;
-    check(t.status == Thread::Status::Finished && s.attributes[0] == 12 + 9997 + 9998 + 9999,
-          "every event has run when it ends, then the engine's 9997, 9998 and 9999 (cActiveAnimEvent)");
+    check(t.status == Thread::Status::Finished && s.attributes[0] == 12 + 9998 + 9999,
+          "every event has run when it ends, then the engine's 9998 and 9999 (cActiveAnimEvent)");
 
     // The event tree's parameters (cCustomEventHandler2::HandleEvents, BV
     // 0x780ad4): the event, the request's stack object, the portion played
@@ -751,7 +754,7 @@ static void testResumeAnimateSim() {
         check(sa.attributes[0] == sb.attributes[0], "the events come at the same ticks");
     }
     check(ta.status == Thread::Status::Finished && tb.status == Thread::Status::Finished &&
-              sb.attributes[0] == 12 + 9997 + 9998 + 9999,
+              sb.attributes[0] == 12 + 9998 + 9999,
           "both end on the same tick, every event run once");
     r.id ^= 1;
     Thread tc = b.start(sb.id, 0x1006);
@@ -761,6 +764,78 @@ static void testResumeAnimateSim() {
 
 // The VM's own thread state (thread_state.hpp): a routing frame's state and
 // the route walked come back on the same stack, not on another.
+// How an Animate Sim's request hands over to what comes next
+// (docs/anim-mac.md §13): its weight function's blend in and out, its
+// action ending as it starts to blend out while the request plays on with
+// its events and the next one synced to its end.
+static void testTransitions() {
+    // The blend in and out: the blend time each, shrunk to 0.9999 of a short
+    // request in proportion, under 1 ms none.
+    RequestFades f = requestFades(500, true, true);
+    check(std::fabs(f.in - kBlendTicks) < 1e-3f && std::fabs(f.out - kBlendTicks) < 1e-3f, "fades: the blend time");
+    f = requestFades(300, true, true);
+    check(std::fabs(f.in - 150 * 0.9999f) < 1e-2f && std::fabs(f.out - f.in) < 1e-4f, "fades: shrunk in a short one");
+    f = requestFades(300, false, true);
+    check(f.in == 0 && std::fabs(f.out - kBlendTicks) < 1e-3f, "fades: no blend in");
+    f = requestFades(1.5f, true, true);
+    check(f.in == 0 && f.out == 0, "fades: under 1 ms none");
+
+    CodeLibrary code;
+    VM vm(code);
+    addGlobals(code, vm);
+    Object& s = sim(vm, 1.5f, 1.5f);
+    s.attributes.assign(1, 0);
+    vm.animations.addTreeEvent("a-blockedPath-long", 250, 7);
+    vm.animations.addTreeEvent("a-blockedPath-long", 480, 5);
+    Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 3, 0x00, 0x09})});
+    ev.argCount = 5;
+    code.add(kGroup, 0x1005, ev);
+    // Blended out, with its event tree: true as it starts to blend out (8
+    // ticks), with the events reached and 9997; the request plays on, the
+    // rest of its events and 9998, 9999 at its end (tick 15).
+    code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0x05, 0x10, 0x80})}));
+    Thread t = vm.start(s.id, 0x1006);
+    auto step = [&] {
+        ++vm.ticks;
+        vm.run(t);
+        tickOverlayEvents(vm);
+    };
+    vm.run(t);
+    int ticks = 0;
+    while (t.status == Thread::Status::Running && ticks < 50)
+        step(), ++ticks;
+    check(ticks == 8 && t.result && s.attributes[0] == 7 + 9997, "true as the blend out starts, after 250 ms's event and 9997");
+    check(!s.animation.playing() && s.animation.tails.size() == 1, "the request plays on");
+    check(std::fabs(s.animation.previousEndMs - (8 * 1000.0 / 30 + 500 - 8 * 1000.0 / 30)) < 0.5 &&
+              std::fabs(s.animation.previousActionEndMs - (500 - kBlendTicks)) < 0.5,
+          "the Sim keeps the request's end and its action's end (EndTicks, EndActionTicks)");
+    while (!s.animation.tails.empty() && ticks < 50)
+        step(), ++ticks;
+    check(ticks == 15 && s.attributes[0] == 7 + 9997 + 5 + 9998 + 9999, "the rest of its events, 9998 and 9999 at its end");
+
+    // Byte 8 0x02: the next one starts at the last one's end (within 140
+    // ms): no blend out (0x40) at speed 0x33 (313.7 ms, true in 10 ticks),
+    // then no blend in (0x80) synced to its end: 19.6 ms in already.
+    s.attributes.assign(1, 0);
+    code.add(kGroup, 0x1007, tree({instr(0x6A, go(1), E, {2, 0, 0x40, 0x33, 0, 0, 0x80}),
+                                   instr(0x6A, T, E, {2, 0, 0x80, 0x20, 0, 0, 0x80, 0, 0x02})}));
+    vm.ticks = 1000;
+    t = vm.start(s.id, 0x1007);
+    vm.run(t);
+    const uint32_t first = s.animation.serial;
+    ticks = 0;
+    while (t.status == Thread::Status::Running && s.animation.serial == first && ticks < 50)
+        step(), ++ticks;
+    const double end = 1000 * 1000.0 / 30 + 500 / (51.0 / 32);
+    check(ticks == 10 && s.animation.playing() && s.animation.fadeInMs == 0 &&
+              std::fabs(s.animation.playedTicks - float(animationClockMs(vm) - end)) < 0.01f,
+          "synced to the last one's end: started in the past by that much");
+    check(s.animation.previousEndMs == AnimationState::kNoTicks &&
+              s.animation.previousActionEndMs == AnimationState::kNoTicks,
+          "the last blocking primitive's ends cleared");
+
+}
+
 static void testThreadState() {
     CodeLibrary code;
     VM vm(code);
@@ -816,6 +891,7 @@ int main() {
     testScriptedWalk();
     testGait();
     testResumeAnimateSim();
+    testTransitions();
     testThreadState();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

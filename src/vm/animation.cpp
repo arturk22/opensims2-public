@@ -23,6 +23,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 
@@ -532,17 +533,33 @@ std::array<int16_t, kTempCount> objectTemps(const VM& vm, ObjectId id) {
     return t == vm.threads.end() ? std::array<int16_t, kTempCount>{} : t->second.temps;
 }
 
+// VM ticks until `ms` of real time have passed (ticksFor's rounding).
+int ticksForMs(const VM& vm, double ms) {
+    return ms <= 0 ? 0 : int(std::ceil(ms / 1000.0 * vm.clock.ticksPerSecond - 1e-6));
+}
+// An Animate Sim's ticks to its end and to its action end (the blend out's
+// start), from what it has played at its speed.
+void retimeAnimateSim(const VM& vm, AnimationState& a) {
+    const double left = std::max(0.0, double(a.lengthTicks - a.playedTicks) / double(a.speed));
+    a.ticksLeft = ticksForMs(vm, left);
+    a.actionTicksLeft = a.fadeOutMs > 0 ? ticksForMs(vm, left - a.fadeOutMs) : a.ticksLeft;
+}
+enum class AnimEvents { Progress, ActionEnd, End };
+
 // Runs the event tree for the tree events the animation has reached (all
 // of them once it ends) and the engine's: 9997 when its blend out starts
-// (kBlendTicks before its end, at the end with "no blend out"), 9998 and
-// 9999 at its end (cActiveAnimEvent::AnimUpdateDefault, BV 0xd38bec, makes
-// those keys for every request; the Animate Sim's trees handle them too:
-// "Event - Get", "Event - Clean", "Event Tree - Read Stop", ... s2pkg
-// event-tree-sweep). In my thread (I am the animated object); a tree that
-// fails fails the Animate Sim.
-void runAnimationEvents(Context& c, AnimationState& a, bool all) {
+// (the action end; never without a blend out: cActiveAnimEvent::
+// AnimUpdateDefault, BV 0xd38ffc, posts it only once HasFadeOutStartTicks
+// Passed), 9998 and 9999 at its end (BV 0xd38bec makes those keys for
+// every request; the Animate Sim's trees handle them too: "Event - Get",
+// "Event - Clean", "Event Tree - Read Stop", ... s2pkg event-tree-sweep).
+// In my thread (I am the animated object); a tree that fails fails the
+// Animate Sim.
+void runAnimationEvents(Context& c, AnimationState& a, AnimEvents mode) {
+    const bool all = mode == AnimEvents::End;
     const float length = std::max(a.lengthTicks, 1.0f);
-    const float fadeAt = a.noBlendOut ? a.lengthTicks : a.lengthTicks - kBlendTicks;
+    // Where the blend out starts, in animation ticks played.
+    const float fadeAt = a.fadeOutMs > 0 ? a.lengthTicks - a.fadeOutMs * a.speed : std::numeric_limits<float>::max();
     auto fire = [&](int16_t event, float portion) {
         if (a.eventTree)
             runEventTree(c.vm, c.thread.me, c.frame.codeOwner, a.eventStackObject, a.eventTree, c.thread.temps, event,
@@ -550,7 +567,8 @@ void runAnimationEvents(Context& c, AnimationState& a, bool all) {
     };
     for (;;) {
         const bool tree = !a.pendingEvents.empty() && (all || a.pendingEvents.front().first <= a.playedTicks);
-        const bool fade = !a.blendOutSent && (all || a.playedTicks >= fadeAt);
+        const bool fade = !a.blendOutSent && a.fadeOutMs > 0 &&
+                          (mode != AnimEvents::Progress || a.playedTicks >= fadeAt);
         if (fade && (!tree || float(a.pendingEvents.front().first) > fadeAt)) {
             a.blendOutSent = true;
             fire(animevent::BlendOut, a.playedTicks / length);
@@ -582,20 +600,55 @@ void runOverlayEvent(VM& vm, const Overlay& o, int16_t event, bool aborted) {
     }
 }
 
+// The Animate Sim's request starts to blend out, or ends without a blend
+// out: its action has ended and the primitive is done (OnPreSimulatorTick,
+// BV 0x6980d8 / base 0x94765c, sets the request's ActualEndActionTicks to
+// its ActualFadeOutStart, or its end; try_animate_sim returns 1 once it is
+// set; docs/anim-mac.md §13.3). The Sim keeps when it ends and when its
+// action ended for what comes next (the blocking primitive's EndTicks and
+// EndActionTicks); the request plays on, blending out, with the rest of its
+// tree events and 9998 and 9999 at its end (AnimationState::tails).
+void endAnimateSimAction(Context& c, AnimationState& a) {
+    const double now = animationClockMs(c.vm);
+    const double end = now + double(a.lengthTicks - a.playedTicks) / double(a.speed); // its start + duration
+    a.previousEndMs = end;
+    a.previousActionEndMs = a.fadeOutMs > 0 ? end - double(a.fadeOutMs) : end;
+    a.previousPortion = 0.5f; // no locomotion in it
+    if (a.ticksLeft > 0) {
+        runAnimationEvents(c, a, AnimEvents::ActionEnd);
+        if (a.eventTree) {
+            AnimationState::Tail t;
+            t.name = a.name;
+            t.me = c.thread.me, t.codeOwner = c.frame.codeOwner, t.stackObject = a.eventStackObject;
+            t.eventTree = a.eventTree;
+            t.pending = std::move(a.pendingEvents);
+            t.played = a.playedTicks, t.perTick = a.ticksPerVmTick, t.length = a.lengthTicks;
+            t.speed = a.speed, t.hurry = a.hurry;
+            t.ticksLeft = a.ticksLeft;
+            t.madeAt = c.vm.ticks;
+            a.tails.push_back(std::move(t));
+        }
+    } else {
+        runAnimationEvents(c, a, AnimEvents::End);
+    }
+    a.pendingEvents.clear();
+    a.name.clear();
+    a.tree = nullptr;
+    a.requestId = 0;
+}
+
 Exit animateSim(Context& c) {
     Object& me = c.me();
     AnimationState& a = me.animation;
     const size_t depth = c.thread.stack.size();
     if (a.playing() && a.depth == depth && a.tree == c.frame.behavior && a.node == c.frame.pc) {
         a.playedTicks += a.ticksPerVmTick;
-        if (--a.ticksLeft > 0) {
-            runAnimationEvents(c, a, false);
+        --a.ticksLeft;
+        if (--a.actionTicksLeft > 0) {
+            runAnimationEvents(c, a, AnimEvents::Progress);
             return Exit::Yield;
         }
-        runAnimationEvents(c, a, true);
-        a.name.clear();
-        a.tree = nullptr;
-        a.requestId = 0;
+        endAnimateSimAction(c, a);
         return Exit::True;
     }
     const auto& o = c.instruction.operands;
@@ -616,13 +669,11 @@ Exit animateSim(Context& c) {
     a.level = animlevel::ofSim(int8_t(o[12]));
     const float weight = float(int8_t(o[13])) / 100.0f;
     a.weight = weight <= 0 || weight > 1 ? 1.0f : weight;
-    a.ticksLeft = seconds ? ticksFor(c.vm, *seconds / animationSpeed(c)) : 0;
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     a.pendingEvents = library(c.vm).treeEvents(name);
     a.eventTree = le16(&o[4]);
     a.eventStackObject = c.frame.stackObject;
     a.lengthTicks = seconds ? *seconds * 1000.0f : 0.0f;
-    a.noBlendOut = (o[2] & 0x40) != 0;
     a.blendOutSent = false;
     a.headingOffset = (o[8] & 0x04) ? animlevel::headingOfDirections(c.thread.temps[4]) : 0.0f;
     a.eventObject = 0;
@@ -630,19 +681,49 @@ Exit animateSim(Context& c) {
         a.eventObject = c.get(o[9], int16_t(le16(&o[10])));
     } catch (const VMError&) {
     }
-    a.playedTicks = 0;
     a.speed = animationSpeed(c);
     a.ticksPerVmTick = float(1000.0 / c.vm.clock.ticksPerSecond) * a.speed;
+    // Its weight function: blended in and out over the blend time unless
+    // byte 2 says "no blend in" (0x80) or "no blend out" (0x40), shrunk in
+    // a short one (CreateTransitionBlend).
+    const RequestFades fades = requestFades(a.lengthTicks / a.speed, !(o[2] & 0x80), !(o[2] & 0x40));
+    a.fadeInMs = fades.in, a.fadeOutMs = fades.out;
+    a.hurry = (o[8] & 0x20) ? 0.0f : 1.0f; // byte 8 0x20: not hurryable
+    // Byte 8 0x02 starts it at the end of the last blocking primitive's
+    // request and 0x08 at its action's end, when that is within 140 ms of
+    // now (else now); the request is made in the past or the future by that
+    // much (try_animate_sim; base 1.0 0x952f60).
+    double offset = 0;
+    const double now = animationClockMs(c.vm);
+    auto sync = [&](double at) {
+        if (at == AnimationState::kNoTicks)
+            return;
+        offset = std::abs(at - now) <= kSyncWindowMs ? at - now : 0.0;
+    };
+    if (o[8] & 0x02)
+        sync(a.previousEndMs);
+    if (o[8] & 0x08)
+        sync(a.previousActionEndMs);
+    a.playedTicks = float(-offset) * a.speed;
     // The request's ID, kept in the stack frame's primitive state
     // (try_animate_sim: the counter goes up first; bit 0 when flipped).
     ++c.vm.animationCounter;
     a.requestId = (a.flipped ? 0x40000001u : 0x40000000u) | ((c.vm.animationCounter & 0xFFu) << 21);
     c.frame.primitiveState = int32_t(a.requestId);
-    if (a.ticksLeft > 0) {
-        runAnimationEvents(c, a, false);
+    if (seconds) {
+        a.previousEndMs = a.previousActionEndMs = AnimationState::kNoTicks;
+        // Its end and its action's end, from now; at the earliest in the
+        // next tick (the request is updated before the trees run).
+        const double duration = double(*seconds) * 1000.0 / double(a.speed) + offset;
+        a.ticksLeft = std::max(ticksForMs(c.vm, duration), 1);
+        a.actionTicksLeft =
+            a.fadeOutMs > 0 ? std::max(ticksForMs(c.vm, duration - double(a.fadeOutMs)), 1) : a.ticksLeft;
+        runAnimationEvents(c, a, AnimEvents::Progress);
         return Exit::Yield;
     }
-    runAnimationEvents(c, a, true);
+    // A missing animation ends at once.
+    a.ticksLeft = a.actionTicksLeft = 0;
+    runAnimationEvents(c, a, AnimEvents::End);
     a.name.clear();
     a.tree = nullptr;
     a.requestId = 0;
@@ -732,6 +813,13 @@ Exit animateOverlay(Context& c) {
     ov->requestLoops = int16_t(loops);
     ov->length = length;
     ov->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
+    // Its weight function (as Animate Sim's, requestFades): no blend out
+    // for one that holds or loops until stopped.
+    const RequestFades fades = requestFades(ov->loops > 0 ? length * float(ov->loops) / animationSpeed(c) : 1e9f,
+                                            !(o[2] & 0x80), !(o[2] & 0x40));
+    ov->fadeInMs = fades.in;
+    ov->fadeOutMs = ov->loops > 0 ? fades.out : 0.0f;
+    ov->hurry = (o[12] & 0x01) ? 0.0f : 1.0f; // byte 12 bit 0: not hurryable
     ov->pending = library(c.vm).treeEvents(ov->name);
     ov->eventTree = le16(&o[4]);
     // Its event tree runs on the animated object (the binary's event handler,
@@ -790,6 +878,9 @@ Exit animateObject(Context& c) {
     // Its time, for the bones its slots stand at (VM::objectPose).
     started->length = library(c.vm).seconds(started->name).value_or(0) * 1000.0f;
     started->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
+    started->fadeInMs = (o[2] & 0x80) ? 0.0f : kBlendTicks; // played until stopped: no blend out of its own
+    started->fadeOutMs = 0;
+    started->hurry = (o[10] & 0x80) ? 0.0f : 1.0f; // byte 10 0x80: not hurryable
     // Its event tree gets the animation's tree events as it plays, on the
     // animated object (as Animate Overlay's) (the vehicles drive on
     // "Event Tree - Drive": loop again or stop, which ends "Wait for Vehicle
@@ -806,6 +897,7 @@ Exit animateObject(Context& c) {
         ev.length = library(c.vm).seconds(name).value_or(0) * 1000.0f;
         ev.perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
         ev.requestLoops = (o[2] & 0x20) ? c.thread.temps[1] : int16_t(1);
+        ev.hurry = (o[10] & 0x80) ? 0.0f : 1.0f;
         list.push_back(std::move(ev));
     }
     return Exit::True;
@@ -1126,6 +1218,22 @@ float walkTilesPerTick(VM& vm, const Object& sim) {
     return vm.walkTilesPerTick;
 }
 
+RequestFades requestFades(float durationMs, bool blendIn, bool blendOut) {
+    RequestFades f{blendIn ? kBlendTicks : 0.0f, blendOut ? kBlendTicks : 0.0f};
+    const float both = f.in + f.out;
+    if (durationMs + 1e-6f < both) {
+        const float k = durationMs / both * 0.9999f;
+        f.in *= k, f.out *= k;
+    }
+    if (f.in < 1)
+        f.in = 0;
+    if (f.out < 1)
+        f.out = 0;
+    return f;
+}
+
+double animationClockMs(const VM& vm) { return double(vm.ticks) * 1000.0 / vm.clock.ticksPerSecond; }
+
 bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r) {
     Object* me = vm.object(t.me);
     if (!me || t.stack.empty() || r.name.empty())
@@ -1146,10 +1254,6 @@ bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r) {
     a.weight = r.weight <= 0 || r.weight > 1 ? 1.0f : r.weight;
     a.speed = speed;
     a.ticksPerVmTick = float(1000.0 / vm.clock.ticksPerSecond) * speed;
-    // The VM ticks it had played: its played time in ticks (the float the
-    // ticks added up to, so the ticks left come out as they were).
-    const int played = int(std::lround(r.played / a.ticksPerVmTick));
-    a.ticksLeft = std::max(ticksFor(vm, *seconds / speed) - played, 1);
     a.depth = t.stack.size(), a.tree = f.behavior, a.node = f.pc;
     a.pendingEvents.clear();
     for (const auto& e : library(vm).treeEvents(r.name))
@@ -1160,9 +1264,19 @@ bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r) {
     a.eventObject = r.target;
     a.eventStackObject = f.stackObject;
     a.lengthTicks = *seconds * 1000.0f;
-    a.noBlendOut = (f.behavior->instructions[f.pc].operands[2] & 0x40) != 0;
-    a.blendOutSent = r.played >= (a.noBlendOut ? a.lengthTicks : a.lengthTicks - kBlendTicks);
+    const auto& operands = f.behavior->instructions[f.pc].operands;
+    const RequestFades fades = requestFades(a.lengthTicks / speed, !(operands[2] & 0x80), !(operands[2] & 0x40));
+    a.fadeInMs = fades.in, a.fadeOutMs = fades.out;
+    a.hurry = (operands[8] & 0x20) ? 0.0f : 1.0f;
+    a.blendOutSent = a.fadeOutMs > 0 && r.played >= a.lengthTicks - a.fadeOutMs * speed;
     a.playedTicks = r.played;
+    // The VM ticks it had played: its played time in ticks (the float the
+    // ticks added up to, so the ticks left come out as they were).
+    const int played = int(std::lround(r.played / a.ticksPerVmTick));
+    a.ticksLeft = std::max(ticksFor(vm, *seconds / speed) - played, 1);
+    a.actionTicksLeft =
+        a.fadeOutMs > 0 ? std::max(ticksForMs(vm, double(*seconds) * 1000.0 / speed - a.fadeOutMs) - played, 1)
+                        : a.ticksLeft;
     a.requestId = r.id;
     return true;
 }
@@ -1193,8 +1307,15 @@ void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r) {
             for (const auto& e : library(vm).treeEvents(r.name))
                 if (float(e.first) > inPlay)
                     o.pending.push_back(e);
-        if (o.loops > 0)
-            o.blendOutSent = o.played >= o.length * float(o.loops) - kBlendTicks;
+        if (o.loops > 0) {
+            // (The saved request's blend flags are not read: both, inferred.)
+            const float speed = r.speed > 0 ? r.speed : 1.0f;
+            const RequestFades fades = requestFades(o.length * float(o.loops) / speed, true, true);
+            o.fadeInMs = fades.in, o.fadeOutMs = fades.out;
+            o.blendOutSent = o.played >= o.length * float(o.loops) - o.fadeOutMs * speed;
+        } else {
+            o.fadeOutMs = 0;
+        }
     }
     ++target.animation.overlaySerial;
 }
@@ -1278,6 +1399,7 @@ int8_t oeTypeOfRole(const std::string& role) {
 }
 
 void tickOverlayEvents(VM& vm) {
+    const float msPerTick = float(1000.0 / vm.clock.ticksPerSecond);
     struct Fire {
         int16_t me, codeOwner, stackObject;
         uint16_t tree;
@@ -1350,7 +1472,7 @@ void tickOverlayEvents(VM& vm) {
                                  portion, it->requestLoops});
                 it->pending.erase(it->pending.begin());
             }
-            if (!it->blendOutSent && it->played >= total - kBlendTicks) {
+            if (!it->blendOutSent && it->fadeOutMs > 0 && it->played >= total - it->fadeOutMs * it->perTick / msPerTick) {
                 it->blendOutSent = true;
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut, portion,
                                  it->requestLoops});
@@ -1413,6 +1535,31 @@ void tickOverlayEvents(VM& vm) {
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End, 1.0f,
                                  it->requestLoops});
             it = ended ? list.erase(it) : it + 1;
+        }
+        // The Animate Sim requests blending out after their action ended
+        // (endAnimateSimAction): the rest of their tree events as they are
+        // reached, and 9998 and 9999 at their end.
+        auto& tails = po->animation.tails;
+        for (auto it = tails.begin(); it != tails.end();) {
+            if (it->madeAt == vm.ticks) { // its primitive played it this tick
+                ++it;
+                continue;
+            }
+            it->played += it->perTick;
+            const bool ended = --it->ticksLeft <= 0;
+            const float length = std::max(it->length, 1.0f);
+            while (!it->pending.empty() && (ended || float(it->pending.front().first) <= it->played)) {
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second,
+                                 std::clamp(it->played / length, 0.0f, 1.0f), 1});
+                it->pending.erase(it->pending.begin());
+            }
+            if (ended) {
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::ActionEnd, 1.0f, 1});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End, 1.0f, 1});
+                it = tails.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
     for (const Fire& f : fires) {

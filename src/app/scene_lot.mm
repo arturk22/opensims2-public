@@ -649,6 +649,15 @@ using namespace os2app;
             for (auto& [id, a] : gObjectActors)
                 if (a)
                     a->update(scene);
+            // The doors the Sims pass open and close as in a live frame
+            // (poseActors), not only at the shots: a door opened at a shot
+            // in the middle of a run stayed open to its end.
+            if (gDoors) {
+                std::vector<os2::Vec3> sims;
+                for (const auto& s : gLotSims)
+                    sims.push_back(s.actor->position);
+                gDoors->update(gSimulation->machine(), sims, scene);
+            }
             // OS2_DEBUG_LAYERS=1: each game hour, the object actor with
             // the most animation layers (the held ones merge: AnimPlayer).
             if (std::getenv("OS2_DEBUG_LAYERS") && gSimulation && gSimulation->ticks() % 1800 == 0) {
