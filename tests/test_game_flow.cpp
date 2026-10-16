@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h>
+#include "port/process.hpp"
 
 using namespace os2;
 namespace fs = std::filesystem;
@@ -83,7 +83,7 @@ int main() {
     check(numberedShot("a.b/flow", 1) == "a.b/flow-1", "numbered shot without extension");
 
     // The user folder: copies made on demand, the game's folder untouched.
-    const fs::path tmp = fs::temp_directory_path() / ("os2_test_game_flow_" + std::to_string(::getpid()));
+    const fs::path tmp = fs::temp_directory_path() / ("os2_test_game_flow_" + std::to_string(processId()));
     fs::remove_all(tmp);
     const fs::path game = tmp / "game", user = tmp / "user";
     const fs::path shipped = game / "TSData/Res/UserData/Neighborhoods";

@@ -18,8 +18,12 @@
 #include "formats/resindex.hpp"
 #include "formats/txmt.hpp"
 #include "formats/ui_resources.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -864,6 +868,7 @@ void BuildMode::hover(simd_float2 p) {
         hovered_ = over, dirty_ = true;
 }
 
+#ifndef _WIN32
 void BuildMode::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
@@ -884,6 +889,7 @@ void BuildMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t 
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 std::optional<std::array<float, 4>> BuildMode::controlRect(uint32_t window, uint32_t control) {
     if (!active_)

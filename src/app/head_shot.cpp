@@ -9,7 +9,11 @@
 #include "formats/scenegraph.hpp"
 #include "formats/xform.hpp"
 #include "formats/sim_character.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
+#endif
 
 #include <algorithm>
 #include <cctype>

@@ -10,7 +10,9 @@
 #include "formats/strings.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
+#ifndef _WIN32
 #include "render/ui_layer.hpp"
+#endif
 #include "vm/animation.hpp"
 #include "vm/interactions.hpp"
 #include "vm/motives.hpp"
@@ -1439,6 +1441,7 @@ void LiveUi::hover(simd_float2 p) {
         dirty_ = true;
 }
 
+#ifndef _WIN32
 void LiveUi::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
@@ -1464,5 +1467,6 @@ void LiveUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t hei
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 } // namespace os2

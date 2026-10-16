@@ -10,7 +10,9 @@
 #include <sstream>
 #include <stdexcept>
 
+#if defined(__APPLE__)
 #include <sys/clonefile.h>
+#endif
 
 namespace os2 {
 
@@ -33,8 +35,15 @@ bool isNeighborhood(const fs::path& dir) {
 } // namespace
 
 fs::path defaultUserDir() {
+#if defined(_WIN32)
+    const char* base = std::getenv("LOCALAPPDATA");
+    if (!base)
+        base = std::getenv("USERPROFILE");
+    return fs::path(base ? base : ".") / "opensims2";
+#else
     const char* home = std::getenv("HOME");
     return fs::path(home ? home : "/tmp") / "Library/Application Support/opensims2";
+#endif
 }
 
 void cloneTree(const fs::path& from, const fs::path& to) {
@@ -42,11 +51,15 @@ void cloneTree(const fs::path& from, const fs::path& to) {
     const fs::path tmp = to.parent_path() / (to.filename().string() + ".copying");
     std::error_code ec;
     fs::remove_all(tmp, ec);
+#if defined(__APPLE__)
     if (clonefile(from.c_str(), tmp.c_str(), 0) != 0) {
         // Not APFS (or another volume): a plain copy.
         fs::remove_all(tmp, ec);
         fs::copy(from, tmp, fs::copy_options::recursive);
     }
+#else
+    fs::copy(from, tmp, fs::copy_options::recursive);
+#endif
     fs::rename(tmp, to);
 }
 
@@ -79,7 +92,8 @@ fs::path UserData::neighborhoodForReading(const std::string& prefix) const {
 }
 
 fs::path UserData::neighborhood(const std::string& prefix) {
-    if (prefix.empty() || prefix.find('/') != std::string::npos || prefix == "." || prefix == "..")
+    if (prefix.empty() || prefix.find('/') != std::string::npos || prefix.find('\\') != std::string::npos ||
+        prefix == "." || prefix == "..")
         throw std::runtime_error("bad neighborhood name \"" + prefix + "\"");
     const fs::path mine = neighborhoodsDir() / prefix;
     if (isNeighborhood(mine))
@@ -96,9 +110,15 @@ fs::path UserData::neighborhood(const std::string& prefix) {
 }
 
 bool UserData::inGameData(const fs::path& path) const {
-    const std::string game = fs::weakly_canonical(fs::absolute(game_)).string();
-    const std::string p = fs::weakly_canonical(fs::absolute(path)).string();
-    return p == game || (p.size() > game.size() && p.compare(0, game.size(), game) == 0 && p[game.size()] == '/');
+    std::error_code ec;
+    const fs::path game = fs::weakly_canonical(fs::absolute(game_), ec);
+    const fs::path p = fs::weakly_canonical(fs::absolute(path), ec);
+    auto gi = game.begin();
+    auto pi = p.begin();
+    for (; gi != game.end(); ++gi, ++pi)
+        if (pi == p.end() || *pi != *gi)
+            return false;
+    return true;
 }
 
 void UserData::loadOptions() {

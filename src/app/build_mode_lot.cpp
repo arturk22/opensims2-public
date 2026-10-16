@@ -18,8 +18,12 @@
 #include "formats/resindex.hpp"
 #include "formats/txmt.hpp"
 #include "formats/ui_resources.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>

@@ -7,7 +7,9 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
+#ifndef _WIN32
 #include "render/ui_layer.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -400,11 +402,14 @@ UiScreen MainMenu::screen(int width, int height) {
     return out;
 }
 
+#ifndef _WIN32
 void MainMenu::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
 }
+#endif
 
+#ifndef _WIN32
 void MainMenu::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || !ok_)
         return;
@@ -420,5 +425,6 @@ void MainMenu::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t h
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 } // namespace os2

@@ -10,8 +10,12 @@
 #include "formats/resindex.hpp"
 #include "formats/model.hpp"
 #include "formats/sim_actor.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/particle_layer.hpp"
 #include "render/renderer.hpp"
+#endif
 #include "vm/vm.hpp"
 
 #include <algorithm>
@@ -141,15 +145,21 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
         os2::logOnce("balloon icons (ObjectThumbnails.package)", "", err);
         thumbnails_.reset(); // balloons keep their default icons
     }
+    // Ultimate Collection's Catalog/Bins/*.bundle.package carry small effects
+    // resources of their own, indexed before Effects/effects.package.
     std::optional<std::vector<uint8_t>> data;
     for (const auto& loc : index.ofType(fx::kTypeEffects)) {
-        data = index.read(loc);
-        break;
+        bool main = loc.package->path().filename() == "effects.package";
+        if (main || !data || loc.entry->rawSize.value_or(loc.entry->size) > data->size())
+            data = index.read(loc);
+        if (main)
+            break;
     }
     if (!data)
         throw std::runtime_error("no effects resource (Res/Effects/effects.package)");
     library_ = std::make_unique<fx::EffectsLibrary>(fx::EffectsLibrary::parse(*data));
     system_ = std::make_unique<fx::EffectSystem>(*library_);
+#ifndef _WIN32
     layer_ = std::make_unique<ParticleLayer>(renderer.device(), renderer.colorFormat(), renderer.depthFormat(), &index);
     // The particle groups sort among the blended parts (layer 7 and up), as
     // the game's display list sorts them.
@@ -162,9 +172,18 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
                 out.push_back({g.layer, g.depth, g.id});
         },
         [layer](MTL::RenderCommandEncoder* enc, int id) { layer->drawGroup(enc, id); });
+#endif
 }
 
+#ifdef _WIN32
+LotEffects::~LotEffects() { renderer_.setParticles({}, nullptr); }
+
+void LotEffects::setImage(const std::string& name, const RgbaImage& image) { renderer_.setParticleImage(name, image); }
+#else
 LotEffects::~LotEffects() { renderer_.setExternalBlended(nullptr, nullptr); }
+
+void LotEffects::setImage(const std::string& name, const RgbaImage& image) { layer_->setImage(name, image); }
+#endif
 
 // The picture of what a balloon names by GUID (TryChangeEffect flag 0x04 BV
 // 0xe44a6c: the object or GUID handed to the thumbnail service, whose
@@ -188,7 +207,7 @@ std::string LotEffects::thumbnail(vm::VM& vm, uint32_t guid) {
                 if (auto e = thumbIndex_.find(objectThumbnailInstance(def->first, model)); e != thumbIndex_.end())
                     if (auto img = decodeUiImage(thumbnails_->read(*e->second))) {
                         name = buf;
-                        layer_->setImage(name, *img);
+                        setImage(name, *img);
                     }
             }
             // A memory: its icon (as the memories panel draws it).
@@ -196,7 +215,7 @@ std::string LotEffects::thumbnail(vm::VM& vm, uint32_t guid) {
                 if (auto bytes = index_.read(Tgi{kTypeUiImage, def->first, 1, 0}))
                     if (auto img = decodeUiImage(*bytes)) {
                         name = buf;
-                        layer_->setImage(name, *img);
+                        setImage(name, *img);
                     }
         }
     // A Sim (its character's GUID): the portrait.
@@ -207,7 +226,7 @@ std::string LotEffects::thumbnail(vm::VM& vm, uint32_t guid) {
                 e.iconSim = nid;
                 if (auto img = iconImage(e)) {
                     name = buf;
-                    layer_->setImage(name, *img);
+                    setImage(name, *img);
                 }
                 break;
             }
@@ -348,7 +367,7 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                             else if (auto img = iconImage(e)) {
                                 if (std::getenv("OS2_DEBUG_FX"))
                                     std::fprintf(stderr, "opensims2: balloon icon %s (%ux%u)\n", t.c_str(), img->width, img->height);
-                                layer_->setImage(t, *img);
+                                setImage(t, *img);
                                 iconNames_.insert(t);
                                 system_->setIcon(r.handle, t);
                             } else {
@@ -431,12 +450,20 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
     // light, "LM_Environment" (TSCreateLightsFromLightingStateWithAmbient BV
     // 0xd741dc, the lighting state's `environment`: 1 by day, 0.8 at night):
     // StandardParticlesMaterial's colorScalar -applyTextureLightColor stage.
+#ifdef _WIN32
+    const simd_float3 env = {1.0f, 1.0f, 1.0f}; // the Windows renderer has no environmentLight() yet
+#else
     const simd_float3 env = renderer_.environmentLight();
+#endif
     for (auto& q : quads_)
         if (q.lit)
             for (int k = 0; k < 3; ++k)
                 q.color[size_t(k)] *= env[k];
+#ifdef _WIN32
+    renderer_.setParticles(quads_, &index_);
+#else
     layer_->setQuads(quads_);
+#endif
     if (std::getenv("OS2_DEBUG_FX")) {
         std::fprintf(stderr, "opensims2: effects at %.2f s: %zu running, %zu particles (LOD %.2f, environment %.2f)\n",
                      seconds, system_->instanceCount(), quads_.size(), system_->lod(), env[0]);

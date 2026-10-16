@@ -1,6 +1,17 @@
 #include "app/scene_loader.hpp"
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <process.h>
+#include <windows.h>
+#else
 #include <pthread.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -17,12 +28,20 @@ struct BackgroundJob::State {
     std::function<void()> work;
     std::exception_ptr error;
     std::atomic<bool> finished{false};
+#if defined(_WIN32)
+    uintptr_t thread = 0;
+#else
     pthread_t thread{};
+#endif
 };
 
 namespace {
 
+#if defined(_WIN32)
+unsigned __stdcall runJob(void* arg) {
+#else
 void* runJob(void* arg) {
+#endif
     auto* state = static_cast<BackgroundJob::State*>(arg);
     try {
         state->work();
@@ -31,7 +50,11 @@ void* runJob(void* arg) {
     }
     state->work = nullptr;
     state->finished.store(true, std::memory_order_release);
+#if defined(_WIN32)
+    return 0;
+#else
     return nullptr;
+#endif
 }
 
 } // namespace
@@ -46,13 +69,21 @@ void BackgroundJob::start(std::function<void()> work) {
         throw std::logic_error("BackgroundJob: a job is still active");
     auto state = std::make_shared<State>();
     state->work = std::move(work);
+#if defined(_WIN32)
+    // 64 MB, as reserved address space: the VM's tree walks recurse deeper than
+    // the default stack of a secondary thread.
+    state->thread = _beginthreadex(nullptr, 64u << 20, runJob, state.get(), 0, nullptr);
+    if (state->thread == 0)
+        throw std::runtime_error("BackgroundJob: _beginthreadex failed");
+#else
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 64u << 20); // 64 MB, as reserved address space
+    pthread_attr_setstacksize(&attr, 64u << 20);
     const int rc = pthread_create(&state->thread, &attr, runJob, state.get());
     pthread_attr_destroy(&attr);
     if (rc != 0)
         throw std::runtime_error("BackgroundJob: pthread_create failed");
+#endif
     state_ = std::move(state);
 }
 
@@ -63,7 +94,12 @@ bool BackgroundJob::done() const { return state_ && state_->finished.load(std::m
 std::exception_ptr BackgroundJob::collect() {
     if (!state_)
         return nullptr;
+#if defined(_WIN32)
+    WaitForSingleObject(reinterpret_cast<HANDLE>(state_->thread), INFINITE);
+    CloseHandle(reinterpret_cast<HANDLE>(state_->thread));
+#else
     pthread_join(state_->thread, nullptr);
+#endif
     std::exception_ptr error = state_->error;
     state_.reset();
     return error;

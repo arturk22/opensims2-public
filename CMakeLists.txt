@@ -8,6 +8,25 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(MSVC)
+  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX _CRT_SECURE_NO_WARNINGS _ENABLE_EXTENDED_ALIGNED_STORAGE)
+  add_compile_options(/utf-8)
+endif()
+
+# Apple's <simd/simd.h> stays on macOS. Everywhere else, src/port/compat
+# supplies the same names with the same memory layout.
+if(NOT APPLE)
+  include_directories(BEFORE ${CMAKE_SOURCE_DIR}/src/port/compat)
+endif()
+
+function(os2_warnings target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+  endif()
+endfunction()
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
@@ -17,8 +36,21 @@ enable_language(C)
 file(GLOB OS2_SPEEX_SRC third_party/speex/libspeex/*.c)
 add_library(os2_speex STATIC ${OS2_SPEEX_SRC})
 target_include_directories(os2_speex PUBLIC third_party/speex/include)
-target_compile_definitions(os2_speex PRIVATE FLOATING_POINT VAR_ARRAYS EXPORT=)
-target_compile_options(os2_speex PRIVATE -w)
+if(MSVC)
+  # MSVC C has no variable-length arrays. Speex's USE_ALLOCA path uses _alloca.
+  target_compile_definitions(os2_speex PRIVATE FLOATING_POINT USE_ALLOCA EXPORT=)
+else()
+  target_compile_definitions(os2_speex PRIVATE FLOATING_POINT VAR_ARRAYS EXPORT=)
+endif()
+if(MSVC)
+  target_compile_options(os2_speex PRIVATE /W0)
+else()
+  target_compile_options(os2_speex PRIVATE -w)
+endif()
+
+add_library(os2_port src/port/process.cpp src/port/files.cpp)
+target_include_directories(os2_port PUBLIC src)
+os2_warnings(os2_port)
 
 add_library(os2_formats
   src/formats/anim.cpp
@@ -94,13 +126,22 @@ add_library(os2_formats
   src/formats/ui_script.cpp
 )
 target_include_directories(os2_formats PUBLIC src)
-target_compile_options(os2_formats PRIVATE -Wall -Wextra)
+os2_warnings(os2_formats)
 find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 # The coverings' niceness and crap for the environment score (round n33).
 target_sources(os2_formats PRIVATE src/formats/environment_catalog.cpp)
 # The lamps for the light maps, shared by the app and the headless hosts (round n42).
 target_sources(os2_formats PRIVATE src/formats/lot_lamps.cpp)
+target_link_libraries(os2_formats PUBLIC os2_port)
+
+# Visual Studio 2022 17.14 (MSVC 14.44.35207): the p2 optimizer hits an
+# internal compiler error (C1001) on FloorColorGrid::build at /O2 (/Oi or
+# /Ot either one triggers it; /Ob0, /Oi-, /Os alone do not). /Os /Oi- with
+# the rest of /O2 builds the file; the code is untouched.
+if(MSVC)
+  set_source_files_properties(src/formats/lot_diffusion.cpp PROPERTIES COMPILE_OPTIONS "/Os;/Oi-")
+endif()
 
 add_library(os2_vm
   src/vm/hood_bridge.cpp
@@ -151,7 +192,7 @@ add_library(os2_vm
   src/vm/world.cpp
 )
 target_include_directories(os2_vm PUBLIC src)
-target_compile_options(os2_vm PRIVATE -Wall -Wextra)
+os2_warnings(os2_vm)
 target_link_libraries(os2_vm PUBLIC os2_formats)
 # vm/routing.cpp and vm/build_edit.cpp split by area (round 26, docs/ideias/DEBITOS-TECNICOS.md 1.2).
 target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp src/vm/build_edit_walls.cpp src/vm/build_edit_ground.cpp src/vm/build_edit_stairs.cpp)
@@ -163,29 +204,32 @@ target_sources(os2_vm PRIVATE src/vm/lot_light.cpp)
 # Sound: decoding to PCM (MP3 through AudioToolbox), name lookup and playback.
 add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp src/audio/mixer.cpp src/audio/sound_system.cpp)
 target_include_directories(os2_audio PUBLIC src)
-target_compile_options(os2_audio PRIVATE -Wall -Wextra)
+os2_warnings(os2_audio)
 target_link_libraries(os2_audio PUBLIC os2_formats)
 if(APPLE)
   target_sources(os2_audio PRIVATE src/audio/player.cpp src/audio/play_sound.cpp src/audio/mixer_output.cpp)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
+elseif(WIN32)
+  target_sources(os2_audio PRIVATE src/audio/mixer_output_win.cpp)
+  target_link_libraries(os2_audio PUBLIC mfplat mfreadwrite mfuuid ole32 shlwapi)
 endif()
 
 # Movies (.movie): playback by the sound's clock.
 add_library(os2_media src/media/movie_player.cpp)
 target_include_directories(os2_media PUBLIC src)
-target_compile_options(os2_media PRIVATE -Wall -Wextra)
+os2_warnings(os2_media)
 target_link_libraries(os2_media PUBLIC os2_audio)
 
 # The game's particle effects, simulated without Metal (render/particle_system).
 add_library(os2_fx src/render/particle_system.cpp)
 target_include_directories(os2_fx PUBLIC src)
-target_compile_options(os2_fx PRIVATE -Wall -Wextra)
+os2_warnings(os2_fx)
 target_link_libraries(os2_fx PUBLIC os2_formats)
 
 add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/movie_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/hood_play_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/wants_cmds.cpp cli/s2pkg/route_cmds.cpp cli/s2pkg/buy_cmds.cpp cli/s2pkg/build_cmds.cpp cli/s2pkg/effects_cmds.cpp cli/s2pkg/simlook_cmds.cpp cli/s2pkg/cas_cmds.cpp cli/s2pkg/tutorial_cmds.cpp src/app/game_save.cpp)
 target_sources(s2pkg PRIVATE cli/s2pkg/shadow_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
-target_link_libraries(s2pkg PRIVATE os2_vm os2_audio os2_fx)
+target_link_libraries(s2pkg PRIVATE os2_vm os2_audio os2_fx os2_port)
 
 if(APPLE)
   # Shaders are compiled at runtime (the Command Line Tools have no offline
@@ -252,6 +296,53 @@ if(APPLE)
     "-framework AppKit" "-framework MetalKit")
 endif()
 
+if(WIN32)
+  find_package(SDL3 CONFIG QUIET)
+  find_program(OS2_DXC dxc)
+  if(NOT OS2_DXC)
+    file(GLOB sdk_dxc "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64/dxc.exe")
+    list(SORT sdk_dxc ORDER DESCENDING)
+    if(sdk_dxc)
+      list(GET sdk_dxc 0 OS2_DXC)
+    endif()
+  endif()
+  if(SDL3_FOUND AND OS2_DXC)
+    set(os2_shader_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+    set(os2_shader_outputs)
+    foreach(shader lot.vert lot.frag ui.vert ui.frag particle.vert particle.frag particle_modulate.frag)
+      if(shader MATCHES "vert$")
+        set(profile vs_6_0)
+      else()
+        set(profile ps_6_0)
+      endif()
+      set(source ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${shader}.hlsl)
+      set(output ${os2_shader_dir}/${shader}.dxil)
+      add_custom_command(OUTPUT ${output}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${os2_shader_dir}
+        COMMAND ${OS2_DXC} -nologo -T ${profile} -E main -Fo ${output} ${source}
+        DEPENDS ${source}
+        COMMENT "Compiling ${shader}.hlsl")
+      list(APPEND os2_shader_outputs ${output})
+    endforeach()
+    add_custom_target(os2_shaders DEPENDS ${os2_shader_outputs})
+    add_executable(opensims2_win src/app/win_main.cpp src/app/game_data_caches.cpp src/render/gpu_renderer.cpp src/app/game_cursors.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/lot_effects.cpp
+      src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/dialog_window_pickers.cpp src/app/dialog_window_clothes.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_mode_family.cpp src/app/cas_mode_panels.cpp src/app/cas_studio.cpp
+      src/render/camera.cpp src/render/cas_camera.cpp
+      src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/main_menu.cpp
+      src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp
+      src/app/movie_host.cpp src/app/loading_screen.cpp src/app/tv_broadcast.cpp)
+    target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_media os2_fx os2_port SDL3::SDL3 dbghelp)
+    os2_warnings(opensims2_win)
+    add_dependencies(opensims2_win os2_shaders)
+    target_link_options(opensims2_win PRIVATE /STACK:67108864)
+    add_custom_command(TARGET opensims2_win POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${os2_shader_dir} $<TARGET_FILE_DIR:opensims2_win>/shaders
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:opensims2_win>)
+  else()
+    message(STATUS "SDL3 or dxc not found: the Windows viewer is not built")
+  endif()
+endif()
+
 enable_testing()
 add_executable(test_qfs tests/test_qfs.cpp)
 target_link_libraries(test_qfs PRIVATE os2_formats)
@@ -282,7 +373,7 @@ target_link_libraries(test_genetics PRIVATE os2_vm)
 add_test(NAME genetics COMMAND test_genetics)
 
 add_executable(test_dialog tests/test_dialog.cpp)
-target_link_libraries(test_dialog PRIVATE os2_vm)
+target_link_libraries(test_dialog PRIVATE os2_vm os2_port)
 add_test(NAME dialog COMMAND test_dialog)
 
 add_executable(test_tutorial tests/test_tutorial.cpp)
@@ -291,7 +382,17 @@ add_test(NAME tutorial COMMAND test_tutorial)
 # With the game's data (OS2_DATA): s2pkg tutorial --auto plays "O Básico -
 # Parte Um" (Tutorial_Lot14) to its step 32 and past it (live QA 14);
 # without the data it is skipped.
-add_test(NAME tutorial_auto COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'furthest step shown 33 (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" tutorial \"$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package\" --auto --ticks 9000; fi")
+if(WIN32)
+  # No sh: run the tool itself when the data path is known at configure time;
+  # without it there is nothing to play.
+  if(DEFINED ENV{OS2_DATA})
+    add_test(NAME tutorial_auto COMMAND s2pkg tutorial "$ENV{OS2_DATA}/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package" --auto --ticks 9000)
+  else()
+    add_test(NAME tutorial_auto COMMAND ${CMAKE_COMMAND} -E echo "furthest step shown 33 (skipped: no OS2_DATA)")
+  endif()
+else()
+  add_test(NAME tutorial_auto COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'furthest step shown 33 (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" tutorial \"$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package\" --auto --ticks 9000; fi")
+endif()
 set_tests_properties(tutorial_auto PROPERTIES PASS_REGULAR_EXPRESSION "furthest step shown 3[3-9]")
 
 add_executable(test_queue tests/test_queue.cpp)
@@ -303,14 +404,29 @@ target_link_libraries(test_autonomy PRIVATE os2_vm)
 add_test(NAME autonomy COMMAND test_autonomy)
 # With the game's data (OS2_DATA): the saved moods of the shipped lots' Sims
 # come out of the base game's UpdateMood (docs/motives-mac.md §4).
-add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
-# With the game's data: the shipped lots' Sims' saved environment (motive 13)
-# against the environment score of their place in the loaded lot (round n33,
-# docs/motives-mac.md §8), with the light maps made without a window (round
-# n42: 24 of the 55 exact and 40 within 2, the app's own numbers; without the
-# light, 14 and 20).
-add_test(NAME env_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'environment for 24 (within 0.5 for 34, within 2 for 40) (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" env-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
-set_tests_properties(env_sweep PROPERTIES PASS_REGULAR_EXPRESSION "environment for (2[4-9]|[3-5][0-9]) \\(within 0.5 for [0-9]+, within 2 for (4[0-9]|5[0-5])\\)")
+if(WIN32)
+  # No sh: run the tool itself when the data path is known at configure time;
+  # without it there is nothing to check.
+  if(DEFINED ENV{OS2_DATA})
+    add_test(NAME mood_sweep COMMAND s2pkg mood-sweep "$ENV{OS2_DATA}/TSData/Res/UserData/Neighborhoods")
+  else()
+    add_test(NAME mood_sweep COMMAND ${CMAKE_COMMAND} -E echo "within 0.05 for all (skipped: no OS2_DATA)")
+  endif()
+  if(DEFINED ENV{OS2_DATA})
+    add_test(NAME env_sweep COMMAND s2pkg env-sweep "$ENV{OS2_DATA}/TSData/Res/UserData/Neighborhoods")
+  else()
+    add_test(NAME env_sweep COMMAND ${CMAKE_COMMAND} -E echo "environment for 24 (within 0.5 for 34, within 2 for 40) (skipped: no OS2_DATA)")
+  endif()
+else()
+  add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+  # With the game's data: the shipped lots' Sims' saved environment (motive 13)
+  # against the environment score of their place in the loaded lot (round n33,
+  # docs/motives-mac.md §8), with the light maps made without a window (round
+  # n42: 24 of the 55 exact and 40 within 2, the app's own numbers; without the
+  # light, 14 and 20).
+  add_test(NAME env_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'environment for 24 (within 0.5 for 34, within 2 for 40) (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" env-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+  set_tests_properties(env_sweep PROPERTIES PASS_REGULAR_EXPRESSION "environment for (2[4-9]|[3-5][0-9]) \\(within 0.5 for [0-9]+, within 2 for (4[0-9]|5[0-5])\\)")
+endif()
 
 add_executable(test_reach tests/test_reach.cpp)
 target_link_libraries(test_reach PRIVATE os2_vm)
@@ -356,6 +472,11 @@ add_executable(test_audio tests/test_audio.cpp)
 target_link_libraries(test_audio PRIVATE os2_audio)
 target_include_directories(test_audio PRIVATE third_party/speex/include) # the test encodes with libspeex
 add_test(NAME audio COMMAND test_audio)
+if(WIN32)
+  add_executable(test_win_audio tests/test_win_audio.cpp)
+  target_link_libraries(test_win_audio PRIVATE os2_audio)
+  add_test(NAME win_audio COMMAND test_win_audio)
+endif()
 add_executable(test_cursors tests/test_cursors.cpp src/app/game_cursors.cpp)
 target_include_directories(test_cursors PRIVATE src)
 target_link_libraries(test_cursors PRIVATE os2_formats)
@@ -390,6 +511,7 @@ target_include_directories(test_camera_input PRIVATE src)
 add_test(NAME camera_input COMMAND test_camera_input)
 add_executable(test_game_flow tests/test_game_flow.cpp src/app/game_flow.cpp src/app/user_data.cpp src/formats/log_once.cpp)
 target_include_directories(test_game_flow PRIVATE src)
+target_link_libraries(test_game_flow PRIVATE os2_port)
 add_test(NAME game_flow COMMAND test_game_flow)
 add_executable(test_hood_terrain tests/test_hood_terrain.cpp)
 target_link_libraries(test_hood_terrain PRIVATE os2_formats)
@@ -413,7 +535,13 @@ add_executable(test_tv_program tests/test_tv_program.cpp)
 target_include_directories(test_tv_program PRIVATE src)
 add_test(NAME tv_program COMMAND test_tv_program)
 
+add_executable(test_simd tests/test_simd.cpp)
+target_include_directories(test_simd PRIVATE src)
+add_test(NAME simd COMMAND test_simd)
+
 # --help prints the usage and exits without opening a window (r14).
+# These drive the macOS app bundle. The Windows host grows its own checks.
+if(TARGET opensims2)
 add_test(NAME cli_help COMMAND opensims2 --help)
 # With the game's data (OS2_DATA): Sims drawn without jumps the VM gave no
 # reason for, seats and slots where their objects are (tests/drawn_places.sh).
@@ -482,3 +610,4 @@ set_tests_properties(front_door PROPERTIES PASS_REGULAR_EXPRESSION "front door: 
 add_test(NAME saved_lot_night COMMAND sh ${CMAKE_SOURCE_DIR}/tests/saved_lot_night.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/saved_lot_night)
 set_tests_properties(saved_lot_night PROPERTIES PASS_REGULAR_EXPRESSION "saved lot night: ok" TIMEOUT 600)
 set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")
+endif()

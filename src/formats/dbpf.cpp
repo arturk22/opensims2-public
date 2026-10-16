@@ -4,28 +4,151 @@
 #include "qfs.hpp"
 
 #include <cstring>
+#include <fstream>
+#include <utility>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 namespace os2 {
 
-DbpfPackage::DbpfPackage(const std::filesystem::path& path) : path_(path), file_(path, std::ios::binary) {
-    if (!file_)
+namespace {
+
+void closeFd(std::intptr_t fd) {
+    if (fd < 0)
+        return;
+#if defined(_WIN32)
+    CloseHandle(reinterpret_cast<HANDLE>(fd));
+#else
+    ::close(static_cast<int>(fd));
+#endif
+}
+
+std::intptr_t openRead(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    // FILE_SHARE_DELETE: a package can be replaced or removed while this
+    // handle is open, as unlink does on POSIX.
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
+    return handle == INVALID_HANDLE_VALUE ? -1 : reinterpret_cast<std::intptr_t>(handle);
+#else
+    return ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+#endif
+}
+
+uint64_t fileSizeOf(std::intptr_t fd) {
+#if defined(_WIN32)
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(reinterpret_cast<HANDLE>(fd), &size))
+        return 0;
+    return static_cast<uint64_t>(size.QuadPart);
+#else
+    const off_t end = ::lseek(static_cast<int>(fd), 0, SEEK_END);
+    return end < 0 ? 0 : static_cast<uint64_t>(end);
+#endif
+}
+
+bool readAt(std::intptr_t fd, uint8_t* dst, size_t size, uint64_t offset) {
+#if defined(_WIN32)
+    // Overlapped reads of one handle from several threads (pread's job) need
+    // a private event. With no event, completion signals the file handle and
+    // another thread collects the wrong result.
+    struct Event {
+        HANDLE handle = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Event() {
+            if (handle)
+                CloseHandle(handle);
+        }
+    };
+    static thread_local Event event;
+    if (!event.handle)
+        return false;
+    HANDLE file = reinterpret_cast<HANDLE>(fd);
+    while (size) {
+        ResetEvent(event.handle);
+        OVERLAPPED ov{};
+        ov.Offset = static_cast<DWORD>(offset);
+        ov.OffsetHigh = static_cast<DWORD>(offset >> 32);
+        // Low bit: do not signal the file handle when this read completes.
+        ov.hEvent = reinterpret_cast<HANDLE>(reinterpret_cast<uintptr_t>(event.handle) | 1);
+        const DWORD chunk = size > (1u << 20) ? (1u << 20) : static_cast<DWORD>(size);
+        DWORD n = 0;
+        if (!ReadFile(file, dst, chunk, &n, &ov)) {
+            if (GetLastError() != ERROR_IO_PENDING || !GetOverlappedResult(file, &ov, &n, TRUE))
+                return false;
+        }
+        if (n == 0)
+            return false;
+        dst += n;
+        size -= n;
+        offset += n;
+    }
+    return true;
+#else
+    size_t got = 0;
+    while (got < size) {
+        const ssize_t n = ::pread(static_cast<int>(fd), dst + got, size - got, static_cast<off_t>(offset + got));
+        if (n <= 0)
+            return false;
+        got += static_cast<size_t>(n);
+    }
+    return true;
+#endif
+}
+
+} // namespace
+
+DbpfPackage::DbpfPackage(const std::filesystem::path& path) : path_(path), file_(openRead(path)) {
+    if (file_ < 0)
         throw DbpfError("cannot open " + path.string());
-    file_.seekg(0, std::ios::end);
-    fileSize_ = uint64_t(file_.tellg());
+    fileSize_ = fileSizeOf(file_);
     readHeader();
     readIndex();
     applyDirectory();
+}
+
+DbpfPackage::DbpfPackage(DbpfPackage&& o) noexcept
+    : path_(std::move(o.path_)), file_(std::exchange(o.file_, -1)), fileSize_(o.fileSize_), header_(o.header_),
+      entries_(std::move(o.entries_)), byTgi_(std::move(o.byTgi_)), shared_(std::move(o.shared_)) {}
+
+DbpfPackage& DbpfPackage::operator=(DbpfPackage&& o) noexcept {
+    if (this != &o) {
+        closeFile();
+        path_ = std::move(o.path_);
+        file_ = std::exchange(o.file_, -1);
+        fileSize_ = o.fileSize_;
+        header_ = o.header_;
+        entries_ = std::move(o.entries_);
+        byTgi_ = std::move(o.byTgi_);
+        shared_ = std::move(o.shared_);
+    }
+    return *this;
+}
+
+DbpfPackage::~DbpfPackage() { closeFile(); }
+
+void DbpfPackage::closeFile() {
+    if (file_ >= 0)
+        closeFd(file_);
+    file_ = -1;
 }
 
 void DbpfPackage::readHeader() {
     uint8_t h[96];
     if (fileSize_ < sizeof h)
         throw DbpfError(path_.string() + ": file too small for DBPF header");
-    file_.seekg(0);
-    file_.read(reinterpret_cast<char*>(h), sizeof h);
+    if (!readAt(file_, h, sizeof h, 0))
+        throw DbpfError(path_.string() + ": short read");
     if (std::memcmp(h, "DBPF", 4) != 0)
         throw DbpfError(path_.string() + ": bad magic");
 
@@ -58,8 +181,8 @@ void DbpfPackage::readIndex() {
         throw DbpfError(path_.string() + ": index outside file");
 
     std::vector<uint8_t> idx(header_.indexSize);
-    file_.seekg(header_.indexOffset);
-    file_.read(reinterpret_cast<char*>(idx.data()), std::streamsize(idx.size()));
+    if (!readAt(file_, idx.data(), idx.size(), header_.indexOffset))
+        throw DbpfError(path_.string() + ": short read");
 
     entries_.reserve(header_.indexCount);
     for (uint32_t i = 0; i < header_.indexCount; ++i) {
@@ -116,15 +239,12 @@ const DbpfEntry* DbpfPackage::find(const Tgi& tgi) const {
 
 std::vector<uint8_t> DbpfPackage::readRaw(const DbpfEntry& e) {
     std::vector<uint8_t> buf(e.size);
-    if (!file_.is_open()) {
-        file_.open(path_, std::ios::binary);
-        if (!file_)
+    if (file_ < 0) {
+        file_ = openRead(path_);
+        if (file_ < 0)
             throw DbpfError("cannot reopen " + path_.string());
     }
-    file_.clear();
-    file_.seekg(e.offset);
-    file_.read(reinterpret_cast<char*>(buf.data()), std::streamsize(buf.size()));
-    if (!file_)
+    if (!buf.empty() && !readAt(file_, buf.data(), buf.size(), e.offset))
         throw DbpfError(path_.string() + ": short read");
     return buf;
 }
@@ -141,39 +261,32 @@ std::vector<uint8_t> DbpfPackage::read(const DbpfEntry& e) {
 
 DbpfPackage::SharedFd& DbpfPackage::SharedFd::operator=(SharedFd&& o) noexcept {
     if (this != &o) {
-        if (fd && *fd >= 0)
-            ::close(*fd);
+        if (fd)
+            closeFd(fd->load());
         fd = std::move(o.fd);
     }
     return *this;
 }
 
 DbpfPackage::SharedFd::~SharedFd() {
-    if (fd && *fd >= 0)
-        ::close(*fd);
+    if (fd)
+        closeFd(fd->load());
 }
 
 std::vector<uint8_t> DbpfPackage::readConcurrent(const DbpfEntry& e) const {
     std::vector<uint8_t> raw(e.size);
-    int fd = shared_.fd->load(std::memory_order_acquire);
+    std::intptr_t fd = shared_.fd->load(std::memory_order_acquire);
     if (fd < 0) {
-        const int mine = ::open(path_.c_str(), O_RDONLY | O_CLOEXEC);
+        const std::intptr_t mine = openRead(path_);
         if (mine < 0)
             throw DbpfError("cannot reopen " + path_.string());
-        int expected = -1;
+        std::intptr_t expected = -1;
         if (shared_.fd->compare_exchange_strong(expected, mine))
             fd = mine;
         else
-            ::close(mine), fd = expected; // another thread opened it first
+            closeFd(mine), fd = expected; // another thread opened it first
     }
-    size_t got = 0;
-    while (got < raw.size()) {
-        const ssize_t n = ::pread(fd, raw.data() + got, raw.size() - got, off_t(e.offset + got));
-        if (n <= 0)
-            break;
-        got += size_t(n);
-    }
-    if (got != raw.size())
+    if (!readAt(fd, raw.data(), raw.size(), e.offset))
         throw DbpfError(path_.string() + ": short read");
     if (!e.compressed() || !qfsIsCompressed(raw))
         return raw;

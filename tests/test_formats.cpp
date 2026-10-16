@@ -32,7 +32,11 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#if defined(_WIN32)
+#include <io.h> // _dup, _dup2, _fileno, _close
+#else
 #include <unistd.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -117,6 +121,7 @@ static void testPng() {
     writePng(path, img);
     std::ifstream f(path, std::ios::binary);
     std::vector<uint8_t> png((std::istreambuf_iterator<char>(f)), {});
+    f.close();
     std::filesystem::remove(path);
     check(png.size() > 8 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G', "png signature");
 
@@ -2109,15 +2114,29 @@ static void testNextStoryOverGround() {
 // os2::logOnce (round 24, docs/game-flow-mac.md §5): an error a caller recovers from is
 // on stderr once per (where, key), at most kLogOnceKeys keys per `where`,
 // then one "not shown" line.
+//
+// dup/dup2/fileno/close are _dup/... on Windows (<io.h>).
+#if defined(_WIN32)
+static int dupFd(int fd) { return _dup(fd); }
+static int dup2Fd(int fd, int target) { return _dup2(fd, target); }
+static int fileNo(FILE* f) { return _fileno(f); }
+static void closeFd(int fd) { _close(fd); }
+#else
+static int dupFd(int fd) { return dup(fd); }
+static int dup2Fd(int fd, int target) { return dup2(fd, target); }
+static int fileNo(FILE* f) { return fileno(f); }
+static void closeFd(int fd) { close(fd); }
+#endif
+
 static void testLogOnce() {
     std::fflush(stderr);
-    const int saved = dup(2);
+    const int saved = dupFd(2);
     FILE* tmp = std::tmpfile();
     if (saved < 0 || !tmp) {
         check(false, "logOnce: stderr redirect");
         return;
     }
-    dup2(fileno(tmp), 2);
+    dup2Fd(fileNo(tmp), 2);
     const std::runtime_error e("unreadable");
     for (int frame = 0; frame < 3; ++frame) // a block that runs every frame
         os2::logOnce("test site", "key A", e);
@@ -2125,8 +2144,8 @@ static void testLogOnce() {
     for (int k = 0; k < os2::kLogOnceKeys + 5; ++k)
         os2::logOnce("test flood", std::to_string(k), "bad");
     std::fflush(stderr);
-    dup2(saved, 2);
-    close(saved);
+    dup2Fd(saved, 2);
+    closeFd(saved);
     std::rewind(tmp);
     std::string out;
     for (int c; (c = std::fgetc(tmp)) != EOF;)

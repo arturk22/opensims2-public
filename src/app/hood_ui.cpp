@@ -11,7 +11,9 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
+#ifndef _WIN32
 #include "render/ui_layer.hpp"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -748,11 +750,13 @@ UiScreen HoodUi::screen(int width, int height) {
     return out;
 }
 
+#ifndef _WIN32
 void HoodUi::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
     options_->attach(device, colorFormat, depthFormat);
 }
+#endif
 
 namespace {
 double steadySeconds() {
@@ -769,6 +773,7 @@ void HoodUi::showErrorTooltip(uint32_t index, simd_float2 at) {
     dirty_ = true;
 }
 
+#ifndef _WIN32
 void HoodUi::prepareFrame(uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || !ok_)
         return;
@@ -794,5 +799,25 @@ void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t hei
     options_->encode(enc, width, height, scale); // under the puck and its panel, which stay drawn over its tab
     layers_[layer_]->encode(enc, width, height);
 }
+#else
+UiScreen HoodUi::overlay(int width, int height) {
+    UiScreen out;
+    if (width <= 0 || height <= 0 || !ok_)
+        return out;
+    if (!errorTip_.empty() && steadySeconds() > errorTipUntil_)
+        errorTip_.clear(), dirty_ = true;
+    if (width != canvasW_ || height != canvasH_)
+        canvasW_ = width, canvasH_ = height, dirty_ = true;
+    if (options_->active())
+        out = options_->screen(width, height); // under the puck and its panel, which stay drawn over its tab
+    UiScreen sc = screen(width, height);
+    out.width = sc.width, out.height = sc.height;
+    out.quads.insert(out.quads.end(), sc.quads.begin(), sc.quads.end());
+    for (auto& text : sc.textImages)
+        out.textImages.push_back(std::move(text)); // the caption quads point at them
+    out.windows += sc.windows, out.drawn += sc.drawn;
+    return out;
+}
+#endif
 
 } // namespace os2

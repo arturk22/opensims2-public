@@ -204,10 +204,12 @@ public:
 
     // --- Drawing -------------------------------------------------------------
     UiScreen screen(int width, int height);
+#ifndef _WIN32
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     // Rebuilds the overlay when what it shows changed (canvas = the drawable
     // size divided by `scale`) and encodes it.
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+#endif
 
 private:
     enum class Action { None, SelectSim, Centre, Speed, Pause, Cancel, Mode, SubPanel, Callback, Floor, Zoom, Rotate,
@@ -301,8 +303,10 @@ private:
     std::optional<simd_float2> mouse_;
     std::set<std::pair<vm::ObjectId, uint16_t>> cancelled_; // (Sim, queue uid) cancelled from the panel
 
+#ifndef _WIN32
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
     size_t layer_ = 0;
+#endif
     bool dirty_ = true;
     int canvasW_ = 0, canvasH_ = 0, laidW_ = 0, laidH_ = 0;
     uint64_t stamp_ = 0;

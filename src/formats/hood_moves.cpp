@@ -13,6 +13,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include "port/files.hpp"
 
 namespace os2::hood {
 
@@ -32,7 +33,12 @@ bool under(const fs::path& path, const fs::path& dir) {
         return false;
     const std::string d = fs::weakly_canonical(fs::absolute(dir)).string();
     const std::string p = fs::weakly_canonical(fs::absolute(path)).string();
-    return p == d || (p.size() > d.size() && p.compare(0, d.size(), d) == 0 && p[d.size()] == '/');
+    if (p == d)
+        return true;
+    if (p.size() <= d.size() || p.compare(0, d.size(), d) != 0)
+        return false;
+    const char sep = p[d.size()];
+    return sep == '/' || sep == '\\';
 }
 
 // Rewrites a package: resources keyed (type, instance) replaced or deleted,
@@ -57,7 +63,7 @@ void rewritePackage(const fs::path& file, const std::map<std::pair<uint32_t, uin
         pkg.closeFile();
         w.save(tmp);
     }
-    fs::rename(tmp, file);
+    os2::replaceFile(tmp, file);
 }
 
 void checkFolder(const fs::path& folder, const fs::path& forbidden) {

@@ -15,17 +15,21 @@
 #include "formats/ui_resources.hpp"
 #include "render/camera.hpp"
 #include "formats/graphics_options.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#endif
 #include "vm/family_write.hpp"
 #include "vm/genetics.hpp"
+#include "port/process.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <random>
-#include <unistd.h>
 
 namespace os2 {
 
@@ -53,7 +57,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
         if (auto s = res_->script(id); s && !s->roots.empty())
             scripts_.emplace(id, std::move(*s));
     loading::phase("cas: ui");
-    tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(getpid()));
+    tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(processId()));
     fs::create_directories(tempDir_);
     renderer_.hideTestScene();
     // The studio lot (app/cas_studio.hpp) unless --cas-no-studio.
@@ -560,10 +564,22 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size, flo
     return out;
 }
 
+#ifndef _WIN32
 void CasMode::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
 }
+#else
+bool CasMode::layout(int width, int height, UiScreen& out) {
+    if (width <= 0 || height <= 0 || capturing_)
+        return false;
+    setCanvas(width, height);
+    if (!dirty_ && laidW_ == width && laidH_ == height)
+        return false;
+    out = screen(width, height);
+    return true;
+}
+#endif
 
 void CasMode::setCanvas(int width, int height) {
     if (width != canvasW_ || height != canvasH_) {
@@ -572,6 +588,7 @@ void CasMode::setCanvas(int width, int height) {
     }
 }
 
+#ifndef _WIN32
 void CasMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || capturing_)
         return;
@@ -585,6 +602,7 @@ void CasMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t he
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 void CasMode::mouseDown(simd_float2 p) {
     if (dirty_ || laidW_ != canvasW_ || laidH_ != canvasH_) {

@@ -10,7 +10,11 @@
 #include "formats/sim_actor.hpp"
 #include "formats/skeleton.hpp"
 #include "formats/skinning.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
+#endif
 #include "vm/sim_motion.hpp"
 #include "vm/vm.hpp"
 

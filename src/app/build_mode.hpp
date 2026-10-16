@@ -185,8 +185,10 @@ public:
     void hover(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
     UiScreen screen(int width, int height);
+#ifndef _WIN32
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+#endif
     // Called every frame: the previews follow the tool.
     void update();
 
@@ -349,8 +351,10 @@ private:
     DrawnWindows windows_; // the panel's windows in the last screen
     std::vector<std::array<float, 4>> solid_;
     std::optional<simd_float2> mouse_;
+#ifndef _WIN32
     std::array<std::unique_ptr<UiLayer>, 3> layers_;
     size_t layer_ = 0;
+#endif
     bool dirty_ = true;
     int canvasW_ = 0, canvasH_ = 0, laidW_ = 0, laidH_ = 0;
 };

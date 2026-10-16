@@ -12,6 +12,7 @@
 #include <random>
 #include <regex>
 #include <stdexcept>
+#include "port/files.hpp"
 
 namespace os2::vm {
 
@@ -289,7 +290,7 @@ FamilyWriteResult writeNewFamily(const fs::path& source, const fs::path& target,
     pkg.closeFile();
     const fs::path tmp = pkgPath.string() + ".new";
     w.save(tmp);
-    fs::rename(tmp, pkgPath);
+    os2::replaceFile(tmp, pkgPath);
     return res;
 }
 

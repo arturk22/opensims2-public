@@ -92,8 +92,10 @@ public:
 
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
     UiScreen screen(int width, int height);
+#ifndef _WIN32
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+#endif
 
     // UI sounds by name (button click sounds), if set.
     void setSoundPlayer(std::function<void(const std::string&)> play) { playSound_ = std::move(play); }
@@ -128,7 +130,9 @@ private:
     std::function<void(const std::string&)> playSound_;
     int canvasW_ = 1280, canvasH_ = 720, laidW_ = 0, laidH_ = 0;
     bool dirty_ = true, uploaded_ = false; // uploaded_: the current layer holds the last screen()
+#ifndef _WIN32
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
+#endif
     size_t layer_ = 0;
 };
 

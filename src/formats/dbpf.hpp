@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -76,19 +75,25 @@ public:
     std::vector<uint8_t> readConcurrent(const DbpfEntry& e) const;
 
     // Release the file handle; the next read reopens it.
-    void closeFile() { file_.close(); }
-    bool fileOpen() const { return file_.is_open(); }
+    void closeFile();
+    bool fileOpen() const { return file_ >= 0; }
+
+    DbpfPackage(const DbpfPackage&) = delete;
+    DbpfPackage& operator=(const DbpfPackage&) = delete;
+    DbpfPackage(DbpfPackage&&) noexcept;
+    DbpfPackage& operator=(DbpfPackage&&) noexcept;
+    ~DbpfPackage();
 
 private:
     std::filesystem::path path_;
-    std::ifstream file_;
+    std::intptr_t file_ = -1;
     uint64_t fileSize_ = 0;
     DbpfHeader header_;
     std::vector<DbpfEntry> entries_;
     std::unordered_map<Tgi, size_t, TgiHash> byTgi_;
     // readConcurrent's descriptor (-1 until first used).
     struct SharedFd {
-        std::unique_ptr<std::atomic<int>> fd = std::make_unique<std::atomic<int>>(-1);
+        std::unique_ptr<std::atomic<std::intptr_t>> fd = std::make_unique<std::atomic<std::intptr_t>>(-1);
         SharedFd() = default;
         SharedFd(SharedFd&&) noexcept = default;
         SharedFd& operator=(SharedFd&& o) noexcept;

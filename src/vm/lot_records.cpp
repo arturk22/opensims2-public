@@ -259,13 +259,15 @@ int16_t directionOf(const LotObjects::State& s) {
 bool inWorld(const LotObjects::State& s) { return s.x >= 0 && s.y >= 0; }
 
 // The pose the game gives a state: position in tiles with the floor's
-// elevation plus the object's (out of the world: the origin), rotation
-// about Z by 90° - 45° × direction. What did not change keeps the old
-// pose's values (the game's quaternions have either sign).
+// elevation plus the object's (out of the world, or in a slot: the origin,
+// as the game saves a Sim's head slots holder and its plumbob; drawn at the
+// container's slot), rotation about Z by 90° - 45° × direction. What did
+// not change keeps the old pose's values (the game's quaternions have either sign).
 std::array<float, 7> poseOf(const Lot& world, const LotObjects::State& s, const LotObjects::State* was,
                             const std::array<float, 7>* old) {
     std::array<float, 7> p = old ? *old : std::array<float, 7>{0, 0, 0, 0, 0, 0, 1};
-    if (!inWorld(s)) {
+    const bool contained = s.data.size() > size_t(objdata::ContainerId) && s.data[objdata::ContainerId] != 0;
+    if (!inWorld(s) || contained) {
         p[0] = p[1] = p[2] = 0;
     } else {
         p[0] = s.x;

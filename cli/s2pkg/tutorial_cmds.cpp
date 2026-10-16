@@ -81,7 +81,8 @@ int cmdTutorial(const std::filesystem::path& lotFile, int ticks, bool autoPlay, 
         vm::bindLotSims(m);
     vm::startSavedLot(m, load, saved, false);
     const int created = vm::ensureTutorialControllers(m);
-    std::printf("%s: lot %d, neighborhood %d, speed %d%s; %d tutorial controller(s) created\n", lotFile.filename().c_str(),
+    const std::string lotName = lotFile.filename().string();
+    std::printf("%s: lot %d, neighborhood %d, speed %d%s; %d tutorial controller(s) created\n", lotName.c_str(),
                 m.globals[vm::global::CurrentHouse], m.globals[vm::global::CurrentNeighborhoodId],
                 m.globals[vm::global::Speed], m.globals[vm::global::Paused] ? " (paused)" : "", created);
     vm::TutorialUi ui;

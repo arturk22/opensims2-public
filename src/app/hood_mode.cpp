@@ -11,7 +11,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace os2 {
 
@@ -925,7 +930,11 @@ void restartWith(const std::vector<std::string>& args) {
         argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
     std::fflush(stdout);
+#ifdef _WIN32
+    _execv(argv[0], argv.data());
+#else
     execv(argv[0], argv.data());
+#endif
     std::perror("opensims2: restart");
     std::exit(1);
 }

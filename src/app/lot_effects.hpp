@@ -135,7 +135,10 @@ private:
     std::unique_ptr<fx::EffectSystem> system_;
     std::unique_ptr<fx::ColliderWorld> world_;
     const Lot* lotSeen_ = nullptr;
-    std::unique_ptr<ParticleLayer> layer_;
+#ifndef _WIN32
+    std::unique_ptr<ParticleLayer> layer_; // Windows: the renderer draws the particles (GpuRenderer::setParticles)
+#endif
+    void setImage(const std::string& name, const RgbaImage& image);
     std::map<std::pair<int16_t, uint32_t>, Running> vm_; // (object, effect serial)
     std::vector<Manual> manual_;
     struct AnimEffect {

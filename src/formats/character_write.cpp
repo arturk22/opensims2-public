@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <map>
 #include <random>
+#include "port/files.hpp"
 
 namespace os2::cas {
 
@@ -419,7 +420,7 @@ bool setCharacterNames(const std::filesystem::path& file, const std::string& fir
         pkg.closeFile();
         const std::filesystem::path tmp = file.string() + ".names";
         w.save(tmp);
-        std::filesystem::rename(tmp, file);
+        os2::replaceFile(tmp, file);
     }
     return true;
 }

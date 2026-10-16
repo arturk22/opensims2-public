@@ -127,6 +127,7 @@ public:
     const std::string& errorTooltip() const { return errorTip_; }
 
     UiScreen screen(int width, int height);
+#ifndef _WIN32
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
     // encode()'s first half: the layout for this frame put in the layer
@@ -134,6 +135,10 @@ public:
     // would). drawnDialog() is the Lot Info Dialog the layer drawn shows.
     void prepareFrame(uint32_t width, uint32_t height, float scale);
     const HoodLot* drawnDialog() const { return drawnDialog_; }
+#else
+    // The open options window under the puck and its panels, on a canvas (the host composes it).
+    UiScreen overlay(int width, int height);
+#endif
 
 private:
     std::string errorTip_;
@@ -214,7 +219,9 @@ private:
     // again (playtest hood-esc).
     bool uploaded_ = false;
     const HoodLot* drawnDialog_ = nullptr;
+#ifndef _WIN32
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
+#endif
     size_t layer_ = 0;
 };
 
