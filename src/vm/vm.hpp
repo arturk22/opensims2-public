@@ -692,7 +692,9 @@ struct Object {
         int checkRoom = -1, checkLevel = -999;
         float checkWalked = 0;
         // Blocked, the goal check has run and said go on (DoBlocked ->
-        // DoBlockedWaitingForGoalCheckTree -> DoBlockedGoalStillAvailable).
+        // DoBlockedWaitingForGoalCheckTree -> DoBlockedGoalStillAvailable):
+        // the next step of the walk is the try counter with `blocker`, not
+        // a new step test.
         bool blockCheckDone = false;
         struct Climb {
             std::string animation; // empty between phases

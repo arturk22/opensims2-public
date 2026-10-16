@@ -1041,6 +1041,55 @@ static void testRouteInGoalCheck() {
           "a goal check that routes again: the inner route walks, the outer one fails with 13 (not 11) after it");
 }
 
+// Blocked, the goal check says go on: DoBlockedWaitingForGoalCheckTree (BV
+// 0x56da50) goes straight to DoBlockedGoalStillAvailable with the blocker
+// the locomotor stored, without trying the step again (docs/routing-mac.md
+// §9.4). An object put in the walker's way after it planned blocks a step;
+// the blocked goal check takes a few ticks, and meanwhile the object goes
+// out of the world: the route still fails with 15 "blocked by object".
+// Before, the step was tried again with the walker standing, went free and
+// the walk went on (the stuck socials of round n31: the next tick the step
+// went into the object again, and the try counter never rose).
+static void testBlockedGoalCheck() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(12, 6);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    ObjectFunctions f;
+    f.functions.resize(0x28);
+    f.functions[0x27] = {0, 0x1011}; // the goal check of the Go To's code owner (the Sim's own tree here)
+    code.add(kGroup, 0x81, f);
+    constexpr uint8_t Global = 0x06, Param = 0x09;
+    // The goal check: true; from its second run (the first is the route's
+    // first step) it waits 5 ticks first.
+    code.add(kGroup, 0x1011, tree({expr(Global, 10, 3, Lit, 1, go(1), E),  // global 10 += 1
+                                   expr(Global, 10, Eq, Lit, 1, T, go(2)), // the first time: true
+                                   expr(Param, 3, Assign, Lit, 5, go(3), E),
+                                   instr(0x00, T, E, {3, 0})}, // sleep param 3 ticks
+                                  4));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {9.5f, 2.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {1.5f, 2.5f, 1};
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    vm.run(t);
+    Object& box = vm.instantiate(kGroup, 0x80);
+    box.position = {3.5f, 2.5f, 1}; // in the way, after the plan
+    bool moved = false;
+    for (int i = 0; i < 3000 && t.status == Thread::Status::Running; ++i) {
+        vm.run(t);
+        if (!moved && sim.route && sim.route->check == 3) { // the blocked goal check runs
+            box.position = {-1, -1, 1};
+            moved = true;
+        }
+    }
+    check(moved && t.status == Thread::Status::Finished && !t.result && sim.person &&
+              sim.person->data[62] == int16_t(RouteFail::BlockedByObject) && sim.position.x < 3,
+          "blocked by an object, the goal check says go on: blocked by object (15), the step not tried again");
+}
+
 // The move-out-of-way slot (CreateMoveOutOfWayDestination type 0,
 // docs/routing-mac.md §9.3): one direction 45 degrees off the asker's, on
 // the side the mover stands; distances 0.0625 to 0.3, optimal 0.3,
@@ -2123,6 +2172,7 @@ int main() {
     testDoorPortalTree();
     testPreRouteTree();
     testRouteInGoalCheck();
+    testBlockedGoalCheck();
     testMoveOutOfWaySlot();
     testMoveOutOfWay();
     testGoHere();

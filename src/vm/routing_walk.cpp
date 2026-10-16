@@ -301,7 +301,11 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             why = which == 2 ? RouteFail::InterruptedByCallback : RouteFail::GoalNotAvailable;
             return Step::Failed;
         }
-        if (which == 3) // blocked: DoBlockedWaitingForGoalCheckTree -> DoBlockedGoalStillAvailable
+        // Blocked: DoBlockedWaitingForGoalCheckTree (BV 0x56da50) goes from
+        // the tree's true straight to DoBlockedGoalStillAvailable (state
+        // 0x1A) with the blocker the locomotor stored, below: the step is not
+        // tried again (docs/routing-mac.md §9.4).
+        if (which == 3)
             r.blockCheckDone = true;
         else if (which == 1 && startAlongRoute(c, me, r))
             return Step::Call;
@@ -316,6 +320,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.loco.moving = false;
         r.loco.onCurve = false;
         r.blocker = 0, r.blockedTicks = 0;
+        r.blockCheckDone = false;
         Object::Route next = r;
         RouteFail w;
         if (!planRoute(vm, me, next, w)) {
@@ -442,7 +447,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     // another a step away was blocked by it before its goal check could end
     // the walk ("Goal Check - Continue?": within 3 tiles the social's
     // lead-in starts where it stands).
-    if (onFloor && !waitingForPerson && !r.aside) {
+    if (onFloor && !waitingForPerson && !r.aside && !r.blockCheckDone) {
         const auto& L = r.loco;
         const float walked = L.moving && L.onCurve && L.curve ? L.curve->total() - L.curve->remaining(L.segment, L.arc) : 0;
         const int room = me.data[objdata::Room];
@@ -461,7 +466,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.loco.halting = false;
         r.loco.haltDone = true;
     };
-    if (r.loco.halting && onFloor) {
+    if (r.loco.halting && onFloor && !r.blockCheckDone) {
         // Stopping for a blocker (StopLocomotion): the walk to the end of
         // its half cycle and the stop clip, along the way; once it has
         // played the walk is blocked (FollowOneStep state 7). The next
@@ -488,6 +493,21 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     // (FollowOneStep returns 0 -> DoBlocked), whether or not it would be
     // seen in the way now; gone, the walk goes on (re-routed).
     ObjectId b = waitingForPerson ? r.blocker : 0;
+    if (r.blockCheckDone) {
+        // DoBlockedGoalStillAvailable after the blocked goal check: the
+        // stored blocker, not this tick's step (which, the walker standing
+        // since the block, went free and walked on: the walk stepped into
+        // the counter again the next tick, the try counter never rose and
+        // the route never failed; N001_Lot68's and N001_Lot11's socials stuck
+        // for days, round n31). No blocker, or its object gone (the object
+        // manager's 0x74 finds none): fails with 1 "unknown".
+        if (!r.blocker || !vm.object(r.blocker)) {
+            r.blockCheckDone = false;
+            why = RouteFail::Unknown;
+            return Step::Failed;
+        }
+        b = r.blocker;
+    }
     if (std::exchange(r.loco.haltDone, false) && !b && vm.object(r.loco.halted))
         b = r.loco.halted;
     float aheadAt = 0;
@@ -547,7 +567,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         // not come here.)
         if (b != r.blocker)
             r.blocker = b, r.blockedTicks = 0;
-        if (r.blockedTicks == 0 && !std::exchange(r.blockCheckDone, false) && !r.aside) {
+        const bool checked = std::exchange(r.blockCheckDone, false);
+        if (r.blockedTicks == 0 && !checked && !r.aside) {
             // DoBlocked (BV 0x5762a4), a blocker found: DoAlongRouteCheckTest
             // forced (its last argument 1) and the goal check tree first
             // (DoBlockedWaitingForGoalCheckTree, state 0x19): its false fails
