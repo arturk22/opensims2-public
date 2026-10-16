@@ -1017,8 +1017,99 @@ static void testVertexObjects() {
     vm.removeObject(chair.id);
 }
 
+// Foundations, decks and pools on a slope as the game's deck tool levels
+// them (docs/buy-build-mac.md §7.25): the tool's height is the start's
+// ground + 0.75 (a pool: + 0), every grid point of the rectangle not at it
+// must pass the vertex test (0x81), the raised level goes to it one grid
+// point past the rectangle too, and the ground under a deck only comes down.
+static void testDeckLevelling() {
+    auto sloped = [](int levels) {
+        Lot lot = flatLot();
+        lot.levelCount = levels;
+        lot.elevations.resize(13 * 11 * size_t(levels));
+        for (int k = 0; k < levels; ++k)
+            for (int x = 0; x <= 12; ++x)
+                for (int y = 0; y <= 10; ++y)
+                    lot.elevations[size_t(k) * 13 * 11 + size_t(x) * 11 + size_t(y)] = 0.1875f * float(x) + 3.0f * float(k);
+        lot.floors.resize(12 * 10 * size_t(levels));
+        lot.rooms.resize(12 * 10 * size_t(levels));
+        for (auto& [k, l] : lot.roomLayers)
+            l.resize(12 * 10 * size_t(levels));
+        return lot;
+    };
+    {
+        Lot lot = sloped(2);
+        CodeLibrary code;
+        VM vm(code);
+        vm.globals[global::BudgetMod10000] = 5000;
+        vm.families[1], vm.globals[global::CurrentFamily] = 1;
+        vm.world = World::fromLot(lot);
+        BuildEditor ed(vm, lot);
+        // A chair on the ground by the rectangle's edge: the edge's points
+        // of the level above would come down onto it (0x60): 0x81.
+        Object& chair = vm.createObject(0x7F000001);
+        chair.position = {5.5f, 2.5f, 1};
+        auto r = ed.drawFoundation(2, 2, 4, 3);
+        check(!r.ok && r.error == 0x81 && lot.elevation(1, 3, 3) == 3.5625f, "an object under the edge refuses it (0x81)");
+        chair.position = {6.5f, 2.5f, 1}; // by the ring: those points stay
+        r = ed.drawFoundation(2, 2, 4, 3);
+        check(r.ok && r.cost == 6 * kFoundationTilePrice, "the foundation on the slope");
+        const float top = 0.375f + 0.75f;
+        bool flat = true;
+        for (int x = 2; x <= 5; ++x)
+            for (int y = 2; y <= 4; ++y)
+                flat &= lot.elevation(1, x, y) == top;
+        check(flat, "its floor is flat at the start's ground + 0.75");
+        check(lot.elevation(1, 1, 3) == top && lot.elevation(1, 6, 1) == top && lot.elevation(1, 6, 5) == top,
+              "the level above goes to it one grid point past the rectangle");
+        check(lot.elevation(1, 7, 3) == 0.1875f * 7 + 3.0f, "two points past it does not");
+        check(lot.elevation(1, 6, 2) != top && lot.elevation(1, 6, 3) != top, "the ring points by the chair stay");
+        check(lot.elevation(0, 2, 3) == 0.375f && lot.elevation(0, 1, 3) == 0.1875f, "the ground under its low side stays");
+        check(lot.elevation(0, 4, 3) == 0.375f && lot.elevation(0, 5, 3) == 0.375f && lot.elevation(0, 6, 4) == 0.375f &&
+                  lot.elevation(0, 6, 3) == 1.125f,
+              "the ground under its high side comes down to the floor - 0.75 (not by the chair)");
+        check(ed.undo() && lot.elevation(1, 3, 3) == 3.5625f && lot.elevation(0, 5, 3) == 0.9375f, "undo puts the slope back");
+        // A deck started on a foundation's edge takes the foundation's height.
+        ed.redo();
+        vm.removeObject(chair.id);
+        r = ed.drawFoundation(5, 2, 6, 3, 1);
+        check(r.ok && r.cost == 2 * 2 * kLatticeDeckTilePrice && lot.elevation(1, 7, 3) == top,
+              "a deck from the foundation's edge at its height");
+        check(lot.deckFoundationStyle(0, 6, 3, 0) == 1 && lot.deckFoundationStyle(0, 4, 3, 0) == 0, "each tile its product");
+        // Over the foundation: the quarters that change cost the deck less
+        // 0.8 of the foundation (3 - 3) / 4 each.
+        r = ed.drawFoundation(4, 2, 4, 3, 1);
+        check(r.ok && r.changed == 0, "the deck over foundation tiles lays nothing new");
+        // Deleting: the tiles' products x 0.8 back by the quarters.
+        r = ed.deleteFoundation(5, 2, 6, 3);
+        check(r.ok && r.cost == -4 * 2 && lot.elevation(1, 7, 3) == lot.elevation(0, 7, 3) + 3.0f &&
+                  lot.elevation(0, 7, 3) == 0.375f,
+              "the deck goes for int(3 x 0.8) a tile, its points back a story over the ground (left cut down)");
+        check(lot.elevation(1, 5, 3) == top, "the foundation's edge stays (its floor holds it)");
+    }
+    {
+        Lot lot = sloped(1);
+        CodeLibrary code;
+        VM vm(code);
+        vm.globals[global::BudgetMod10000] = 5000;
+        vm.families[1], vm.globals[global::CurrentFamily] = 1;
+        vm.world = World::fromLot(lot);
+        BuildEditor ed(vm, lot);
+        auto r = ed.drawPool(2, 2, 4, 3);
+        check(r.ok && r.cost == 6 * kPoolTilePrice, "a pool on the slope");
+        check(lot.elevation(0, 5, 3) == 0.375f && lot.elevation(0, 6, 3) == 0.375f && lot.elevation(0, 1, 3) == 0.375f,
+              "the ground levelled to the start's, one grid point past the pool too");
+        check(lot.elevation(0, 7, 3) == 0.1875f * 7, "not two");
+        check(lot.elevation(-1, 3, 3) == 0.375f - 3.0f && lot.elevation(-1, 6, 3) == 0.375f - 3.0f, "the bottom a story down");
+        // The start on the far side: the pool takes that corner's ground.
+        r = ed.drawPool(9, 6, 8, 7);
+        check(r.ok && lot.elevation(0, 8, 6) == 0.1875f * 10, "a drag from its right takes the right corner's height");
+    }
+}
+
 int main() {
     testRedoFunds();
+    testDeckLevelling();
     testVertexObjects();
     testNoCharge();
     testStairs();

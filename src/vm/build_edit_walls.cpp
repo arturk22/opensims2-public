@@ -234,46 +234,6 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, 
     return "";
 }
 
-bool BuildEditor::levelPoints(const std::vector<std::array<int, 2>>& points, float height,
-                              const std::vector<std::array<int, 4>>& free) {
-    if (!lot_.hasLevel(0) || lot_.elevations.empty())
-        return true;
-    const int W = int(lot_.width), H = int(lot_.height);
-    const size_t base = size_t(0 - lot_.minLevel) * size_t(W + 1) * size_t(H + 1);
-    std::vector<size_t> change;
-    for (const auto& [x, y] : points) {
-        if (x < 0 || y < 0 || x > W || y > H)
-            continue;
-        const size_t i = base + size_t(x) * size_t(H + 1) + size_t(y);
-        if (std::fabs(lot_.elevations[i] - height) < 1e-4f)
-            continue;
-        if (terrainLimitError(height))
-            return false;
-        // A ground floor on a tile around the point, or a wall (or fence)
-        // ending there, holds it (inferred: the foundation and pool tools'
-        // own levelling, MayPlaceQuadrilateral, is not read; the walls use
-        // the game's leveller, levelForWall).
-        for (int tx = x - 1; tx <= x; ++tx)
-            for (int ty = y - 1; ty <= y; ++ty)
-                if (tx >= 0 && ty >= 0 && tx < W && ty < H)
-                    for (uint16_t q : lot_.floor(0, uint32_t(tx), uint32_t(ty)))
-                        if (q)
-                            return false;
-        for (const auto& w : lot_.walls) {
-            if (w.a.level != 0)
-                continue;
-            const bool touches = (std::lround(w.a.x) == x && std::lround(w.a.y) == y) ||
-                                 (std::lround(w.b.x) == x && std::lround(w.b.y) == y);
-            if (touches && std::none_of(free.begin(), free.end(), [&](const auto& f) { return sameSection(f, w); }))
-                return false;
-        }
-        change.push_back(i);
-    }
-    for (size_t i : change)
-        lot_.elevations[i] = height;
-    return true;
-}
-
 BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, int y1) {
     Result r;
     const auto sections = wallSections(x0, y0, x1, y1);

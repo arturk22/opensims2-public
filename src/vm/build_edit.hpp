@@ -116,6 +116,26 @@ public:
     // the marker `style` (SetDeckFoundationMarkers, docs/buy-build-mac.md
     // §7.25).
     void setMarkers(int level, int x0, int y0, int x1, int y1, int32_t style);
+    // A lot read without the markers gets them from its heights and pools.
+    void ensureMarkers();
+    // The deck tool's cost of setting `style` on the tiles (ax, ay)-(bx, by)
+    // of lot level `level` (SetDeckFoundationStyle: a quarter of the new
+    // product's price less 0.8 of the old one's for each quarter that
+    // changes, floored).
+    int markerCost(int level, int ax, int ay, int bx, int by, int32_t style) const;
+    // UserDeckFoundation::CalculateTopElevation from the drag's start grid
+    // point (sx, sy): its ground + 0.75 (a pool: + 0), or the raised floor
+    // there when a deck or foundation is round it.
+    float deckTopHeight(int sx, int sy, bool pool) const;
+    // MayPlaceQuadrilateral's grid points: 0x81 when one of the rectangle's
+    // (tiles (ax, ay)-(bx, by)) on lot level `li` not at `top` fails the
+    // vertex test; 0 if they all may go.
+    int deckLevelError(int li, int ax, int ay, int bx, int by, float top) const;
+    // MoveFloorElevations / TryMoveFloorElevation / ChangeFloorVertex (BV
+    // 0x9af1c4, 0x9aef18, 0x9acee0) over the grid points one past the
+    // rectangle (docs/buy-build-mac.md §7.25): to `top` (`place`) or back a
+    // story over the level below, each that passes the vertex test.
+    void moveDeckFloor(int li, int ax, int ay, int bx, int by, float top, bool pool, bool place);
 
     // Pool tool (deckfoundations.txt "pool 3"): a rectangle of ground tiles
     // (corners inclusive) dug into a pool: the lot gets its underground
@@ -375,8 +395,8 @@ public:
     // it on its level (0x5A), the point a story up or down that would have
     // to follow within MinLevelHeight (0.75) and cannot (0x69/0x6A), a wall
     // on an edge from it that needs a flat bottom (0x5B, this level) or top
-    // (0x5C, the level below), a pool, foundation or deck round it (silent)
-    // and a fence that would get steeper than 60° (0x31), and the objects
+    // (0x5C, the level below), a pool round it (silent) and a fence that
+    // would get steeper than 60° (0x31), and the objects
     // round it (bit 7, vertexObjectsError: 0x61, 0x60, 0x68).
     static constexpr int kSilentRefusal = -1;
     int vertexMoveError(int li, int x, int y, float height, uint32_t mask) const;
@@ -449,11 +469,6 @@ private:
     // The objects attached to a wall section (lead IDs), and whether one
     // of them is in use.
     std::vector<ObjectId> attachedObjects(int level, int ax, int ay, int bx, int by, bool* inUse) const;
-    // Levels the ground's grid points to `height` (the lot's level 0);
-    // false (nothing changed) if one of them is held by a floor or by a
-    // wall that is not among `free`.
-    bool levelPoints(const std::vector<std::array<int, 2>>& points, float height,
-                     const std::vector<std::array<int, 4>>& free = {});
     Result eraseRun(int level, int x0, int y0, int x1, int y1, bool fences);
     // The attic walls the roofs of a lot level need (gable ends over walls).
     std::vector<std::array<int, 4>> atticWalls(int lotLevel) const;
@@ -518,6 +533,8 @@ private:
 // (product 0 foundation, 1 and 2 decks, 3 pool); 0 for none.
 constexpr int kDeckTypeDeck = 1, kDeckTypeFoundation = 2, kDeckTypePool = 3, kDeckTypeStage = 4;
 int deckFoundationType(int32_t style);
+// A base-game product's price a tile (deckfoundations.txt 0-3; 0 for none).
+int deckProductPrice(int32_t style);
 
 // The modular stairs among the VM's objects: each "Stair Modular - ... -
 // Portal - A" top step followed down its links (object data 80) to the
@@ -554,7 +571,8 @@ int terrainLimitError(float height);
 namespace vertextest {
 constexpr uint32_t Edge = 1u << 0, Limits = 1u << 1, Floor = 1u << 2, Floorable = 1u << 3, Above = 1u << 4,
                    Below = 1u << 5, Objects = 1u << 7, Partitions = 1u << 8, Pool = 1u << 9,
-                   Submersible = 1u << 10, FenceSlope = 1u << 11, DeckFoundation = 1u << 13;
+                   Submersible = 1u << 10, FenceSlope = 1u << 11,
+                   TileMarker = 1u << 13; // WorldDB slot 0xcc (not the deck markers), never set in the base game
 constexpr uint32_t kWalls = 0x2BB7, kBrush = 0x2BF7;
 // cWorldDB::MinLevelHeight (the global 0x02b14460, set to 0.75 by a static
 // initializer): how close a story may come to the one below.

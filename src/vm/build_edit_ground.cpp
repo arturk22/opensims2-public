@@ -55,7 +55,7 @@ int deckFoundationType(int32_t style) {
     }
 }
 
-void BuildEditor::setMarkers(int level, int x0, int y0, int x1, int y1, int32_t style) {
+void BuildEditor::ensureMarkers() {
     // A lot saved without the array (N002_Lot32) gets one from what it has:
     // foundations by their heights and the pools (inferred: their product
     // is not known, taken as the foundation's).
@@ -77,6 +77,10 @@ void BuildEditor::setMarkers(int level, int x0, int y0, int x1, int y1, int32_t 
             for (int q = 0; q < 4; ++q)
                 setDeckFoundationMarker(lot_, -1, x, y, q, kPoolProduct);
     }
+}
+
+void BuildEditor::setMarkers(int level, int x0, int y0, int x1, int y1, int32_t style) {
+    ensureMarkers();
     for (int x = std::min(x0, x1); x <= std::max(x0, x1); ++x)
         for (int y = std::min(y0, y1); y <= std::max(y0, y1); ++y)
             for (int q = 0; q < 4; ++q)
@@ -164,6 +168,100 @@ void BuildEditor::foundationWalls(int newStyle, const std::set<std::pair<int, in
         }
 }
 
+int deckProductPrice(int32_t style) {
+    switch (style) {
+    case 0: return kFoundationTilePrice;
+    case 1: return kLatticeDeckTilePrice;
+    case 2: return kColumnDeckTilePrice;
+    case 3: return kPoolTilePrice;
+    default: return 0;
+    }
+}
+
+int BuildEditor::markerCost(int level, int ax, int ay, int bx, int by, int32_t style) const {
+    // cTSUserToolUndoableDeckFoundation::SetDeckFoundationStyle (Mac BV
+    // 0x41817c): every quarter whose marker changes adds (DeckFoundationCost
+    // (new) - DeckFoundationCost(old, refund)) x 0.25 to the undoable's cost,
+    // and Cost() floors the sum (0x9b48f0). DeckFoundationCost (0x417c30):
+    // the product's price, x RefundRate (0.8) for a refund, floored.
+    int quarters4 = 0; // the sum x 4
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y)
+            for (int q = 0; q < 4; ++q)
+                if (const int32_t old = lot_.deckFoundationStyle(level, x, y, q); old != style)
+                    quarters4 += deckProductPrice(style) - int(float(deckProductPrice(old)) * kBuildRefundRate);
+    return int(std::floor(float(quarters4) / 4.0f));
+}
+
+float BuildEditor::deckTopHeight(int sx, int sy, bool pool) const {
+    // UserDeckFoundation::CalculateTopElevation (BV 0x9ad4e4): with no
+    // deck, foundation (or stage) marker round the start (HasDeckFoundation
+    // Vertex, FUN_001633fc), its ground + 4 x FloorElevationUnit (0.75), a
+    // pool + 0; else the raised floor there (the level above).
+    const int W = int(lot_.width), H = int(lot_.height);
+    sx = std::clamp(sx, 0, W), sy = std::clamp(sy, 0, H);
+    bool marked = false;
+    for (int tx = sx - 1; tx <= sx; ++tx)
+        for (int ty = sy - 1; ty <= sy; ++ty)
+            marked |= foundationTile(tx, ty);
+    if (marked && lot_.hasLevel(1))
+        return lot_.elevation(1, sx, sy);
+    return lot_.elevation(0, sx, sy) + (pool ? 0.0f : 4 * kFloorElevationUnit);
+}
+
+int BuildEditor::deckLevelError(int li, int ax, int ay, int bx, int by, float top) const {
+    // MayPlaceQuadrilateral (BV 0x352a30): every grid point of the rectangle
+    // (corners included) on the level of the floor it makes that is not at
+    // the tool's height must pass the vertex test with 0x2BB7 (the global
+    // 0x02b8a698), else 0x81 "Can't level terrain".
+    for (int x = ax; x <= bx + 1; ++x)
+        for (int y = ay; y <= by + 1; ++y)
+            if (std::fabs(lot_.elevation(li, x, y) - top) > 1e-4f)
+                if (const int e = vertexMoveError(li, x, y, top, vertextest::kWalls)) {
+                    if (std::getenv("OS2_DEBUG_VERTEX"))
+                        std::fprintf(stderr, "vertex (%d,%d) level %d from %.3f to %.3f: %#x\n", x, y, li,
+                                     lot_.elevation(li, x, y), top, unsigned(e));
+                    return 0x81;
+                }
+    return 0;
+}
+
+void BuildEditor::moveDeckFloor(int li, int ax, int ay, int bx, int by, float top, bool pool, bool place) {
+    // MoveFloorElevations (BV 0x9af1c4): the grid points one past the
+    // rectangle on every side, each through TryMoveFloorElevation
+    // (0x9aef18): taking away, the height is the point a level down + a
+    // story; a point whose height changes (a pool's, always) moves when it
+    // passes the vertex test (0x2BB7, a pool's without bit 9), else stays
+    // without an error; then ChangeFloorVertex (0x9acee0): a pool's point a
+    // level down goes to the height - 3, a deck's or foundation's (the
+    // terrain under it) only comes down, to the height - 0.75, when higher;
+    // the point goes to the height with the stories above
+    // (ChangeFloorAndWaterElevationCoupled).
+    for (int x = ax - 1; x <= bx + 2; ++x)
+        for (int y = ay - 1; y <= by + 2; ++y) {
+            if (x < 0 || y < 0 || x > int(lot_.width) || y > int(lot_.height))
+                continue;
+            float h = top;
+            if (!place && lot_.hasLevel(li - 1))
+                h = lot_.elevation(li - 1, x, y) + kStandardLevelHeight;
+            if (std::fabs(lot_.elevation(li, x, y) - h) < 1e-4f && !pool)
+                continue;
+            const uint32_t mask = pool ? vertextest::kWalls & ~vertextest::Pool : vertextest::kWalls;
+            if (vertexMoveError(li, x, y, h, mask))
+                continue;
+            if (lot_.hasLevel(li - 1)) {
+                const size_t plane = size_t(lot_.width + 1) * size_t(lot_.height + 1);
+                float& below = lot_.elevations[size_t(li - 1 - lot_.minLevel) * plane + size_t(x) * size_t(lot_.height + 1) +
+                                               size_t(y)];
+                if (pool)
+                    below = h - kStandardLevelHeight;
+                else if (below > h - 4 * kFloorElevationUnit)
+                    below = h - 4 * kFloorElevationUnit;
+            }
+            moveVertexCoupled(li, x, y, h);
+        }
+}
+
 BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, int product) {
     Result r;
     const DeckProduct deck = deckProduct(product);
@@ -173,14 +271,14 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
         r.message = std::string("cannot lay a ") + what + ": " + why;
         return r;
     };
-    if (!lot_.hasLevel(0) || !lot_.hasLevel(1) || lot_.elevations.empty())
-        return fail(0x1A, "the lot has no story above the ground");
+    if (!lot_.hasLevel(0) || lot_.elevations.empty())
+        return fail(0x1A, "the lot has no ground");
     const int W = int(lot_.width), H = int(lot_.height);
     const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
     const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
-    // CanPlaceTile / MayPlaceQuadrilateral (BV 0x34f5a8, 0x352a30): water
-    // (0x1E), objects that are not allowed in a foundation (0x0C, od 42
-    // without 0x200); walls and floors inside are refused too (inferred).
+    // The tiles of the rectangle (inferred, the app's: locked or off the lot
+    // 0x45, a ground floor 0x0C (the street's 0x45), water 0x1E; the game's
+    // MayPlaceQuadrilateral tests the corners, 0x02, and the grid points).
     std::vector<std::array<int, 2>> tiles;
     for (int x = ax; x <= bx; ++x)
         for (int y = ay; y <= by; ++y) {
@@ -198,63 +296,69 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
                 for (int cy = y; cy <= y + 1; ++cy)
                     if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
                         return fail(0x1E, "water at " + point(x, y));
-            for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
-                if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x200)))
-                    return fail(o->person ? 0x4B : 0x0C, "something is in the way at " + point(x, y));
             tiles.push_back({x, y});
         }
-    for (const auto& w : lot_.walls) {
-        if (w.a.level != 0 || raisedEdge(w.type))
-            continue;
-        const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
-        if (mx >= float(ax) && mx <= float(bx + 1) && my >= float(ay) && my <= float(by + 1))
-            return fail(0x0C, "a wall is in the way");
-    }
     if (tiles.empty()) {
         r.ok = true;
         r.message = std::string("the ") + what + " is there already";
         return r;
     }
-    r.cost = int(tiles.size()) * deck.price;
+    Geometry before = capture();
+    // The level above the ground the deck raises (CreateQuadrilateral adds
+    // it, WorldDB 0x68, when the lot has none).
+    if (!lot_.hasLevel(1))
+        addUpperLevel(lot_);
+    // The tool's height: the drag's start (the corner of its first tile away
+    // from the other end; inferred mapping of the click's grid point).
+    const int sx = x0 <= x1 ? ax : bx + 1, sy = y0 <= y1 ? ay : by + 1;
+    const float top = deckTopHeight(sx, sy, false);
+    if (const int e = deckLevelError(1, ax, ay, bx, by, top)) {
+        restore(before);
+        return fail(e, "the ground cannot be levelled");
+    }
+    // A foundation: each object of its tiles that may not be in one
+    // (ObjectMayBeInFoundation, BV 0x34e380: three kinds of the selector
+    // service, not identified, or a support that ConformsToCeiling; here a
+    // support or an object in the air, od 42 0x200, inferred) -> 0x83;
+    // a deck tests none (the vertex test's 0x60 catches them).
+    if (product == 0)
+        for (const auto& [x, y] : tiles)
+            for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
+                if (const Object* o = vm_.object(id);
+                    o && (o->person || !((o->definition && o->definition->objectType() == kObjectTypeSupport) ||
+                                         (o->data[objdata::PlacementFlags] & 0x200)))) {
+                    restore(before);
+                    return fail(0x83, "something is in the way at " + point(x, y));
+                }
+    // A wall strictly inside the rectangle that the level room tool may not
+    // erase (FUN_009ac8d0; here every wall but the raised edges) -> 0x84.
+    for (const auto& w : lot_.walls) {
+        if (w.a.level != 0 || raisedEdge(w.type))
+            continue;
+        const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+        if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f && my < float(by + 1) - 0.01f) {
+            restore(before);
+            return fail(0x84, "a wall is in the way");
+        }
+    }
+    r.cost = markerCost(0, ax, ay, bx, by, product);
     if (!canAfford(vm_, r.cost)) {
+        restore(before);
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
         return r;
     }
-    Geometry before = capture();
-    // The terrain levelled to the first corner (MayPlaceQuadrilateral:
-    // each point not at that height must be movable, else 0x81).
-    const float height = lot_.elevation(0, std::clamp(x0, 0, W), std::clamp(y0, 0, H));
-    std::vector<std::array<int, 2>> points;
-    for (const auto& [x, y] : tiles)
-        for (int cx = x; cx <= x + 1; ++cx)
-            for (int cy = y; cy <= y + 1; ++cy)
-                points.push_back({cx, cy});
-    std::vector<std::array<int, 4>> free;
-    for (const auto& w : lot_.walls)
-        if (raisedEdge(w.type) && w.a.level == 0)
-            free.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
-                            int(std::lround(w.b.y))});
-    if (!levelPoints(points, height, free)) {
-        restore(before);
-        return fail(0x81, "the ground cannot be levelled");
-    }
-    // The stories above sit a foundation higher there.
-    const size_t plane = size_t(W + 1) * size_t(H + 1);
-    for (const auto& [cx, cy] : points)
-        for (int k = 1; lot_.hasLevel(k); ++k)
-            lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
-                height + kFoundationHeight + 3.0f * float(k - 1);
-    const uint16_t top = patternRef(lot_.floorPatterns, deck.floor, 1);
+    // UserPlaceDeckFoundation (BV 0x9b1bc0): the markers, the heights, the
+    // edge walls, the floors, the supports.
+    setMarkers(0, ax, ay, bx, by, product);
+    moveDeckFloor(1, ax, ay, bx, by, top, false, true);
+    const uint16_t floorRef = patternRef(lot_.floorPatterns, deck.floor, 1);
     std::set<std::pair<int, int>> laid;
     for (const auto& [x, y] : tiles) {
         laid.insert({x, y});
         for (int q = 0; q < 4; ++q)
-            setFloor(lot_, 1, x, y, q, top), setFloorRotation(lot_, 1, x, y, q, 1);
+            setFloor(lot_, 1, x, y, q, floorRef), setFloorRotation(lot_, 1, x, y, q, 1);
     }
-    // SetDeckFoundationMarkers: every quarter of the rectangle's tiles, on
-    // the ground, the product (docs/buy-build-mac.md §7.25).
-    setMarkers(0, ax, ay, bx, by, product);
     foundationWalls(product, &laid, true);
     // A deck on columns: its support object at each corner of the rectangle
     // (supportLayout -corners), on the terrain under it (inferred: the
@@ -328,23 +432,22 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
         return r;
     }
     Geometry before = capture();
-    const size_t plane = size_t(W + 1) * size_t(H + 1);
     std::set<std::pair<int, int>> removed;
     for (const auto& [x, y] : tiles)
         removed.insert({x, y});
-    auto stays = [&](int x, int y) { return !removed.count({x, y}) && foundationTile(x, y); };
-    std::vector<std::array<int, 2>> corners;
-    // Each tile gives back its product's price: a deck's floor marks a deck
-    // (the lattice one's price; inferred: the game keeps the product per tile).
-    int refund = 0;
+    // UserRemoveDeckFoundation (BV 0x9b17dc): each tile's markers go (the
+    // refund: the products' prices x 0.8 by the quarters, markerCost), the
+    // deck's columns on it (back by undo), its floors, the edge walls, then
+    // the heights back a story over the point a level down where nothing
+    // holds them (MoveFloorElevations, the vertex test: a floor still round a
+    // point keeps it).
+    ensureMarkers();
+    int quarters4 = 0;
     std::vector<Sold> columns;
     for (const auto& [x, y] : tiles) {
-        bool deck = false;
-        for (uint16_t q : lot_.floor(1, uint32_t(x), uint32_t(y)))
-            if (auto it = lot_.floorPatterns.find(q); it != lot_.floorPatterns.end() && it->second.rfind("deck", 0) == 0)
-                deck = true;
-        refund += int(float(deck ? kLatticeDeckTilePrice : kFoundationTilePrice) * kBuildRefundRate);
-        // The deck's columns on it go with it (back by undo).
+        for (int q = 0; q < 4; ++q)
+            if (const int32_t old = lot_.deckFoundationStyle(0, x, y, q); old != -1)
+                quarters4 -= int(float(deckProductPrice(old)) * kBuildRefundRate);
         for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
             if (const Object* o = vm_.object(id); o && o->guid() == kDeckColumnGuid) {
                 columns.push_back({id, currentPlacement(vm_, id)});
@@ -352,22 +455,12 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
             }
         for (int q = 0; q < 4; ++q)
             setFloor(lot_, 1, x, y, q, 0);
-        for (int cx = x; cx <= x + 1; ++cx)
-            for (int cy = y; cy <= y + 1; ++cy)
-                if (!stays(cx - 1, cy - 1) && !stays(cx, cy - 1) && !stays(cx - 1, cy) && !stays(cx, cy))
-                    corners.push_back({cx, cy});
-    }
-    for (const auto& [cx, cy] : corners) {
-        const float ground = lot_.elevation(0, cx, cy);
-        for (int k = 1; lot_.hasLevel(k); ++k)
-            lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
-                ground + 3.0f * float(k);
-    }
-    for (const auto& [x, y] : tiles)
         setMarkers(0, x, y, x, y, -1);
+    }
     foundationWalls(0, &removed, false);
+    moveDeckFloor(1, ax, ay, bx, by, 0.0f, false, false);
     r.changed = int(tiles.size());
-    r.cost = -refund;
+    r.cost = int(std::floor(float(quarters4) / 4.0f));
     chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost, std::move(columns));
@@ -497,13 +590,12 @@ int BuildEditor::vertexMoveError(int li, int x, int y, float height, uint32_t ma
             if (len > 0 && std::fabs(height - lot_.elevation(li, ox, oy)) / len > std::sqrt(3.0f))
                 return 0x31;
         }
-    // Bit 13 (FUN_009e8124): a tile round it with a deck, foundation or pool
-    // marker (DeckFoundationStyle != -1). The lots keep the markers of
-    // foundations and decks on level 0, under their raised floor, and the
-    // pools' on level -1.
-    if ((mask & DeckFoundation) &&
-        tilesRound([&](int tx, int ty) { return (li == 0 && foundationTile(tx, ty)) || (li == -1 && poolTile(tx, ty)); }))
-        return kSilentRefusal;
+    // Bit 13 (FUN_009e8124) asks the WorldDB's slot 0xcc of the tiles round
+    // it, a per-tile array at cWorldDB +0xd0 next to the deck markers (slot
+    // 0xc8, +0xcc), -1 by default: not the deck/foundation markers (round
+    // n37, docs/buy-build-mac.md §7.25; it was taken as them). No base-game
+    // lot or tool sets it (the BV's awnings, inferred): it never refuses here.
+    (void)TileMarker;
     return 0;
 }
 
@@ -960,12 +1052,18 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
         for (int y : {y0, y1})
             if (x < 0 || y < 0 || x >= W || y >= H)
                 return fail(0x02, "out of the lot");
-    // The tile where the drag started already has a deck, foundation or
-    // pool (IsDeckFoundationOfType 2, 1, 4): 0x86 (§7.18).
-    if (poolTile(x0, y0) || foundationTile(x0, y0))
-        return fail(0x86, "the drag starts on a pool or a foundation");
     const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
     const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
+    // MayPlaceQuadrilateral's grid points (docs/buy-build-mac.md §7.25):
+    // each of the rectangle's not at the tool's height (the start's ground)
+    // must pass the vertex test, else 0x81.
+    if (deckLevelError(0, ax, ay, bx, by, deckTopHeight(x0 <= x1 ? ax : bx + 1, y0 <= y1 ? ay : by + 1, true)))
+        return fail(0x81, "the ground cannot be levelled");
+    // The tile where the drag started already has a foundation, a deck or a
+    // stage (IsDeckFoundationOfType 2, 1, 4: the 4 is the BV's stage, not
+    // the pool; a drag over a pool is refused below): 0x86 (§7.18, §7.25).
+    if (foundationTile(x0, y0))
+        return fail(0x86, "the drag starts on a foundation or a deck");
     // Tiles of a pool already there are skipped: a rectangle over or next to
     // a pool extends it (the deck tool's CanPlaceTile lets a pool tile go
     // beside a pool), which gives pools that are not rectangles; the pool
@@ -1058,14 +1156,8 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
             return r;
         }
     }
-    const int W = int(lot_.width), H = int(lot_.height);
     const int ax = std::min(x0, x1), bx = std::max(x0, x1), ay = std::min(y0, y1), by = std::max(y0, y1);
     const int rx0 = ax, ry0 = ay, rx1 = bx + 1, ry1 = by + 1;
-    std::optional<float> poolHeight;
-    for (int x = ax - 1; x <= bx + 1 && !poolHeight; ++x)
-        for (int y = ay - 1; y <= by + 1 && !poolHeight; ++y)
-            if (poolTile(x, y))
-                poolHeight = lot_.elevation(0, x, y);
     std::vector<std::array<int, 2>> fresh;
     for (int x = ax; x <= bx; ++x)
         for (int y = ay; y <= by; ++y)
@@ -1077,31 +1169,23 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         r.message = "the pool is there already";
         return r;
     }
-    r.cost = tiles * kPoolTilePrice;
+    Geometry before = capture();
+    // The pool's level a story down (the lot gets it when it has none).
+    addLowerLevel(lot_);
+    // The tool's height: the ground at the drag's start (CalculateTopElevation).
+    const float height = deckTopHeight(x0 <= x1 ? ax : bx + 1, y0 <= y1 ? ay : by + 1, true);
+    r.cost = markerCost(-1, ax, ay, bx, by, kPoolProduct);
     if (!canAfford(vm_, r.cost)) {
+        restore(before);
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
         return r;
     }
-    Geometry before = capture();
-    const float height = poolHeight.value_or(lot_.elevation(0, std::clamp(x0, 0, W), std::clamp(y0, 0, H)));
-    std::vector<std::array<int, 2>> points;
-    for (const auto& [x, y] : fresh)
-        for (int cx = x; cx <= x + 1; ++cx)
-            for (int cy = y; cy <= y + 1; ++cy)
-                points.push_back({cx, cy});
-    std::vector<std::array<int, 4>> lips; // the pool's own edge walls do not hold the ground
-    for (const auto& w : lot_.walls)
-        if (w.type == Lot::Pool)
-            lips.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)), int(std::lround(w.b.y))});
-    if (!levelPoints(points, height, lips)) {
-        restore(before);
-        return fail(0x81, "the ground cannot be levelled");
-    }
-    addLowerLevel(lot_);
-    const size_t plane = size_t(W + 1) * size_t(H + 1);
-    for (const auto& [cx, cy] : points)
-        lot_.elevations[size_t(-1 - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] = height - 3.0f;
+    // UserPlaceDeckFoundation: the markers (a level down), the heights (the
+    // ground to the height one grid point past the rectangle where the
+    // vertex test lets it, the bottom a story under it), the walls, floors.
+    setMarkers(-1, ax, ay, bx, by, kPoolProduct);
+    moveDeckFloor(0, ax, ay, bx, by, height, true, true);
     const uint16_t lip = patternRef(lot_.floorPatterns, "floor_poolroundedlipblue", 1);
     for (const auto& [x, y] : fresh)
         for (int q = 0; q < 4; ++q)
@@ -1124,8 +1208,6 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         kept.push_back(pool);
     }
     lot_.pools = std::move(kept);
-    // The pool's markers sit a level down (SetDeckFoundationMarkers, type 3).
-    setMarkers(-1, ax, ay, bx, by, kPoolProduct);
     poolWalls();
     r.changed = tiles;
     chargeFunds(vm_, -r.cost);
