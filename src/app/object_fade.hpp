@@ -21,8 +21,11 @@
 // at 41%, and fully drawn from 10. A faded object is drawn with alpha
 // blending (render style 4) and its materials' alpha times the fade. A camera
 // with no objectFadeDistance (Build's top-down view, the free camera) fades
-// nothing. The cinematic camera's (objectFadeCineCam 1: a ray from the camera
-// to its target against the objects' boxes, FUN_0065deb0) is not done.
+// nothing. ParentFadeAlpha (BV 0x662c30): an object the rule fades takes its
+// container's alpha when that is lower (the app: lot_actors.cpp). The
+// cinematic camera's (objectFadeCineCam 1, FUN_0065deb0: the objects near the
+// ray from the eye along the view, by how far their box is from it; read in
+// docs/camera-ui-mac.md 1.10, round n39) is not done.
 
 #include "formats/camera_config.hpp"
 

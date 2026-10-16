@@ -4,6 +4,9 @@
 #include "app/app_state.hpp"
 #include "app/object_fade.hpp"
 
+#include <functional>
+#include <map>
+
 namespace os2app {
 
 // Sims the VM makes while the lot plays (a baby born, the debug
@@ -186,28 +189,52 @@ void updateObjectFade(os2::Renderer& renderer) {
     os2::vm::VM& machine = gSimulation->machine();
     auto& faded = gScene.fadedInstances;
     size_t obstructing = 0;
+    // Each object's own alpha first (only those the rule fades), then
+    // ParentFadeAlpha (BV 0x662c30): a faded object takes its container's alpha
+    // when lower (the container's own, itself lowered by its container's).
+    struct Fade {
+        int instance;
+        float alpha;
+        bool fades;
+    };
+    std::map<int16_t, Fade> fades;
     gObjectView->forEachDrawn([&](int16_t id, int instance, os2::SimActor*) {
         if (instance < 0)
             return;
-        float alpha = 1;
+        Fade f{instance, 1, false};
         if (params)
             if (const os2::vm::Object* o = machine.object(id);
                 o && !o->person && os2::objectFades(*params, o->data[40])) { // Flag Field 2
                 ++obstructing;
+                f.fades = true;
                 if (const auto box = renderer.instanceBounds(instance)) {
                     const float depth = simd_dot((box->first + box->second) * 0.5f - eye, forward);
-                    alpha = os2::objectFadeAlpha(*params, depth);
+                    f.alpha = os2::objectFadeAlpha(*params, depth);
                     if (std::getenv("OS2_FADE_LOG"))
-                        std::printf("opensims2: fade: object %d %s depth %.2f alpha %.3f\n", id, o->definition ? o->definition->title.c_str() : "?", depth, alpha);
+                        std::printf("opensims2: fade: object %d %s depth %.2f alpha %.3f\n", id, o->definition ? o->definition->title.c_str() : "?", depth, f.alpha);
                 }
             }
-        if (alpha < 1) {
-            renderer.setInstanceAlpha(instance, alpha);
-            faded.insert(instance);
-        } else if (faded.erase(instance)) {
-            renderer.setInstanceAlpha(instance, 1);
-        }
+        fades[id] = f;
     });
+    std::function<float(int16_t, int)> fadeOf = [&](int16_t id, int depth) -> float {
+        const auto it = fades.find(id);
+        if (it == fades.end() || !it->second.fades || depth > 16)
+            return 1;
+        float alpha = it->second.alpha;
+        if (const os2::vm::Object* o = machine.object(id))
+            if (const int16_t parent = o->data[os2::vm::objdata::ContainerId]; parent > 0 && parent != id)
+                alpha = std::min(alpha, fadeOf(parent, depth + 1));
+        return alpha;
+    };
+    for (const auto& [id, f] : fades) {
+        const float alpha = fadeOf(id, 0);
+        if (alpha < 1) {
+            renderer.setInstanceAlpha(f.instance, alpha);
+            faded.insert(f.instance);
+        } else if (faded.erase(f.instance)) {
+            renderer.setInstanceAlpha(f.instance, 1);
+        }
+    }
     static size_t lastLogged = size_t(-1); // (one line per change, for the headless runs)
     if (params && faded.size() != lastLogged && (faded.size() || lastLogged != size_t(-1))) {
         std::printf("opensims2: object fade: %zu objects obstruct the view, %zu faded (distance %.1f, falloff %.1f)\n",
