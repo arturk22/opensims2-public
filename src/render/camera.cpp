@@ -118,6 +118,15 @@ void LotCamera::zoomBy(int levels) {
     const auto& t = def_.distances;
     if (t.empty() || levels == 0)
         return;
+    if (wheelLevel_ >= 0) { // after the wheel: in = back to the wheel's level, once
+        const int at = std::clamp(wheelLevel_, 0, int(t.size()) - 1);
+        wheelLevel_ = -1;
+        if (levels > 0) {
+            dist_.set(t[size_t(at)], def_.zoomSmoothing, minChange_);
+            if (--levels == 0)
+                return;
+        }
+    }
     // The next level closer (or farther) than where the zoom is heading.
     const float d = dist_.target, eps = 1e-3f;
     int at = -1;
@@ -146,7 +155,14 @@ void LotCamera::wheel(float notches) { wheelBy(notches, def_.wheel); }
 // between the first and last levels, smoothed as the zoom.
 void LotCamera::wheelBy(float delta, float sensitivity) {
     const float d = dist_.target;
-    dist_.set(clampDistance(d + delta * sensitivity * (d + 10) / -50.0f), def_.zoomSmoothing, minChange_);
+    const float to = clampDistance(d + delta * sensitivity * (d + 10) / -50.0f);
+    dist_.set(to, def_.zoomSmoothing, minChange_);
+    // The level: the first not farther than the distance.
+    const auto& t = def_.distances;
+    int i = 0;
+    while (i + 1 < int(t.size()) && to < t[size_t(i)])
+        ++i;
+    wheelLevel_ = t.empty() ? -1 : i;
 }
 
 void LotCamera::rotateBy(int steps) {
@@ -271,6 +287,7 @@ void LotCamera::stepForward(float axis) {
 }
 
 void LotCamera::reset() {
+    wheelLevel_ = -1;
     if (!def_.distances.empty())
         dist_.set(def_.distances[size_t(std::clamp(def_.defaultZoom, 0, int(def_.distances.size()) - 1))],
                   def_.zoomSmoothing, minChange_);
@@ -334,6 +351,7 @@ bool LotCamera::restorePosition(int slot, bool smooth) {
     if (slot < 0 || slot >= int(saved_.size()) || !saved_[size_t(slot)])
         return false;
     const Saved& s = *saved_[size_t(slot)];
+    wheelLevel_ = -1;
     pivotTarget_ = constrain(s.pivot);
     dist_.set(s.dist, def_.zoomSmoothing, minChange_);
     heading_.set(heading_.value + std::remainder(s.heading - heading_.value, 2 * float(M_PI)), def_.spinSmoothing,
@@ -345,6 +363,7 @@ bool LotCamera::restorePosition(int slot, bool smooth) {
 }
 
 void LotCamera::setPose(const Pose& p) {
+    wheelLevel_ = -1;
     pivotTarget_ = constrain(p.pivot);
     dist_.set(p.dist, def_.zoomSmoothing, minChange_);
     heading_.set(p.heading, def_.spinSmoothing, minChange_);
@@ -367,6 +386,7 @@ void LotCamera::setDefinition(CameraDef def) {
 }
 
 void LotCamera::matchView(simd_float3 eye, simd_float3 forward) {
+    wheelLevel_ = -1;
     const simd_float3 f = simd_normalize(forward);
     float down = -std::asin(std::clamp(f.z, -1.0f, 1.0f)); // radians, positive looking down
     if (!def_.pitchMin.empty() && !def_.pitchMax.empty())

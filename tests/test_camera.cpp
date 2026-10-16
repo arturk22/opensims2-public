@@ -127,6 +127,16 @@ int main() {
     check(near(cam.distance(), 70), "wheel clamps to the farthest level");
     check(near(cam.zoom(), 0), "zoom level of the distance");
 
+    // Right after the wheel the first z only goes back to the wheel's level (here 70 itself).
+    cam.zoomBy(1);
+    settle(cam);
+    check(near(cam.distance(), 70), "z after the wheel: the wheel's level, once");
+    cam.wheel(1); // 62: the first level not farther is 40
+    cam.zoomBy(1);
+    settle(cam);
+    check(near(cam.distance(), 40), "z after the wheel between levels: the next closer one");
+    cam.zoomBy(-1);
+    settle(cam);
     // Smoothing: 50 ms frames over N (zoom N = 5): one 50 ms update covers 1/5.
     cam.zoomBy(1); // 70 -> 40
     cam.update(0.05);

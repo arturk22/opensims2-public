@@ -91,7 +91,11 @@ public:
     explicit LotCamera(CameraDef def);
 
     // --- Requests ----------------------------------------------------------
-    void zoomBy(int levels);         // positive zooms in (towards the closer levels), smoothed
+    // A zoom level in / out (z / x, 0x9b65fb1f / 0x7b65fb6b), smoothed. Right after
+    // the wheel the first one in only goes to the wheel's level (the first not
+    // farther than where it stopped) and clears that (HandleRequest; SetZoomLevel
+    // 0x86b74c clears it too).
+    void zoomBy(int levels);
     void wheel(float notches);       // positive zooms in, continuous
     void rotateBy(int steps);        // to the next/previous orientation of the table, smoothed
     // The rotate request 0xbc17e41c (pixels): with both axes, |dx / dy| < 1 keeps
@@ -237,6 +241,7 @@ private:
     simd_float3 keyMove_{0, 0, 0}, keyMoveTarget_{0, 0, 0}; // +0x238: pixels a request
     Smooth keyRotate_, keyZoom_;     // +0x200, +0x21c
     int wheelPos_ = 0;               // +0x1fc: the wheel's position, in notches
+    int wheelLevel_ = -1;            // +0x70 while this[500] (the wheel's level), else -1
     bool rotateSims1Mode_ = false;
     float lift_ = 0; // extra pivot height so the eye stays over the floor
     Smooth dist_, heading_, pitchT_; // heading in radians, unwrapped
