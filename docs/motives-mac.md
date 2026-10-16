@@ -223,12 +223,9 @@ frações mudam (Lot11, Lot68 depois da 1ª hora).
 
 Fica fora (no `TODO.md`):
 
-- o **ambiente** (motivo 13): `cTSEnvironmentScoreManager` (BV `0x5805a0`,
-  `GetEnvironmentRoomID` `0x57ffa8`, constantes no construtor) não foi
-  lido; o motivo fica com o valor salvo;
-- o tique em que o primeiro passo de 60 cai depois de carregar (se o
-  `+0x264` volta do arquivo e qual relógio o simulador passa não foi
-  conferido); aqui é o mesmo relógio das memórias, que começa em 0;
+- ~~o **ambiente** (motivo 13)~~ (rodada n33, §8);
+- ~~o tique em que o primeiro passo de 60 cai depois de carregar~~
+  (rodada n33, §8.5);
 - com pesos somando 0 o jogo divide por 0; aqui o humor fica só o dado 163.
 
 ## 8. Ambiente (motivo 13): `cTSEnvironmentScoreManager`
@@ -343,6 +340,12 @@ niceness = fmadds((float)preço, m, niceness)       (preço = campo 0x12 do OBJD
 crap += c;  contagem += 1;  categoria (dado 59) 0x16/0x17 → contadores
 ```
 
+O preço é o `GetPrice` do objeto (base vtable `0xbc`: o campo `0x12` da
+definição do próprio objeto, `+0x1e8`). Num multi-tile ele é
+`cEdithMTObject::GetPrice` (BV `0xaf04ec`): o campo `0x12` da definição
+**mestra** do grupo (a do catálogo; as partes têm 0). Sem isso a banheira
+do N001_Lot18 não contava e o cômodo ficava 45 abaixo do salvo (§8.6).
+
 **Notas** (`UpdateEnvScoreForRoom` `0xc85364`, float):
 
 ```
@@ -400,3 +403,63 @@ e sobe 1 depois de todos os objetos terem rodado
 (`SimulateOneTick` BV `0x49a814`, só com o relógio andando). Então, ao
 carregar um lote salvo com contador ≥ 60, o primeiro passo de 60 cai **no
 primeiro tique** e os seguintes a cada 60 a partir dele.
+
+### 8.6 No código (rodada n33)
+
+`src/vm/environment.*`, `src/formats/environment_catalog.*`,
+`src/vm/motives.cpp`, `src/vm/lot.cpp` (`setLotRooms`),
+`src/vm/lot_resume.cpp`, `src/vm/lot_save.cpp`, `src/app/lot_lighting.cpp`:
+
+- **Paredes e pisos** (`setLotEnvironment`, chamado por `setLotRooms` ao
+  carregar e depois de cada mudança do modo construir): as somas por chave
+  em `VM::environmentArchitecture`, das linhas do grafo 5 (os dois lados,
+  revestimento → produto) e dos tiles de cada sala do 3ARY `0x09` em todos
+  os andares. Produtos (`patternScores`): os XML do catálogo (`cost`,
+  `nicenessmultiplier` padrão 1, `crapscore` padrão 0, mesmo escondidos ou
+  obsoletos) e os scripts antigos (`floorPatterns.txt`, `wallPatterns.txt`:
+  só o `crapScore`, "blank" 0,1 e "floor_plywoodFoundation" 1; as linhas de
+  texto de catálogo estão comentadas no base, então o preço é 0).
+- **Objetos e notas** (`environmentRooms`): somados quando a nota é pedida
+  (uma vez por tique em que algum Sim dá o passo), a mesma conta das
+  mensagens do jogo. **Inferido**: `HasModel` verdadeiro para todo objeto
+  (os sem modelo do base são controladores de preço 0); o padrão de um tile
+  com vários quartos da sala é o do primeiro quarto da máscara (o
+  `FloorPattern` de um tile mascarado não foi lido até o fim).
+- **Nota do Sim** (`environmentScore`): a conta do §8.4; um Sim fora do
+  mundo (no trabalho, na escola) tem sala −1 e nota 0 (inferido: a sala que
+  o jogo dá a quem sai do mundo). A luz vem de `VM::floorIllumination`, que
+  o app liga ao light map de piso mostrado (`LotLighting::floorIllumination`:
+  o texel em `floorTexel`, os dois mapas na mistura do crossfade, × 2,
+  `ColourToIlluminance`). **Sem host (s2pkg, testes) a luz fica de fora**:
+  o termo é 0 (como um cômodo claro); no app, o primeiro passo depois de
+  carregar vem antes dos light maps e também fica sem ele.
+- **O passo de 60** usa `VM::simulatorTicks` (o `+0xa0` do simulador: lido
+  do SIMI, sobe no fim de cada tique, gravado de volta pelo lot-save) contra
+  `Person::memoriesTick` (0 ao carregar, não gravado). Nos lotes do jogo o
+  contador salvo vai de 1522 a 81662 (os com Sims): o primeiro passo cai no
+  primeiro tique (antes: no 60º). Numa VM que começa do 0 (testes), no 61º.
+- `OS2_DEBUG_ENV=1` imprime cada passo (Sim, sala, nota, luz).
+
+**Provas** (`s2pkg env-sweep`, ctest `env_sweep` com `OS2_DATA`): os 55 Sims
+dos 69 lotes do jogo, nota calculada do lote carregado contra o ambiente
+salvo. 14 batem exatamente (17 até 0,5); 36 ficam até 20 abaixo da nota do
+cômodo, o termo da luz que o headless não tem (8 exatamente −20, cômodos
+escuros na hora em que o lote foi salvo; os outros dão luz entre 0,58 e
+0,89); 2 não se explicam (Johnny e Jill no N002_Lot10, 21,3 abaixo: talvez
+estivessem noutro lugar no último passo). No app (headless, `OS2_DEBUG_ENV`),
+no N001_Lot68 salvo às 07:08, a Lilith e o Daniel no quarto escuro ficam com
+luz 0,44 e 0,48, termo −20 e nota 47,236, **o salvo exato**.
+
+3 dias de jogo antes (main) e depois (`s2pkg autonomy --ticks 129600`,
+semente padrão): no N001_Lot11 o ambiente passa de fixo (46 e 34) a variar
+com o cômodo (médias 55, 30, 21, 33; 0 na escola; −100 do lado de fora junto
+da lixeira, x ≈ 30: salvo no tique 58400, a célula tem a lixeira cheia, um
+monte de lixo e três baratas, crap 175, base −173,8; o térreo, com pratos e
+comida largados, cai a −38,5); no N001_Lot68 de fixo (66, 54, 47, 47) a
+médias 24 a 62. Autonomia: no N001_Lot68, com 4 sementes, o depois teve
+**incêndio no fogão nas 4** (antes, em nenhuma), com mortes: o cozinheiro
+larga a comida no fogão entre um "Cozinhar" e o seguinte (o "Continuar a
+Cozinhar" é um anúncio autônomo que perde para outros quando os motivos
+mudam). Com o ambiente desligado as mesmas sementes não pegam fogo. A
+leitura da rodada n32 (o fogo do Lot68 é do jogo) vale; a frequência mudou
+com o ambiente certo (`TODO.md`).
