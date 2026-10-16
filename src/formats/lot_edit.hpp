@@ -35,6 +35,14 @@ struct RoomMerge {
     uint32_t graph = 0;
     int32_t right = 0, left = 0;
 };
+// cWallGraph::SetRoomsPostAttach (Mac BV 0xc1f1bc, docs/buy-build-mac.md
+// §7.3, §7.25) for the line (ax, ay)-(bx, by) just added to graph `g` on
+// `level`, over the graph's room array (5 -> 3ARY 0x09, 6 -> 0x0A, 7 ->
+// 0x0B): a line that closes no cycle changes nothing; one that splits a room
+// gives the first free ID to its left side (the left normal (-dy, dx)), or,
+// splitting the outdoors (0), to the side its cycle encloses. addWall calls
+// it for every graph the wall goes into.
+void postAttachRooms(Lot& lot, Lot::WallGraph& g, int level, int ax, int ay, int bx, int by);
 // Takes the wall there out of Lot::walls and every graph. Returns what it
 // was. `merges` gets the rooms it separated in each room graph.
 std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx, int by,

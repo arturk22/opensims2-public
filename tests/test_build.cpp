@@ -307,6 +307,26 @@ static void testRoomIds() {
     removeWall(two, 0, 1, 1, 2, 1, &merges);
     updateRooms(two, merges);
     check(roomAt(two, 2, 2) == 0 && roomAt(two, 4, 2) == 0, "joined with the outdoors it is room 0");
+
+    // SetRoomsPostAttach (docs/buy-build-mac.md §7.25): a wall splitting a
+    // room gives the new ID to the left side of the line that closes the
+    // cycle (seen from its a to its b), whatever the sizes; the outdoors
+    // split gives it to the enclosed side, whichever way the walls run.
+    Lot split = flatLot();
+    for (auto* m : {&split.rooms, &split.roomLayers[0x0A], &split.roomLayers[0x0B]})
+        m->assign(12 * 10, {0, 0, 0, 0});
+    for (const auto& s : std::array<std::array<int, 4>, 4>{{{1, 1, 1, 5}, {1, 5, 7, 5}, {7, 5, 7, 1}, {7, 1, 1, 1}}})
+        for (const auto& t : wallSections(s[0], s[1], s[2], s[3]))
+            addWall(split, 0, t[0], t[1], t[2], t[3], 1, {0xFFFF, 0xFFFF});
+    updateRooms(split);
+    check(roomAt(split, 4, 3) == 1 && roomAt(split, 0, 0) == 0, "a room drawn clockwise is the enclosed side's");
+    for (const auto& t : wallSections(3, 5, 3, 1)) // down -y: its left is +x
+        addWall(split, 0, t[0], t[1], t[2], t[3], 1, {0xFFFF, 0xFFFF});
+    updateRooms(split);
+    check(roomAt(split, 5, 3) == 2 && roomAt(split, 2, 3) == 1,
+          "the closing line's left side (the larger part here) takes the new ID");
+    const auto& light2 = split.roomLayers[0x0B];
+    check(light2[size_t(5) * 10 + 3][0] == 2 && light2[size_t(2) * 10 + 3][0] == 1, "so do the light rooms (3ARY 0x0B)");
 }
 
 static void testFoundation() {

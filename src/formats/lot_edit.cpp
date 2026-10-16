@@ -1,6 +1,7 @@
 #include "lot_edit.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <numeric>
 #include <set>
@@ -124,7 +125,134 @@ int32_t roomBesideSegment(const Lot& lot, const std::vector<std::array<uint16_t,
     return rooms[tileIndex(lot, li, x, y)][size_t(q)];
 }
 
+// The left face's cycle of the half-edge (ax, ay) -> (bx, by) of the graph's
+// lines on `level` (cWallGraph's LNext: at each point the next line clockwise
+// from the way back), as the points it passes; `bridge` set when the walk
+// comes back along (bx, by) -> (ax, ay): the line closes no cycle.
+std::vector<std::array<int, 2>> leftCycle(const Lot::WallGraph& g, int level, int ax, int ay, int bx, int by,
+                                          bool& bridge) {
+    std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> next;
+    for (const auto& l : g.lines) {
+        const auto* a = vertexById(g, l.a);
+        const auto* b = vertexById(g, l.b);
+        if (!a || !b || a->level != level || b->level != level)
+            continue;
+        const std::pair<int, int> pa{int(std::lround(a->x)), int(std::lround(a->y))},
+            pb{int(std::lround(b->x)), int(std::lround(b->y))};
+        next[pa].push_back(pb), next[pb].push_back(pa);
+    }
+    auto angle = [](std::pair<int, int> from, std::pair<int, int> to) {
+        return std::atan2(float(to.second - from.second), float(to.first - from.first));
+    };
+    std::vector<std::array<int, 2>> cycle;
+    bridge = false;
+    std::pair<int, int> u{ax, ay}, v{bx, by};
+    for (size_t step = 0; step < 100000; ++step) {
+        cycle.push_back({u.first, u.second});
+        if (u == std::pair<int, int>{bx, by} && v == std::pair<int, int>{ax, ay})
+            bridge = true;
+        // The next line out of v: the first clockwise from v -> u.
+        const float back = angle(v, u);
+        std::pair<int, int> best = u;
+        float bestDelta = 10.0f;
+        for (const auto& w : next[v]) {
+            float d = back - angle(v, w);
+            while (d <= 1e-4f)
+                d += 2.0f * float(M_PI);
+            if (d < bestDelta)
+                bestDelta = d, best = w;
+        }
+        u = v, v = best;
+        if (u == std::pair<int, int>{ax, ay} && v == std::pair<int, int>{bx, by})
+            break;
+    }
+    return cycle;
+}
+
 } // namespace
+
+void postAttachRooms(Lot& lot, Lot::WallGraph& g, int level, int ax, int ay, int bx, int by) {
+    auto* rooms = roomArray(lot, g.instance);
+    const int W = int(lot.width), H = int(lot.height);
+    if (!rooms || rooms->size() != size_t(W) * H * size_t(lot.levelCount) || !lot.hasLevel(level))
+        return;
+    const int li = level - lot.minLevel;
+    // The quarter on each side of the line, left (seen from a to b, the
+    // left normal (-dy, dx)) and right.
+    const int dx = bx - ax, dy = by - ay;
+    struct Side {
+        int x, y, q;
+    };
+    auto sideOf = [&](int nx, int ny) -> Side {
+        if (dx && dy) { // a diagonal: the half of its tile the normal points to
+            const int tx = std::min(ax, bx), ty = std::min(ay, by);
+            return {tx, ty, nx < 0 ? int(QWest) : int(QEast)};
+        }
+        if (dy == 0) { // along x: the tile above (+y) or below
+            const int tx = std::min(ax, bx);
+            return ny > 0 ? Side{tx, ay, QSouth} : Side{tx, ay - 1, QNorth};
+        }
+        const int ty = std::min(ay, by); // along y: the tile east (+x) or west
+        return nx > 0 ? Side{ax, ty, QWest} : Side{ax - 1, ty, QEast};
+    };
+    // A diagonal's halves: "/" (dx == dy) parts west + north from east +
+    // south, "\" north + east from south + west (roomComponents).
+    auto diagonalSide = [&](int nx, int ny) -> Side {
+        const int tx = std::min(ax, bx), ty = std::min(ay, by);
+        if (dx == dy)
+            return {tx, ty, ny > 0 || nx < 0 ? int(QNorth) : int(QSouth)};
+        return {tx, ty, ny > 0 || nx > 0 ? int(QNorth) : int(QSouth)};
+    };
+    const Side left = dx && dy ? diagonalSide(-dy, dx) : sideOf(-dy, dx);
+    const Side right = dx && dy ? diagonalSide(dy, -dx) : sideOf(dy, -dx);
+    auto inLot = [&](const Side& s) { return s.x >= 0 && s.y >= 0 && s.x < W && s.y < H; };
+    if (!inLot(left) && !inLot(right))
+        return;
+    // cWallGraph::SetRoomsPostAttach (Mac BV 0xc1f1bc, docs/buy-build-mac.md
+    // §7.3, §7.25): a line that closes no cycle leaves the rooms as they are.
+    const auto comps = roomComponents(lot, g);
+    auto comp = [&](const Side& s) { return comps[tileIndex(lot, li, s.x, s.y)][size_t(s.q)]; };
+    if (inLot(left) && inLot(right) && comp(left) == comp(right))
+        return;
+    bool bridge = false;
+    const auto cycle = leftCycle(g, level, ax, ay, bx, by, bridge);
+    if (bridge)
+        return;
+    // It closes one: CreateRoom gives the first ID free in the graph's room
+    // list. The new room is the left cycle's, unless the room split is the
+    // outdoors (0) and the left cycle does not enclose the line (the parity
+    // test FUN_00c1c480): then the right one's.
+    const Side& any = inLot(left) ? left : right;
+    const uint16_t old = (*rooms)[tileIndex(lot, li, any.x, any.y)][size_t(any.q)];
+    bool encloses = false;
+    {
+        const float px = (float(ax) + float(bx)) / 2 - 0.05f * float(dy), py = (float(ay) + float(by)) / 2 + 0.05f * float(dx);
+        for (size_t i = 0, j = cycle.size() - 1; i < cycle.size(); j = i++) {
+            const float xi = float(cycle[i][0]), yi = float(cycle[i][1]), xj = float(cycle[j][0]), yj = float(cycle[j][1]);
+            if ((yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi)
+                encloses = !encloses;
+        }
+    }
+    const Side& chosen = old != 0 || encloses ? left : right;
+    if (!inLot(chosen))
+        return;
+    // (The graph's list as the room array has it: updateRooms keeps it so.)
+    std::set<int32_t> used{0};
+    for (const auto& q : *rooms)
+        for (uint16_t r : q)
+            used.insert(r);
+    uint16_t id = 1;
+    while (used.count(id))
+        ++id;
+    // Each line of the cycle seeds its side and RefreshMap floods the old
+    // room's quarters from there: the chosen side's region.
+    const uint32_t region = comp(chosen);
+    for (size_t i = 0; i < comps.size(); ++i)
+        for (int q = 0; q < 4; ++q)
+            if (comps[i][size_t(q)] == region && (*rooms)[i][size_t(q)] == old)
+                (*rooms)[i][size_t(q)] = id;
+    g.rooms.insert(std::upper_bound(g.rooms.begin(), g.rooms.end(), int32_t(id)), int32_t(id));
+}
 
 const Lot::Wall* findWall(const Lot& lot, int level, int ax, int ay, int bx, int by) {
     for (const auto& w : lot.walls)
@@ -169,6 +297,7 @@ std::optional<uint32_t> addWall(Lot& lot, int level, int ax, int ay, int bx, int
             l.id = uint32_t(g.header[7]++);
         }
         g.lines.push_back(l);
+        postAttachRooms(lot, g, level, ax, ay, bx, by);
     }
     Lot::Wall w;
     w.id = id;
