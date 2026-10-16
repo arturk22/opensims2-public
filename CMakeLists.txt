@@ -535,9 +535,13 @@ add_executable(test_tv_program tests/test_tv_program.cpp)
 target_include_directories(test_tv_program PRIVATE src)
 add_test(NAME tv_program COMMAND test_tv_program)
 
-add_executable(test_simd tests/test_simd.cpp)
-target_include_directories(test_simd PRIVATE src)
-add_test(NAME simd COMMAND test_simd)
+# The compat <simd/simd.h> (src/port/compat) off Apple; Apple's own vector
+# types have no simd_float4(...) constructor, so the check is not built there.
+if(NOT APPLE)
+  add_executable(test_simd tests/test_simd.cpp)
+  target_include_directories(test_simd PRIVATE src)
+  add_test(NAME simd COMMAND test_simd)
+endif()
 
 # --help prints the usage and exits without opening a window (r14).
 # These drive the macOS app bundle. The Windows host grows its own checks.
