@@ -156,6 +156,7 @@ std::optional<QueuedInteraction> entryOf(VM& vm, Object& sim, const LotObjects::
         q->flags |= 0x04;
     q->autonomous = rec.u54 & 0x400;     // autonomous (cTSInteraction vtable 0xbc)
     q->testAutonomous = rec.u54 & 0x800; // tested as autonomous (vtable 0xc4)
+    q->noContinuation = rec.u54 & 0x4000; // no continuation after it (vtable 0x8c)
     return q;
 }
 
@@ -229,6 +230,7 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
             q->flags |= 0x04;
         q->autonomous = rec->u54 & 0x400;     // autonomous (cTSInteraction vtable 0xbc)
         q->testAutonomous = rec->u54 & 0x800; // tested as autonomous (vtable 0xc4)
+        q->noContinuation = rec->u54 & 0x4000; // no continuation after it (vtable 0x8c)
         sim.queue.push_back(std::move(*q));
     }
     if (sim.queue.empty())

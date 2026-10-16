@@ -341,6 +341,7 @@ Exit pushInteraction(Context& c) {
         q->target = c.get(kOwnerLocal, o[4]);
     }
     q->flags = flags;
+    q->noContinuation = flags2 & 0x10; // +0x54 bit 0x4000 (vtable 0x90)
     q->pushedBy = c.thread.me;
     q->operands = o;
     static const bool logPush = std::getenv("OS2_LOG_PUSH") != nullptr; // test aid: who pushes what
@@ -449,28 +450,29 @@ Exit handleSubQueue(Context& c) {
 // is started, and inside one the front entry when its priority is higher
 // (it nests over the running one): its action tree is pushed on top of this tree and the counter
 // goes to 0; when it returns, this instruction runs again at once (see
-// below). Otherwise true. In the sub-queue mode the binary runs the queued
-// sub-actions; nested interactions are not pushed here, so there are none
-// and the instruction returns true at once. Not done: the binary's
-// "ActionSkipped" (an entry whose check tree fails makes it yield; here the
-// next entry is tried at once).
+// below). An entry taken and refused (TestInteraction) is skipped
+// (ActionSkipped) and the instruction yields. Otherwise true. In the
+// sub-queue mode the binary runs the queued sub-actions (handleSubQueue).
 Exit idleForInput(Context& c) {
     Thread& t = c.thread;
     // The interaction this instruction ran has returned: the binary runs the
     // instruction again at once (the tree stack element's "re-run" flag, set
     // when it started the action, keeps DoNodeAction from branching) and, in
     // that re-run, only starts the next entry when it was pushed "continue as
-    // current" (Push Interaction byte 3 bit 0x04, cTSInteraction +0x84) and
-    // the finished one was not cancelled (inferred from the check on the
-    // current action); else it returns true and Main runs its "Post
-    // Interaction" (cTSPerson::TryIdleForInput). "Sub - Push Eat" pushes Eat
-    // that way, so Main's "Kill - Objects in Hands" does not take the snack.
+    // current" (Push Interaction byte 3 bit 0x04, cTSInteraction vtable
+    // 0x84: +0x54 bit 0x02) and the finished one (the person's +0x5d8) does
+    // not say "no continuation" (vtable 0x8c: +0x54 bit 0x4000, which Push
+    // Interaction's byte 14 bit 0x10 sets through 0x90; no tree of the base
+    // game sets it; this was "not cancelled", inferred); else it returns
+    // true and Main runs its "Post Interaction" (cTSPerson::TryIdleForInput,
+    // BV 0xade664). "Sub - Push Eat" pushes Eat that way, so Main's "Kill -
+    // Objects in Hands" does not take the snack.
     if (t.interactionReturned) {
-        const bool cancelled = t.interactionReturned == 2;
+        const bool noContinuation = t.interactionReturned == 2;
         t.interactionReturned = 0;
         const Object& me = c.me();
         const size_t next = size_t(me.activeInteraction + 1);
-        if (cancelled || next >= me.queue.size() || !(me.queue[next].flags & 0x04))
+        if (noContinuation || next >= me.queue.size() || !(me.queue[next].flags & 0x04))
             return Exit::True;
     }
     const auto& o = c.instruction.operands;
@@ -959,7 +961,8 @@ void endInteraction(VM& vm, Thread& t) {
     if (!sim)
         return;
     auto& q = sim->queue;
-    if (interactionCancelled(*sim))
+    if (sim->activeInteraction >= 0 && size_t(sim->activeInteraction) < q.size() &&
+        q[size_t(sim->activeInteraction)].noContinuation)
         t.interactionReturned = 2;
     if (sim->activeInteraction >= 0) {
         if (size_t(sim->activeInteraction) < q.size()) {

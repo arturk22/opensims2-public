@@ -423,6 +423,10 @@ struct QueuedInteraction {
     // entry from the queue, set only for the Find Best Interaction's entry.
     bool autonomous = false;
     bool testAutonomous = false;
+    // +0x54 bit 0x4000 (vtable 0x90/0x8c), Push Interaction byte 14 bit
+    // 0x10: when it ends, the Idle for Input that ran it does not start a
+    // "continue as current" entry after it (no base-game tree sets it).
+    bool noContinuation = false;
     // Cancelled by the user or by something more important queued behind it:
     // Idle for Input in its action tree returns at once (FreeSO's NotifyIdle).
     bool cancelled = false;
@@ -941,7 +945,7 @@ struct Thread {
     std::string error;     // once Failed: the message and the stack at the failure
     size_t instructions = 0; // total executed
     // Set when a queued interaction's action tree returned to the Idle for
-    // Input that ran it (1, or 2 when it had been cancelled), which runs
+    // Input that ran it (1, or 2 when it said "no continuation"), which runs
     // again at once (queue.cpp).
     uint8_t interactionReturned = 0;
     // Set while a check tree runs for the pie menu: Add/Change the Action

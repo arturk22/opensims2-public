@@ -842,6 +842,40 @@ static void testPushTestsTheEntry() {
           "Idle for Input skips a queued entry the visitor may not run");
 }
 
+// Round n31: when an interaction returns, the Idle for Input that ran it
+// runs again and starts the next entry only if it is "continue as current"
+// and the finished one does not say "no continuation" (cTSInteraction +0x54
+// bit 0x4000, Push Interaction byte 14 bit 0x10; TryIdleForInput reads it
+// through vtable 0x8c), else returns true and Main goes on (here: counts in
+// temp 2) before the next Idle for Input takes it.
+static void testContinuationAfterReturn() {
+    for (const bool noContinuation : {false, true}) {
+        Fixture fx;
+        constexpr uint32_t kMainGroup = 0x7F000070;
+        fx.code.add(kMainGroup, 0x80, definition(kObjectTypePerson, 0, 0x5150002));
+        ObjectFunctions f;
+        f.functions.resize(2);
+        f.functions[1].action = 0x1000;
+        fx.code.add(kMainGroup, 0x80, std::move(f));
+        fx.code.add(kMainGroup, 0x1000, tree({expr(Param, 0, Assign, Lit, 1, go(1), E), idle(0, true, go(2)),
+                                              expr(Temp, 2, Add, Lit, 1, go(0), E)},
+                                             1));
+        const ObjectId sim = fx.vm.instantiate(kMainGroup, 0x80).id;
+        fx.vm.startMain(sim);
+        Object& s = *fx.vm.object(sim);
+        auto first = fx.make(0), then = fx.make(0);
+        first.noContinuation = noContinuation;
+        then.flags = 0x04; // continue as current
+        enqueue(fx.vm, s, first);
+        enqueue(fx.vm, s, then);
+        fx.vm.tick();
+        const Thread& t = fx.vm.threads[sim];
+        check(s.queue.empty() && t.temps[2] == (noContinuation ? 2 : 1),
+              noContinuation ? "\"no continuation\": Main goes on before the continuation runs"
+                             : "a continuation runs from the re-run, before Main goes on");
+    }
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -862,6 +896,7 @@ int main() {
     testAutonomousBits();
     testSkippedEntryUnlinks();
     testPushTestsTheEntry();
+    testContinuationAfterReturn();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

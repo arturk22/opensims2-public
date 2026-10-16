@@ -102,9 +102,9 @@ LotObjects::SavedInteraction toRecord(VM& vm, const Object& sim, const QueuedInt
     // vtable 0x88/0x84, SetContinuation/GetContinuation, Mac BV 0x4c518c/
     // 0x4c58c0), Push Interaction's "continue as current" (byte 3 bit 0x04);
     // 0x400 autonomous and 0x800 tested as autonomous (vtable 0xbc/0xc0 and
-    // 0xc4/0xc8, BV 0x4c58b4/0x4c5888).
-    r.u54 = (r.u54 & ~(2u | 0x400u | 0x800u)) | (q.flags & 0x04 ? 2u : 0u) | (q.autonomous ? 0x400u : 0u) |
-            (q.testAutonomous ? 0x800u : 0u);
+    // 0xc4/0xc8, BV 0x4c58b4/0x4c5888), 0x4000 no continuation (0x90/0x8c).
+    r.u54 = (r.u54 & ~(2u | 0x400u | 0x800u | 0x4000u)) | (q.flags & 0x04 ? 2u : 0u) | (q.autonomous ? 0x400u : 0u) |
+            (q.testAutonomous ? 0x800u : 0u) | (q.noContinuation ? 0x4000u : 0u);
     return r;
 }
 
