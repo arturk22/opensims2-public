@@ -367,6 +367,7 @@ private:
     void stepSequence(Instance& inst, SequencePart& sq, float dt);
     void startChain(MetaChain& m, bool hard);
     void generateMeta(Instance& inst, MetaChain& m, float dt);
+    static size_t emitStep(const Instance& inst, const MetaChain& m);
     void spawnMeta(Instance& inst, MetaChain& m, float age);
     void enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth);
     void updateWalk(MetaParticle::Walk& w, const MetaParticles::Walk& d);

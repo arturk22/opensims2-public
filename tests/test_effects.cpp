@@ -325,6 +325,8 @@ static EffectsLibrary metaLibrary() {
     MetaParticles die = swim;
     die.flags = 0x19000021ull;
     die.life = {2, 2};
+    die.rateCurveCycles = 1; // (the game's: one burst, of the moment)
+    die.rateCurveTime = 0.001f;
     die.baseEffect = "deadmodel";
     lib.metaParticles = {swim, feed, die};
     // A state chain (component flag 0x8): swimming, feeding, dead.
@@ -374,17 +376,29 @@ static void testMetaParticles() {
     sys.update(0.1f);
     m.clear();
     sys.collectModels(m);
-    check(m.size() == 1 && *m[0].model == "fishParticle1Dead_cres", "state 2: the dead fish");
+    // State 2 switches the effect's description (SwitchDescription): the
+    // swimming fish keeps its model and life under the dead one's physics,
+    // and the dead description's one burst brings a dead fish.
+    auto count = [&](const char* model) {
+        size_t n = 0;
+        for (const auto& e : m)
+            n += *e.model == model;
+        return n;
+    };
+    check(count("fishParticle1_cres") == 1 && count("fishParticle1Dead_cres") == 1,
+          "state 2: the swimming fish stays, the burst brings a dead one");
     for (int i = 0; i < 30; ++i)
         sys.update(0.1f);
     m.clear();
     sys.collectModels(m);
-    check(m.empty(), "the dead fish is gone when its life ends, and none is born out of state 0");
+    check(count("fishParticle1Dead_cres") == 0 && count("fishParticle1_cres") == 1,
+          "the dead fish is gone when its life ends; the burst is not repeated");
     sys.setState(h, 0);
-    sys.update(0.1f);
+    for (int i = 0; i < 3; ++i)
+        sys.update(0.1f);
     m.clear();
     sys.collectModels(m);
-    check(m.size() == 1 && *m[0].model == "fishParticle1_cres", "back in state 0 a fish is born again");
+    check(m.size() == 1 && *m[0].model == "fishParticle1_cres", "back in state 0: still the one fish (maintain 1)");
 
     const int r = sys.start("roach", where);
     m.clear();

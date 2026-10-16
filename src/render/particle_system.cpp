@@ -967,7 +967,7 @@ void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int dep
 void EffectSystem::spawnMeta(Instance& inst, MetaChain& m, float age) {
     if (m.particles.size() >= kMaxMetaParticles)
         return;
-    const MetaParticles& d = *m.steps[0];
+    const MetaParticles& d = *m.steps[emitStep(inst, m)];
     MetaParticle p;
     const Placement t1 = chainFrame(inst, m);
     V3 dir{0, 0, 1};
@@ -1002,7 +1002,7 @@ void EffectSystem::spawnMeta(Instance& inst, MetaChain& m, float age) {
     p.position = transformPoint(t1, p.position);
     p.velocity = rotate(t1, p.velocity);
     // (Its first step: the state's for a state chain.)
-    const size_t step = m.byState ? std::min<size_t>(size_t(inst.state), m.steps.size() - 1) : 0;
+    const size_t step = emitStep(inst, m);
     enterStep(m, p, step, 0);
     if ((d.flags & mflag::Path) && !d.path.empty() && d.path.back().time > 0)
         p.life = d.path.back().time;
@@ -1035,8 +1035,15 @@ void EffectSystem::spawnMeta(Instance& inst, MetaChain& m, float age) {
 // (0xf64694: the missing ones made, not moved), inject or the rate curve
 // (read as the particles', which they mirror; the rate's new ones are not
 // set back along the emitter's way here).
+// The description the chain emits with: the first, or a state chain's
+// state's (cTSMetaParticlesEffect::SwitchDescription BV 0xf60b58 makes it
+// the effect's own: its new particles and their physics follow it).
+size_t EffectSystem::emitStep(const Instance& inst, const MetaChain& m) {
+    return m.byState ? std::min<size_t>(size_t(std::max(inst.state, 0)), m.steps.size() - 1) : 0;
+}
+
 void EffectSystem::generateMeta(Instance& inst, MetaChain& m, float dt) {
-    const MetaParticles& d = *m.steps[0];
+    const MetaParticles& d = *m.steps[emitStep(inst, m)];
     if (m.stopping)
         return;
     if (m.delayLeft > 0) {
@@ -1316,12 +1323,12 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
     }
     for (auto& p : m.particles) {
         // A state chain: the effect's state picks the description
-        // (SelectDescriptionState BV 0xeb04f4 -> SwitchDescription).
-        if (m.byState) {
-            const size_t want = std::min<size_t>(size_t(inst.state), m.steps.size() - 1);
-            if (p.step != want)
-                enterStep(m, p, want, 0);
-        }
+        // (SelectDescriptionState BV 0xeb04f4 -> SwitchDescription 0xf60b58:
+        // the effect's own, which every particle's physics follows; a
+        // particle keeps its carried effect and its life, UpdateActiveParticles
+        // 0xf5f5b0 and ProcessMetaParticle swap nothing).
+        if (m.byState)
+            p.step = emitStep(inst, m);
         p.age += dt;
         if (p.age >= p.life) {
             // Its life over: a chain hands it to the next description
@@ -1346,10 +1353,10 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
     for (auto& c : m.dying)
         stepInstance(*c, dt, false);
     std::erase_if(m.dying, [](const std::unique_ptr<Instance>& c) { return !busy(*c); });
-    // New ones from the first description (state chains only in state 0,
-    // inferred: SwitchDescription not followed).
+    // New ones from the description of the chain's state (the first for
+    // a plain chain), in every state.
     const bool window = m.stopAt < 0 || m.time < m.stopAt;
-    if (m.started && emit && !inst.stopped && window && (!m.byState || inst.state == 0))
+    if (m.started && emit && !inst.stopped && window)
         generateMeta(inst, m, dt);
     else if (!window || inst.stopped)
         m.stopping = true;
