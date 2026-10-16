@@ -288,7 +288,43 @@ bool addLowerLevel(Lot& lot) {
     ++lot.levelCount;
     for (auto& g : lot.wallGraphs)
         g.header[2] = lot.minLevel, g.header[5] = lot.levelCount;
+    fitDeckFoundationMarkers(lot);
     return true;
+}
+
+int32_t setDeckFoundationMarker(Lot& lot, int level, int x, int y, int q, int32_t style) {
+    const size_t tiles = size_t(lot.width) * lot.height;
+    if (!tiles || x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height) || q < 0 || q > 3 ||
+        level < lot.minLevel || level >= lot.minLevel + lot.levelCount - 1)
+        return kNoMarkerPlane;
+    if (lot.deckFoundationStyles.empty()) {
+        lot.deckFoundationBase = lot.minLevel;
+        lot.deckFoundationStyles.assign(tiles * size_t(lot.levelCount - 1), {-1, -1, -1, -1});
+    }
+    fitDeckFoundationMarkers(lot);
+    const int32_t old = lot.deckFoundationStyle(level, x, y, q);
+    lot.deckFoundationStyles[(size_t(level - lot.deckFoundationBase) * lot.width + size_t(x)) * lot.height +
+                             size_t(y)][size_t(q)] = style;
+    return old;
+}
+
+void fitDeckFoundationMarkers(Lot& lot) {
+    const size_t tiles = size_t(lot.width) * lot.height;
+    if (lot.deckFoundationStyles.empty() || !tiles)
+        return;
+    const int planes = std::max(lot.levelCount - 1, 0);
+    const size_t oldPlanes = lot.deckFoundationStyles.size() / tiles;
+    if (lot.deckFoundationBase == lot.minLevel && oldPlanes == size_t(planes))
+        return;
+    std::vector<std::array<int32_t, 4>> fitted(tiles * size_t(planes), {-1, -1, -1, -1});
+    for (int k = 0; k < planes; ++k) {
+        const int from = lot.minLevel + k - lot.deckFoundationBase;
+        if (from >= 0 && size_t(from) < oldPlanes)
+            std::copy_n(lot.deckFoundationStyles.begin() + long(size_t(from) * tiles), tiles,
+                        fitted.begin() + long(size_t(k) * tiles));
+    }
+    lot.deckFoundationStyles = std::move(fitted);
+    lot.deckFoundationBase = lot.minLevel;
 }
 
 namespace {
@@ -374,6 +410,7 @@ void addUpperLevel(Lot& lot) {
     ++lot.levelCount;
     for (auto& g : lot.wallGraphs)
         g.header[5] = lot.levelCount;
+    fitDeckFoundationMarkers(lot);
 }
 
 bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation) {

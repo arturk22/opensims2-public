@@ -61,8 +61,11 @@ struct Lot {
     // to the one under the top (no marker can sit on the top level: the lots
     // hold one plane fewer than the elevations; DeckFoundationStyle answers
     // -1 from the top level up), from `deckFoundationBase`, the lowest level
-    // when the lot was read. Read for the fences' +0.75
-    // (docs/roof-fence-water-mac.md §2.1); Build mode does not write it.
+    // (fitDeckFoundationMarkers keeps it so as levels are added). Read for
+    // the fences' +0.75 (docs/roof-fence-water-mac.md §2.1) and Build mode's
+    // foundations; Build mode writes it as the game's deck tool does
+    // (formats/lot_edit.hpp setDeckFoundationMarker, docs/buy-build-mac.md
+    // §7.25).
     std::vector<std::array<int32_t, 4>> deckFoundationStyles;
     int deckFoundationBase = 0;
     // The marker of quarter `quarter` (0 west, 1 north, 2 east, 3 south) of

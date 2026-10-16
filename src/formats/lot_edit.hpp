@@ -70,6 +70,21 @@ bool removeFenceArch(Lot& lot, int level, int ax, int ay, int bx, int by);
 // 3 below the ground, no floors or rooms; the wall graphs' level range
 // follows. False if the lot has one already.
 bool addLowerLevel(Lot& lot);
+// The 3ARY 0x14 deck/foundation/pool markers (Lot::deckFoundationStyles) as
+// cTSUserToolUndoableDeckFoundation::SetDeckFoundationStyle writes them (Mac
+// BV 0x41817c, docs/buy-build-mac.md §7.25): quarter `q` of tile (x, y) on
+// `level` gets `style` (the deckfoundations.txt product: 0 foundation, 1 and
+// 2 decks, 3 pool; -1 none). A lot without the array gets one (a plane a
+// level, from the lowest to the one under the top, as the saved lots keep
+// it). Returns the marker it had; kNoMarkerPlane off the arrays (the top
+// level has none).
+constexpr int32_t kNoMarkerPlane = -2;
+int32_t setDeckFoundationMarker(Lot& lot, int level, int x, int y, int q, int32_t style);
+// After a level was added: the marker planes again from the lowest level to
+// the one under the top, the new planes without markers (a lot without the
+// array keeps none).
+void fitDeckFoundationMarkers(Lot& lot);
+
 // Adds a level on top (a dormer's roof over the attic, MakeDormer: WorldDB
 // vtable 0x1C): its grid points 3 above the highest, no floors or rooms.
 void addUpperLevel(Lot& lot);

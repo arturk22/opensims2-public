@@ -95,6 +95,8 @@ BuildEditor::Geometry BuildEditor::capture() const {
     g.floorPatterns = lot_.floorPatterns;
     g.wallPatterns = lot_.wallPatterns;
     g.staleWallLayer = lot_.staleWallLayer;
+    g.deckFoundationStyles = lot_.deckFoundationStyles;
+    g.deckFoundationBase = lot_.deckFoundationBase;
     return g;
 }
 
@@ -117,6 +119,8 @@ void BuildEditor::restore(const Geometry& g) {
     lot_.floorPatterns = g.floorPatterns;
     lot_.wallPatterns = g.wallPatterns;
     lot_.staleWallLayer = g.staleWallLayer;
+    lot_.deckFoundationStyles = g.deckFoundationStyles;
+    lot_.deckFoundationBase = g.deckFoundationBase;
 }
 
 void BuildEditor::syncWorld() {

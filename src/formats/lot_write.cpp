@@ -17,7 +17,7 @@ constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11, kTypeLo
                    kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC, kWaterLevels = 0x3B76;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
                    kTypeWallLayer = 0x8A84D7B0;
-constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorRotations = 0x15, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
+constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorRotations = 0x15, kArrayDeckFoundations = 0x14, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
                    kWallLayerPartitions = 0x04;
 constexpr size_t kFileNameSize = 64;
 
@@ -82,6 +82,19 @@ LotGeometryRecord rotationArray(DbpfPackage& pkg, const Lot& lot) {
         for (uint8_t v : q)
             w.u8(v);
     return {kType3DArray, h.group, kArrayFloorRotations, std::move(w.bytes())};
+}
+
+// 3ARY 0x14: the deck/foundation/pool markers, four i32 a tile, one plane a
+// level from the lowest to the one under the top (Lot::deckFoundationStyles).
+LotGeometryRecord markerArray(DbpfPackage& pkg, const Lot& lot) {
+    const Head h = headOf(pkg, kType3DArray, kArrayDeckFoundations, 1);
+    BinWriter w = begin(h, kType3DArray, "c3DArray");
+    const size_t tiles = size_t(lot.width) * lot.height;
+    w.u32(lot.width), w.u32(lot.height), w.u32(uint32_t(tiles ? lot.deckFoundationStyles.size() / tiles : 0));
+    for (const auto& q : lot.deckFoundationStyles)
+        for (int32_t v : q)
+            w.i32(v);
+    return {kType3DArray, h.group, kArrayDeckFoundations, std::move(w.bytes())};
 }
 
 LotGeometryRecord stringMap(DbpfPackage& pkg, uint32_t instance, const std::map<uint16_t, std::string>& names,
@@ -249,7 +262,8 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
             out.push_back({kTypePool, h.group, 0, std::move(w.bytes())});
         }
     }
-    // The lot's other 3ARYs (0x03, 0x0C, 0x14, ...: not read) get the
+    // The lot's other 3ARYs (0x03, 0x0C, ...: not read; 0x14 when the lot
+    // has no markers read) get the
     // levels added below (a pool's): a copy of their lowest plane each
     // (inferred), so that every array keeps the lot's level count.
     {
@@ -268,6 +282,7 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
             for (const auto& e : source.entries()) {
                 if (e.tgi.type != kType3DArray || e.tgi.instance == kArrayElevation || e.tgi.instance == kArrayFloors ||
                     e.tgi.instance == kArrayRooms || e.tgi.instance == kArrayFloorRotations ||
+                    (e.tgi.instance == kArrayDeckFoundations && !lot.deckFoundationStyles.empty()) ||
                     lot.roomLayers.count(e.tgi.instance))
                     continue;
                 const auto b = source.read(e);
@@ -294,6 +309,8 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
         out.push_back(quarterArray(source, kArrayFloors, lot, lot.floors));
     if (!lot.floorRotations.empty())
         out.push_back(rotationArray(source, lot));
+    if (!lot.deckFoundationStyles.empty())
+        out.push_back(markerArray(source, lot));
     if (!lot.rooms.empty())
         out.push_back(quarterArray(source, kArrayRooms, lot, lot.rooms));
     for (const auto& [instance, values] : lot.roomLayers)

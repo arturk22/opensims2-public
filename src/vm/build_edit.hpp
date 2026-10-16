@@ -108,8 +108,14 @@ public:
     // Ctrl: the foundation tiles of the rectangle go (int(4 x 0.8) back a
     // tile); the walls follow the edge of what is left.
     Result deleteFoundation(int x0, int y0, int x1, int y1);
-    // A ground tile under a foundation.
+    // A ground tile under a foundation or a deck: its markers (3ARY 0x14) on
+    // the ground when the lot keeps them, else the story above 0.25-1.25
+    // over the terrain at its four grid points (a lot without the array).
     bool foundationTile(int x, int y) const;
+    // Every quarter of the tiles (x0, y0)-(x1, y1) on lot level `level` gets
+    // the marker `style` (SetDeckFoundationMarkers, docs/buy-build-mac.md
+    // §7.25).
+    void setMarkers(int level, int x0, int y0, int x1, int y1, int32_t style);
 
     // Pool tool (deckfoundations.txt "pool 3"): a rectangle of ground tiles
     // (corners inclusive) dug into a pool: the lot gets its underground
@@ -409,6 +415,8 @@ private:
         std::map<uint32_t, std::vector<std::array<uint16_t, 4>>> roomLayers;
         std::map<uint16_t, std::string> floorPatterns, wallPatterns;
         std::map<uint32_t, Lot::LayerEntry> staleWallLayer;
+        std::vector<std::array<int32_t, 4>> deckFoundationStyles;
+        int deckFoundationBase = 0;
     };
     // An object sold with a wall: where it was, for undo.
     struct Sold {
@@ -492,6 +500,13 @@ private:
     uint32_t revision_ = 0;
     std::array<int, 4> editable_{0, 0, 0, 0}; // inferredRoadStripArea, for a lot without 3ARY 0x03
 };
+
+// cITSProductDeckFoundation::tDeckFoundationType (the deckfoundations.txt
+// parser's SetType, docs/buy-build-mac.md §7.25): deck 1, foundation 2, pool
+// 3; the BV's stage is 4. deckFoundationType gives a base-game marker's
+// (product 0 foundation, 1 and 2 decks, 3 pool); 0 for none.
+constexpr int kDeckTypeDeck = 1, kDeckTypeFoundation = 2, kDeckTypePool = 3, kDeckTypeStage = 4;
+int deckFoundationType(int32_t style);
 
 // The modular stairs among the VM's objects: each "Stair Modular - ... -
 // Portal - A" top step followed down its links (object data 80) to the

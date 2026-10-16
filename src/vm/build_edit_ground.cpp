@@ -38,11 +38,64 @@ DeckProduct deckProduct(int product) {
 // deck 2's supportObject (the column under a deck on the terrain).
 constexpr uint32_t kDeckColumnGuid = 0xAA75A097;
 
+// The pool's product (deckfoundations.txt "pool 3"): its marker.
+constexpr int32_t kPoolProduct = 3;
+
 } // namespace
+
+int deckFoundationType(int32_t style) {
+    switch (style) {
+    case 0: return kDeckTypeFoundation;
+    case 1:
+    case 2: return kDeckTypeDeck;
+    case kPoolProduct: return kDeckTypePool;
+    default: return 0;
+    }
+}
+
+void BuildEditor::setMarkers(int level, int x0, int y0, int x1, int y1, int32_t style) {
+    // A lot saved without the array (N002_Lot32) gets one from what it has:
+    // foundations by their heights and the pools (inferred: their product
+    // is not known, taken as the foundation's).
+    if (lot_.deckFoundationStyles.empty() && lot_.levelCount > 1) {
+        std::vector<std::array<int, 2>> found, pools;
+        for (int x = 0; x < int(lot_.width); ++x)
+            for (int y = 0; y < int(lot_.height); ++y) {
+                if (foundationTile(x, y))
+                    found.push_back({x, y});
+                if (poolTile(x, y))
+                    pools.push_back({x, y});
+            }
+        lot_.deckFoundationBase = lot_.minLevel;
+        lot_.deckFoundationStyles.assign(size_t(lot_.width) * lot_.height * size_t(lot_.levelCount - 1), {-1, -1, -1, -1});
+        for (const auto& [x, y] : found)
+            for (int q = 0; q < 4; ++q)
+                setDeckFoundationMarker(lot_, 0, x, y, q, 0);
+        for (const auto& [x, y] : pools)
+            for (int q = 0; q < 4; ++q)
+                setDeckFoundationMarker(lot_, -1, x, y, q, kPoolProduct);
+    }
+    for (int x = std::min(x0, x1); x <= std::max(x0, x1); ++x)
+        for (int y = std::min(y0, y1); y <= std::max(y0, y1); ++y)
+            for (int q = 0; q < 4; ++q)
+                setDeckFoundationMarker(lot_, level, x, y, q, style);
+}
 
 bool BuildEditor::foundationTile(int x, int y) const {
     if (!lot_.hasLevel(0) || !lot_.hasLevel(1) || x < 0 || y < 0 || x >= int(lot_.width) || y >= int(lot_.height))
         return false;
+    // The ground's markers (3ARY 0x14) when the lot keeps them: a quarter of
+    // a foundation or a deck (the game's HasFoundation / the deck's
+    // IsDeckFoundationOfType 1). The level 1 grid points one past a
+    // foundation are raised too (MoveFloorElevations, docs/buy-build-mac.md
+    // §7.25): the heights cannot tell the tile beside it from it.
+    if (!lot_.deckFoundationStyles.empty()) {
+        for (int q = 0; q < 4; ++q)
+            if (const int t = deckFoundationType(lot_.deckFoundationStyle(0, x, y, q));
+                t == kDeckTypeFoundation || t == kDeckTypeDeck)
+                return true;
+        return false;
+    }
     for (int cx = x; cx <= x + 1; ++cx)
         for (int cy = y; cy <= y + 1; ++cy)
             if (const float d = lot_.elevation(1, cx, cy) - lot_.elevation(0, cx, cy);
@@ -197,6 +250,9 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
         for (int q = 0; q < 4; ++q)
             setFloor(lot_, 1, x, y, q, top), setFloorRotation(lot_, 1, x, y, q, 1);
     }
+    // SetDeckFoundationMarkers: every quarter of the rectangle's tiles, on
+    // the ground, the product (docs/buy-build-mac.md §7.25).
+    setMarkers(0, ax, ay, bx, by, product);
     foundationWalls(product, &laid, true);
     // A deck on columns: its support object at each corner of the rectangle
     // (supportLayout -corners), on the terrain under it (inferred: the
@@ -305,6 +361,8 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
             lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
                 ground + 3.0f * float(k);
     }
+    for (const auto& [x, y] : tiles)
+        setMarkers(0, x, y, x, y, -1);
     foundationWalls(0, &removed, false);
     r.changed = int(tiles.size());
     r.cost = -refund;
@@ -970,6 +1028,8 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         kept.push_back(pool);
     }
     lot_.pools = std::move(kept);
+    // The pool's markers sit a level down (SetDeckFoundationMarkers, type 3).
+    setMarkers(-1, ax, ay, bx, by, kPoolProduct);
     poolWalls();
     r.changed = tiles;
     chargeFunds(vm_, -r.cost);
@@ -1059,6 +1119,7 @@ BuildEditor::Result BuildEditor::erasePool(int x0, int y0, int x1, int y1) {
                 ++r.changed;
                 for (int qq = 0; qq < 4; ++qq)
                     setFloor(lot_, -1, tx, ty, qq, 0);
+                setMarkers(-1, tx, ty, tx, ty, -1);
             }
     poolWalls();
     r.cost = -r.changed * int(float(kPoolTilePrice) * kBuildRefundRate);
@@ -1132,6 +1193,7 @@ BuildEditor::Result BuildEditor::deletePool(int x, int y) {
                         ++r.changed;
                         for (int qq = 0; qq < 4; ++qq)
                             setFloor(lot_, -1, tx, ty, qq, 0);
+                        setMarkers(-1, tx, ty, tx, ty, -1);
                     }
         }
         poolWalls();

@@ -331,6 +331,13 @@ static void testFoundation() {
           "the stories above sit a foundation higher");
     check(lot.elevation(1, 8, 8) == 3.0f, "elsewhere they do not");
     check(ed.foundationTile(3, 2) && !ed.foundationTile(5, 2), "the tiles are foundation tiles");
+    // SetDeckFoundationMarkers (docs/buy-build-mac.md §7.25): the product on
+    // every quarter of the rectangle, on the ground; nothing elsewhere.
+    check(lot.deckFoundationStyle(0, 2, 2, 0) == 0 && lot.deckFoundationStyle(0, 4, 3, 3) == 0 &&
+              lot.deckFoundationStyle(0, 5, 3, 0) == -1 && lot.deckFoundationStyle(1, 3, 3, 0) == -1,
+          "the foundation's markers (3ARY 0x14) on the ground");
+    check(lot.deckFoundationStyles.size() == 12 * 10 * 2 && lot.deckFoundationBase == 0,
+          "a plane a level, the top one left out");
     size_t walls = 0;
     for (const auto& w : lot.walls)
         walls += w.type == Lot::Foundation;
@@ -343,7 +350,10 @@ static void testFoundation() {
         walls += w.type == Lot::Foundation;
     check(walls == 8 && lot.elevation(1, 5, 2) == 3.0f && lot.elevation(1, 4, 2) == kFoundationHeight,
           "the walls and heights follow what is left");
+    check(lot.deckFoundationStyle(0, 4, 2, 1) == -1 && lot.deckFoundationStyle(0, 3, 2, 1) == 0,
+          "the deleted tiles lose their markers");
     check(ed.undo() && ed.undo() && lot.walls.empty() && lot.elevation(1, 3, 3) == 3.0f, "undo takes it all back");
+    check(lot.deckFoundationStyles.empty(), "the markers too");
 }
 
 static void testTerrain() {
@@ -712,6 +722,10 @@ static void testPool() {
     check(r.ok && r.cost == 6 * kPoolTilePrice && lot.pools.size() == 1, "a pool of six tiles at §75");
     check(lot.minLevel == -1 && lot.levelCount == 2 && lot.elevation(-1, 4, 4) == -3.0f, "the lot gets its underground level");
     check(lot.floor(-1, 4, 3)[0] != 0 && lot.floor(0, 4, 3)[0] == 0, "the pool's floor is a level down");
+    check(lot.deckFoundationBase == -1 && lot.deckFoundationStyle(-1, 3, 3, 0) == 3 &&
+              lot.deckFoundationStyle(-1, 5, 4, 2) == 3 && lot.deckFoundationStyle(-1, 6, 4, 2) == -1 &&
+              lot.deckFoundationStyle(0, 4, 4, 0) == -1,
+          "the pool's markers (product 3) a level down");
     size_t walls = 0;
     for (const auto& w : lot.walls)
         walls += w.type == Lot::Pool && w.a.level == -1;
