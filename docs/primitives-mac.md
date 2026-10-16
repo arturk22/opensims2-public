@@ -3377,6 +3377,127 @@ nós por turno do binário (`cli/s2pkg/budget.hpp`; antes 20000 fora do
   (destino ocupado: o `EvalTileForGoal` recusa o tile da barata com outro Sim
   parado nele, ex. Loki depois de pisar, N002_Lot3).
 
+### Rodada n31: visitas em laço de "Leave", sociais presos e o "autônomo" da fila
+
+Lido nas árvores (`tools/datahunt`) e no binário (Ghidra MCP, só leitura).
+Medida de partida (`s2pkg autonomy`, main `8bfebd80`, `S2PKG_VISITORS=1`):
+`N003_Lot192` 12 h (21.600 ticks, semente padrão): Juliette e Tybalt começam
+"Leave" 135 e 123 vezes das 23:33 em diante (cada um termina em 30–80 ticks
+e recomeça) e não saem; Hérmia, Mercúcio e Romeu saem 23:51–00:32. 3 dias
+(129.600 ticks): `N001_Lot68` semente 5, Daniel em "Beijar no Rosto" e
+Angela em "Receber Beijo" 28,1 h (14:08 → 18:17 do dia seguinte), os dois
+morrem de fome (18:38 e 19:20); `N001_Lot11` semente 1, Cassandra em
+"Contar Piada" 25,4 h (Mortimer em "Ouvir Piada" 18,5 h), ela morre às 22:40
+do 3º dia; `N003_Lot52` semente 5, Tybalt preso das 07:39 e morto às 01:23;
+semente 6, Juliette morre às 03:11.
+
+**1. O laço do "Leave" é rota.** O "Leave" global (`0x12F`) é um laço: acha
+o "Controller - Visitor" (Set to Next por GUID; cria se não há) e, se o Sim
+não roda a interação dele ("Sim - Running Interaction?" `0x31D`), empurra
+em si mesmo a entrada 0 "Leave" (prioridade máxima, objeto no local 0) e
+espera. "Interaction - Leave" (`0x1010` do controlador, grupo `0x7F92C86E`)
+tenta "Leave - By Vehicle?" (`0x1015`) e "Leave - By Ped Portal" (`0x1018`:
+Go To Routing Slot até o portal de pedestre, dois slots); falhando, vai a um
+slot global (nó 10) e **acaba verdadeira**, e o "Leave" global a empurra de
+novo. Sem caminho até o portal o jogo também giraria assim. Juliette e
+Tybalt estão (desde o lote salvo) no deque do andar 2 (x 21–27, y 24–28),
+cujas únicas descidas são as escadas modulares de 6 degraus (x 26/27 e
+12/13, y 28 → 25, "Stair Modular - Balustrade - No Railings", borda de baixo
+em y = 27,5). Com as escadas como portais de slot (`9cf74b11`,
+`routing-mac.md` §8.6) as pontas de baixo das duas faixas ficam em
+y = 27,71 (`OS2_OBJECT_PORTALS=1`: 568 slot 0 (27,67; 25,81; 2) → 600 slot 1
+(27,67; 27,71; 1)), no tile da peça "End" (600, em (27,5; 27,5; 1), que
+bloqueia) e das "Bridge" 593/598: o planejador não sai da ponta e o deque
+não tem caminho para o andar 1 (`S2PKG_ROUTE_TRY` de qualquer ponto do deque
+até o portal ou até (27,5; 28,5; 1): falha 2; `Leave - By Ped Portal`
+falha com 2 nos dois slots). Com `OS2_STAIR_ONE_PORTAL=1` (o portal antigo,
+patamar a patamar) os dois saem às 23:57 e 00:02 com um "Leave" cada (na
+v0.2.0, 23:50 e 00:16). **Frente de rotas** (a rodada n30 mexe nelas; nada
+mudou aqui): a pegada da "End"/"Bridge" sobre a ponta da faixa (ou a ponta
+fora dela) como o binário a tem não foi lida.
+
+**2. Os sociais presos são o laço do bloqueio da locomoção.** Nos dois
+casos o lado A está em "Route - Dynamic w/Lead in" (Go To Routing Slot até
+B, com o goal check) e o B em "Wait - Person X State Test Y" (o estado de A,
+atributo 6 do objeto de controle, fica em 2; B espera ≥ 4). A não anda: a
+cada tick o passo dele entra num objeto (Daniel em (16,97; 19,93; 2), dentro
+do tile do balcão 151 "Counter - Quaint" em (16,5; 19,5); Cassandra no
+objeto 691). O VM vê o bloqueio e roda o goal check (o `DoBlocked` forçado,
+`r.check = 3` em `routing_walk.cpp`); a árvore volta verdadeira e o
+`advance` recomeça do alto: testa o passo de novo com o Sim parado (a
+locomoção foi morta no bloqueio), esse passo não entra no balcão, o
+bloqueio é esquecido (`blocker = 0`, `blockCheckDone = false`) e o andar
+recomeça; no tick seguinte o passo entra no balcão de novo. O contador de
+tentativas nunca sobe e a rota nunca falha. No binário,
+`DoBlockedWaitingForGoalCheckTree` (BV `0x56da50`) vai do fim da árvore
+**direto ao estado `0x1A`** (`DoBlockedGoalStillAvailable`, BV `0x57a8d4`)
+com o bloqueador que o `DoBlocked` (BV `0x5762a4`) guardou, sem testar o
+passo de novo; com um objeto é "blocked by object", a rota falha, o social
+acaba e o B sai da espera. **Frente de rotas** (`routing_walk.cpp`; nada
+mudou aqui). O Daniel entrou no tile do balcão pelo lead-in do beijo
+anterior, que o deixou em (16,99; 19,93), 0,01 dentro de x < 17.
+
+**3. `N003_Lot52`.** Semente 5: o "Chutar" do Tybalt na urna 174 anda até o
+centro dela (47,50; 41,50; 1) e de lá toda rota falha com 2 (101 vezes) até
+ele morrer de fome: rota (um objetivo no centro de uma pegada). Semente 6:
+Juliette com os motivos baixos leva um susto ("Assustar") e morre 15 min
+depois: o "Sub - Be Scared - Die of Fright?" das urnas (do jogo, como a
+Ofélia da rodada 22).
+
+**4. O "autônomo" de uma interação (binário).** O `cTSInteraction` guarda
+dois bits no `+0x54` (que o lote salva):
+- **`0x400`, autônoma** (vtable `0xbc`/`0xc0`, BV `0x4c58b4`/`0x4c5894`):
+  `SetCurrentAction` (BV `0xadc6d8`) a copia para o **dado de pessoa 166**;
+  o `AddAction` de uma entrada imediata (BV `0xadbbdc`) põe o 166 e o bit da
+  ação atual nos dela enquanto a árvore roda. Ligam: `try_gosub_action_found`
+  (BV `0xade17c`) e o `TryPushAction` (BV `0xe33530`) com o byte 14 bit 0x02
+  (a entrada do último Find Best Interaction); um push **feito por um Sim**
+  sem o 0x02 herda o 0x400 da interação atual dele (`0xbc` → `0xc0`); fora
+  isso 0 (`cTSInteraction::Init`, BV `0x4c7dec`, zera o `+0x54`). O VM dava
+  166 = "prioridade 20" (inferido).
+- **`0x800`, testar como autônoma** (vtable `0xc4`/`0xc8`, BV `0x4c5888`/
+  `0x4c5868`): o `TryIdleForInput` (BV `0xade664`) monta o
+  `cEdithObjectTestSim` com ele (a chamada em `0xadeb6c`), então a check tree
+  de uma entrada da fila recebe **parâmetro 0 = 1** quando ela veio do Find
+  Best Interaction. Só o gosub e o push com 0x02 o ligam. O teste do próprio
+  `TryPushAction` usa o byte 14 bit 0x02 como "autônomo"; o modo "Handle Sub
+  Queue Interactions" testa com 0. O VM passava 0 nos dois.
+- Nos 69 lotes, das 100 interações salvas só 4 têm entrada; as quatro são de
+  prioridade 20 e têm o `0x400` (`+0x54` = `0x400`, `0x480`, `0xC80`,
+  `0xCA0`; as duas com `0x800` são "What's This?" e "Ask Tybalt to Join").
+
+**5. Entrada recusada: `ActionSkipped` e `ClearSubActions` (binário).** O
+`TryIdleForInput` tira a entrada da frente da fila, chama `ClearSubActions`
+e, se o objeto dela existe, a testa (`TestInteraction` com a check tree
+forçada); passou e tem action tree → `GosubObjectTree`, `SetCurrentAction`,
+contador 0, devolve 3. Senão `ActionSkipped` (BV `0xaca0cc`: o
+`UnLinkInteractions` da entrada, vtable `0x10c` = BV `0x4c6a54`, e o evento
+4 no objeto dela) e **devolve 2**: espera um tick e a próxima entrada fica
+para o tick seguinte. Objeto sumido: a entrada sai sem `ActionSkipped` e
+devolve 2. O VM tirava a recusada **sem desfazer o vínculo** (o Sim do outro
+lado de um social não recebia o dado 110 e sua "Wait - Person X State" não
+acabava) e tentava a próxima no mesmo tick. `ClearSubActions` (BV `0xadc4f4`)
+faz o `UnLinkInteractions` de cada sub-ação esperando antes de limpar a
+sub-fila e zera a sub-ação atual e os dados 26, 75–78 e 157; o VM limpava
+sem desfazer vínculos. No modo da sub-fila, a recusada leva `ClearSubActions`
+e `ActionSkipped`.
+
+**6. O que mais o `TestInteraction` (BV `0x4c6214`) testa** (lido; ver o
+código abaixo para o que entrou): sai sem resultado se a entrada da interação
+é < 0; zera "passou" (`0xa0`); pessoa, objeto ou entrada nulos → recusada;
+zera os dados de objeto 50, 6, 101 e 104 **do Sim** (e no fim os copia para a
+interação: 50 "escondida", 6, 101, 104); recusa se o bitset de idade da
+pessoa (`0xd0`) não cruza o da entrada (`0x48`), se é visitante (`0x78`) e a
+entrada não tem a flag 0x0001 ("allow visitors", `TestFlags(1)`), se o objeto
+diz `0x214` ou `0x2e8(autônomo)` (não lidos), se um flag do sim system
+(`0x23`) está ligado e a entrada tem `0x20000` (o flags2 bit 1); entrada de
+depuração (TTAB `0x80`, vtable `0x9c`) é recusada fora do modo de depuração
+(o `TryPushAction` passa o último argumento verdadeiro: lá ela é sempre
+recusada). Passou tudo: sem check tree ou sem "forçar" → passou; senão roda a
+check tree com {autônomo, join, argumento, 0}. O `TryPushAction` sempre chama
+o `TestInteraction` (forçando a check tree só com o byte 3 bit 0x20) e falha
+com resultado 2 quando ele recusa.
+
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
 Tudo lido no binário (Ghidra headless, um clone com os nomes do
