@@ -73,7 +73,7 @@ palavra.
 
 | Sistema | Classes (estudadas) | Cobertura de nomes | Índice de fidelidade | "inferido" em src / docs |
 |---|---|---|---|---|
-| VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 9,5 / 11 = **86%** | 125 / 80 |
+| VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 10 / 11 = **91%** (com a n41) | 125 / 80 |
 | Rotas | 27 (13) | 113 / 622 = 18,2% (não recontado na n18) | 7,5 / 8 = **94%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% (não recontado na n23 nem na n34) | 7,5 / 9 = **83%** (com a n34) | 36 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 8 / 10 = **80%** | 10 / 8 |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (25) | 87 / 1.534 = 5,7% (não recontado na n10 nem na n21) | 7 / 8 = **88%** | 33 / 28 |
 | Desenho | 211 (36) | 129 / 2.309 = 5,6% (não recontado na n13, n16, n19, n22, n25, n36 nem n40) | 9,5 / 10 = **95%** (com a n40) | 55 / 41 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11 nem na n27) | 11,5 / 13 = **88%** (com a n27) | 43 / 52 |
-| **Total** | **816 (252)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **95 / 110 = 86,4%** (com a n23, a n25, a n27, a n36, a n34, a n37 e a n40) | **505 em src** |
+| **Total** | **816 (252)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **95,5 / 110 = 86,8%** (com a n23, a n25, a n27, a n36, a n34, a n37, a n40 e a n41) | **505 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
