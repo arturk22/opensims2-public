@@ -20,12 +20,17 @@
 //      motion, header heading and request heading (AnimPlayer::Options::
 //      turn), mixed bone by bone by levels as the channel blender does
 //      (AnimPlayer); there is no other adjustment of the Sim's place.
-//   3. A jump of the root (contained or released, a Snap, a stair's end
-//      putting the climber on top): what the body shows does not move with
-//      it. The layers that play once (a held last frame, a get-in under
-//      way) and those fading out stay where they were in the world
-//      (AnimPlayer::stayInWorld), as the game's PostSnap puts the object
-//      where the animation left it; looping layers go on from the new root,
+//   3. A jump of the root. At a walk's hand-off (FollowOneStep puts the Sim
+//      at the way's end through LocoPlaceFromSceneGraph, between PreSnap
+//      and PostSnap: cChoreoQueue::UpdateObjectTransform keeps every request
+//      in the frame it was added in; docs/seat-mac.md §D) all the layers
+//      stay where they were in the world (AnimPlayer::stayInWorld). At the
+//      VM's other jumps (contained or released, a Snap, a stair's end
+//      putting the climber on top) the layers that play once (a held last
+//      frame, a get-in under way) and those fading out stay where they were
+//      in the world, looping layers go on from the new root (inferred: the
+//      game's Snap moves the node without PostSnap, as read, which would
+//      draw the straight stair's climb fading out 4 tiles past its top),
 //      and what starts afterwards plays in it (the leaveOut get-in, made
 //      from the corner the Sim stood at, ends seated 0.67 from it in the
 //      chair pulled out: placed at the seat after, its held last frame

@@ -706,6 +706,12 @@ static void testPlayer() {
     once.play(walk, 0, {.fade = 0, .loop = true});
     once.stayInWorld(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, 0.05);
     check(near(angle(once.pose(0.1)[1].q), 40, 1e-2f), "stayInWorld leaves a looping layer");
+    // At a walk's hand-off every request keeps its frame (UpdateObjectTransform):
+    // the looping layer stays too.
+    AnimPlayer handOff(&s);
+    handOff.play(walk, 0, {.fade = 0, .loop = true});
+    handOff.stayInWorld(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, 0.05, true);
+    check(near(angle(handOff.pose(0.1)[1].q), 130, 1e-2f), "stayInWorld (all) moves a looping layer");
     AnimPlayer fading(&s);
     fading.play(walk, 0, {.fade = 0, .loop = true});
     fading.play(idle, 0.1, {.fade = 0.5f, .loop = true}); // replaces it: the walk fades out

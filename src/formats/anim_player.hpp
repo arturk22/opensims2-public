@@ -138,15 +138,18 @@ public:
     // Fades out the layers of `priority` (all if -1).
     void stop(double now, float fade = 0.25f, int priority = -1);
     // The model moved by `delta` (new model space <- old), a jump of the
-    // place the body is drawn from (a Snap, put in or taken out of a seat, a
-    // stair's end): the layers started so far that play once (a held last
-    // frame, or one still under way) or fade out go on where they were in
-    // the world, each moved back by it (the bones under the top node); a
-    // looping layer still playing goes on in the new place, and the layers
-    // started after play in it. It is the game's PostSnap: the object is put
-    // where the animation left it (GlobalRootTransPosition) and the body
-    // does not move with the jump (app/seat_module.hpp).
-    void stayInWorld(const Xform& delta, double now);
+    // place the body is drawn from: the layers started so far go on where
+    // they were in the world, each moved back by it (the bones under the top
+    // node), and the layers started after play in the new place. `all`: every
+    // layer, looping ones too, as cChoreoQueue::UpdateObjectTransform keeps
+    // each request in the frame it was added in (BV 0xd1d8a8; PostSnap after
+    // LocoPlaceFromSceneGraph, the route's hand-off; docs/seat-mac.md §D).
+    // Else only those that play once (a held last frame, or one still under
+    // way) or fade out, a looping layer still playing going on from the new
+    // place: our rule for the VM's jumps (a Snap, put in or taken out of a
+    // seat, a stair's end), where the game's requests follow the node as
+    // read (inferred; app/seat_module.hpp).
+    void stayInWorld(const Xform& delta, double now, bool all = false);
 
     // Local bone transforms at `now` (drops the layers that have faded out).
     std::vector<Xform> pose(double now);

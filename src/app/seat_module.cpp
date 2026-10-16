@@ -33,13 +33,17 @@ void SeatModule::place(int16_t id, SimActor& actor, vm::SimMotion& motion, doubl
             seated = true;
         }
     actor.rootMotion = false;
-    // Rule 3: the root jumped (in or out of a seat, a Snap, a stair's end,
-    // a walk handed off at its stop's fade out): what plays once or fades
-    // out stays where it was in the world.
+    // Rule 3: the root jumped. A walk handed off at its stop's fade out
+    // (FollowOneStep's LocoPlaceFromSceneGraph, between PreSnap and
+    // PostSnap): every request stays where it was in the world (docs/
+    // seat-mac.md §D). In or out of a seat, a Snap, a stair's end: what
+    // plays once or fades out stays where it was in the world (inferred: the
+    // game's Snap moves the node without PostSnap, as read).
     const Xform root = actor.placement();
     static const bool keep = std::getenv("OS2_NO_STAY_IN_WORLD") == nullptr; // (test aid: the body jumps with the root)
-    if (k.last && keep && (seated != k.seated || isJump(*k.last, root) || motion.current().handOff))
-        actor.player.stayInWorld(root.inverse().then(*k.last), now);
+    const bool handOff = motion.current().handOff;
+    if (k.last && keep && (seated != k.seated || isJump(*k.last, root) || handOff))
+        actor.player.stayInWorld(root.inverse().then(*k.last), now, handOff);
     k.seated = seated;
     k.last = root;
 }

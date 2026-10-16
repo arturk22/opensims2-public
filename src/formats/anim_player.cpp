@@ -272,7 +272,7 @@ bool AnimPlayer::playsOn(const Layer& l, double now) const {
     return now < l.start + (l.anim ? l.anim->duration / 1000.0 / l.rate : 0.0);
 }
 
-void AnimPlayer::stayInWorld(const Xform& delta, double now) {
+void AnimPlayer::stayInWorld(const Xform& delta, double now, bool all) {
     // The held bones stay where they were in the world too.
     if (skeleton_ && held_.size() == skeleton_->bones.size())
         for (size_t i = 0; i < held_.size(); ++i) {
@@ -283,7 +283,7 @@ void AnimPlayer::stayInWorld(const Xform& delta, double now) {
     for (auto& l : layers_) {
         // A looping layer still playing goes on in the new place; one that
         // plays once (held or not yet ended) or fades out stays.
-        if (l.loop && playsOn(l, now))
+        if (!all && l.loop && playsOn(l, now))
             continue;
         l.frame = delta.then(l.frame);
         l.framed = true;
