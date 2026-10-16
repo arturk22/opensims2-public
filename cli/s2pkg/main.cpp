@@ -700,6 +700,13 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     for (auto v : t.temps)
         std::printf(" %d", v);
     std::printf("\n");
+    // A dialog the tree put up (its strings from the code owner's files).
+    for (const auto& [who, d] : machine.dialogs) {
+        std::printf("dialog type %d: title \"%s\" message \"%s\"", d.type, d.title.c_str(), d.message.c_str());
+        for (const auto& b : d.buttons)
+            std::printf(" [%s]", b.c_str());
+        std::printf("\n");
+    }
     return t.status == vm::Thread::Status::Failed ? 1 : 0;
 }
 
