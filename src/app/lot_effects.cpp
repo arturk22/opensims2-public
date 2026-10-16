@@ -6,6 +6,7 @@
 #include "formats/ui_image.hpp"
 #include "formats/strings.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/lot.hpp"
 #include "formats/resindex.hpp"
 #include "formats/model.hpp"
 #include "formats/sim_actor.hpp"
@@ -13,6 +14,7 @@
 #include "render/renderer.hpp"
 #include "vm/vm.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <set>
@@ -39,7 +41,95 @@ fx::Placement fromXform(const Xform& x) {
     return p;
 }
 
+// The lot as the particles' world-space colliders see it (cFloorsCollider,
+// cWallsCollider; docs/effects-mac.md 4f.3). Levels as os2::Lot numbers
+// them (0 the ground).
+class LotColliders : public fx::ColliderWorld {
+public:
+    explicit LotColliders(const Lot& lot) : lot_(lot) {}
+
+    // nTSWorld::LevelBelow (BV 0x1670cc).
+    int levelBelow(const fx::V3& p) const override {
+        if (lot_.levelCount <= 0)
+            return 0;
+        const float x = std::clamp(p[0], 0.0f, float(lot_.width)), y = std::clamp(p[1], 0.0f, float(lot_.height));
+        for (int l = lot_.minLevel + lot_.levelCount - 1; l > lot_.minLevel; --l)
+            if (lot_.elevationAt(l, x, y) < p[2] + 0.01f)
+                return l;
+        return lot_.minLevel;
+    }
+
+    // SampledFloorElevation where the level has a floor at the point's
+    // quarter tile (the WorldDB's test, 0xb8). The ground counts everywhere
+    // on the lot and the quarter is the point's triangle of the tile
+    // (inferred: FUN_0015d2f0 and the test's terrain case not read).
+    bool floor(int level, float x, float y, float& z) const override {
+        if (!lot_.hasLevel(level) || x < 0 || y < 0 || x > float(lot_.width) || y > float(lot_.height))
+            return false;
+        z = lot_.elevationAt(level, x, y);
+        if (level == 0)
+            return true;
+        const uint32_t tx = std::min(uint32_t(x), lot_.width - 1), ty = std::min(uint32_t(y), lot_.height - 1);
+        const float dx = x - float(tx) - 0.5f, dy = y - float(ty) - 0.5f;
+        const int quarter = std::fabs(dx) > std::fabs(dy) ? (dx < 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
+        return lot_.floor(level, tx, ty)[size_t(quarter)] != 0;
+    }
+
+    // The walls of the level the segment starts on (no fences), a story
+    // high: the segment stops `radius` before the first one it crosses, on
+    // the side it came from (inferred: the WorldDB's wall tests not read).
+    bool wall(const fx::V3& a, const fx::V3& b, float radius, fx::V3& at, fx::V3& normal) const override {
+        const int level = levelBelow(a);
+        float bottom = 0, top = 0;
+        const float cx = std::clamp(a[0], 0.0f, float(lot_.width)), cy = std::clamp(a[1], 0.0f, float(lot_.height));
+        bottom = lot_.elevationAt(level, cx, cy);
+        top = lot_.hasLevel(level + 1) ? lot_.elevationAt(level + 1, cx, cy) : bottom + 3;
+        if (a[2] < bottom || a[2] > top)
+            return false;
+        const float mx = b[0] - a[0], my = b[1] - a[1];
+        float best = 2;
+        for (const auto& w : lot_.walls) {
+            if (w.a.level != level || w.type >= 0x100)
+                continue;
+            const float wx = w.b.x - w.a.x, wy = w.b.y - w.a.y;
+            const float wl = std::hypot(wx, wy);
+            if (wl < 1e-6f)
+                continue;
+            float nx = -wy / wl, ny = wx / wl; // the wall's normal, towards where the segment starts
+            float da = (a[0] - w.a.x) * nx + (a[1] - w.a.y) * ny;
+            if (da < 0)
+                nx = -nx, ny = -ny, da = -da;
+            const float vn = mx * nx + my * ny;
+            if (!(vn < -1e-6f))
+                continue;
+            const float t = (radius - da) / vn; // when it comes within the radius
+            if (!(t <= 1) || t >= best)
+                continue;
+            const float tc = std::max(t, 0.0f);
+            const float px = a[0] + mx * tc, py = a[1] + my * tc;
+            const float along = ((px - w.a.x) * wx + (py - w.a.y) * wy) / (wl * wl);
+            if (along < 0 || along > 1)
+                continue;
+            best = t;
+            at = {px, py, a[2] + (b[2] - a[2]) * tc};
+            normal = {nx, ny, 0};
+        }
+        return best <= 1;
+    }
+
+private:
+    const Lot& lot_;
+};
+
 } // namespace
+
+void LotEffects::setLot(const Lot* lot) {
+    if (lot == lotSeen_)
+        return;
+    lotSeen_ = lot;
+    world_ = lot ? std::make_unique<LotColliders>(*lot) : nullptr;
+    system_->setWorld(world_.get());
+}
 
 LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::filesystem::path& resDir)
     : renderer_(renderer), index_(index) {
@@ -347,9 +437,14 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
             for (int k = 0; k < 3; ++k)
                 q.color[size_t(k)] *= env[k];
     layer_->setQuads(quads_);
-    if (std::getenv("OS2_DEBUG_FX"))
-        std::fprintf(stderr, "opensims2: effects at %.2f s: %zu running, %zu particles\n", seconds,
-                     system_->instanceCount(), quads_.size());
+    if (std::getenv("OS2_DEBUG_FX")) {
+        std::fprintf(stderr, "opensims2: effects at %.2f s: %zu running, %zu particles (LOD %.2f, environment %.2f)\n",
+                     seconds, system_->instanceCount(), quads_.size(), system_->lod(), env[0]);
+        if (!quads_.empty())
+            std::fprintf(stderr, "opensims2:   first at (%.2f %.2f %.2f) size %.3f rgba (%.2f %.2f %.2f %.2f)\n",
+                         quads_[0].position[0], quads_[0].position[1], quads_[0].position[2], quads_[0].width,
+                         quads_[0].color[0], quads_[0].color[1], quads_[0].color[2], quads_[0].color[3]);
+    }
 }
 
 } // namespace os2

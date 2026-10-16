@@ -66,6 +66,8 @@ struct Wiggle {
 // §4e.2).
 namespace pflag {
 constexpr uint64_t Inject = 1ull << 0;        // rate -> bursts at each cycle's start (InjectParticles)
+constexpr uint64_t Collide = 1ull << 3;       // collide: the colliders act (ApplyColliderForces)
+constexpr uint64_t CollideKill = 1ull << 4;   // (the other collide option; none in the base game)
 constexpr uint64_t Maintain = 1ull << 1;      // rate -> the count kept alive (MaintainParticles)
 constexpr uint64_t Sustain = 1ull << 2;       // rate -sustain: the last cycle is held, not ended
 constexpr uint64_t Radial = 1ull << 6;        // emit -radial: the direction is the birth point

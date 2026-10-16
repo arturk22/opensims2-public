@@ -201,6 +201,7 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
         // its fraction, + 1 (BV 0x86ffb8 -> cTSEffectsManager::SetLOD(float)).
         gEffects->setLod(gCamera->zoom() + 1);
     }
+    gEffects->setLot(gLotShape.get()); // the floors and walls the particles meet
     gEffects->update(seconds, gSimulation ? &gSimulation->machine() : nullptr, gObjectView.get(),
                      [](int16_t id) -> const os2::SimActor* {
                          for (const auto& s : gLotSims)

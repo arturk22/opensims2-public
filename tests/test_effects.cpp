@@ -471,10 +471,91 @@ static void testLod() {
     }
 }
 
+// Colliders (ApplyColliderForces BV 0xeb3064, the response FUN_00ebdb5c):
+// the floors one against the host's lot, a plane one, a death effect.
+struct FlatFloor : ColliderWorld {
+    int levelBelow(const V3&) const override { return 0; }
+    bool floor(int level, float, float, float& z) const override {
+        z = 0;
+        return level == 0;
+    }
+};
+
+static void testColliders() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    Particles& p = lib.particles[0];
+    p.flags = pflag::Collide;
+    p.force = {0, 0, -10};
+    p.drag = 0;
+    p.emitSpeed = {0, 0};
+    p.emitVolume = {{0, 0, 1}, {0, 0, 1}};
+    p.life = {3, 3};
+    p.preRoll = 0;
+    p.sizeCurve = {0.1f};
+    p.sizeVary = 0;
+    ColliderInfo floors;
+    floors.name = "floors";
+    floors.f = {0, 1, 1, 0}; // no bounce, keep sliding, radius x 1, no death
+    p.colliders = {floors};
+    auto lowest = [&](EffectSystem& sys) {
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        float z = 1e9f;
+        for (const auto& x : q)
+            z = std::min(z, x.position[2]);
+        return std::make_pair(q.size(), z);
+    };
+    FlatFloor world;
+    {
+        EffectSystem sys(lib, 3);
+        sys.start("Smoke", {});
+        for (int i = 0; i < 60; ++i)
+            sys.update(1.0f / 30);
+        check(lowest(sys).second < -1, "no lot: the particles fall through");
+    }
+    {
+        EffectSystem sys(lib, 3);
+        sys.setWorld(&world);
+        sys.start("Smoke", {});
+        for (int i = 0; i < 60; ++i)
+            sys.update(1.0f / 30);
+        const auto [n, z] = lowest(sys);
+        check(n > 5 && z > 0.04f && z < 0.06f, "floors: they lie half their size over the floor");
+    }
+    // A plane collider: a 2 x 2 rectangle at z 0.5, its normal up.
+    ColliderInfo plane;
+    plane.name = "plane";
+    plane.v = {V3{-1, -1, 0.5f}, V3{2, 0, 0}, V3{0, 2, 0}};
+    plane.f = {0, 1, 1, 0};
+    p.colliders = {plane};
+    {
+        EffectSystem sys(lib, 3);
+        sys.start("Smoke", {});
+        for (int i = 0; i < 60; ++i)
+            sys.update(1.0f / 30);
+        const auto [n, z] = lowest(sys);
+        check(n > 5 && z > 0.55f && z < 0.65f, "plane: they stop their size over it");
+    }
+    // A death chance of 1 with a death effect: the particle dies there and the effect starts.
+    floors.f = {0, 1, 1, 1};
+    floors.effect2 = "Smoke";
+    p.colliders = {floors};
+    {
+        EffectSystem sys(lib, 3);
+        sys.setWorld(&world);
+        sys.start("Smoke", {});
+        for (int i = 0; i < 20; ++i)
+            sys.update(1.0f / 30);
+        check(sys.instanceCount() > 1, "a death effect starts where the particle died");
+    }
+}
+
 int main() {
     try {
         testParse();
         testLod();
+        testColliders();
         testSimulation();
         testMaintainedCount();
         testFramesAndStarts();

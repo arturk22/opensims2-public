@@ -1,6 +1,7 @@
 #include "render/particle_system.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace os2::fx {
@@ -13,6 +14,7 @@ constexpr float kFastDrag = 0.05f;    // dt x drag above this takes the time-ste
 constexpr size_t kMaxParticles = 512; // per emitter (a guard of ours)
 
 constexpr size_t kMaxMetaParticles = 64;          // per chain (a guard of ours)
+constexpr size_t kMaxSpawned = 256;               // instances, past which collide/death effects are dropped (ours)
 constexpr float kCollideAway = -1e-5f;            // the plane collider's "moving towards it" (BV 0x274bc04)
 
 V3 add(V3 a, V3 b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
@@ -435,15 +437,214 @@ EffectSystem::Particle EffectSystem::initParticle(const Instance& inst, const Em
     return p;
 }
 
+// cTSPlaneCollider's set-up: the rectangle (a corner and two edges) of each
+// "plane" collider record in the emitter's frame, taken into the particles'.
+std::vector<EffectSystem::Plane> EffectSystem::setUpPlanes(const std::vector<ColliderInfo>& infos,
+                                                           const Placement& t1) const {
+    std::vector<Plane> out(infos.size());
+    for (size_t i = 0; i < infos.size(); ++i) {
+        if (infos[i].name != "plane")
+            continue;
+        Plane& pl = out[i];
+        pl.o = transformPoint(t1, infos[i].v[0]);
+        pl.e1 = mul(rotate(t1, infos[i].v[1]), t1.scale);
+        pl.e2 = mul(rotate(t1, infos[i].v[2]), t1.scale);
+        V3 n{pl.e1[1] * pl.e2[2] - pl.e1[2] * pl.e2[1], pl.e1[2] * pl.e2[0] - pl.e1[0] * pl.e2[2],
+             pl.e1[0] * pl.e2[1] - pl.e1[1] * pl.e2[0]};
+        const float nl = len(n);
+        if (nl < 1e-9f)
+            continue;
+        pl.n = mul(n, 1 / nl);
+        pl.ok = true;
+    }
+    return out;
+}
+
+namespace {
+
+float dot(const V3& a, const V3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+// cTSPlaneCollider's test (BV 0xebce60): moving against its normal, the
+// moment the particle comes within `r` of the plane (or it starts in front
+// of it within that), at a point inside the rectangle: the segment's end
+// moved there.
+} // namespace
+
+bool EffectSystem::hitPlane(const Plane& pl, const V3& p0, V3& p1, float r) {
+    const V3 seg = sub(p1, p0);
+    const float vn = dot(seg, pl.n);
+    if (!(vn < kCollideAway))
+        return false;
+    const float dist = -dot(sub(p0, pl.o), pl.n);
+    const float t = (r + dist) / vn;
+    if (!(t <= 1 && (t >= 0 || dist / vn >= 0)))
+        return false;
+    const V3 q = add(p0, mul(seg, t));
+    const V3 rel = sub(q, pl.o);
+    const float a11 = dot(pl.e1, pl.e1), a12 = dot(pl.e1, pl.e2), a22 = dot(pl.e2, pl.e2);
+    const float b1 = dot(rel, pl.e1), b2 = dot(rel, pl.e2);
+    const float det = a11 * a22 - a12 * a12;
+    if (std::fabs(det) < 1e-12f)
+        return false;
+    const float ua = (b1 * a22 - b2 * a12) / det, ub = (b2 * a11 - b1 * a12) / det;
+    if (ua < 0 || ua > 1 || ub < 0 || ub > 1)
+        return false;
+    p1 = q;
+    return true;
+}
+
+// cFloorsCollider's test (TSSGEffectInteraction.cpp, BV 0x1bc2a58), in the
+// world: the floor of the level below the new point (nTSWorld::LevelBelow)
+// and the one of the level above it; crossing the lower one going down (or
+// starting within `r` over it) the particle stops `r` over it, normal up;
+// crossing the upper one going up, `r` under it, normal down; a floor counts
+// only where the lot has one.
+bool EffectSystem::hitFloors(const V3& p0, V3& p1, float r, V3& n) const {
+    if (!world_)
+        return false;
+    const int below = world_->levelBelow(p1);
+    float zb = 0, za = 0;
+    const bool hasBelow = world_->floor(below, p1[0], p1[1], zb);
+    const bool hasAbove = world_->floor(below + 1, p1[0], p1[1], za);
+    const V3 up{0, 0, 1}, down{0, 0, -1};
+    auto lowerOnly = [&]() {
+        if (!hasBelow || zb < p1[2] - r)
+            return false;
+        p1[2] = zb + r;
+        n = up;
+        return true;
+    };
+    auto upperOnly = [&]() {
+        if (!hasAbove || p1[2] + r < za)
+            return false;
+        p1[2] = za - r;
+        n = down;
+        return true;
+    };
+    const float z0 = p0[2], z1 = p1[2];
+    if (z0 <= z1) {
+        if (z1 <= z0) { // level
+            if (hasBelow && z1 <= zb + r) {
+                p1[2] = zb + r;
+                n = up;
+                return true;
+            }
+            return upperOnly();
+        }
+        // Rising: the ceiling.
+        const float top = za - r, from = std::min(z0, za);
+        if (top <= from) {
+            if (!hasAbove)
+                return lowerOnly();
+            p1 = {p0[0], p0[1], top};
+            n = down;
+            return true;
+        }
+        if (z1 < top || !hasAbove)
+            return lowerOnly();
+        if (top < z1) {
+            const float f = (top - from) / (z1 - from);
+            p1 = {p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f, top};
+        }
+        n = down;
+        return true;
+    }
+    // Falling: the floor.
+    const float bottom = zb + r, from = std::max(z0, zb);
+    if (from <= bottom) {
+        if (!hasBelow)
+            return upperOnly();
+        p1 = {p0[0], p0[1], bottom};
+        n = up;
+        return true;
+    }
+    if (bottom < z1 || !hasBelow)
+        return upperOnly();
+    if (z1 < bottom) {
+        const float f = (bottom - from) / (z1 - from);
+        p1 = {p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f, bottom};
+    }
+    n = up;
+    return true;
+}
+
+// The collider response (BV FUN_00ebdb5c), collider by collider: a hit kills
+// the particle with its death chance (1, or a draw under it), starting the
+// death effect there; otherwise the collide effect starts there and,
+// moving against the normal, the normal speed bounces back x bounce and the
+// rest keeps x slide (the "stick" float, +0x34, is 0 in the base game). The
+// effects start soft at the point (FUN_00ebd9ac). The world colliders
+// (floors, walls) take the points into the world and half the radius
+// (BV 0x1bc3248); "wallsAndFloors" hits only when both do (0x1bc2e8c).
+bool EffectSystem::collide(const std::vector<ColliderInfo>& infos, const std::vector<Plane>& planes,
+                           const Placement& toWorld, const V3& prev, V3& pos, V3& vel, float radius) {
+    for (size_t i = 0; i < infos.size(); ++i) {
+        const ColliderInfo& c = infos[i];
+        V3 n{};
+        bool hit = false;
+        if (c.name == "plane") {
+            if (i < planes.size() && planes[i].ok && hitPlane(planes[i], prev, pos, radius * c.f[2])) {
+                hit = true;
+                n = planes[i].n;
+            }
+        } else if (world_) {
+            const std::string kind = [&] {
+                std::string k = c.name;
+                for (char& ch : k)
+                    ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                return k;
+            }();
+            const float r = radius * c.f[2] * 0.5f;
+            const V3 w0 = transformPoint(toWorld, prev);
+            V3 w1 = transformPoint(toWorld, pos);
+            if (kind == "floors")
+                hit = hitFloors(w0, w1, r, n);
+            else if (kind == "walls") {
+                V3 at{};
+                hit = world_->wall(w0, w1, r, at, n);
+                if (hit)
+                    w1 = at;
+            } else if (kind == "wallsandfloors") {
+                V3 at{}, nw{};
+                hit = hitFloors(w0, w1, r, n) && world_->wall(w0, w1, r, at, nw);
+                if (hit)
+                    w1 = at, n = nw;
+            }
+            if (hit) {
+                const Placement back = inverse(toWorld);
+                pos = transformPoint(back, w1);
+                n = rotate(back, n);
+            }
+        }
+        if (!hit)
+            continue;
+        const V3 at = transformPoint(toWorld, pos);
+        if (c.f[3] != 0 && (c.f[3] == 1 || rng_.range(0, 1) <= c.f[3])) {
+            if (!c.effect2.empty())
+                spawns_.push_back({c.effect2, at});
+            return false;
+        }
+        if (!c.effect1.empty())
+            spawns_.push_back({c.effect1, at});
+        const float vn = dot(vel, n);
+        if (vn < 0) {
+            const V3 normal = mul(n, vn), tangent = sub(vel, normal);
+            vel = sub(vel, add(mul(normal, 1 + c.f[0]), mul(tangent, 1 - c.f[1])));
+        }
+    }
+    return true;
+}
+
 // cTSParticlesEffect::UpdateParticlePhysics (BV 0xeb6ecc): false once the
 // particle's life is over. With none of the flags that need forces and a
 // gentle drag, one step (BV 0x1c2aca0); otherwise steps of 1/15 s
 // (UpdateParticlePhysicsTimeStep 0xeb6d50, ApplyForces 0xeb6604).
-bool EffectSystem::updatePhysics(const Emitter& e, Particle& p, float dt) const {
+bool EffectSystem::updatePhysics(const Instance& inst, const Emitter& e, Particle& p, float dt) {
     const Particles& d = *e.desc;
     p.age += dt;
     if (p.age >= p.life)
         return false;
+    const bool colliders = (d.flags & (pflag::Collide | pflag::CollideKill)) && !d.colliders.empty();
     const V3& a = e.accel;
     if (!(d.flags & pflag::NeedsTimeStep) && dt * d.drag <= kFastDrag) {
         const V3 v0 = p.velocity;
@@ -455,6 +656,7 @@ bool EffectSystem::updatePhysics(const Emitter& e, Particle& p, float dt) const 
     float left = dt;
     do {
         const float step = left > kTimeStep ? kTimeStep : left;
+        const V3 before = p.position;
         p.position = add(p.position, mul(p.velocity, step));
         p.velocity = add(p.velocity, mul(a, step));
         // ApplyForces: the attractor's pull (BV 0x1c2c98c: towards its
@@ -468,6 +670,18 @@ bool EffectSystem::updatePhysics(const Emitter& e, Particle& p, float dt) const 
             }
         }
         p.velocity = mul(p.velocity, 1 - step * d.drag);
+        // ApplyColliderForces (BV 0xeb3064): the particle's size (x its aspect
+        // when over 1, x 1 + its aspect's variation) as the radius.
+        if (colliders) {
+            const float t = std::min(1.0f, p.age / p.life);
+            const Placement frame = particleFrame(inst, e);
+            const float radius = p.sizeScale * sampleCurve(d.sizeCurve, t, 1) *
+                                 std::max(1.0f, sampleCurve(d.aspectCurve, t, 1) * p.aspectScale) *
+                                 (1 + std::fabs(d.aspectVary)) * frame.scale *
+                                 ((d.flags & pflag::ScaleExisting) ? e.sizeScale : 1);
+            if (!collide(d.colliders, e.planes, frame, before, p.position, p.velocity, radius))
+                return false;
+        }
         left -= step;
     } while (left > 0);
     return true;
@@ -484,7 +698,7 @@ void EffectSystem::maintainParticles(const Instance& inst, Emitter& e, float dt)
     const size_t want = size_t(std::max(0.0f, std::ceil(sampleCurve(d.rateCurve, 0, 0))));
     while (e.particles.size() < std::min(want, kMaxParticles)) {
         Particle p = initParticle(inst, e);
-        if (!updatePhysics(e, p, dt))
+        if (!updatePhysics(inst, e, p, dt))
             break; // (born dead: the binary drops it and goes on; avoid looping)
         e.particles.push_back(p);
     }
@@ -511,7 +725,7 @@ void EffectSystem::injectParticles(const Instance& inst, Emitter& e, float dt) {
             if (age < d.life[1])
                 for (int i = 0; i < count && e.particles.size() < kMaxParticles; ++i) {
                     Particle p = initParticle(inst, e);
-                    if (updatePhysics(e, p, age))
+                    if (updatePhysics(inst, e, p, age))
                         e.particles.push_back(p);
                 }
             ++e.cycleIndex;
@@ -590,7 +804,7 @@ void EffectSystem::addRateCurveParticles(const Instance& inst, Emitter& e, float
         for (int i = 0; i < n; ++i) {
             Particle p = initParticle(inst, e);
             p.position = sub(p.position, mul(moved, age / total));
-            if (e.particles.size() < kMaxParticles && updatePhysics(e, p, age))
+            if (e.particles.size() < kMaxParticles && updatePhysics(inst, e, p, age))
                 e.particles.push_back(p);
             age -= every;
         }
@@ -643,6 +857,11 @@ void EffectSystem::applyEmitter(const Instance& inst, Emitter& e, float dt) {
     const V3 at = t1.position;
     if (sqrlen(sub(at, e.lastPosition)) > 1) // a jump: no trail across it
         e.lastPosition = at;
+    // The colliders are set up once, on the first ApplyEffect (+0x1d0).
+    if (!e.planesSet) {
+        e.planes = setUpPlanes(d.colliders, t1);
+        e.planesSet = true;
+    }
     // The attractor's point follows the emitter (FUN_00f5d93c); one without
     // a point of its own pulls towards the effect's target, which nothing
     // sets here (inferred: no pull).
@@ -652,7 +871,7 @@ void EffectSystem::applyEmitter(const Instance& inst, Emitter& e, float dt) {
     // The force, the world's wind (none on a lot; inferred) and the walk,
     // in the particles' frame.
     e.accel = add(d.force, e.walk);
-    std::erase_if(e.particles, [&](Particle& p) { return !updatePhysics(e, p, dt); });
+    std::erase_if(e.particles, [&](Particle& p) { return !updatePhysics(inst, e, p, dt); });
     if (!inst.stopped && (e.stopAt < 0 || e.time < e.stopAt))
         generate(inst, e, dt);
     else
@@ -886,7 +1105,7 @@ void EffectSystem::generateMeta(Instance& inst, MetaChain& m, float dt) {
 // cTSMetaParticlesEffect::UpdateParticlePhysicsTimeStep (BV 0xf62d10) in
 // steps of 1/15 s, or the path (SnapParticleToPath 0xf5fb18): false when
 // the particle is gone (past its path's end, or killed by a collider).
-bool EffectSystem::stepMetaPhysics(const Instance& inst, const MetaChain& m, MetaParticle& p, float dt) {
+bool EffectSystem::stepMetaPhysics(const Instance& inst, MetaChain& m, MetaParticle& p, float dt) {
     const MetaParticles& d = *m.steps[p.step];
     const Placement t1 = chainFrame(inst, m);
     if ((d.flags & mflag::Path) && !d.path.empty()) {
@@ -968,48 +1187,16 @@ bool EffectSystem::stepMetaPhysics(const Instance& inst, const MetaChain& m, Met
                 p.velocity = add(p.velocity, mul(to, step * sampleCurve(d.attractorStrength, std::min(dist / std::max(d.attractorRange, 1e-6f), 1.0f), 0) / dist));
         }
         p.velocity = mul(p.velocity, 1 - step * d.drag);
-        // Plane colliders (cTSPlaneCollider BV 0xebce60, the response
-        // 0xebdb5c): a rectangle (corner, two edges) in the emitter's frame,
-        // met moving against its normal within the radius: the particle
-        // stops on it, the normal velocity bounces back x bounce, the rest
-        // x slide; death kills (1) or kills by chance.
-        for (const auto& c : d.colliders) {
-            if (c.name != "plane")
-                continue;
-            const V3 o = transformPoint(t1, c.v[0]);
-            const V3 e1 = mul(rotate(t1, c.v[1]), t1.scale), e2 = mul(rotate(t1, c.v[2]), t1.scale);
-            V3 n{e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
-            const float nl = len(n);
-            if (nl < 1e-9f)
-                continue;
-            n = mul(n, 1 / nl);
-            const V3 seg = sub(p.position, before);
-            const float denom = seg[0] * n[0] + seg[1] * n[1] + seg[2] * n[2];
-            if (!(denom < kCollideAway))
-                continue;
-            const float dist0 = -((before[0] - o[0]) * n[0] + (before[1] - o[1]) * n[1] + (before[2] - o[2]) * n[2]);
-            const float t = (radius * c.f[2] + dist0) / denom;
-            if (!(t <= 1 && (t >= 0 || dist0 / denom >= 0)))
-                continue;
-            const V3 q = add(before, mul(seg, t));
-            const V3 r = sub(q, o);
-            const float a11 = e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2], a12 = e1[0] * e2[0] + e1[1] * e2[1] + e1[2] * e2[2],
-                        a22 = e2[0] * e2[0] + e2[1] * e2[1] + e2[2] * e2[2];
-            const float b1 = r[0] * e1[0] + r[1] * e1[1] + r[2] * e1[2], b2 = r[0] * e2[0] + r[1] * e2[1] + r[2] * e2[2];
-            const float det = a11 * a22 - a12 * a12;
-            if (std::fabs(det) < 1e-12f)
-                continue;
-            const float ua = (b1 * a22 - b2 * a12) / det, ub = (b2 * a11 - b1 * a12) / det;
-            if (ua < 0 || ua > 1 || ub < 0 || ub > 1)
-                continue;
-            if (c.f[3] == 1 || (c.f[3] > 0 && random(0, 1) <= c.f[3]))
+        // The colliders (the common response, BV FUN_00ebdb5c; the plane
+        // ones set up once per step's description, in the emitter's frame).
+        if (!d.colliders.empty()) {
+            if (m.planes.size() < m.steps.size())
+                m.planes.resize(m.steps.size());
+            auto& planes = m.planes[p.step];
+            if (planes.size() != d.colliders.size())
+                planes = setUpPlanes(d.colliders, t1);
+            if (!collide(d.colliders, planes, m.rigid ? inst.where : inst.source, before, p.position, p.velocity, radius))
                 return false;
-            p.position = q;
-            const float vn = p.velocity[0] * n[0] + p.velocity[1] * n[1] + p.velocity[2] * n[2];
-            if (vn < 0) {
-                const V3 normal = mul(n, vn), tangent = sub(p.velocity, normal);
-                p.velocity = sub(p.velocity, add(mul(normal, 1 + c.f[0]), mul(tangent, 1 - c.f[1])));
-            }
         }
         left -= step;
     } while (left > 0);
@@ -1098,6 +1285,22 @@ void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParti
     }
 }
 
+// A meta particle that is gone (FUN_00f64084, BV): its carried effect stops
+// soft and runs on until its particles die (+0x1c0); the "<base>_death"
+// effect, when the library has one (InitFromDescription BV 0xf60654), starts
+// soft where it was.
+void EffectSystem::retireMeta(const Instance& inst, MetaChain& m, MetaParticle& p) {
+    if (p.child) {
+        p.child->stopped = true;
+        if (busy(*p.child) && m.dying.size() < kMaxMetaParticles)
+            m.dying.push_back(std::move(p.child));
+        p.child.reset();
+    }
+    const std::string& base = m.steps[p.step]->baseEffect;
+    if (!base.empty() && !inst.stopped && lib_.indexOf(base + "_death"))
+        spawns_.push_back({base + "_death", transformPoint(m.rigid ? inst.where : inst.source, p.position)});
+}
+
 void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) {
     dt *= m.timeScale;
     m.time += dt;
@@ -1123,12 +1326,12 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
             if (!m.byState && p.step + 1 < m.steps.size()) {
                 enterStep(m, p, p.step + 1, 0);
             } else {
-                p.child.reset();
+                retireMeta(inst, m, p);
                 continue;
             }
         }
         if (!stepMetaPhysics(inst, m, p, dt)) {
-            p.child.reset();
+            retireMeta(inst, m, p);
             continue;
         }
         placeMeta(inst, m, p);
@@ -1136,6 +1339,10 @@ void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) 
             stepInstance(*p.child, dt, emit);
     }
     std::erase_if(m.particles, [](const MetaParticle& p) { return !p.child; });
+    // The carried effects of the dead ones run until their particles are gone.
+    for (auto& c : m.dying)
+        stepInstance(*c, dt, false);
+    std::erase_if(m.dying, [](const std::unique_ptr<Instance>& c) { return !busy(*c); });
     // New ones from the first description (state chains only in state 0,
     // inferred: SwitchDescription not followed).
     const bool window = m.stopAt < 0 || m.time < m.stopAt;
@@ -1239,6 +1446,8 @@ bool EffectSystem::busy(const Instance& inst) {
         for (const auto& p : m.particles)
             if (p.child && busy(*p.child))
                 return true;
+        if (!m.dying.empty())
+            return true;
         if (inst.stopped)
             continue;
         if (m.started && !m.stopping)
@@ -1263,6 +1472,17 @@ void EffectSystem::update(float seconds) {
             it = instances_.erase(it);
         else
             ++it;
+    }
+    // The collide and death effects of this step: at their point (only the
+    // translation), started soft, left to end by themselves (FUN_00ebd9ac).
+    std::vector<Spawn> spawns;
+    spawns.swap(spawns_);
+    for (const auto& sp : spawns) {
+        if (instances_.size() >= kMaxSpawned)
+            break;
+        Placement at;
+        at.position = sp.at;
+        start(sp.name, at, false);
     }
 }
 
@@ -1405,10 +1625,13 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
                 out.push_back(q);
         }
     }
-    for (const auto& mc : inst.metas)
+    for (const auto& mc : inst.metas) {
         for (const auto& p : mc.particles)
             if (p.child)
                 collectInstance(*p.child, group, out);
+        for (const auto& c : mc.dying)
+            collectInstance(*c, group, out);
+    }
 }
 
 } // namespace os2::fx

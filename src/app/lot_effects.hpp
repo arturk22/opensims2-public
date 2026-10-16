@@ -25,6 +25,7 @@
 namespace os2 {
 
 class DbpfPackage;
+struct Lot;
 struct DbpfEntry;
 class ParticleLayer;
 class Renderer;
@@ -64,6 +65,9 @@ public:
     int start(const std::string& name, const fx::Placement& at, bool hard = true) { return system_->start(name, at, hard); }
     // The camera (position, up axis), for the effects that face it (balloons).
     void setView(const fx::V3& eye, const fx::V3& up) { system_->setView(eye, up); }
+    // The lot the floors and walls colliders of the particles meet (null:
+    // none); kept by pointer, set again when it changes.
+    void setLot(const Lot* lot);
     // The effects' level of detail from the lot camera: its fractional zoom
     // level + 1 (cTSCameraSmoothSims1Controller::Update -> SetLOD(float)).
     void setLod(float lod) { system_->setLod(lod); }
@@ -129,6 +133,8 @@ private:
     std::set<std::string> iconNames_;
     std::unique_ptr<fx::EffectsLibrary> library_;
     std::unique_ptr<fx::EffectSystem> system_;
+    std::unique_ptr<fx::ColliderWorld> world_;
+    const Lot* lotSeen_ = nullptr;
     std::unique_ptr<ParticleLayer> layer_;
     std::map<std::pair<int16_t, uint32_t>, Running> vm_; // (object, effect serial)
     std::vector<Manual> manual_;

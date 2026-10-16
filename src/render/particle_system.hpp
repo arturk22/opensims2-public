@@ -89,6 +89,28 @@ private:
     uint32_t state_;
 };
 
+// The lot as the effects' world-space colliders see it (the game's
+// TSSGEffectInteraction.cpp: cFloorsCollider, cWallsCollider), given by the
+// host; game space, Z up.
+class ColliderWorld {
+public:
+    virtual ~ColliderWorld() = default;
+    // nTSWorld::LevelBelow (BV 0x1670cc): from the top level down, the
+    // first whose floor at (x, y) is under z + 0.01, else the lowest.
+    virtual int levelBelow(const V3& p) const = 0;
+    // The floor of `level` at (x, y) (SampledFloorElevation) when it counts:
+    // on the lot and with a floor there (the WorldDB's floor test with the
+    // point's quarter tile); false otherwise.
+    virtual bool floor(int level, float x, float y, float& z) const = 0;
+    // The walls (the WorldDB's wall query 0xa0(3), its sphere and segment
+    // tests 0x54 / 0x4c, not read): the segment a -> b against them, kept
+    // `radius` away: the point it stops at and the wall's normal.
+    virtual bool wall(const V3& a, const V3& b, float radius, V3& at, V3& normal) const {
+        (void)a, (void)b, (void)radius, (void)at, (void)normal;
+        return false;
+    }
+};
+
 class EffectSystem {
 public:
     explicit EffectSystem(const EffectsLibrary& library, uint32_t seed = 1);
@@ -129,6 +151,8 @@ public:
         eye_ = eye, up_ = up;
         hasView_ = true;
     }
+    // The lot for the floors and walls colliders (none: they never hit).
+    void setWorld(const ColliderWorld* world) { world_ = world; }
     // True while the instance emits or has particles alive.
     bool alive(int handle) const;
     size_t instanceCount() const { return instances_.size(); }
@@ -142,6 +166,26 @@ public:
     void collectSounds(std::vector<EffectSound>& out) const;
 
 private:
+    // A plane collider (cTSPlaneCollider): its corner and two edges in the
+    // particles' frame, and its normal.
+    struct Plane {
+        V3 o{}, e1{}, e2{}, n{};
+        bool ok = false;
+    };
+    std::vector<Plane> setUpPlanes(const std::vector<ColliderInfo>& infos, const Placement& t1) const;
+    // The collider response (BV FUN_00ebdb5c) for a particle that moved from
+    // `prev` to `pos` (its frame's), `toWorld` its frame in the world: false
+    // when a collider kills it. Collide and death effects are queued.
+    bool collide(const std::vector<ColliderInfo>& infos, const std::vector<Plane>& planes, const Placement& toWorld,
+                 const V3& prev, V3& pos, V3& vel, float radius);
+    bool hitFloors(const V3& p0, V3& p1, float r, V3& n) const;
+    static bool hitPlane(const Plane& pl, const V3& p0, V3& p1, float r);
+    struct Spawn {
+        std::string name;
+        V3 at{};
+    };
+    std::vector<Spawn> spawns_; // started (soft) after the step
+
     // A part's components from the effect started down to it (each
     // nested effect's component, then its own): their LOD ranges and
     // scales multiply; `emit`/`size`/`alpha` are the scales handed in (a
@@ -191,6 +235,10 @@ private:
         V3 walk{};             // +0x70: the random walk's force
         V3 attractorPoint{};   // +0x7c: the attractor's point in the particles' frame
         bool attracts = false;
+        // The plane colliders, set up on the first ApplyEffect (+0x1d0) in
+        // the particles' frame: one per collider record (unused for others).
+        std::vector<Plane> planes;
+        bool planesSet = false;
         std::vector<Particle> particles;
     };
     // A decal (Block::Decal): one quad flat on the ground under the
@@ -259,6 +307,11 @@ private:
         int cycleIndex = 0;
         float rateRemainder = 0, delayLeft = 0;
         std::vector<MetaParticle> particles;
+        // The plane colliders of each step, set up on its first use.
+        std::vector<std::vector<Plane>> planes;
+        // The carried effects of the meta particles that died, stopped soft
+        // and run until their particles are gone (FUN_00f64084, +0x1c0).
+        std::vector<std::unique_ptr<Instance>> dying;
     };
     struct Instance {
         Placement where;  // the effect's transform (its node's), turned to the camera if it faces it
@@ -291,12 +344,13 @@ private:
     void updateLod(Instance& inst);
     void stepInstance(Instance& inst, float dt, bool emit);
     void stepChain(Instance& inst, MetaChain& m, float dt, bool emit);
+    void retireMeta(const Instance& inst, MetaChain& m, MetaParticle& p);
     void startChain(MetaChain& m, bool hard);
     void generateMeta(Instance& inst, MetaChain& m, float dt);
     void spawnMeta(Instance& inst, MetaChain& m, float age);
     void enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth);
     void updateWalk(MetaParticle::Walk& w, const MetaParticles::Walk& d);
-    bool stepMetaPhysics(const Instance& inst, const MetaChain& m, MetaParticle& p, float dt);
+    bool stepMetaPhysics(const Instance& inst, MetaChain& m, MetaParticle& p, float dt);
     void placeMeta(const Instance& inst, const MetaChain& m, MetaParticle& p) const;
     Placement chainFrame(const Instance& inst, const MetaChain& m) const;
     static bool busy(const Instance& inst);
@@ -312,7 +366,7 @@ private:
     void maintainParticles(const Instance& inst, Emitter& e, float dt);
     void updateRandomWalk(Emitter& e, float dt);
     Particle initParticle(const Instance& inst, const Emitter& e);
-    bool updatePhysics(const Emitter& e, Particle& p, float dt) const;
+    bool updatePhysics(const Instance& inst, const Emitter& e, Particle& p, float dt);
     // The emitter's transform in its particles' frame (t1).
     Placement emitterFrame(const Instance& inst, const Emitter& e) const;
     // The particles' frame in the world (t2): the instance with a rigid
@@ -330,6 +384,7 @@ private:
     V3 eye_{}, up_{0, 0, 1};
     bool hasView_ = false;
     float lod_ = kMaxLod;
+    const ColliderWorld* world_ = nullptr;
     std::unordered_map<int, Instance> instances_;
     int next_ = 1;
     int nextId_ = 1;
