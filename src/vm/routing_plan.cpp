@@ -585,8 +585,14 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         }
     }
     planner.portalLocked = nullptr;
-    if (!planned)
+    if (!planned) {
+        // InitRoute without a way: UpdatePersonDataFields(0, true) sets
+        // person data 39 "route status" to 0 (base 1.0 0xc58130;
+        // docs/primitives-mac.md §4j).
+        if (me.person)
+            me.person->data[persondata::RouteStatus] = 0;
         return false;
+    }
     r.points.clear();
     int level = me.position.level;
     Point2 prev{me.position.x, me.position.y};
@@ -646,6 +652,11 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     r.chair = path.goal < r.chairs.size() ? r.chairs[path.goal] : 0;
     shapeWalk(vm, me, r, me.route.has_value() && !me.route->waiting && me.route->climb.ticksLeft == 0);
     ++r.plans; // a new path (cTSRoute +0xd8: DoAlongRouteCheckTest checks again)
+    // InitRoute with a way: UpdatePersonDataFields(1, true), route status 1
+    // (base 1.0 0xc57cb4), at every plan (DoInitial), also when the walker
+    // is at the goal already.
+    if (me.person)
+        me.person->data[persondata::RouteStatus] = 1;
     return true;
 }
 

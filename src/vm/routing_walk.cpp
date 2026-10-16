@@ -1072,14 +1072,23 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     }
     keepOuterRoute(c, me, depth);
     worldOf(c);
+    // The routing primitive starts (ProcessGoto, base 1.0 0xc59afc): with no
+    // route on the walker's route stack, person data 39 "route status" := 1
+    // before the route is pushed; a route started inside another's callback
+    // tree leaves it (docs/primitives-mac.md §4j).
+    if (!c.frame.preRouteRan && me.person && routeStackDepth(c.thread, depth) == 1)
+        me.person->data[persondata::RouteStatus] = 1;
     if (c.frame.preRouteRan) // back from the pre-route tree
         if (const auto ran = std::exchange(c.thread.rerunResult, std::nullopt); ran && !*ran)
             return failRoute(c, RouteFail::PreRouteFailed, 0, failureTrees);
     if (!me.position.inWorld())
         throw VMError("Trying to route while out of world.");
     const VM::RouteGoals goals = plan();
-    if (goals.goals.empty()) // the last refused candidate's result (InitRoute: none at all → 6)
+    if (goals.goals.empty()) { // the last refused candidate's result (InitRoute: none at all → 6)
+        if (me.person) // InitRoute's FindPath failed: route status 0 (base 1.0 0xc58130)
+            me.person->data[persondata::RouteStatus] = 0;
         return failRoute(c, goals.refused ? RouteFail(goals.refused) : RouteFail::NoValidGoals, 0, failureTrees);
+    }
     Object::Route r;
     for (size_t i = 0; i < goals.goals.size(); ++i)
         r.goals.push_back({goals.points[i][0], goals.points[i][1], goals.goals[i].cost});
@@ -1166,6 +1175,11 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
         // The route is over (DoPostFailedOrSucceeded): a Sim that asked this
         // one to move hears the request is over.
         moveOutOfWayRouteEnded(c.vm, c.me());
+        // PopRoute (base 1.0 0xc55310): the last route off the route stack
+        // sets person data 39 "route status" to 0 (0xc55514); with routes
+        // left under it (a route in a callback tree) it stays.
+        if (Object& me = c.me(); me.person && routeStackDepth(c.thread, c.thread.stack.size()) == 1)
+            me.person->data[persondata::RouteStatus] = 0;
         c.frame.preRouteRan = false; // the instruction is done
         c.frame.postRoute = 0;
         c.frame.routeSlot = -1;
@@ -1215,7 +1229,10 @@ const Slots::Slot& routingSlot(VM& vm, const Object& target, bool global, int in
 // slot index" (which of the places the slot gives was taken; "Sofa -
 // Animate - Get In" passes it on as the seat; 0 here, then the bone of a
 // bone slot the planned way goes to) and 40 "route goal" (the object). Inferred
-// from the labels and those uses; 39 "route status" is left alone.
+// from the labels and those uses (the base game's UpdatePersonDataFields, base
+// 1.0 FUN_00c64a70, writes them from the current route at every plan and pop,
+// docs/primitives-mac.md §4j); 39 "route status" is set by the plan, the start
+// and the end of a route (walkStep, planRoute, walk).
 void noteRouteSlot(Object& me, int slot, ObjectId target) {
     if (!me.person)
         return;

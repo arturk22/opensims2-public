@@ -787,6 +787,55 @@ static void testRouteResult() {
           "route result 2: path not found");
 }
 
+// Person data 39 "route status" as the base game's router keeps it
+// (docs/primitives-mac.md §4j): 1 from the start of the route (the pre-route
+// tree already sees it) while it walks, 0 once it is over; 0 when no way is
+// found (InitRoute) and after the route that failed.
+static void testRouteStatus() {
+    for (const bool walled : {false, true}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(10, 10);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        ObjectFunctions f;
+        f.functions.resize(0x26);
+        f.functions[0x25] = {0, 0x1010};
+        code.add(kGroup, 0x81, f);
+        constexpr uint8_t Global = 0x06, MyPersonData = 0x12;
+        // The pre-route tree: global 10 = my person data 39, true.
+        code.add(kGroup, 0x1010, tree({expr(Global, 10, Assign, MyPersonData, 39, T, E)}));
+        vm.globals[10] = -1;
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {8.5f, 8.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {1.5f, 1.5f, 1};
+        if (walled) {
+            for (int x = 0; x < 10; ++x)
+                vm.world->addWall(1, x, 5, x + 1, 5);
+            sim.person->data[39] = 1;
+        }
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        bool walking = false, steady = true;
+        for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i) {
+            vm.run(t);
+            if (t.status == Thread::Status::Running && sim.route) {
+                walking = true;
+                steady = steady && sim.person->data[39] == 1;
+            }
+        }
+        if (walled)
+            check(t.status == Thread::Status::Finished && !t.result && !walking && vm.globals[10] == -1 &&
+                      sim.person->data[39] == 0,
+                  "no way: route status 0");
+        else
+            check(t.status == Thread::Status::Finished && t.result && walking && steady && vm.globals[10] == 1 &&
+                      sim.person->data[39] == 0,
+                  "route status 1 from the pre-route tree through the walk, 0 after it");
+    }
+}
+
 // A Sim standing in a one-tile corridor blocks another: the walker waits
 // (asking it to move), plans again, and after five tries fails with
 // "blocked by person" (14).
@@ -2161,6 +2210,7 @@ int main() {
     testEscapeDiagonal();
     testObjectPortals();
     testRouteResult();
+    testRouteStatus();
     testBlockedBySim();
     testMutualBlock();
     testPredictionOnCurve();

@@ -1146,6 +1146,12 @@ void VM::resetObject(ObjectId id, Thread& t) {
         o->subAction.reset();
         syncQueueData(*o);
     }
+    // The router's OnCleanup (BV 0x5727c8) empties the route stack
+    // (ClearRouteStack: PopRoute until none is left), the last one setting
+    // person data 39 "route status" to 0 (docs/primitives-mac.md §4j; it is 1
+    // only while a route is on the stack).
+    if (o->person)
+        o->person->data[persondata::RouteStatus] = 0;
     o->route.reset();
     o->outerRoutes.clear();
     const size_t done = t.instructions;

@@ -118,6 +118,9 @@ constexpr int16_t SemiAttributeCount = 79;
 // Person data fields the engine reads (names as in STR# 0xC8).
 namespace persondata {
 constexpr int16_t NeighborId = 31;
+// "route status": 1 while the person's route is on (base 1.0 router:
+// docs/primitives-mac.md §4j); the shoo trees only shoo who has 0.
+constexpr int16_t RouteStatus = 39;
 constexpr int16_t PersonAge = 58;
 constexpr int16_t FamilyNumber = 61;
 } // namespace persondata

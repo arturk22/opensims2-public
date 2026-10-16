@@ -431,6 +431,11 @@ Exit handleSubQueue(Context& c) {
             return Exit::Call;
     }
     sim->subAction = item;
+    // SetCurrentSubAction (base 1.0 0xb849ec) with a sub-action: person data
+    // 39 "route status" := 0 (0xb84ac0), as SetCurrentAction does
+    // (docs/primitives-mac.md §4j).
+    if (sim->person)
+        sim->person->data[persondata::RouteStatus] = 0;
     updateObjectOwnership(c.vm, c.thread.me, item.object);
     syncQueueData(*sim);
     return Exit::Call;
@@ -985,7 +990,7 @@ void endInteraction(VM& vm, Thread& t) {
 void setCurrentAction(VM& vm, Object& sim) {
     if (sim.person) {
         auto& d = sim.person->data;
-        for (size_t k : {size_t(39), size_t(persondata::NonInterruptible), size_t(73), size_t(110)})
+        for (size_t k : {size_t(persondata::RouteStatus), size_t(persondata::NonInterruptible), size_t(73), size_t(110)})
             if (k < d.size())
                 d[k] = 0;
     }
