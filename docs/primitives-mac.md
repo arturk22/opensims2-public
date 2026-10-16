@@ -3415,7 +3415,10 @@ falha com 2 nos dois slots). Com `OS2_STAIR_ONE_PORTAL=1` (o portal antigo,
 patamar a patamar) os dois saem às 23:57 e 00:02 com um "Leave" cada (na
 v0.2.0, 23:50 e 00:16). **Frente de rotas** (a rodada n30 mexe nelas; nada
 mudou aqui): a pegada da "End"/"Bridge" sobre a ponta da faixa (ou a ponta
-fora dela) como o binário a tem não foi lida.
+fora dela) como o binário a tem não foi lida. **Rodada n31b**
+(`routing-mac.md` §9.4): a pegada da "End" acaba em 27,625; quem fechava a
+ponta era o tile debaixo dos degraus, que o binário não fecha. Feito: os
+dois saem às 23:58 e 00:10.
 
 **2. Os sociais presos são o laço do bloqueio da locomoção.** Nos dois
 casos o lado A está em "Route - Dynamic w/Lead in" (Go To Routing Slot até
@@ -3435,7 +3438,8 @@ tentativas nunca sobe e a rota nunca falha. No binário,
 com o bloqueador que o `DoBlocked` (BV `0x5762a4`) guardou, sem testar o
 passo de novo; com um objeto é "blocked by object", a rota falha, o social
 acaba e o B sai da espera. **Frente de rotas** (`routing_walk.cpp`; nada
-mudou aqui). O Daniel entrou no tile do balcão pelo lead-in do beijo
+mudou aqui). **Feito na rodada n31b** (`routing-mac.md` §9.4), com o limite
+de um goal check por tick do agregado. O Daniel entrou no tile do balcão pelo lead-in do beijo
 anterior, que o deixou em (16,99; 19,93), 0,01 dentro de x < 17.
 
 **3. `N003_Lot52`.** Semente 5: o "Chutar" do Tybalt na urna 174 anda até o
