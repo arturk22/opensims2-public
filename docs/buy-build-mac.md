@@ -168,6 +168,25 @@ O layout está no script (`s2pkg ui-dump … 49060004`). O código
 **Para nós**: renderizar a miniatura com o nosso renderer (uma câmera fixa
 de 3/4 e uma luz) e guardar em cache. Não é preciso ler o pacote do usuário.
 
+### 1.6 A colocação do painel na tela (medido no jogo, 800x600 e 1280x720)
+
+Coordenadas de cliente, medidas nas capturas do jogo em janela (o mesmo
+binário; o jogo estava preso no preset `$Low` do `Graphics Rules.sgr`,
+máx 800x600 — destravado para o 1280x720). Com o catálogo cheio de itens:
+
+- À esquerda nada anda com a tela: o puck em x 0 e o catálogo começando em
+  x ≈549 nas duas resoluções (a barra do sort fecha logo antes).
+- A grade também não anda: coluna 1 em x 589 e topo da linha 1 em
+  `altura − 126` (474 em 800x600, 594 em 1280x720); placas 44x44 de passo
+  48, duas linhas.
+- Quem estica é só o catálogo: a borda direita fica em `largura − 36` e a
+  última faixa (~31 px) leva a seta ▶ (o ⌃ em cima dela e a barra de
+  rolagem embaixo). Dá 3 colunas em 800x600 e 13 em 1280x720.
+
+**Para nós** (medido contra a captura do app em 1280x720): o app usa a
+largura fixa do script (265) e mostra 4 colunas; a grade fica +7 px em x e
++4 em y, o fundo do catálogo +3 e o puck em x 8.
+
 ---
 
 ## 2. Preço, fundos, valor e depreciação
