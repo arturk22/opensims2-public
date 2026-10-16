@@ -728,6 +728,27 @@ setparam constraintwidth         -10
             z.start(simd_make_float3(0, 0, 10), simd_make_float3(1, 0, 0), 45);
             check(z.restorePosition(2) && near(z.position().x, 5) && near(z.position().z, 20) && near(z.heading(), float(M_PI) / 2),
                   "restore a saved position");
+            // The orbit (Shift + a d w s; BV 0x7a7784 read literally): with no velocity
+            // M = I and the target is on the far side of the centre, the view along
+            // centre - position; the velocity's x (a / d) turns it about Z by that many
+            // degrees an update; a key released ends it.
+            FreeCamera o(*def);
+            o.start(simd_make_float3(10, 0, 20), simd_make_float3(-1, 0, 0), 45);
+            o.setOrbit(simd_make_float3(0, 0, 20));
+            o.update(0);
+            check(near(o.positionTarget().x, -10) && near(o.positionTarget().y, 0) && near(std::fabs(o.heading()), float(M_PI)),
+                  "orbit: the target centre + (centre - position), facing along it");
+            // (Updates of 0 ms: the velocity ramps by its minimum change, 0.1 an
+            // update, to 10 x (0.1 + 0.9 x 19 / 49) = 4.49, the position barely moves.)
+            o.setMove(1, 0, 0);
+            for (int i = 0; i < 60; ++i)
+                o.update(0);
+            const float turn = std::atan2(o.positionTarget().y, o.positionTarget().x);
+            check(near(std::remainder(turn - float(M_PI), 2 * float(M_PI)), o.velocity().x * float(M_PI) / 180, 2e-3f),
+                  "orbit: the velocity's x turns it about Z, in degrees an update");
+            // (Read literally, the far-side target pulls the camera into the centre.)
+            o.setOrbit(std::nullopt);
+            check(!o.orbit(), "released: no orbit");
             check(!z.restorePosition(4), "nothing saved there");
         }
     }

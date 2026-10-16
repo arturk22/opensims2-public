@@ -35,9 +35,18 @@
 // orientation's own smoothing, orientationsteps 5 / minchange 0.1 on a
 // quaternion, snaps small turns, so the look is immediate here); the pitch
 // held to upperpitchlimit .. lowerpitchlimit; where the view starts (the previous
-// camera's eye and direction, the fov table's nearest entry); the orbit
-// (Shift + movement keys: PickOrbitCenter 0x7a6590 casts a ray into the scene,
-// the rest was not read) is not done.
+// camera's eye and direction, the fov table's nearest entry).
+//
+// The orbit (Shift + a d w s, round n39, docs/camera-ui-mac.md 1.11): each of
+// those key-downs (repeats too) picks a centre (PickOrbitCenter 0x7a6590: a ray
+// from the eye along the view into the scene; the app casts it) and any Stop
+// Move / raise / lower ends it; they do not set the direction (only the plain
+// keys do). While it lasts the update (0x7a7784) turns the position about the
+// centre by the velocity in degrees per update, x (a / d) about Z and z (q / e)
+// about X (FUN_000ea0dc(k vz, 0, k vx) = Rz Ry Rx, k = pi / 180), and aims at the
+// far side as read: target = centre + M (centre - position), facing along
+// M (centre - position). Inferred: the matrix applied to a column vector (the
+// orbit's sense), the scene pick as the floor under the ray.
 
 #include "formats/camera_config.hpp"
 #include "render/camera.hpp"
@@ -66,6 +75,10 @@ public:
     // A step of the fov table: +1 zooms in (narrower), -1 out ("Zoom in" /
     // "Zoom Out", 0x8d377398 / 0x8d37738a).
     void zoomStep(int direction);
+    // The orbit: its centre (PickOrbitCenter's hit), or none (no hit, or a key
+    // released: the orbit ends).
+    void setOrbit(std::optional<simd_float3> centre) { orbit_ = centre; }
+    const std::optional<simd_float3>& orbit() const { return orbit_; }
     // Camera positions 0-5 ("Save / Restore Camera Position n").
     void savePosition(int slot);
     bool restorePosition(int slot);
@@ -108,6 +121,7 @@ private:
     Params params_;
     simd_float3 pos_{0, 0, 10}, posTarget_{0, 0, 10}, vel_{0, 0, 0};
     simd_float3 dir_{0, 0, 0};
+    std::optional<simd_float3> orbit_; // +0x2e4 with +0x2f0
     float heading_ = 0, pitch_ = 0;
     size_t fovIndex_ = 0;
     LotCamera::Smooth fovSmooth_; // radians

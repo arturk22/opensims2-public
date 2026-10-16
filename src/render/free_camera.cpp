@@ -61,6 +61,7 @@ void FreeCamera::start(simd_float3 eye, simd_float3 forward, float fovDegrees) {
     pos_ = posTarget_ = eye;
     vel_ = {0, 0, 0};
     dir_ = {0, 0, 0};
+    orbit_.reset();
     fovIndex_ = 0;
     for (size_t i = 1; i < params_.fov.size(); ++i)
         if (std::fabs(params_.fov[i] - fovDegrees) < std::fabs(params_.fov[fovIndex_] - fovDegrees))
@@ -114,11 +115,26 @@ void FreeCamera::update(double dt) {
     const float s = p.velocitySensitivityMin;
     const float scale = s + (1 - s) * heightFraction_;
     const simd_float3 velTarget = dir_ * (p.maxVelocity * scale);
-    // The position wanted: where the current velocity, turned by the heading, takes it.
-    const float c = std::cos(heading_), sn = std::sin(heading_);
-    const simd_float3 right{sn, -c, 0}, forward{c, sn, 0};
-    if (simd_length_squared(vel_) > 0)
-        posTarget_ = constrain(pos_ + right * vel_.x + forward * vel_.y + simd_make_float3(0, 0, vel_.z));
+    if (orbit_) {
+        // The orbit (BV 0x7a7784): the velocity as degrees an update, x about Z and z about X.
+        const float k = kPi / 180.0f;
+        const float cz = std::cos(k * vel_.x), sz = std::sin(k * vel_.x);
+        const float cx = std::cos(k * vel_.z), sx = std::sin(k * vel_.z);
+        simd_float3 r = *orbit_ - pos_;
+        r = simd_make_float3(r.x, cx * r.y - sx * r.z, sx * r.y + cx * r.z); // Rx
+        r = simd_make_float3(cz * r.x - sz * r.y, sz * r.x + cz * r.y, r.z); // Rz
+        posTarget_ = *orbit_ + r;
+        if (simd_length(r) > 1e-6f) { // facing along it (FUN_000ea3a0 with Z up, the angles by FUN_000eaac4)
+            heading_ = std::atan2(r.y, r.x);
+            pitch_ = std::clamp(std::atan2(r.z, simd_length(r.xy)), radians(p.lowerPitch), radians(p.upperPitch));
+        }
+    } else {
+        // The position wanted: where the current velocity, turned by the heading, takes it.
+        const float c = std::cos(heading_), sn = std::sin(heading_);
+        const simd_float3 right{sn, -c, 0}, forward{c, sn, 0};
+        if (simd_length_squared(vel_) > 0)
+            posTarget_ = constrain(pos_ + right * vel_.x + forward * vel_.y + simd_make_float3(0, 0, vel_.z));
+    }
     smoothVector(pos_, posTarget_, ms, p.translationSteps, p.translationMin);
     smoothVector(vel_, velTarget, ms, p.velocitySteps, p.velocityMin);
     fovSmooth_.update(ms);

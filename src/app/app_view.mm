@@ -149,6 +149,7 @@ using namespace os2app;
 @implementation OS2View {
     std::unique_ptr<os2::LotCamera> _camera;
     std::set<unsigned short> _held;
+    std::set<unsigned short> _orbitOnly; // free camera: a d w s pressed with Shift ("Start orbit ...": not a move)
     os2::CameraMouseInput _mouse;
     bool _rotating; // right button with Control or Option: rotate/tilt instead of scroll
     bool _leftRotating; // Control + left on the lot (trackpads): rotate/tilt
@@ -170,7 +171,18 @@ using namespace os2app;
 }
 
 - (bool)held:(unsigned short)a orKey:(unsigned short)b {
-    return _held.count(a) || _held.count(b);
+    return (_held.count(a) && !_orbitOnly.count(a)) || (_held.count(b) && !_orbitOnly.count(b));
+}
+
+// The free camera's PickOrbitCenter (BV 0x7a6590): a ray from the eye along the
+// view into the scene, here the floor or ground under it (inferred: the game's
+// scene pick also stops at objects).
+static std::optional<simd_float3> pickOrbitCentre() {
+    const os2::LotCamera::FirstPerson pose = gFreeCamera->pose();
+    const simd_float3 dir = simd_normalize(pose.forward);
+    if (const auto t = floorUnderRay(pose.eye, dir))
+        return pose.eye + dir * *t;
+    return std::nullopt;
 }
 
 - (void)applyHeldKeys:(double)dt {
@@ -269,6 +281,14 @@ using namespace os2app;
         return;
     }
     _held.insert(e.keyCode);
+    // The free camera's orbit (Shift + a d w s, cCameraCameraManController::DoMessage):
+    // every key-down picks the centre, repeats too; such a key is not a move.
+    if (freeCameraActive() && (e.modifierFlags & NSEventModifierFlagShift) &&
+        (e.keyCode == kA || e.keyCode == kD || e.keyCode == kW || e.keyCode == kS)) {
+        if (!e.isARepeat)
+            _orbitOnly.insert(e.keyCode);
+        gFreeCamera->setOrbit(pickOrbitCentre());
+    }
     if (e.isARepeat)
         return;
     // Any key (Shift sends no keyDown) cancels the pie menu; Esc that did so does nothing more.
@@ -416,6 +436,11 @@ using namespace os2app;
     if (gCas)
         gCas->keyUp(e.keyCode);
     _held.erase(e.keyCode);
+    _orbitOnly.erase(e.keyCode);
+    // Stop Move ... / Stop lower / raise (any modifiers) end the free camera's orbit.
+    if (gFreeCamera && (e.keyCode == kA || e.keyCode == kD || e.keyCode == kW || e.keyCode == kS ||
+                        e.keyCode == kQ || e.keyCode == kE))
+        gFreeCamera->setOrbit(std::nullopt);
 }
 
 - (void)flagsChanged:(NSEvent*)e {
