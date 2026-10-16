@@ -2703,6 +2703,69 @@ cada peça é ligada à de baixo e à de cima (os mapas `+0x244`/`+0x258`,
 `LinkObjects`). Uma peça que não cabe desfaz tudo (`RevertChanges`). Não feito
 no app (a lareira segue objeto comum).
 
+**Correção do bit 13 do teste de vértice.** O `FUN_009e8124` não lê os
+marcadores de deck: pergunta a vtable **`0xcc`** do `WorldDB` (thunk
+`0x1511a3c` → `0xd2f34`), que lê outro array por tile (`cWorldDB +0xd0`, um
+`u32` por tile, −1 por padrão) ao lado dos marcadores (`0xc8`, `+0xcc`, por
+quarto). Nada do jogo base o grava (inferido: os toldos do BV): no base o bit
+13 nunca recusa. Sem isso, o "pincel não mexe em volta de fundação" que a
+§7.24 tirava daqui não existe; o que segura o chão perto de uma fundação é o
+bit 4 (o andar de cima teria de subir junto e tem piso em volta, `0x69`).
+
+**No código (rodada n37).**
+
+- Marcadores: `formats/lot_edit.hpp` `setDeckFoundationMarker` /
+  `fitDeckFoundationMarkers` (um plano por andar, do mais baixo ao de baixo do
+  topo, seguindo os andares novos), gravados pelo `lot_write` (o 3ARY `0x14`
+  sai byte a byte igual ao do `N001_Lot68` quando nada muda). A fundação, o
+  deck e a piscina gravam o produto em todo quarto do retângulo (a piscina um
+  andar abaixo); apagar grava −1. `BuildEditor::foundationTile` lê os
+  marcadores do térreo quando o lote os tem (os vértices da volta também sobem,
+  então as alturas não distinguem o tile vizinho); um lote lido sem o array
+  ganha um das alturas e das piscinas na primeira mudança.
+- Nivelamento: `deckTopHeight` (`CalculateTopElevation`; o começo do
+  arraste é o canto do primeiro tile longe do outro extremo, mapeamento
+  inferido), `deckLevelError` (os vértices do retângulo → `0x81`),
+  `moveDeckFloor` (`MoveFloorElevations` com a volta, `ChangeFloorVertex`),
+  `markerCost` (o preço por quarto que muda). Sai o `levelPoints` inferido.
+  Fundação: objetos `0x83` (aqui passam suportes e objetos no ar, od 42
+  `0x200`: os três tipos do serviço `0x60` não foram identificados); paredes
+  estritamente dentro `0x84` (aqui toda parede que não é borda levantada:
+  `FUN_009ac8d0` não lido); deck, nenhum teste de objeto; o andar de cima é
+  criado se faltar. Ficam do app (inferido): tile travado `0x45`, piso no
+  térreo `0x0C`, água `0x1E` (o `CanPlaceTile` só é da piscina). A água do
+  chão segue as mudanças de altura (`ChangeFloorAndWaterElevation` →
+  `UpdateWaterElevations` com a flag de piso: os pontos secos ficam 1 abaixo
+  do chão, ou a lagoa vizinha − 0,1; a água ligada, `FUN_008b02d4`, não lida).
+- Bit 7 do teste de vértice: `BuildEditor::vertexObjectsError` (`0x61`,
+  `0x60`, `0x68`); `ConformsToCeiling` não lido: só suportes (OBJD tipo 5)
+  passam no `0x60` (inferido). Vale para o nivelador das paredes, o cômodo,
+  as escadas modulares, o pincel e o deck. `OS2_DEBUG_VERTEX=1` diz quem
+  recusa. O `tests/door_cut_wall.sh` e o `build_undo.sh` vendem antes as
+  escadas do deck do `N002_Lot23` (o degrau de cima delas ficava onde o cômodo
+  levantaria o andar do deck: `0x68`, como no jogo).
+- Dinheiro: refazer não testa os fundos (editor, objetos e Design do modo
+  Construção, modo Compra); desfazer devolve o preço inteiro, como antes.
+- Salas: `formats/lot_edit.hpp` `postAttachRooms`, chamado pelo `addWall` em
+  cada grafo com mapa de salas: dividir uma sala dá o ID novo ao lado
+  esquerdo da linha que fecha o ciclo (o `a → b` da parede como gravada; a
+  direção que o jogo usa para a aresta é inferida), dividir o lado de fora
+  (0) dá ao lado que o ciclo cerca (o ciclo pelo `LNext`, paridade); o
+  `updateRooms` mantém o que cada parede deu. O "quartos sem piso nos andares
+  de cima ficam fora" do `updateRooms` segue inferido.
+- Colocação: `poolUnder` (`FUN_00164c40`): sobre piscina não há piso,
+  `0x8E`, salvo p&`0x200`/p2&`4`; objetos de piscina (p&`0x800`) passam
+  (inferido: a luminária de piscina do `N001_Lot82`, od 42 `0x0800`, od 82 0,
+  fica no térreo sobre a piscina; o jogo passa o teste para todo objeto). O
+  `s2pkg placement-sweep` dá as mesmas contas nos 12.930 objetos. A camada de
+  visibilidade do piso segue sem fazer (o app não a tem).
+- Antes e depois numa encosta do `N003_Lot159` (fundação 23,20–26,22,
+  piscina 21,15–24,17): `docs/screenshots/n37-fundacao-encosta-antes.jpg` /
+  `-depois.jpg` (a fundação mais alta do lado de baixo, o chão do lado de cima
+  cortado), `n37-piscina-encosta-*.jpg` (a piscina num patamar plano, a volta
+  aplainada; antes a borda da piscina saía do morro e o chão rebaixado ficava
+  sob a água velha, desenhado como fundo de lagoa).
+
 ---
 
 ## 8. Base vs BV
