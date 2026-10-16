@@ -891,8 +891,7 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
         const double dt = std::chrono::duration<double>(now - last).count();
         last = now;
         const float right = float(keys[1]) - float(keys[0]), forward = float(keys[3]) - float(keys[2]);
-        if (right != 0 || forward != 0)
-            camera->pan(right, forward, dt);
+        camera->setKeyMove(right, forward);
         camera->update(dt);
         showUi();
         renderer.setEye(camera->eye());
@@ -2952,18 +2951,25 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                     a->update(scene);
             adoptVmSims();
             {
-                // Shift: "Move ... Faster" (twice the speed).
+                // Shift: "Move ... Faster" (twice the speed). The camera's
+                // own requests (docs/camera-ui-mac.md 1.11), its update the
+                // rates.
                 const float fast = (SDL_GetModState() & SDL_KMOD_SHIFT) ? 2.0f : 1.0f;
+                camera.setKeyMove((float(keys[1]) - float(keys[0])) * fast, (float(keys[3]) - float(keys[2])) * fast);
+                camera.setKeyZoom(int(keys[4]) - int(keys[5]));
+                camera.setKeyRotate(int(keys[7]) - int(keys[6]));
+                // The window's edge (DoWindowEdgeScrolling, once a frame): the step requests.
                 cameraMouse.config().edgeScroll = app.settings.edgeScrolling;
-                const auto [mr, mf] = cameraMouse.panAxes(1280, 720);
-                const float right = std::clamp((float(keys[1]) - float(keys[0])) * fast + mr, -fast, fast);
-                const float forward = std::clamp((float(keys[3]) - float(keys[2])) * fast + mf, -fast, fast);
-                camera.pan(right, forward, dt);
-                // Right button: the anchor's offset x 0.25 as a move request, per 50 ms frame.
-                const auto [dragX, dragY] = cameraMouse.dragMove();
-                camera.movePixels(dragX * float(dt) * 20.0f, dragY * float(dt) * 20.0f);
-                camera.zoomHeld(int(keys[4]) - int(keys[5]), dt);
-                camera.rotateHeld(int(keys[7]) - int(keys[6]), dt);
+                const auto edge = cameraMouse.edgeSteps(1280, 720);
+                if (edge.sendSideways)
+                    camera.stepSideways(edge.sideways);
+                if (edge.sendForward)
+                    camera.stepForward(edge.forward);
+                // Right button held (DragCamera): the anchor's offset x 0.25 as the move request.
+                if (cameraMouse.anchored()) {
+                    const auto [dragX, dragY] = cameraMouse.dragMove();
+                    camera.moveRequest(dragX, dragY);
+                }
                 if (pie)
                     follow.follow(simulation.machine(), pie->sim());
                 camera.update(dt);
