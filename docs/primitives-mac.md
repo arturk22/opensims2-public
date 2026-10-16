@@ -541,7 +541,7 @@ Make Pregnant", árvore global, toca 10002 = o som global
 tabela continua escolhida por |n|). O nome achado vai em minúsculas para o
 sistema de áudio numa mensagem com o ID do objeto, a posição (para Sims, o
 osso `root_rot` e os dados de pessoa 58, 65 e 88) e um de dois eventos
-conforme a flag 0x40 (inferido: tocar em laço / uma vez). Object data 34
+conforme a flag 0x40 (**rodada n41**: tocar / parar, ver §4j). Object data 34
 (flags de som): bit 0x02, ou 0x10 com nome começando por "vox", não manda a
 posição. **Sempre verdadeiro** (o fim da função é `li r3,1`).
 
@@ -4083,6 +4083,32 @@ enxotado; fora dos incêndios morrem 5 antes (sementes 0, 1, 6, 12) e 1
 depois (semente 4). Cada semente é caótica; a mudança não aumenta nem
 incêndios nem mortes. N001_Lot11, sementes 1–6: nenhum incêndio nem morte
 antes e depois, "Afastar-se" 2 → 0, os mesmos 6 resets por erro.
+
+### Play / Stop Sound Event (`cTSObject::TryPlaySound`, BV `0xe41844`)
+
+Lido de novo. Do operando o binário só usa o número do som (s16 0), o byte
+de flags (4) e, com número negativo, o dono e o dado (6, u16 7): **o volume
+(byte 5), a taxa (u16 2) e o bit 0 das flags não são lidos**. A fonte é o
+stack object com o bit `0x02` e flags ≠ `0xFF`, senão eu. A tabela sai de
+|n| pelo dono do código da árvore (vtable `0x50` do elemento da pilha):
+≥ 20000 → `0x38` (semi-global) com n − 20000, 10000–19999 → `0x34` (global)
+com n − 10000, o resto → `0x3C` (privada); com n negativo o índice é **o
+valor** de (dono, dado) dentro da tabela escolhida por |n| (não somado). O
+nome achado vai em minúsculas numa mensagem com o ID do objeto e a
+posição; o tipo da mensagem é `0x2BC78968` com o bit `0x40` e `0xCBC78960`
+sem ele. O `cTSAudioEventHandler::DoEvent` (BV `0x6108a4`) toca o evento
+com `0xCBC78960` e **para** o evento com `0x2BC78968`: o `0x40` é "parar"
+(confirmado; era inferido dos dados). Mais do `DoEvent`: um evento tocado
+cujo nome começa por `stop_` para o evento do resto do nome (nenhum nome das
+tabelas de som do jogo base começa assim); nomes `vox*` vão no canal 1,
+`cine*` no 6; `foot*` só tocam com as duas flags do tratador ligadas (`+0x38`,
+`+0x39`, a última pela mensagem `0x2CBF1A2B`); evento de objeto que não é
+mais válido é recusado. **Laço**: o `TryPlaySound` não diz se o som repete;
+isso é da trilha (o único uso do bit 0 no jogo base, o "Process" do
+detector de fumaça, `0x7F97EA32` `0x1004`, toca `alarm_smoke` com `0x01` e
+para com `0x41`; a trilha dele não tem a chave `0xff595ffd` que o
+`SoundSystem::loops` toma por laço). O VM segue tocando em laço com o bit 0
+ou nome `_lp` (inferido, para o alarme não calar depois de 3 s).
 
 ## 5. Outras primitivas: operandos pelo disassembler
 
