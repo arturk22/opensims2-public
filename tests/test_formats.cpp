@@ -12,6 +12,7 @@
 #include "formats/lot_edit.hpp"
 #include "formats/lot_model.hpp"
 #include "formats/lot_diffusion.hpp"
+#include "formats/lot_lamps.hpp"
 #include "formats/lot_roof.hpp"
 #include "formats/lot_water.hpp"
 #include "formats/lot_ui_state.hpp"
@@ -842,6 +843,37 @@ end
     LotLightMap dark = computeLotLightMap(layout, day, {});
     check(std::fabs(texel(dark.image, 28, 28) - 0.5f) < 0.01f, "outdoor floor texel is half the outdoor light");
     check(std::fabs(texel(dark.image, 4, 4) - 0.1f) < 0.01f, "indoor floor texel is the inside ambient");
+    {
+        // The environment's light under a point (formats/lot_lamps, round
+        // n42): the floor texel x 2 as 0.3 r + 0.59 g + 0.11 b; VM level 1 is
+        // the lot's level 0; off the pages 0; nothing without a light map.
+        const auto out = floorIlluminationAt(layout, nullptr, &dark, 1, 1, 3.5f, 3.5f);
+        const auto in = floorIlluminationAt(layout, nullptr, &dark, 1, 1, 0.5f, 0.5f);
+        check(out && std::fabs(*out - 2 * texel(dark.image, 28, 28)) < 1e-4f, "floor illuminance outdoors: texel x 2");
+        check(in && std::fabs(*in - 2 * texel(dark.image, 4, 4)) < 1e-4f, "floor illuminance indoors: texel x 2");
+        check(floorIlluminationAt(layout, nullptr, &dark, 1, 1, 5.0f, 1.0f) == 0.0f, "floor illuminance off the lot: 0");
+        check(floorIlluminationAt(layout, nullptr, &dark, 1, 2, 1.0f, 1.0f) == 0.0f, "floor illuminance off the levels: 0");
+        check(!floorIlluminationAt(layout, nullptr, nullptr, 1, 1, 1.0f, 1.0f), "no light map, no illuminance");
+        // Crossfading two maps: halfway between them.
+        LotLightMap bright = dark;
+        for (size_t i = 0; i < bright.image.pixels.size(); i += 4)
+            bright.image.pixels[i] = bright.image.pixels[i + 1] = bright.image.pixels[i + 2] = 255;
+        const auto mid = floorIlluminationAt(layout, &dark, &bright, 0.5f, 1, 0.5f, 0.5f);
+        check(mid && std::fabs(*mid - (*in + 2.0f) * 0.5f) < 1e-3f, "floor illuminance crossfades the maps");
+        // The light-map lights: lamps that are off are left out; the cache
+        // key has the state and each lit lamp's object, light and level.
+        LotLamp on, off;
+        on.id = 7, on.light = "lamp", on.level = 50, on.diffusionColor = {1, 0.5f, 0};
+        off.id = 8, off.light = "lamp", off.level = 0;
+        std::string key;
+        const auto lights = lightMapLights({on, off}, "night", &key);
+        check(lights.size() == 1 && lights[0].object == 7 && std::fabs(lights[0].color[1] - 0.25f) < 1e-6f,
+              "light-map lights: the lit lamps at their level");
+        check(key == "night|7:lamp:50", "light-map cache key");
+        check(std::string(lightingStateOfHour(7)) == "day" && std::string(lightingStateOfHour(19)) == "night" &&
+                  std::string(lightingStateOfHour(6)) == "night",
+              "lighting state of the hour");
+    }
     {
         // The sun's height-map shadow: a 3-high block on tile (3, 1) with
         // the sun low in +X shades the tile west of it (its top is far over

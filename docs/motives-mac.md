@@ -586,5 +586,14 @@ dos 50 exatos e 38 a menos de 2, **os números do app da rodada n33, Sim por
 Sim**: o Johnny e a Jill (N002_Lot10) 1,276 acima, os de fora do
 N003_Lot192 0,04–0,06 acima, a Angela (N001_Lot68 #11) 12,556 abaixo, a
 Circe (N002_Lot3 #147) 14,904 abaixo. O resto é a diferença dos nossos light
-maps para os do jogo (§8.6). Leva ~6 s para os 69 lotes.
+maps para os do jogo (§8.6). Leva ~6 s para os 69 lotes. Conferido também
+direto contra o app (headless, `--run-vm 2`, `OS2_DEBUG_ENV=1`, os 14 lotes
+com Sims fora do tutorial): a luz e a nota de cada um dos 50 Sims são as do
+`env-sweep` (diferença ≤ 0,0005, o arredondamento impresso). O app não muda:
+as 3 capturas do N001_Lot68 (`--run-vm 2 --frames 3`) saem idênticas byte a
+byte às da main, com as mesmas linhas de ambiente. No `autonomy` os light
+maps custam ~13% (N001_Lot68, 30000 tiques: refeitos 12 vezes, quando o
+Change Light muda uma lâmpada ou o estado vira). Teste sem dados
+(`test_formats`): a luz sob o ponto (texel × 2, fora das páginas 0, o
+crossfade), as luzes do light map e a chave do cache.
 
