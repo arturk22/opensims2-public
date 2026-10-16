@@ -979,7 +979,10 @@ têm `0_0` e `1e_1n`; o sinal do norte também é tentado ao contrário, inferid
 u ao longo da parede (√2 por trecho, inferido como o reto) e v igual.
 `N002_Lot3`: 142 → 166 faces com máscara; `docs/screenshots/r13-wallmask-diagonal.jpg`
 (as janelas da baía de `N001_Lot77`). Objetos sem máscara continuam com o
-recorte retangular.
+recorte retangular. **Rodada n36** (`walls-floors-mac.md` §6.2–6.3): cada
+face acha o seu TXMT pelo `WallCutoutMaterialName` e o amostra pelo seu UV1
+(com o `tsMirrorWallMask`), o topo leva a máscara da face A, e sem máscara
+não há recorte nenhum.
 `SetWallCutout` passa o nome
 ao `cWallManager::SetCutoutMaterial` (BV `0x6c5d6c`), que troca o material
 daquela face pelo TXMT da máscara (alfa = buraco). Ao apagar uma parede, os
@@ -2485,7 +2488,8 @@ recebe: para os degraus, **a altura absoluta** que o lance calcula
 **Portas e janelas sem máscara.** `ComputeWallCutoutLocators` (`0x6612d8`):
 com o texto do STR# `0x85` vazio **não há recorte nenhum**; senão, para cada
 parte e lado, o nome da máscara vai ao `SetCutoutMaterial` (`0x6c5d6c`), sem
-caixa retangular: o jogo só abre a parede pela máscara.
+caixa retangular: o jogo só abre a parede pela máscara (rodada n36: feito,
+`walls-floors-mac.md` §6.3).
 
 **No código (rodada n20).**
 

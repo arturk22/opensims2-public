@@ -213,23 +213,26 @@ inclinada:
 
 **Inferido ou de fora:**
 
-- a máscara de portas e janelas segue a projeção plana da rodada 16 (o `u`
+- ~~a máscara de portas e janelas segue a projeção plana da rodada 16 (o `u`
   ao longo do −x do objeto); o jogo usa o UV1 de cada vértice e o
-  `wallMaskMirrorFlag` do `CombinedWallMaterial`, não lidos por inteiro;
+  `wallMaskMirrorFlag` do `CombinedWallMaterial`, não lidos por inteiro~~
+  (rodada n36, §6.2 e §6.5: feito);
 - ~~o nó 5 (meia parede a +0,75 e 0,1 de espessura sobre piso "tipo 4") não
   é separado do 3, como o +0,75 das cercas~~ (rodada n25,
   `roof-fence-water-mac.md` §2.1: o "tipo 4" é o marcador cru 4 do 3ARY
   `0x14`, que nenhum produto do jogo base tem; feito: a cerca coberta com as
-  duas pontas nele vai para o nó 5); a meia parede segue sendo "cerca com
-  revestimento" (inferido: o jogo pergunta o `PartitionType` 3 do estilo);
+  duas pontas nele vai para o nó 5); ~~a meia parede segue sendo "cerca com
+  revestimento" (inferido: o jogo pergunta o `PartitionType` 3 do estilo)~~
+  (rodada n36, §6.4: pelo `ishalfwall` da cerca do catálogo);
 - no modo baixo, fundações e paredes de piscina (nó 0) ficam erguidas (quem
   chama o `SetLevelUpDownState` para quais andares não foi lido); as meias
   paredes não entram no corte (o valor do serviço `0xe92db716`);
 - o light map das faces é o nosso atlas (`LotLightMapLayout`, a célula
   cobre a face chanfrada), não o do `cLightMapManager`;
-- as laterais dos buracos sem máscara (batentes) são nossas, no material do
-  topo;
-- `cFloorThicknessGeometryNode` (a borda dos pisos) não é desenhado.
+- ~~as laterais dos buracos sem máscara (batentes) são nossas, no material do
+  topo~~ (rodada n36: sem máscara não há buraco nem batente, §6.3);
+- ~~`cFloorThicknessGeometryNode` (a borda dos pisos) não é desenhado~~
+  (rodada n36, §6.1: feito).
 
 ## 6. Rodada n36: borda dos pisos, máscaras, sem máscara, meia parede
 
@@ -350,3 +353,53 @@ já tinha lido; agora feito).
   `isgreenhouse`). Quem passa o `ishalfwall` ao tipo 3 não foi achado
   (inferido: é o produto feito da cerca do catálogo com `ishalfwall`).
   Nenhuma cerca do catálogo do jogo base tem `ishalfwall` verdadeiro.
+
+### 6.5 O que o código faz (rodada n36, `src/formats/lot_model.cpp`)
+
+| Peça | Antes | Agora (binário) |
+|---|---|---|
+| Borda dos pisos | não desenhada: sob um deck ou varanda, os 0,15 entre o topo da saia (o piso − 0,15) e o piso mostravam o escuro de baixo | `addFloors`: nos andares ≥ 1, as arestas que sobram do conjunto alternado de cada quarto ganham a faixa de 0,15 (`kFloorThickness`), normal `Perp`, UV 0–1 ao longo e para baixo, material `FloorThickness` (`StandardMaterial`, difusa 0,5, `floor-edge`, iluminado), desenhada ou escondida com o seu quarto |
+| Máscara: qual TXMT | uma lista de nomes tentada por parede (`0_n`, `1s_s`, `1n_n`, `0_s`), a mesma para as duas faces | o nome de cada face pelo `WallCutoutMaterialName` (`wallCutoutMaterialName`), do localizador da face no referencial do objeto (`X = −y`, `Y = x`); o nível = andares inteiros entre o chão da parede e o objeto (±0,375: a parede da fundação sob uma janela não é cortada) |
+| Máscara: UV | projeção plana ao longo do −x do objeto, `v` a partir do chão mais baixo da parede | planos por face iguais ao UV1: `u` ao longo do localizador da própria face, `1 − u` com o `tsMirrorWallMask`; `v` = 1 no chão da coluna, `1 − H/3` no alto (o chão da parede é reto: parede exige fundo plano) |
+| Topo da parede | sempre inteiro (barra de 0,2 cruzando a porta na parede cortada) | com a máscara da face A (o localizador do topo), os mesmos planos: aberto sobre a porta na parede baixada; sem o +0,01 do lado A |
+| Quem corta | definições "Window…"/"Door…" com o modelo carregado para a caixa | todo objeto cujo modelo tem a máscara do próprio tile (`0_0_0` n, s, nw ou se): também o `_NEWDoor - 2 Tile - Template` (`doorCentralAsian`) de `N002_Lot2` e `N003_Lot192` |
+| Sem máscara | recorte retangular do tamanho do objeto com batentes, peitoril e verga | nada |
+| Meia parede | cerca com papel = meia parede (nó 3/5) | só o estilo de `PartitionType` 3 (`PatternCatalog::isHalfWall`, o `ishalfwall` da cerca do catálogo); a cerca com papel é só trilho e poste; o poste de meia parede sobe 0,75 só onde termina meia parede do estilo; trilhos e postes de meia parede somem no modo baixo (`placeFencePieces`) |
+| Parede fora do lote | desenhada | sem geometria quando nenhum dos dois tiles ao lado está no lote |
+
+Nos 63 lotes (`s2pkg lot`, com `OS2_DEBUG_WALLMASK=1`): as paredes com
+máscara eram 2 883 e são 2 894 (nenhuma perdida; as novas são a porta
+`doorCentralAsian` e uma janela `windowdesigner` de 2 tiles); dos 1 825
+recortes retangulares que ainda havia, 1 805 ficavam sob uma máscara (o
+segundo objeto das portas e janelas dobradas dos lotes) e 20 na parede ao
+lado de uma porta de 2 tiles (a moldura atravessando a parede vizinha).
+Com as paredes erguidas as capturas inteiras dos lotes saem iguais (nenhum
+pixel muda mais que 24 níveis), menos a porta de `N003_Lot144` (o molde
+`_NEWDoor - 2 Tile - Template`, modelo `doorCentralAsian`, no mesmo lugar de
+duas `Door - Club 2`): antes a parede ficava na frente da porta (de fora
+inteira, de dentro meia folha), agora ela aparece pela máscara; as mesmas
+casas sem o molde (`N003_Lot159`, `166`, `171`) não mudam.
+
+Testes: `testFloorThickness`, as meias paredes de `testWallGeometry` e
+`testFencePieces`, e o arco de 2 tiles de `N001_Lot82` nas duas faces e no
+topo com as paredes baixas (`testTwoTileArchMask`).
+
+Antes/depois (à esquerda o antes, `--lot` sem tela):
+
+- `docs/screenshots/n36-borda-piso-antes-depois.jpg`: o deck octogonal de
+  `N001_Lot79`, a varanda de `N003_Lot46` em corte, `N001_Lot11` em corte (as
+  bordas dos andares e do terraço), a sacada sobre as janelas de `N002_Lot3`;
+- `docs/screenshots/n36-mascaras-antes-depois.jpg`: o arco de 2 tiles de
+  `N001_Lot82` com as paredes baixas (o topo abre sobre ele), a porta de
+  `N003_Lot144` (antes coberta pela parede) e as janelas e portas em arco de
+  `N002_Lot3` com as paredes erguidas (iguais).
+
+**Inferido ou de fora:** o referencial do objeto para os nomes (`X = −y`,
+`Y = x`, conferido pelos nomes que existem); o nível do nome pela altura (o
+lote não guarda o andar de cada objeto) e o `+0x124` do objeto (quais lados
+ele corta: aqui os nomes que existem); quem dá o `PartitionType` 3 a partir
+do `ishalfwall`; o valor padrão do `tsMirrorWallMask` ausente (tomado como
+0); qual SetCutoutMaterial vale quando dois objetos cortam a mesma face (aqui
+o primeiro na ordem dos objetos do lote); o +0,01 do UV1 do topo no lado A.
+Sem conteúdo no jogo base: meias paredes (nenhuma cerca do catálogo tem
+`ishalfwall`).

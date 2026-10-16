@@ -506,10 +506,14 @@ duas vezes também difere ali (não é das cercas):
   (as cercas e o guarda-corpo do alpendre não mudam).
 
 **Inferido ou de fora:** o estilo 4 como palco (só o nome `stage` no
-parser); a meia parede como "cerca com revestimento" (o jogo pergunta o
+parser); ~~a meia parede como "cerca com revestimento" (o jogo pergunta o
 `PartitionType` 3 do estilo; o catálogo base não tem nenhuma) e, por isso,
 a segunda condição do poste de meia parede (`FUN_00a7098c`) e os nós 7–12
-escondidos no modo baixo; os postes dos arcos (o jogo os tira do FPL com o
+escondidos no modo baixo~~ (rodada n36, `walls-floors-mac.md` §6.4: a meia
+parede é o estilo de `PartitionType` 3, a cerca do catálogo com
+`ishalfwall`; a cerca com papel não vira parede; o segundo teste do poste e
+os trilhos e postes de meia parede fora no modo baixo feitos; quem passa o
+`ishalfwall` ao tipo 3 segue inferido); os postes dos arcos (o jogo os tira do FPL com o
 estilo do arco; o modo Construção do app não grava esses postes, então o
 desenho põe um em cada ponta); portões (`AddGate`) e os subconjuntos
 `togglewalls` (nada disso no jogo base); o modo Construção não grava o 3ARY
