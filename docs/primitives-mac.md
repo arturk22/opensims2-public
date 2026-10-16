@@ -2652,8 +2652,11 @@ Puddle`. `Burn - _Simulate` (`0x1002`) converte o atributo 4 em unidades de
 e, por unidade: idade (atr 0) += n, contador de propagação (atr 5) −= n,
 `Burn - Decrease Flame(n)` (chama −= n). Depois, **com chama > 10, atr 5
 < 0 e idade > 45** (`0x1003`[3]): `random(8)` (`0x1003`[6]) = 0 →
-`Burn - Spread`; tentou ou não, **atr 5 := 10** (`0x1003`[5]): no máximo
-uma tentativa a cada 10 unidades (200 ticks), cada uma com 1/8. Idade > 75
+`Burn - Spread` e só então **atr 5 := 10** (`0x1003`[5]); o sorteio que
+não dá 0 não mexe no atr 5 e **se repete na unidade seguinte** (corrigido
+na rodada n32: o nó 15 vai direto ao teste de idade; antes estava "tentou
+ou não"). Ou seja, 1/8 a cada 20 ticks enquanto valem as condições, e 10
+unidades de pausa depois de cada `Burn - Spread`. Idade > 75
 (`0x1003`[4]) sem a flag de estado 5 → `Burn - Destroy`.
 
 **Chama inicial** (`Main - Setup`, `0x1004`): soma o od 84 dos objetos do
@@ -2758,9 +2761,10 @@ parâmetro 0 é o "autônomo" do `cEdithObjectTestSim`: `FBA_FindStaticInteracti
 (BV `0xad4130`) e `FBA_RunCheckTree` (BV `0xae24e4`) o montam com
 `FUN_004c5cb0(teste, pessoa + 0x2e0, 1, 0)` (`+0x10` := 1, `+0x11` := 0), e
 `cEdithObjectTestSim::TestInteraction` (BV `0x4c6214`) passa ao check tree
-os parâmetros {`+0x10` ≠ 0, 1 se a vtable `0x2c` da interação devolve 1,
-o argumento `long`}; o menu de pie não chama o `FUN_004c5cb0` (o construtor
-`FUN_004c7024` deixa `+0x10` = 0): parâmetro 0 = 0. A entrada "Extinguish"
+os parâmetros {`+0x10` ≠ 0, 1 se a vtable `0x2c` da interação (o campo
+`+0x8`) devolve 1, o argumento `long`}, os "autônomo, join, Sim clicado" do
+menu de pie (rodada 19, acima); no menu de pie `+0x10` = 0 (o construtor
+`FUN_004c7024` o zera e só as duas FBA chamam o `FUN_004c5cb0`). A entrada "Extinguish"
 do TTAB (autonomia 50, anúncios 0–100 em nove motivos) serve ao bombeiro.
 
 **O pânico prende a casa perto do fogo.** `Push - Panic - All Sims Not
@@ -2815,6 +2819,40 @@ sala, Lilith (pega fogo 14:54, morre 15:50: 56 min) e Daniel (pega fogo
 14:49, o Fire do tile apaga 15:18, pega de novo 15:32, morre 16:25: 53 min);
 a Angela pegou fogo 11 min e o Fire dela apagou. Tudo isso são as árvores;
 a rota que falhou no forno é das rotas (`TODO.md`).
+
+**Por que o fogo dura horas.** Com o sorteio a cada unidade (correção do
+§ da rodada 15 acima), um Fire tenta se espalhar, em média (Monte Carlo da
+árvore: chama inicial, idade > 45, chama > 10, 1/8 por unidade, pausa de 10),
+**1,5 vez no chão vazio** (atr 1 = 0, chama 73–86), 3,1 / 4,8 / 6,5 com atr 1
+= 1 / 2 / 3. Cada tentativa vai a uma direção nova (atr 6) e falha em
+parede, em Fire já aceso, em objeto sólido que não queima (`Skip?`) ou onde
+o Fire não cabe; tile vazio é sempre alvo. Mais de uma tentativa por Fire
+mesmo no chão nu: **o incêndio cresce por todo piso aberto** e reacende os
+tiles já queimados (nada marca o chão queimado) até, por acaso, todos os
+Fires de uma frente apagarem antes de passar adiante. O VM roda essas
+árvores; a medida abaixo é isso.
+
+**Medida (rodada n32; nada no comportamento mudou nesta rodada, então
+antes = depois).** `s2pkg autonomy`, 3 dias de jogo (129.600 ticks) do
+horário salvo, `OS2_SEED` 1–6, `S2PKG_FIRES=1` (que agora diz quem pega
+fogo, quem para de queimar e os NPCs que chegam, com o tipo: 12 =
+bombeiro); causas das mortes pelo chamador do `Kill Sim`:
+
+| Lote (alarme) | Sementes com fogo | Fires (pico vivos, duração) | Bombeiro | Mortes no fogo | Fome depois do fogo | Fome sem fogo |
+|---|---|---|---|---|---|---|
+| `N001_Lot68` (não) | 4, 6 | 168 (29, 21,1 h); 65 (20, 12,3 h) | nunca | 3 (uma visita) + 1 | 1 + 3 | 2 (semente 5) |
+| `N003_Lot52` (não) | 2, 4 | 41 (16, 8,7 h); 39 (14, 7,7 h) | nunca | 2 + 2 | 2 + 2 | 1 + 1 (sementes 5, 6) |
+| `N001_Lot11` (sim, na cozinha) | 6 | 1 (1, 0,3 h) | chegou e apagou | 0 | 0 | 1 + 1 (sementes 1, 2: Cassandra) |
+
+Nos lotes sem alarme, **um fogo mata a família inteira** (os que não
+queimam passam fome em pânico, com os motivos derrubados pelos `Set Motive
+Deltas` do `Panic - On Fire!` de quem pegou fogo e sobreviveu, ou depois,
+na casa queimada: a Mary-Sue do `N001_Lot68` semente 6, 29 h depois): é o
+jogo.
+Quem pega fogo morre em 43–56 min de jogo (Hermia 55, Tybalt 43, Lilith 56,
+Daniel 53), dentro dos 29–69 das árvores. As mortes de fome sem fogo são
+outra frente (`TODO.md`: Angela 4 h em "Receber Beijo" no `N001_Lot68`
+semente 5).
 
 ## 4g. Rodada 12: Sims vivos e destravados (binário + árvores)
 

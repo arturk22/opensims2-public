@@ -222,7 +222,7 @@ Docs: `primitives-mac.md` (0x03, 0x21, 0x1D, menu de pie),
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
-| `cTSPerson::TryFindBestAction`, `FBA_ScoreInteraction`, `FBA_CheckInteractions`, `FBA_RunCheckTree` | `vm/autonomy.cpp` | fiel | O uso da memória de falhas (8 por 9999 ticks) é inferido. |
+| `cTSPerson::TryFindBestAction`, `FBA_ScoreInteraction`, `FBA_CheckInteractions`, `FBA_RunCheckTree` | `vm/autonomy.cpp` | fiel | O uso da memória de falhas (8 por 9999 ticks) é inferido. Parâmetro 0 = 1 das check trees conferido (n32: `FUN_004c5cb0` com autônomo 1). |
 | `TryFind5WorstMotives`, `Set Motive Change`, laço de `cTSPerson::OnSimulatorTick` | `vm/motives.cpp` | fiel | |
 | Menu de pie: `cEdithObjectTestSim::TestInteraction`, `AppendInteractionsForAuto`, `sMakeNewMenuItem` | `app/pie_menu.cpp` | fiel | Rodada 19. |
 | Vieses (dono, memória, relação, clima) | `vm/autonomy.cpp` | fiel | No base, só o de dono pesa. |
@@ -422,7 +422,7 @@ paralelo, áreas diferentes, Opus com Ghidra só leitura.
 |---|---|---|---|
 | 30 | **Impasse na varanda do N001_Lot11** (sementes 2/4/6: dois Sims no degrau de um tile entre a escada do deck e a porta) e **voltar `stair_top` e `glides` à forma estrita** (afrouxados na n23): `CreateMoveOutOfWayDestination`, a regra "posição atual também inválida" do teste de passo, tempo das pausas | n18b, n23 | rotas |
 | 31 | **Visitantes em laço de "Leave"** no N003_Lot192 (Tybalt e Juliette, ~327 vezes a partir das 02:00; na v0.2.0 saíam) | fix-noite | VM/sociais |
-| 32 | **Fogo sem bombeiros** no N001_Lot68 (fogão às 17:29, dois Sims morrem): conferir no binário quem chama os bombeiros sem detector e se é só a semente | fix-noite, `TODO.md` incêndios | VM |
+| 32 | **Fogo sem bombeiros** no N001_Lot68 (fogão às 17:29, dois Sims morrem): conferir no binário quem chama os bombeiros sem detector e se é só a semente — **feita** (n32, `primitives-mac.md` §4f "Rodada n32"): é o jogo; só o alarme do cômodo (`Sub - Call Fire Fighter`) e o "Ligar.../Emergência" do jogador agendam o bombeiro, o parâmetro 0 = 1 das check trees autônomas confirmado no binário (a casa não apaga sozinha), o sorteio de propagação a cada 20 ticks (doc corrigido) faz o fogo andar por horas; medido em 3 lotes × 6 sementes; `S2PKG_FIRES` diz quem pega fogo e os NPCs | fix-noite, `TODO.md` incêndios | VM |
 | 33 | **Ambiente (motivo 13)**: `cTSEnvironmentScoreManager` (BV `0x5805a0`, `GetEnvironmentRoomID` `0x57ffa8`), refeito a cada 60 ticks; e o tique do primeiro passo de 60 depois de carregar | n17 | motivos |
 | 34 | **Olhar e eventos, resto**: portar o `AnimUpdate` do look-at (BV `0xd41e04`), eixo dos spots, chave de evento 6 contra 3, evento por volta, velocidade das cinemáticas | n23 | animação |
 | 35 | **Luz, resto**: sala da fonte do portal, `doorOrArchDirectMultiplier`, supressão janela-janela, luzes diretas das janelas, grafos de parede 3/8/10/11, passe incremental, `LM_sunHM` e `AddBlobToHeightMap` dos objetos; conferir o brilho dos objetos à noite (geladeira quase branca) — **feita** (n35, `lighting-mac.md` §11): Delta com sinal e conjuntos por sala de luz (a geladeira branca vinha das Delta só positivas e da sala da VM), portais como o jogo (fonte na luz, portas sem luz direta, supressão, práticas das janelas), paredes só dos grafos de luz e piscina com o piso da grade (a passada otimizada que o jogo roda), "LM_sunHM" por objeto; o `AddBlobToHeightMap` é só do bairro | n16 | luz |
