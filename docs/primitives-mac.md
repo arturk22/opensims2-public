@@ -3534,23 +3534,26 @@ do byte 14 aparecem nos dados). O VM pedia "não cancelada" (inferido).
    `+0x54`. Teste: a continuação roda na volta antes do Main seguir, e depois
    dele com o bit.
 
-**Medidas** (`s2pkg autonomy`, `S2PKG_VISITORS=1 S2PKG_FIRES=1`; antes =
-main `8bfebd80`, depois = os quatro commits). Nada disso mexe nas causas
-(rotas), e as medidas mostram isso:
+**Medidas** (`s2pkg autonomy`, `S2PKG_VISITORS=1 S2PKG_FIRES=1`, 3 dias; antes =
+main `309a28c3`, já com as rotas da rodada n30; depois = estes commits por
+cima). Nada disso mexe nas causas (rotas), e as medidas mostram isso:
 
 | | antes | depois |
 |---|---|---|
-| `N003_Lot192` 12 h: "Leave" começados por Juliette / Tybalt | 135 / 123, não saem | 130 / 124, não saem (com `OS2_STAIR_ONE_PORTAL=1`: 1 / 1, saem 00:02 / 23:57) |
-| `N001_Lot68` sementes 1–6, mortes (com fogo) e social preso ≥ 10 h | 9 (7: s4, s6); s5 beijo 28,1 h (2 mortes), s1 "Repudiar" 10,9 h | 12 (7: s4, s6); s5 beijo 44,0 h (3), s2 beijo 24,3 h (2) |
-| `N001_Lot11` sementes 1–6 | 2 (Cassandra s1, s2: piada 25,4 h e 23,1 h); s4 piada 12,8 h | 1 (Cassandra s1: piada 25,4 h) |
-| `N003_Lot52` sementes 1–12, mortes: no fogo / no cercado das urnas / outras | 8 / 4 / 4 (fogo em 2 sementes) | 14 / 4 / 4 (fogo em 4 sementes) |
+| `N003_Lot192` 12 h: "Leave" começados por Juliette / Tybalt | 122 / 120, não saem | 117 / 112, não saem (com `OS2_STAIR_ONE_PORTAL=1`: saem 00:02 / 23:57) |
+| `N001_Lot11` sementes 1–6: mortes sem fogo; social ≥ 10 h | 1; "Contar Piada" 25 h+ (s3) | 0; nenhum |
+| `N001_Lot68` sementes 1–6: mortes sem fogo / no fogo; social ≥ 10 h | 3 / 4; "Estapear" 61 h+ (s2), "Tapa na Mão" 19 h (s5) | 0 / 4; "Estapear" 61 h+ (s2) |
+| `N003_Lot52` sementes 1–12: mortes sem fogo / no fogo (sementes com fogo); social ≥ 10 h | 5 / 17 (5); 3 (21–22 h) | 6 / 20 (6); 4 (18–23 h) |
 
-As mortes fora do fogo ficam iguais; os fogos (a comida esquecida no forno,
-cozinhar com pouca habilidade) mudam de semente quando a ordem dos eventos
-muda. Os sociais presos continuam o laço do bloqueio da locomoção (item 2),
-agora em outras sementes. O cercado das urnas do `N003_Lot52` (x 44–55,
+Os fogos (a comida esquecida no forno, cozinhar com pouca habilidade) mudam
+de semente quando a ordem dos eventos muda. Os sociais presos continuam o
+laço do bloqueio da locomoção (item 2; conferido depois da n30 no
+`N001_Lot68` semente 2: "step into 639" a cada tick e o goal check a cada
+tick, sem contar tentativa). O cercado das urnas do `N003_Lot52` (x 44–55,
 y 39–45) prende Sims à noite: as rotas de lá falham com 2 (o planejador sem
 os Sims, `S2PKG_ROUTE_TRY`, acha caminho; a causa dinâmica não foi lida).
+Antes da n30 (main `8bfebd80`) era o mesmo quadro: Lot192 135/123, os
+sociais presos de 23–44 h no Lot68 (s2, s5) e no Lot11 (s1, s2).
 
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
