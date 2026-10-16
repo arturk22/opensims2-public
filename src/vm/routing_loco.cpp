@@ -734,6 +734,42 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     };
     auto plannedStop = [&](float heading) { return stopClip(heading, true, L.stopWeight, L.stopOtherFoot); };
     auto walkGait = [&] { return blendGaits(gaitOf(vm, me), gaitOf(vm, me, true), L.strideWeight); };
+    // The request's cycle portion as the walk starts standing (+0x1bc: 0.5,
+    // or the last blocking primitive's final one in the start window).
+    float standPortion = 0.5f;
+    // When the route's first phase starts (cLocomotable::ComputeLocoStartTicks,
+    // BV 0x6ad69c; docs/anim-mac.md §13.6), against the last blocking
+    // primitive's request: with its action's end eA kept (none: now), the
+    // last route's stop still playing starts it at that stop's end; else
+    // not a short step and |now - eA| < 140 ms starts it at eA + 70; else,
+    // within W (40 for a short step, 140) of that request's end e and
+    // before it, at e - W/2. In those cases the request's cycle portion is
+    // the kept one. VM ticks after now (negative: before).
+    auto followStartTicks = [&](bool shortStep) {
+        const AnimationState& a = me.animation;
+        const double now = animationClockMs(vm);
+        const double eA = a.previousActionEndMs, e = a.previousEndMs;
+        if (eA == AnimationState::kNoTicks)
+            return 0.0f;
+        constexpr double kWindow = 140; // DAT_02c11c04
+        double start = now;
+        if (now < a.locoEndingUntilMs) {
+            if (e != AnimationState::kNoTicks && start < e)
+                start = e;
+            standPortion = a.previousPortion;
+        } else if (!shortStep && now - eA > -kWindow && now - eA < kWindow) {
+            start = eA + kWindow / 2;
+            standPortion = a.previousPortion;
+        } else if (e != AnimationState::kNoTicks) {
+            const double w = shortStep ? 40 : kWindow, d = now - e;
+            if (d > -w && d < w) {
+                if (d < 0)
+                    start = e - w / 2;
+                standPortion = a.previousPortion;
+            }
+        }
+        return float((start - now) * tps / 1000.0);
+    };
     // The stride fit (fitStride) for what is left from the frame: the stop
     // ahead by its foot, the start's distances (0: none), what is left of
     // the current half cycle when walking on. The request's cycle portion
@@ -751,7 +787,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
             return std::pair<float, float>{l ? l.distance() : 0, s ? s.distance() : (l ? l.distance() : 0)};
         };
         float f0 = 0;
-        const float portion = walkingOn ? L.cycle : 0.5f;
+        const float portion = walkingOn ? L.cycle : standPortion;
         if (walkingOn) {
             f0 = 1 - L.cycle;
             if (f0 >= 0.5f)
@@ -831,14 +867,23 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
                         L.cycleStart = L.cycle = 0;
                         L.fade = requestFadeIn(step.seconds(), false);
                         L.crossover = false;
-                        L.lead = -1; // standing at its start this tick
+                        // Standing at its start this tick (-1), or the
+                        // window's ticks later or earlier (a short step).
+                        L.lead = -1 - followStartTicks(true);
+                        out.beganFollow = true;
                     }
                 }
             }
             if (!L.sidestep) {
                 newRequest();
-                const BlendedClip goLong = turnClip(vm, me, "turnAndGo", angle, itps, 0);
-                const BlendedClip goShort = turnClip(vm, me, "turnAndGo", angle, itps, 1);
+                const float ahead = wasMoving ? 0.0f : followStartTicks(false);
+                // The start of the request's portion: the plain clip from
+                // 0.5 (standing), the "R" one from 0 (InitChannelNetwork, §8.5).
+                const char* goRole = stopFootOther(standPortion) ? "turnAndGoR" : "turnAndGo";
+                if (!turnClip(vm, me, goRole, angle, itps, 0))
+                    goRole = "turnAndGo";
+                const BlendedClip goLong = turnClip(vm, me, goRole, angle, itps, 0);
+                const BlendedClip goShort = turnClip(vm, me, goRole, angle, itps, 1);
                 StrideFit f;
                 if (goLong) {
                     L.cycle = goLong.heaviest().clip->cycle; // the portion the start ends at
@@ -846,7 +891,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
                 } else {
                     f = fit(0, 0, false);
                 }
-                if (const BlendedClip go = turnClip(vm, me, "turnAndGo", angle, itps, L.strideWeight)) {
+                if (const BlendedClip go = turnClip(vm, me, goRole, angle, itps, L.strideWeight)) {
                     // A short way's start covers its share (squeezed under
                     // the short clips' own distance).
                     begin(Loco::Start, go, std::min(f.shortWay ? f.startDistance : go.distance(), stretch), legHeading);
@@ -863,8 +908,13 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
                     L.fade = requestFadeIn(go.seconds() + f.cycles * walkGait().seconds + (stopAhead ? stopAhead.seconds() : 0),
                                            bool(stopAhead));
                     L.crossover = false;
-                    if (!wasMoving)
-                        L.lead = -1; // standing at its start this tick
+                    if (!wasMoving) {
+                        // Standing at its start this tick (-1: it starts
+                        // now), or as many ticks later or earlier as
+                        // ComputeLocoStartTicks puts it.
+                        L.lead = -1 - ahead;
+                        out.beganFollow = true;
+                    }
                 }
             }
         } else if (!wasMoving || rebuilt) {
@@ -967,9 +1017,15 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     }
     // The frame's way this tick, along the curve.
     ensureCurve();
-    float step = L.kind == Loco::Walk ? L.speed : L.distance / float(std::max(L.ticks, 1));
-    if (L.kind != Loco::Walk && L.tick == 0)
-        step *= 1 + std::min(L.lead, float(L.ticks)); // the first tick of a phase begun earlier (-1: at its start)
+    float step = L.speed;
+    if (L.kind != Loco::Walk) {
+        // The frame's share of the clip's way this tick, with the phase
+        // begun `lead` ticks before its first tick (-1: at its start; less:
+        // later, standing until then).
+        const float n = float(std::max(L.ticks, 1));
+        auto played = [&](float k) { return std::clamp(k + L.lead, 0.0f, n); };
+        step = L.distance * (played(float(L.tick) + 1) - played(float(L.tick))) / n;
+    }
     if (L.halting)
         step = std::min(step, L.haltRoom);
     float x = L.fx, y = L.fy;
@@ -1050,6 +1106,14 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
             const float total = float(L.requestTicks) / tps + left;
             const float fadeOut = total > 0 && total < in + full ? full * total / (in + full) * 0.9999f : full;
             if (left > 1e-4f && left <= fadeOut && (L.requestLength > 0.5f || left < 0.04f)) {
+                // The request's end, its blend out's start, the portion its
+                // clip ends at (FollowOneStep: SetEndTicks, SetEndActionTicks,
+                // SetFinalCyclePortionCompleted, BV 0x6b8848).
+                const double now = animationClockMs(vm);
+                out.endMs = now + double(left) * 1000.0;
+                out.actionEndMs = out.endMs - double(fadeOut) * 1000.0;
+                if (const BlendedClip c = current())
+                    out.endPortion = c.heaviest().clip->cycle;
                 L.tick = L.ticks;
                 L.lead = 0;
                 out.handOff = true;
@@ -1235,10 +1299,10 @@ void applyLocoStep(VM& vm, Object& me, Object::Route& r, const LocoStep& st) {
                                : 0;
         const float natural = clip ? clip->velocity : 0;
         std::fprintf(stderr,
-                     "loco t%llu %d %-5s %-32s %s tick %d/%d frame (%.3f,%.3f) h %6.1f root (%.3f,%.3f) face %6.1f "
+                     "loco t%llu %d %-5s %-32s %s tick %d/%d lead %.2f frame (%.3f,%.3f) h %6.1f root (%.3f,%.3f) face %6.1f "
                      "speed %.3f clip %.3f (own %.3f) slide %.3f%s%s%s\n",
                      (unsigned long long)vm.ticks, me.id, kinds[st.loco.kind], st.loco.animation.c_str(),
-                     st.loco.mirror ? "M" : "-", st.loco.tick, st.loco.ticks, st.loco.fx, st.loco.fy,
+                     st.loco.mirror ? "M" : "-", st.loco.tick, st.loco.ticks, st.loco.lead, st.loco.fx, st.loco.fy,
                      st.loco.heading * 180 / float(M_PI), st.x, st.y, st.facing * 180 / float(M_PI), frame, natural,
                      own, std::fabs(frame - natural), st.loco.layers.size() > 1 ? " blend" : "",
                      [&] {
@@ -1252,8 +1316,16 @@ void applyLocoStep(VM& vm, Object& me, Object::Route& r, const LocoStep& st) {
                      st.loco.halting ? " halting" : "");
     }
     r.loco = st.loco;
-    if (st.handOff)
+    AnimationState& a = me.animation;
+    if (st.beganFollow) // ComputeLocoStartTicks used them up
+        a.previousEndMs = a.previousActionEndMs = AnimationState::kNoTicks;
+    if (st.handOff) {
         ++me.locoHandOff;
+        a.previousEndMs = st.endMs;
+        a.previousActionEndMs = st.actionEndMs;
+        a.previousPortion = st.endPortion;
+        a.locoEndingUntilMs = st.endMs;
+    }
     r.points.erase(r.points.begin(), r.points.begin() + std::ptrdiff_t(std::min(st.consumed, r.points.size())));
     moveTo(vm, me, st.x, st.y, st.level);
     setDirection(me, directionOf(-std::sin(st.facing), std::cos(st.facing)));

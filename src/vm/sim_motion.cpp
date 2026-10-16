@@ -63,11 +63,12 @@ void SimMotion::sample(VM& vm, const Object& o) {
                     s.walkPhase = L.cycleStart * *secs;
             if (L.kind == Loco::Walk)
                 s.walkPortion = L.cycleStart;
-            // A phase begun before its first tick (the walk's first, 5 or
-            // 100 ms back): its clips start that far in.
-            if (L.kind != Loco::Walk && L.lead > 0 && L.ticks > 0) {
-                s.walkPortion = std::min(1.0f, L.lead / float(L.ticks));
-                s.walkPhase = L.lead / float(vm.clock.ticksPerSecond);
+            // A route's first phase begun off now (ComputeLocoStartTicks:
+            // lead -1 is now; docs/anim-mac.md §13.6): its clips start that
+            // far in already, or later (negative).
+            if (L.kind != Loco::Walk && L.lead != 0 && L.lead != -1 && L.ticks > 0) {
+                s.walkPortion = std::min(1.0f, (L.lead + 1) / float(L.ticks));
+                s.walkPhase = (L.lead + 1) / float(vm.clock.ticksPerSecond);
             }
             if (s.walkLayers.empty())
                 s.walkLayers.push_back({L.animation, 1, L.mirror, 1});

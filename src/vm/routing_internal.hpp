@@ -99,8 +99,15 @@ struct LocoStep {
     int level = 0;
     float facing = 0; // the body's heading
     // The walk ends here as its last clip starts to fade out (FollowOneStep's
-    // hand-off): the clip plays on in the world.
+    // hand-off): the clip plays on in the world. FollowOneStep keeps that
+    // request's end, its blend out's start and the walk cycle portion it ends
+    // at as the last blocking primitive's (on the animation clock, ms).
     bool handOff = false;
+    double endMs = 0, actionEndMs = 0;
+    float endPortion = 0.5f;
+    // The route's first phase began this tick (BeginFollow ->
+    // ComputeLocoStartTicks): the last blocking primitive's ends are used up.
+    bool beganFollow = false;
     // Asked to halt: the way ends (the planned stop) within the room given,
     // so the walk goes on.
     bool walkOn = false;

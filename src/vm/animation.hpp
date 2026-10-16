@@ -275,6 +275,9 @@ struct AnimationState {
     static constexpr double kNoTicks = 2147483392.0; // 0x7FFFFF00
     double previousEndMs = kNoTicks, previousActionEndMs = kNoTicks;
     float previousPortion = 0.5f;
+    // The last route's stop clip plays on until then (its request in
+    // FollowOneStep's ending state, ms): the next route starts after it.
+    double locoEndingUntilMs = 0;
     // Animate Sim requests whose action has ended and that play on to their
     // end, blending out, while the Sim's tree goes on: their tree events,
     // and 9998 and 9999 at the end (tickOverlayEvents).

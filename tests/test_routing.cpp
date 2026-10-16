@@ -1401,6 +1401,54 @@ static void addLocoSet(CodeLibrary& code, VM& vm, bool extra = false) {
     vm.animations.add("a-male-run-alt0-normal", 0.5f, 8.0f);
 }
 
+// ComputeLocoStartTicks (docs/anim-mac.md §13.6): a route begun within 140
+// ms of the last blocking primitive's action end (an Animate Sim blending
+// out) starts its first phase 70 ms after it; within 140 ms before that
+// request's end (else), at its end less 70; the next route after a route's
+// hand-off waits for the stop clip still playing. The ends are used up.
+static void testLocoStartWindow() {
+    using Loco = Object::Route::Loco;
+    for (int c = 0; c < 3; ++c) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(14, 12);
+        addLocoSet(code, vm);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {11.5f, 5.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {2.5f, 5.5f, 1};
+        sim.person->data[58] = 27;
+        sim.data[objdata::Direction] = 4;
+        vm.ticks = 300;
+        const double now = animationClockMs(vm);
+        AnimationState& a = sim.animation;
+        float want = -1;
+        if (c == 0) { // the action ended 10 ms ago: starts 60 ms from now
+            a.previousActionEndMs = now - 10, a.previousEndMs = now + 223.3;
+            want = -1 - 60.0f * 30 / 1000;
+        } else if (c == 1) { // 200 ms ago, its end 33.3 ms ago: begun 36.7 ms ago (e - 70)
+            a.previousActionEndMs = now - 200, a.previousEndMs = now + 33.3;
+            want = -1 - (33.3f - 70) * 30 / 1000;
+        } else { // a route's stop plays on 150 ms more
+            a.previousActionEndMs = now - 83.3, a.previousEndMs = now + 150, a.locoEndingUntilMs = now + 150;
+            want = -1 - 150.0f * 30 / 1000;
+        }
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        float lead = 0;
+        for (int i = 0; i < 1000 && t.status == Thread::Status::Running && lead == 0; ++i) {
+            vm.run(t);
+            if (sim.route && sim.route->loco.kind == Loco::Start)
+                lead = sim.route->loco.lead;
+        }
+        check(std::fabs(lead - want) < 0.01f, "loco start window: the first phase's start");
+        check(a.previousEndMs == AnimationState::kNoTicks && a.previousActionEndMs == AnimationState::kNoTicks,
+              "loco start window: the last primitive's ends used up");
+    }
+}
+
 static void testLocoPhases() {
     using Loco = Object::Route::Loco;
     // Facing +X (direction 4, the way), +Y (2: 90 degrees clockwise to the
@@ -2216,6 +2264,7 @@ int main() {
     testPredictionOnCurve();
     testTurnInPlace();
     testLocoPhases();
+    testLocoStartWindow();
     testRunnerStep();
     testLocoBlend();
     testLocoCurve();
