@@ -4114,6 +4114,37 @@ para com `0x41`; a trilha dele não tem a chave `0xff595ffd` que o
 `SoundSystem::loops` toma por laço). O VM segue tocando em laço com o bit 0
 ou nome `_lp` (inferido, para o alarme não calar depois de 3 s).
 
+### Os registros de objetos da pessoa (`cTSPerson +0x60c`, `cObjectRecord`)
+
+Lido em parte (BV). É um `std::vector<cObjectRecord>` (12 bytes: vtable
+`Write`, o objeto (`+4`), a profundidade da pilha de árvores (s16 `+8`) e
+uma flag (u8 `+10`)), salvo no PERS (`save-mac.md` §3; o VM o lê e grava
+como veio, sem mexer). É o **contador de uso** dos objetos: cada registro
+soma 1 no object data 62 do objeto, e sai tirando 1.
+
+- `cTSPerson::StackJustPopped` (BV `0xadef18`, a cada quadro tirado da
+  pilha de árvores da pessoa): com registros, olha o último; se a pilha
+  agora tem a profundidade dele − 1 (o quadro dele saiu), od 62 do objeto −=
+  1, para cada registro com a flag a ação corrente (a sub-ação, se houver)
+  recebe o objeto dele (vtable `0x104`), e o registro sai; se a pilha está
+  mais rasa que ele, só od 62 −= 1 e sai. Depois: com sub-ação e o número de
+  registros igual ao `+0x644` (anotado quando ela começou) a sub-ação
+  acabou (157 := 0, 102 := 21, 103 := 80); sem registros, ou com o número
+  igual ao `+0x646` − 1, a ação acabou (`SetCurrentAction` da próxima).
+- `cTSPerson::OnCleanup` (BV `0xadcbcc`): no reset (`Cleanup(nada)`) tira
+  os registros um a um do fim, desempilhando a pilha de árvores até a
+  profundidade de cada um, e tira 1 do od 62 do objeto; com um objeto
+  apagado, a pessoa é reiniciada se ele está num registro (além dos dados
+  80 e 157).
+- `SetCurrentAction`/`SetCurrentSubAction` anotam o número de registros
+  (`+0x646`/`+0x644`) para saber quando a ação acaba.
+
+Quem **cria** os registros não foi achado (o `push_back` é inline; a função
+de inserção `0x19b68b4` não tem chamadores resolvidos). O VM calcula o od
+62 contando quem tem a interação ou código do objeto na pilha
+(`engine_prims.cpp useCount`, inferido) e acha o fim da ação pela pilha de
+quadros; os registros ficam por fazer (`TODO.md`).
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
