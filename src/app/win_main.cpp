@@ -1505,14 +1505,14 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         // What the VM plays on an object, overlay by overlay (VM::objectPose):
         // each overlay its own layer, mirrored as the VM plays it, and taken
         // off when the VM takes it off, the object keeping that pose.
-        simulation.onObjectOverlay = [&](int16_t id, const std::string& name, bool flipped, uint32_t overlay, double at) {
+        simulation.onObjectOverlay = [&](int16_t id, const std::string& name, bool flipped, uint32_t overlay, bool loop, double at) {
             os2::SimActor* actor = objectActor(id);
             if (!actor)
                 return;
             try {
                 const int layer = 1 + int(overlay & 0x3FFFFFFF);
                 actor->cue(at, actor->animation(index, name),
-                           {.fade = 0.1f, .loop = false, .priority = layer, .mirror = flipped, .level = layer});
+                           {.fade = 0.1f, .loop = loop, .priority = layer, .mirror = flipped, .level = layer});
             } catch (const std::exception& e) {
                 reportMissing(id, name, e);
             }
@@ -2181,25 +2181,66 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (build)
                 build->pickObject = [&](simd_float3 eye, simd_float3 dir) { return pie->pick(eye, dir); };
         }
+        // The selected Sim's point for the cutaway (cWallCutawayManager,
+        // docs/ui-live-mac.md 8d): where it stands while it is on the level
+        // shown; worked out again only when it changes room (another tile
+        // outdoors), or the camera or the view changed: between those times
+        // the point stays. None unless the Sim is on the level shown.
+        struct {
+            bool stored = false;
+            int level = 0;
+            float x = 0, y = 0;
+            std::optional<std::array<float, 3>> used;
+            std::array<float, 6> camera{};
+            int mode = -1, viewLevel = 0;
+        } cutawaySim;
+        auto cutawaySimPoint = [&](const os2::LotViewOptions& v) -> std::optional<std::array<float, 3>> {
+            auto& c = cutawaySim;
+            const os2::vm::Object* o = pie ? simulation.machine().object(pie->sim()) : nullptr;
+            bool changed = false;
+            if (o && o->position.inWorld() && o->position.level - 1 == v.level) {
+                const auto& p = o->position;
+                if (!c.stored) {
+                    changed = true;
+                } else {
+                    const uint16_t was = os2::lotRoomAt(lot, c.level, c.x, c.y);
+                    changed = was ? was != os2::lotRoomAt(lot, v.level, p.x, p.y)
+                                  : (std::floor(c.x) != std::floor(p.x) || std::floor(c.y) != std::floor(p.y) ||
+                                     c.level != v.level);
+                }
+                c.stored = true, c.level = v.level, c.x = p.x, c.y = p.y;
+            }
+            const simd_float3 e = camera.eye(), f = camera.pivot();
+            const std::array<float, 6> cam{e.x, e.y, e.z, f.x, f.y, f.z};
+            if (changed || cam != c.camera || c.mode != wallView.mode() || c.viewLevel != v.level || !c.used) {
+                c.camera = cam, c.mode = wallView.mode(), c.viewLevel = v.level;
+                if (c.stored)
+                    c.used = std::array<float, 3>{c.x, c.y, lot.elevationAt(c.level, c.x, c.y)};
+            }
+            if (!c.stored || c.level != v.level)
+                return std::nullopt;
+            return c.used;
+        };
         // The view the camera asks for; in cutaway the walls between the
         // camera and the selected Sim on the level shown come down too.
         wantedView = [&] {
             os2::LotViewOptions v = wallView.options(lookOf(), viewLevel());
-            if (v.walls == os2::LotViewOptions::Walls::Cutaway && pie && pie->sim() && v.level != os2::LotViewOptions::kAllLevels)
-                if (const os2::vm::Object* o = simulation.machine().object(pie->sim());
-                    o && o->position.inWorld() && o->position.level - 1 == v.level) {
-                    const simd_float3 e = camera.eye();
-                    v.simLine = std::array<float, 4>{e.x, e.y, o->position.x, o->position.y};
-                }
+            const simd_float3 e = camera.eye(); // cutaway tests the walls against the camera's position
+            v.camera = std::array<float, 3>{e.x, e.y, e.z};
+            if (v.walls == os2::LotViewOptions::Walls::Cutaway && pie && v.level != os2::LotViewOptions::kAllLevels)
+                v.simPoint = cutawaySimPoint(v);
             return v;
         };
         // Keeps the lot model drawn for the current view: rebuilt (the
         // geometry; the cache keeps the materials and holes) when the wall
-        // mode, the roof, the level or the cutaway side of the walls changed.
+        // mode, the roof, the level or the cutaway side of the walls changed
+        // (the cutaway compared apart: lotCutawayWalls follows the camera).
+        std::vector<bool> cutaway;
         int lotViews = 0;
         auto updateLotView = [&] {
             const os2::LotViewOptions want = wantedView();
-            if (!os2::WallView::sameCut(view, want)) {
+            const std::vector<bool> cut = os2::lotCutawayWalls(lot, want);
+            if (!os2::WallView::sameCut(view, want) || cut != cutaway) {
                 os2::LotLightMapLayout fresh;
                 const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, want, &fresh, &cache);
                 renderer.replaceObject(houseModel, model, index);
@@ -2211,6 +2252,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                         lotLighting->setLightMapLayout(layout);
                 }
                 view = want;
+                cutaway = cut;
                 ++lotViews;
             }
             if (liveUi)

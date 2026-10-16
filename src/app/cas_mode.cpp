@@ -23,13 +23,13 @@
 #endif
 #include "vm/family_write.hpp"
 #include "vm/genetics.hpp"
+#include "port/process.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <random>
-#include <unistd.h>
 
 namespace os2 {
 
@@ -57,7 +57,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
         if (auto s = res_->script(id); s && !s->roots.empty())
             scripts_.emplace(id, std::move(*s));
     loading::phase("cas: ui");
-    tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(getpid()));
+    tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(processId()));
     fs::create_directories(tempDir_);
     renderer_.hideTestScene();
     // The studio lot (app/cas_studio.hpp) unless --cas-no-studio.

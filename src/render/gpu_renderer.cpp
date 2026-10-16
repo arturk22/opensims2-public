@@ -273,7 +273,7 @@ struct GpuRenderer::Gpu {
     SDL_GPUBuffer* particleVertices = nullptr;
     SDL_GPUTexture* particleTexture(const std::string& name);
     const ParticleMesh* particleMesh(const std::string& name);
-    void buildParticles(const simd_float4x4& view);
+    void buildParticles(const simd_float4x4& view, const simd_float4x4& viewProj);
 
     SDL_GPUBuffer* uploadBuffer(const void* data, size_t bytes, SDL_GPUBufferUsageFlags usage);
     SDL_GPUTexture* uploadImage(const RgbaImage& image, bool clamp);
@@ -1842,7 +1842,7 @@ int particleDepth(fx::DrawType d) {
 
 } // namespace
 
-void GpuRenderer::Gpu::buildParticles(const simd_float4x4& viewMatrix) {
+void GpuRenderer::Gpu::buildParticles(const simd_float4x4& viewMatrix, const simd_float4x4& viewProj) {
     if (particleVertices)
         SDL_ReleaseGPUBuffer(device, particleVertices);
     particleVertices = nullptr;
@@ -1853,21 +1853,37 @@ void GpuRenderer::Gpu::buildParticles(const simd_float4x4& viewMatrix) {
     const simd_float3 right = simd_make_float3(viewMatrix.columns[0].x, viewMatrix.columns[1].x, viewMatrix.columns[2].x);
     const simd_float3 up = simd_make_float3(viewMatrix.columns[0].y, viewMatrix.columns[1].y, viewMatrix.columns[2].y);
     const simd_float3 back = simd_make_float3(viewMatrix.columns[0].z, viewMatrix.columns[1].z, viewMatrix.columns[2].z);
-    const simd_float4 eyeColumn = simd_inverse(viewMatrix).columns[3];
-    const simd_float3 eyeAt = simd_make_float3(eyeColumn.x, eyeColumn.y, eyeColumn.z);
 
-    // Back to front (by layer first), so blended particles composite.
-    std::vector<std::pair<float, const ParticleSprite*>> order;
-    order.reserve(particles.size());
-    for (const auto& s : particles) {
-        const auto& sp = s.q.sortPosition;
-        order.push_back({simd_length_squared(simd_make_float3(sp[0], sp[1], sp[2]) - eyeAt) - s.q.layer * 1e-3f, &s});
+    // An emitter's particles are one group, drawn together in birth order
+    // (their order here); the groups sort among themselves by their key (the
+    // layer) and the depth of the centre of their particles' box, as the
+    // game's cTSParticlesRenderable does (ParticleLayer::prepare).
+    struct Group {
+        size_t begin = 0;
+        size_t count = 0;
+        float depth = 0;
+        int key = 7;
+    };
+    std::vector<Group> groups;
+    for (size_t i = 0; i < particles.size();) {
+        size_t j = i + 1;
+        while (j < particles.size() && particles[j].q.group == particles[i].q.group)
+            ++j;
+        const auto& c = particles[i].q.groupCenter;
+        const simd_float4 clip = simd_mul(viewProj, simd_make_float4(c[0], c[1], c[2], 1));
+        groups.push_back({i, j - i, clip.w > 1e-5f ? clip.z / clip.w : 0.0f, particles[i].q.layerKey});
+        i = j;
     }
-    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) {
-        if (a.first != b.first)
-            return a.first > b.first;
-        return a.second->q.sortOrder < b.second->q.sortOrder;
+    std::stable_sort(groups.begin(), groups.end(), [](const Group& a, const Group& b) {
+        if (a.key != b.key)
+            return a.key < b.key;
+        return a.depth > b.depth;
     });
+    std::vector<const ParticleSprite*> order;
+    order.reserve(particles.size());
+    for (const Group& g : groups)
+        for (size_t i = 0; i < g.count; ++i)
+            order.push_back(&particles[g.begin + i]);
 
     struct Corner {
         float position[3];
@@ -1876,7 +1892,7 @@ void GpuRenderer::Gpu::buildParticles(const simd_float4x4& viewMatrix) {
     };
     std::vector<Corner> corners;
     corners.reserve(order.size() * 6);
-    for (const auto& [d, sprite] : order) {
+    for (const ParticleSprite* sprite : order) {
         const fx::ParticleQuad& q = sprite->q;
         const simd_float3 c = simd_make_float3(q.position[0], q.position[1], q.position[2]);
         simd_float3 ax = right, ay = up;
@@ -1993,7 +2009,7 @@ bool GpuRenderer::draw(const simd_float4x4& viewProj) {
         if (event.type == SDL_EVENT_QUIT)
             return false;
     gpu_->flushDynamic();
-    gpu_->buildParticles(gpu_->view);
+    gpu_->buildParticles(gpu_->view, viewProj);
     int pixelW = 0, pixelH = 0;
     SDL_GetWindowSizeInPixels(gpu_->window, &pixelW, &pixelH);
     gpu_->prepareCensor(viewProj, unsigned(std::max(pixelW, 0)), unsigned(std::max(pixelH, 0)));
@@ -2017,7 +2033,7 @@ bool GpuRenderer::capture(const std::filesystem::path& path, const simd_float4x4
     if (width <= 0 || height <= 0)
         return false;
     gpu_->flushDynamic();
-    gpu_->buildParticles(gpu_->view);
+    gpu_->buildParticles(gpu_->view, viewProj);
     gpu_->prepareCensor(viewProj, unsigned(width), unsigned(height));
     const SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(gpu_->device, gpu_->window);
     SDL_GPUTextureCreateInfo info{};
@@ -2114,7 +2130,7 @@ RgbaImage GpuRenderer::capture(uint32_t width, uint32_t height, const FrameView&
         return image;
     const simd_float4x4 viewProj = simd_mul(view.projection, view.view);
     gpu_->flushDynamic();
-    gpu_->buildParticles(view.view);
+    gpu_->buildParticles(view.view, viewProj);
     gpu_->prepareCensor(viewProj, width, height);
     const SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(gpu_->device, gpu_->window);
     SDL_GPUTextureCreateInfo info{};
