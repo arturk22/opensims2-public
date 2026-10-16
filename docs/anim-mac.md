@@ -933,3 +933,127 @@ letra (inclusive o `lVar26 −= sobra` da chegada, que parece um descuido).
   da árvore `0x1004` do 156 em dois Sims, a maior parte), o resumo da
   autonomia igual; `N001_Lot11` 313 → 345. Teste `test_animation_vm`.
 
+
+## 13. Transições: como um pedido passa ao seguinte (rodada n43)
+
+Leitura de 2026-10-16 (`docs/inventario-binario.md` §8, linha 43). Modo:
+**Ghidra MCP** (só leitura, nada renomeado nem salvo), nos dois programas;
+endereços BV, salvo onde diz "base" (o base 1.0, `sims2_base_1.0.ppc`).
+
+### 13.1 A forma do blend (`cBlendInterval::Value`, BV `0xd28880`)
+
+O `cBlendInterval` do BV fica logo depois do CLSID (`0xd28700`,
+`0x4B96AA16`; o `0xd6cb84` que o symxfer chama de construtor não é):
+`SetType` (`0xd287fc`, `+0x08`), `SetStartValue` (`+0x0C`), `SetEndValue`
+(`+0x10`), `SetDurationTicks` (`+0x14`), os getters, `IsConstant`
+(`0xd2883c`), `IsNegative` (`0xd28854`), **`Value` (`0xd28880`)** e
+`Integral` (`0xd288d0`) — as mesmas 20 instruções do `0x3436c8` do baserom:
+
+```
+Value(t) = início                              se t ≤ 0
+         = início + t · (fim − início) / d      se t < d
+         = fim                                  senão
+```
+
+**Todo intervalo é linear** (o `Integral` é a integral dessa reta, com o
+`0,5` de `0x274b4d4`). A função do pedido (`cBlendFunction2`, vtable
+`0x2831c48`: `0x14` `Init`, `0x40` `BlendOutStartTicks` `0xd31ec8`, `0x48`
+`BlendInDurationTicks` `0xd320d0`, `0x4c` `BlendOutDurationTicks`
+`0xd321f0`, `0x58` `Value`, `0x74`/`0x84` o intervalo i e quantos) é uma
+sequência deles; o `Init` (`0xd3363c`) põe a entrada (tipo 0, do valor
+inicial ao alvo), a rampa opcional (5) ou meia-transição (3), a sustentação
+(1), a rampa (4) ou meia-transição (3) e a saída (2, ao valor final), e o
+tipo de blend diz onde a entrada começa: **0** no começo do pedido (a
+sustentação é a duração − entrada − saída), 1 centrada (−entrada/2), 2
+antes (−entrada). Com a flag de "degrau" (o `bool`) a entrada fica no
+valor inicial e um 3 de no máximo 50 ticks faz a troca no meio dela.
+
+### 13.2 A função de peso do pedido (`CreateTransitionBlend`, `FUN_00a46c00`)
+
+`cAnimatable::CreateTransitionBlend` (BV `0x68b4c4`; argumentos pelos
+slots do ABI do Darwin: `this`, agora, deslocamento, `tARType`, recurso,
+porção inicial, 1, peso, voltas, velocidade, os dois `bool` de blend e a
+saída) chama o `FUN_00a46c00` (= `nRZSceneDBAnim::CreateWeightBlendFunction`,
+`0x8330ec` no baserom) com o **tipo de blend 0**, entrada = `T` se o pedido
+tem blend de entrada (a flag 0x80 do Animate Sim desliga), saída = `T` se
+tem blend de saída (0x40 desliga), `T` = 233,333 ms, valor inicial e final
+**0,001** (`0x274b474`) e o alvo = o peso do pedido. O `FUN_00a46c00`:
+
+- duração = `d·(voltas − 1) + d·(1 − porção inicial)`, dividida pela
+  velocidade (em módulo); voltas −1 = sem fim;
+- se `duração + 1e-6 < entrada + saída`, as duas encolhem na proporção:
+  `× 0,9999 · duração / (entrada + saída)`; menos de 1 ms vira 0;
+- `Init(0,001, peso, 0,001, entrada, saída, duração, ...)`, tipo 0.
+
+Ou seja, o peso **sobe em reta** de 0,001 ao peso durante a entrada desde
+o começo do pedido, fica, e **desce em reta** durante a saída, que termina
+no fim do pedido. A única troca explícita é a das rotas: com `tARType` 5 o
+pedido de rota anterior (vtable `0x32c(5)`) ainda ativo e com blend de
+entrada sai pelo `FUN_00a47bf0` (`FadeOutChoreoRequestWeight`, tipo 2, `T`)
+a partir do deslocamento, se ele acabaria mais de `T` depois.
+
+### 13.3 O pedido velho saindo enquanto o novo entra: o fim da ação
+
+- `cChoreoRequest::AnimUpdate` (BV `0xd93bfc`): com `BlendOutDurationTicks`
+  > 0 e finito, quando `agora − início ≥ BlendOutStartTicks`, liga
+  `+0xAD` (`HasFadeOutStartTicksPassed`, `0xd93a00`), estado 2 e guarda
+  `+0xB0` = início + `BlendOutStartTicks` (`ActualFadeOutStart`,
+  `0xd93a08`). **Sem blend de saída isso nunca acontece.**
+- `cAnimatable::OnPreSimulatorTick` (BV `0x6980d8`; base `0x94765c`,
+  igual), a cada tick antes das árvores, para cada `cAnimRequest` (do último
+  ao primeiro; vtables do `nTSSG::cAnimRequest` pela ordem do baserom:
+  `0x40` `SetHurrySpeed`, `0x48` `SetEndActionEventTicks`, `0x54`
+  `SetActualEndActionTicks`, `0x88` `Type`, `0x90` `ChoreoRequest`, `0xac`
+  `IsBlockingPrimitive`, `0xb4` `HurrySpeed`, `0xbc` `EndActionEventTicks`,
+  `0xc8` `ActualEndActionTicks`): se o pedido de coreografia não expirou,
+  o fim da ação ainda é NENHUM (`0x7FFFFF00`), não há chave "action end" no
+  ANIM (`EndActionEventTicks` = −1: nenhum ANIM do jogo base tem uma, `s2pkg
+  anim-events` só acha os tipos 1005, 1014 e 8) e o fade de saída começou,
+  **o fim da ação = `ActualFadeOutStart`**; num pedido bloqueante o
+  `cAnimatable` guarda `+0x13C` = `EndTicks(false)` (o fim do pedido),
+  `+0x140` = o começo do fade de saída e `+0x144` = 0,5 (sem locomoção;
+  os três "da primitiva bloqueante anterior", `0x68b06c`–`0x68b07c`). Se
+  expirou com o fim da ação ainda NENHUM (sem blend de saída, ou cortado):
+  o fim da ação = `EndTicks` e os mesmos três valores (`+0x140` = o fim);
+  o pedido sai da lista, menos o bloqueante cujo fim da ação foi posto
+  neste tick (sai no seguinte).
+- `try_animate_sim` (BV `0x69d634`; base: o fim em `0x9538b8`, `subis
+  0x7fff`/`cmplwi 0xff00`) devolve 2 enquanto `ActualEndActionTicks` é
+  NENHUM e **1 quando ele foi posto**. Então **o Animate Sim acaba quando o
+  pedido começa a sair** — `T` antes do fim (menos num pedido curto), ou no
+  fim sem blend de saída — e o pedido segue tocando e saindo, com as chaves
+  dele (as do ANIM, 9998 e 9999 no fim), enquanto a árvore segue. O
+  próximo Animate Sim entra pelo blend de entrada **enquanto** o velho sai:
+  é essa a sobreposição, e não um pedido segurado no fim.
+- A chave 9997 (`cActiveAnimEvent::AnimUpdateDefault`, `0xd38ffc`) só é
+  posta quando `HasFadeOutStartTicksPassed`: **um pedido sem blend de saída
+  não recebe 9997** (a VM mandava no fim, inferido).
+- **Sincronia** (byte 8 do Animate Sim): 0x02 começa o pedido em
+  `EndTicks` da primitiva anterior e 0x08 em `EndActionTicks`, se a
+  diferença para agora é de no máximo **140 ms** (base: o dado `0x1581bec`
+  = 140; no BV o `DAT_02c0df64`, sem escrita achada); senão agora. Depois
+  de criar o pedido os dois voltam a NENHUM (`0x69e650`). No jogo base,
+  0x02 em ~400 e 0x08 em ~370 dos 4.010 Animate Sim (`s2pkg prim-usage 6A`):
+  as cadeias "sem blend de saída" → "sem blend de entrada, sincronizado"
+  (`C0` com 0x02, 202 usos) tocam emendadas, sem mistura.
+- Interrompido (o objeto `0x228`), o pedido sai com `T` (vtable `0x3b4`) e a
+  primitiva dá falso.
+
+### 13.4 A pressa: o dado de objeto 85 (`OnPreSimulatorTick`)
+
+O dado lido (`cITSObject::GetObjectData(85)`, vtable `0x34`) é o de
+**objeto** 85, "Hurry Speed" no STR# `0x8D` (antes dado aqui como de
+pessoa). Fator: `p/100 = f`; `1 + f` se `f > 0`, `1/(1 − f)` se `f < 0`;
+**`p = 0` dá fator 0, que não muda nada** (um pedido apressado segue
+apressado até acabar). O fator é 0 também com o bit 0 do `+0x108` do
+`cObject` (vtable `0x1fc`; base `0x230`), não identificado. Para cada
+pedido não expirado com `HurrySpeed` > 0 e diferente do fator: a
+velocidade vira `fator · velocidade / HurrySpeed` (`FUN_00a4757c`: o que
+tocou fica, o resto refaz a função de peso com a duração nova e as mesmas
+entrada e saída) — a locomoção (tipo 7) escala os valores `0x160`/`0x164`
+e o inteiro `0x174` do seguidor de rota (interface `0x6A6FD04D`, não
+identificados) — e o `HurrySpeed` vira o fator. Todo pedido começa com
+`HurrySpeed` 1, ou **0 quando "não apressável"** (Animate Sim byte 8 0x20:
+o `try_animate_sim` chama `0x40(0)`). Quem escreve o 85 no jogo base:
+"Function - Pre Route" (149), "Setup Kid" (200), "CT - Setup" (o
+parâmetro), "Hurry - End" e "Interaction - Cancel" (0).
