@@ -708,8 +708,12 @@ alvo da posição = centro + r ;  frente = r (FUN_000ea3a0 com (0, 0, 1) para ci
 
 (`FUN_000ea0dc(a, b, c)` monta `[cb·cc, sa·sb·cc − ca·sc, ca·sb·cc + sa·sc;
 cb·sc, sa·sb·sc + ca·cc, ca·sb·sc − sa·cc; −sb, sa·cb, ca·cb]`, ou seja
-`Rz(c)·Ry(b)·Rx(a)` para um vetor coluna; se o `operator*` do vetor pela
-matriz a aplica como linha, é a inversa: o sentido do giro fica inferido.) Lido ao pé da letra: `vel.x` (a/d) gira em torno de Z e
+`Rz(c)·Ry(b)·Rx(a)` guardada linha a linha. **As convenções da GZ, conferidas
+na rodada n39:** `nGZNumerics::operator*(cVector<3,float>, cSqMatrix<3,float>)`
+(BV `0x14cf93c` → `FUN_014cf5f0`) dá `r[i] = v · linha i`, ou seja `M·v` com a
+matriz guardada por linhas (vetor coluna); `operator*(cVector, cQuaternion)`
+(`0x1522800` → `FUN_000e9510`) gira por `R(q)·v` padrão, `q = (x, y, z, w)`, o
+mesmo do `simd_act`. Então a órbita gira mesmo por `Rz(k·vx)·Rx(k·vz)`.) Lido ao pé da letra: `vel.x` (a/d) gira em torno de Z e
 `vel.z` (q/e) em torno de X; `vel.y` (w/s) não entra; e o alvo fica do outro
 lado do centro (`centro + M·(centro − posição)`, não `centro + M·(posição −
 centro)`), olhando para longe dele. Com a posição suavizada (7 passos) isso
@@ -755,8 +759,7 @@ o raio da vista (`floorUnderRay`; inferido: o jogo também pára nos objetos).
 ~20 tiles (com o deslizar depois de soltar, o alvo ficava `v·5` à frente);
 `.` 0,5 s gira 77°. **Inferido / não feito:** as setas do mapa de dispositivo
 (o acelerador as consome); a taxa de quadros (a borda e o zoom segurado andam
-por quadro, como no jogo, e o app desenha a 60 Hz); o sentido da órbita (a
-convenção do `operator*` vetor × matriz).
+por quadro, como no jogo, e o app desenha a 60 Hz).
 
 
 ## 2. Menu de pie (`cTSWinPieMenu`)

@@ -48,8 +48,8 @@
 // centre by the velocity in degrees per update, x (a / d) about Z and z (q / e)
 // about X (FUN_000ea0dc(k vz, 0, k vx) = Rz Ry Rx, k = pi / 180), and aims at the
 // far side as read: target = centre + M (centre - position), facing along
-// M (centre - position). Inferred: the matrix applied to a column vector (the
-// orbit's sense), the scene pick as the floor under the ray.
+// M (centre - position) (cVector x cSqMatrix is M v, BV 0x14cf93c). Inferred:
+// the scene pick as the floor under the ray.
 
 #include "formats/camera_config.hpp"
 #include "render/camera.hpp"

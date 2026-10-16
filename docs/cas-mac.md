@@ -1480,3 +1480,15 @@ sai sempre sem descrição, que é o que o opensims2 já grava
 - Segue inferido: a direção do zoom (convenção do quaternion), as normais
   do rosto refeito; não feitos: máscaras/quantidades de camada (sem uso nos
   dados), os overlays que o jogo põe sozinho (envelhecer, chupões).
+
+**Rodada n39 (câmera, resto), as convenções da GZ para a direção do zoom.**
+Conferidas no binário: `operator*(cVector<3,float>, cSqMatrix<3,float>)` (BV
+`0x14cf93c`) é `M·v` com a matriz guardada por linhas; `operator*(cVector,
+cQuaternion)` (`0x1522800` → `FUN_000e9510`) é a rotação padrão `R(q)·v` com
+`q = (x, y, z, w)` (a mesma do `simd_act` do app); `FUN_000ea0dc(a, b, c)` monta
+`Rz(c)·Ry(b)·Rx(a)` por linhas. O quaternion do localizador já está certo (a
+frente `R(q)·(0,1,0)` olha o Sim). Falta só a ordem dos produtos dentro da conta
+do olho (BV `0x7aa284`, que o Ghidra não tem como função: a leitura da n21 foi
+`Q·Rx(−elevação)·Rz(heading)`), de que depende se os giros do zoom são nos
+eixos da câmera (a leitura ao pé da letra, que leva a câmera das roupas para
+cima da cabeça) ou nos do mundo (o app); segue inferido.
