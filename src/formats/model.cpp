@@ -1,5 +1,6 @@
 #include "model.hpp"
 #include "formats/log_once.hpp"
+#include "formats/object_shadow.hpp"
 
 #include "graphics_options.hpp"
 
@@ -603,6 +604,15 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
             const auto gmdcBytes = index.read(*gmdcLoc);
             Rcol gmdcRc(gmdcBytes);
             const auto geometry = GeometryData::parse(firstBlock(gmdcRc, "cGeometryDataContainer", "GMDC").body);
+            // The shape's bound (cGeometryDataContainer::SetRigidBound): the
+            // GMDC's bounding mesh, object space. One without (skinned
+            // shapes keep a mesh per joint instead): its vertices, as
+            // cBoundingVolumeBuilder would build one (inferred).
+            ObjectModel::Bound bound;
+            bound.shape = shape.resource.fileName;
+            bound.fromBoundingMesh = !geometry.boundingMesh.vertices.empty();
+            for (const auto& v : geometry.boundingMesh.vertices)
+                bound.points.push_back(toObject.apply(v));
 
             for (auto& mesh : buildMeshes(geometry)) {
                 for (auto& p : mesh.positions)
@@ -630,13 +640,18 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                 // Kept whatever the Shadows option: the renderer skips these parts
                 // while the option has no guob, so changing it needs no reload.
                 part.shadowPlane = shadowPlane(mesh.name, part.material);
+                part.guob = guobIndex(mesh.name);
                 if (!mesh.bones.empty())
                     for (const auto& t : geometry.transforms)
                         part.bindPoses.push_back(
                             Xform{{t.rotation[0], t.rotation[1], t.rotation[2], t.rotation[3]}, t.translation});
+                if (!bound.fromBoundingMesh)
+                    bound.points.insert(bound.points.end(), mesh.positions.begin(), mesh.positions.end());
                 part.mesh = std::move(mesh);
                 model.parts.push_back(std::move(part));
             }
+            if (!bound.points.empty())
+                model.bounds.push_back(std::move(bound));
         }
     }
 

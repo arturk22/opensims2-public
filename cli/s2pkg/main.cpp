@@ -3,6 +3,7 @@
 #include "budget.hpp"
 #include "prim_cmds.hpp"
 #include "effects_cmds.hpp"
+#include "shadow_cmds.hpp"
 #include "simlook_cmds.hpp"
 #include "material_cmds.hpp"
 #include "audio_cmds.hpp"
@@ -1041,7 +1042,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), hoodPlayUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage(), tutorialUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), hoodPlayUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage(), tutorialUsage(), shadowUsage());
     return 2;
 }
 
@@ -1069,6 +1070,8 @@ int main(int argc, char** argv) {
         if (int rc = primCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = effectsCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = shadowCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = simLookCommand(cmd, argc, argv); rc >= 0)
             return rc;

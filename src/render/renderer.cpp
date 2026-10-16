@@ -295,6 +295,7 @@ struct Renderer::Part {
     std::array<MTL::Buffer*, kFramesInFlight> slots{};
     size_t source = 0;
     bool shadowPlane = false; // skipped while graphicsOptions().guob is off
+    int guob = -1;            // GUOB subset (ObjectModel::Part::guob): drawn while the instance has it on
     std::vector<Vertex> pending;
     std::array<bool, kFramesInFlight> stale{};
     MTL::Buffer* indices = nullptr;
@@ -812,6 +813,7 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
         p.vertices = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
         p.source = source;
         p.shadowPlane = part.shadowPlane;
+        p.guob = part.guob;
         if (dynamic) {
             p.slots[0] = p.vertices;
             for (size_t i = 1; i < p.slots.size(); ++i)
@@ -980,6 +982,15 @@ void Renderer::setInstanceAlpha(int instance, float alpha) {
         instances_[size_t(instance)].alpha = std::clamp(alpha, 0.0f, 1.0f);
 }
 
+void Renderer::setInstanceGuobs(int instance, uint8_t on) {
+    if (instance >= 0 && size_t(instance) < instances_.size())
+        instances_[size_t(instance)].guobs = on;
+}
+
+uint8_t Renderer::instanceGuobs(int instance) const {
+    return instance >= 0 && size_t(instance) < instances_.size() ? instances_[size_t(instance)].guobs : 0x3F;
+}
+
 std::optional<std::pair<simd_float3, simd_float3>> Renderer::instanceBounds(int instance) const {
     if (instance < 0 || size_t(instance) >= instances_.size())
         return std::nullopt;
@@ -1133,6 +1144,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     for (const auto& inst : instances_)
         for (const auto& part : models_[size_t(inst.model)]->parts) {
             if (part.shadowPlane && !graphicsOptions().guob)
+                continue;
+            if (part.guob >= 0 && !((inst.guobs >> part.guob) & 1))
                 continue;
             const Material& m = part.material;
             const bool blended = m.blend != StandardMaterial::Blend::None || inst.alpha < 1;

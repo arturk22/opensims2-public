@@ -130,6 +130,11 @@ public:
     // `alpha`, alpha blended and not written to the depth buffer while it is
     // under 1.
     void setInstanceAlpha(int instance, float alpha);
+    // Which of the model's GUOB parts (ObjectModel::Part::guob) the instance
+    // draws, bit i for GuobIndex i (nTSSG::cShadow::EnableGUOB): all of them
+    // until set (formats/object_shadow.hpp says which).
+    void setInstanceGuobs(int instance, uint8_t on);
+    uint8_t instanceGuobs(int instance) const;
     // The instance's bounding box in the world (the model's parts' boxes
     // carried by its transform: what an object's world bound is), if it has a model.
     std::optional<std::pair<simd_float3, simd_float3>> instanceBounds(int instance) const;
@@ -311,6 +316,7 @@ private:
         simd_float4x4 transform;
         int lightSet = 0;
         float alpha = 1;
+        uint8_t guobs = 0x3F; // GUOB parts drawn (setInstanceGuobs)
     };
     std::vector<Instance> instances_;
     size_t testInstances_ = 0; // the first instances_ are the test scene

@@ -42,6 +42,9 @@ struct ObjectModel {
         bool underlayFlat = false; // the underlay's average colour instead (a hairdo's scalp shows skin)
         std::vector<std::string> overlays;
         bool shadowPlane = false; // a ground/wall shadow plane: drawn only while graphicsOptions().guob
+        // The GUOB subset the part is (formats/object_shadow.hpp GuobIndex),
+        // -1 if none: the renderer draws it only while its instance has it on.
+        int guob = -1;
     };
 
     // Alpha mask laid over the model's XY plane: value (x, y) sits at
@@ -61,6 +64,14 @@ struct ObjectModel {
 
     std::string name; // CRES resource name
     std::vector<Part> parts;
+    // Each shape's bound, object space (rest pose): what the scene graph
+    // grows an object's box with (GrowGlobalBBox, docs/lighting-mac.md 12.2).
+    struct Bound {
+        std::string shape;              // SHPE resource name
+        bool fromBoundingMesh = false;  // the GMDC's bounding mesh, else its vertices
+        std::vector<std::array<float, 3>> points;
+    };
+    std::vector<Bound> bounds;
     Skeleton skeleton; // the CRES's transform nodes; skinned parts use its joint ids
     std::vector<AlphaMask> masks;
     std::map<std::string, MaterialDefinition> materials; // by material name

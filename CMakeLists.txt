@@ -68,6 +68,7 @@ add_library(os2_formats
   src/formats/lot_roof_game.cpp
   src/formats/lot_water.cpp
   src/formats/model.cpp
+  src/formats/object_shadow.cpp
   src/formats/movie.cpp
   src/formats/neighborhood.cpp
   src/formats/wants.cpp
@@ -178,6 +179,7 @@ target_compile_options(os2_fx PRIVATE -Wall -Wextra)
 target_link_libraries(os2_fx PUBLIC os2_formats)
 
 add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/movie_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/hood_play_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/wants_cmds.cpp cli/s2pkg/route_cmds.cpp cli/s2pkg/buy_cmds.cpp cli/s2pkg/build_cmds.cpp cli/s2pkg/effects_cmds.cpp cli/s2pkg/simlook_cmds.cpp cli/s2pkg/cas_cmds.cpp cli/s2pkg/tutorial_cmds.cpp src/app/game_save.cpp)
+target_sources(s2pkg PRIVATE cli/s2pkg/shadow_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio os2_fx)
 

@@ -19,6 +19,7 @@
 #include "app/wall_view.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
+#include "formats/object_shadow.hpp"
 #include "formats/sim.hpp"
 #include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
@@ -2240,7 +2241,76 @@ static void testLotUiState() {
     }
 }
 
+// nTSSG::cShadow's GUOB planes (docs/lighting-mac.md 12): the subsets, the
+// tile rectangle round an object, the sides by its direction, what is on.
+static void testObjectShadow() {
+    check(guobIndex("groundshadow") == kGuobGround && guobIndex("WallShadow") == kGuobWall &&
+              guobIndex("northwallshadow") == kGuobNorth && guobIndex("southwallshadow") == kGuobSouth &&
+              guobIndex("eastwallshadow") == kGuobEast && guobIndex("westwallshadow") == kGuobWest &&
+              guobIndex("shadow") == -1,
+          "GUOB subset names in kGUOBSubsetNames' order");
+    ObjectModel m;
+    auto part = [&](const char* subset, const char* material, std::array<float, 3> a, std::array<float, 3> b) {
+        ObjectModel::Part p;
+        p.mesh.name = subset;
+        p.material = material;
+        p.mesh.positions = {a, b};
+        m.parts.push_back(p);
+    };
+    part("body", "wood", {-0.4f, -0.45f, 0}, {0.4f, 0.45f, 0.9f});
+    part("groundshadow", "dresserShadow", {-0.5f, -0.5f, 0.01f}, {0.5f, 0.5f, 0.01f});
+    part("northwallshadow", "dresserWallShadow", {-0.5f, 0.49f, 0}, {0.5f, 0.49f, 1});
+    part("southwallshadow", "GUOBOff", {-0.5f, -0.49f, 0}, {0.5f, -0.49f, 1});
+    const GuobModelInfo info = guobModelInfo(m);
+    check(info.present == ((1 << kGuobGround) | (1 << kGuobNorth)), "GUOBs present: a GUOBOff saved is none");
+    check(info.hasBounds && info.lo[0] == -0.5f && info.hi[1] == 0.5f && info.hi[2] == 1.0f,
+          "the model's box takes every part, the shadow planes too");
+
+    // Placed in tile (3, 5) facing direction 0 (turned 90 degrees).
+    Xform at{quatFromEulerXYZ(0, 0, 1.5707963f), {3.5f, 5.5f, 0}};
+    std::array<float, 3> lo, hi;
+    guobWorldBox(at, info.lo, info.hi, lo, hi);
+    const GuobTileRect r = guobTileRect(lo, hi);
+    check(r.x0 == 3 && r.x1 == 4 && r.y0 == 5 && r.y1 == 6, "a one-tile object's tile rectangle");
+    check(guobTileRect({2.9f, 5.0f, 0}, {4.1f, 6.0f, 0}).x0 == 2 && guobTileRect({2.9f, 5.0f, 0}, {4.1f, 6.0f, 0}).x1 == 5 &&
+              guobTileRect({2.9f, 5.0f, 0}, {4.1f, 6.0f, 0}).y0 == 5 && guobTileRect({2.9f, 5.0f, 0}, {4.1f, 6.0f, 0}).y1 == 6,
+          "the rectangle is floor / ceil of the box, exact edges kept");
+
+    // Walls on the low-y edge (3,5)-(4,5) and the high-x edge (4,5)-(4,6).
+    GuobWorld w;
+    w.wallMode = 2;
+    w.wallExists = [](int x0, int y0, int x1, int y1, int level) {
+        auto edge = [&](int ax, int ay, int bx, int by) {
+            return (x0 == ax && y0 == ay && x1 == bx && y1 == by) || (x0 == bx && y0 == by && x1 == ax && y1 == ay);
+        };
+        return level == 0 && (edge(3, 5, 4, 5) || edge(4, 5, 4, 6));
+    };
+    auto sides = [&](int dir) { return guobWallSides(r, dir, 0, true, w); };
+    constexpr uint8_t N = 1 << kGuobNorth, S = 1 << kGuobSouth, E = 1 << kGuobEast, W = 1 << kGuobWest;
+    check(sides(0) == (S | W), "direction 0: north is the low-x side, west the low-y side");
+    check(sides(2) == (S | E), "direction 2 turns the sides");
+    check(sides(4) == (N | E), "direction 4 turns the sides");
+    check(sides(6) == (N | W), "direction 6 turns the sides");
+    check(guobWallSides(r, 0, 1, true, w) == 0, "the walls of another level do not count");
+    check(guobWallSides(r, 0, 0, false, w) == 0, "a level not shown has no wall planes");
+    GuobWorld roof = w;
+    roof.wallMode = 3;
+    check(guobWallSides(r, 0, 0, true, roof) == 0, "the base game's wall planes need wall mode 2, not 3");
+
+    const uint8_t all = kAllGuobs;
+    check(guobsOn(all, true, S | W, w) == ((1 << kGuobGround) | (1 << kGuobWall) | S | W), "walls up: ground, wall and the sides");
+    GuobWorld cut = w;
+    cut.wallMode = 1;
+    check(guobsOn(all, true, 0, cut) == ((1 << kGuobGround) | (1 << kGuobWall)), "cutaway: the ground and wallshadow planes");
+    GuobWorld down = w;
+    down.wallMode = 0;
+    check(guobsOn(all, true, 0, down) == (1 << kGuobGround), "walls down: the ground plane only");
+    check(guobsOn(all, false, S, w) == 0, "a hidden shadow has none on");
+    check(guobsOn(info.present, true, S | N, w) == ((1 << kGuobGround) | N), "only the planes the model has");
+}
+
 int main() {
+    testObjectShadow();
     testLogOnce();
     testLotUiState();
     testDxt1();
