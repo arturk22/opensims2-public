@@ -328,7 +328,9 @@ superfície pessoa, sem o "longe vazio → perto" e sem o "." como vazio.
 Lido e feito na rodada n02 (`docs/anim-mac.md` §4–5): o solucionador de
 duas juntas do `cIKStrategy7DOF` (dobradiça em X, giro do braço pelo polo,
 65 %/75 % da torção no bíceps e no pulso) em `applyIk`; a mistura dos alvos
-pelo contato conferida.
+pelo contato conferida. Rodada n44 (`docs/anim-mac.md` §14): a partilha do
+braço pela Euler XYZ, a última solução com os contatos em 0 e o alvo do
+outlet do nó.
 
 ## H. Levantar
 
