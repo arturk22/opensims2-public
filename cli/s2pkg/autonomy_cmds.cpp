@@ -889,6 +889,15 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
             }
         }
         if (verbose)
+            for (const auto& [key, e] : rooms)
+                std::printf("  key %6d (%s): walls %g / %g crap %g -> %.3f; floors %g / %g crap %g -> %.3f; objects %g (%g) "
+                            "crap %g -> %.3f; base %.3f\n",
+                            key, key >= vm::kEnvironmentIndoorBase ? "room" : "cell", double(e.wallNice),
+                            double(e.wallCount), double(e.wallCrap), double(e.wallScore), double(e.floorNice),
+                            double(e.floorArea), double(e.floorCrap), double(e.floorScore), double(e.objectNice),
+                            double(e.objectCount), double(e.objectCrap), double(e.objectScore),
+                            double(vm::baseEnvironmentScore(rooms, key)));
+        if (verbose)
             for (const auto& [id, o] : machine.objects())
                 if (!o.person && o.definition && o.position.inWorld())
                     std::printf("  object %d %-40s price %5d niceness %4d crap %3d room %3d lead %d type %d\n", id,
