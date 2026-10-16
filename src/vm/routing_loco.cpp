@@ -1161,17 +1161,6 @@ ObjectId footprintBlocker(VM& vm, const Object& me, const Object::Route& r, floa
 
 namespace routing_internal {
 
-// What the walker would stand in at `to` (TSObjectCanSetPosition with error
-// 0x0C "intersects object", whose object LocoPlaceFromSceneGraph makes the
-// blocker), or 0: another Sim, or an object whose footprint it steps into.
-// Between two Sims (TestPlacementWithRespectToObject, BV 0x8ac158) a body is
-// a point: the step is refused when the two centres come within 0.283
-// (0x274b968), whatever their ages; the Sim walked to has no exception.
-// Person data 68 ("Ghost Flags") with bit 0x02 skips the test. The objects:
-// the person's footprint box against their routing footprints
-// (footprintBlocker). Inferred: a walker already standing in the other (or
-// in an object's footprint) may walk on (LocoPlace puts it where it is stuck
-// when its own place does not pass either).
 bool peopleMayOverlap(VM& vm, const Object& a, const Object& b) {
     // Either one may intersect people (object data 8 "flags" 0x04 | 0x10:
     // zero extent, allow person intersection), or either one's "allow
@@ -1183,34 +1172,51 @@ bool peopleMayOverlap(VM& vm, const Object& a, const Object& b) {
            intersectionAllowed(vm, b, a);
 }
 
+// What the walker would stand in at `to` (TSObjectCanSetPosition with error
+// 0x0C "intersects object", whose object LocoPlaceFromSceneGraph makes the
+// blocker), or 0: another Sim, or an object whose footprint it steps into.
+// Between two Sims (TestPlacementWithRespectToObject, BV 0x8ac158) a body is
+// a point: the step is refused when the two centres come within 0.283
+// (0x274b968), whatever their ages; the Sim walked to has no exception.
+// Person data 68 ("Ghost Flags") with bit 0x02 skips the test. The objects:
+// the person's footprint box against their routing footprints
+// (footprintBlocker). LocoPlaceFromSceneGraph (BV 0x6b2ee0, round n30): when
+// the new place fails, the walker's current place is tested the same way,
+// and if it fails too, for whatever reason (another Sim within 0.283, a
+// footprint), the step goes; until round n30 the VM let a walker on only
+// past the Sim (or out of the footprints) it already stood in, one by one.
+// (The walls are left to the planner here.)
 ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
     if (me.person && me.person->data.size() > 68 && (me.person->data[68] & 0x02))
         return 0;
-    for (const ObjectId id : vm.people()) { // by ID, as objects() is
-        const Object* po = vm.object(id);
-        if (!po)
-            continue;
-        const Object& o = *po;
-        if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
-            o.position.level != level)
-            continue;
-        const float reach = kPeopleApart;
-        const float now = std::hypot(o.position.x - me.position.x, o.position.y - me.position.y);
-        const float then = std::hypot(o.position.x - x, o.position.y - y);
-        if (!(then < reach && now >= reach))
-            continue;
-        if (peopleMayOverlap(vm, me, o))
-            continue;
-        return id;
-    }
+    auto personAt = [&](float px, float py, int lv) -> ObjectId {
+        for (const ObjectId id : vm.people()) { // by ID, as objects() is
+            const Object* po = vm.object(id);
+            if (!po)
+                continue;
+            const Object& o = *po;
+            if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
+                o.position.level != lv)
+                continue;
+            if (std::hypot(o.position.x - px, o.position.y - py) < kPeopleApart && !peopleMayOverlap(vm, me, o))
+                return id;
+        }
+        return 0;
+    };
     static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
     const TilePos to{int(std::floor(x)), int(std::floor(y)), level};
     const TilePos from = VM::tileOf(me);
-    if (me.position.inWorld() && (!wholeTiles || !(to == from)))
-        if (const ObjectId id = footprintBlocker(vm, me, r, x, y, level);
-            id && !footprintBlocker(vm, me, r, me.position.x, me.position.y, me.position.level))
-            return id;
-    return 0;
+    const bool footprints = me.position.inWorld() && (!wholeTiles || !(to == from));
+    ObjectId id = personAt(x, y, level);
+    if (!id && footprints)
+        id = footprintBlocker(vm, me, r, x, y, level);
+    if (!id || !me.position.inWorld())
+        return id;
+    // The current place fails too: the step goes.
+    if (personAt(me.position.x, me.position.y, me.position.level) ||
+        (footprints && footprintBlocker(vm, me, r, me.position.x, me.position.y, me.position.level)))
+        return 0;
+    return id;
 }
 
 // Puts the walker where this tick's locomotion step puts it.
