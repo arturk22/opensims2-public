@@ -227,6 +227,14 @@ bool dialogPausesGame(const VM& vm);
 // how many dialogs were answered.
 int autoTimeOutDialogs(VM& vm, double now);
 
+// The language's text formatter as ParseUIString uses it (cRZLanguageUtility,
+// docs/primitives-mac.md "Dialog", round n45), for a STR# language code:
+// MakeNumberString (digits in threes: "1.200" in Brazilian Portuguese,
+// "1,200" in US English) and MakeTimeString with minutes and no seconds
+// ("17:00"; "5:00 pm" in US English).
+std::string languageNumber(int64_t value, uint8_t language);
+std::string languageTime(int hour, int minute, uint8_t language);
+
 // Expands the `$` tokens of a dialog string (`$Me`, `$Object`, `$Local:n`,
 // `$NameLocal:n`, `$TimeLocal:n`, ...; see dialog.cpp) for the instruction
 // running in `c`.

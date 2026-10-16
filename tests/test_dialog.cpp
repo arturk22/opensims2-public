@@ -88,7 +88,8 @@ static void testYesNoCancel() {
         return;
     const Dialog& d = it->second;
     check(d.title == "Title", "dialog: title");
-    check(d.message.find("works 9:00 to 17:00 for $45, $Unknown:3 stays") != std::string::npos, "dialog: tokens");
+    check(d.message.find("works 9:00 am to 5:00 pm for $45, $Unknown:3 stays") != std::string::npos,
+          "dialog: tokens ($TimeLocal in US English, the language utility)");
     check(d.buttons.size() == 3 && d.buttons[0] == "Take" && d.buttons[2] == "Stop", "dialog: buttons");
     vm.run(t);
     check(t.status == Thread::Status::Running, "dialog: still waiting");
@@ -610,16 +611,34 @@ static void testTokens() {
         }
     };
     has("s; Bella Bella Bella Goth Goth;", "tokens: $Me as a prefix, the neighbor tokens");
-    has("$1200 $1000012;", "tokens: $Money a x b, $Cash a + 10000 x b");
+    // MakeNumberString in US English: the digits in threes with ",".
+    has("$1,200 $1,000,012;", "tokens: $Money a x b, $Cash a + 10000 x b");
     // Without Live.package's STR# 0x99 here: the Portuguese names it has.
     has("Segunda-feira, Quarta-feira, Domingo;", "tokens: $DayFlags");
     has("; Quarta-feira;", "tokens: $DayLocal (local + 1 of STR# 0x99)");
-    has("$20500;", "tokens: $FamilyAssets of the family in the local");
+    has("$20,500;", "tokens: $FamilyAssets of the family in the local");
     // $NeighborLocal:9 stays, and the later $Neighbor pass takes its first
     // letters, as the game's prefix search does.
     has("BellaLocal:9 stays; $TimeLocal:3 stays;", "tokens: arguments that do not hold stay");
     has("Bella Goth", "tokens: without case");
     check(it->second.iconNeighbor == 7, "tokens: $Neighbor gives the icon");
+}
+
+// The language utility's MakeNumberString (BV 0x138448) and MakeTimeString
+// (BV 0x137700) as ParseUIString asks for them.
+static void testLanguageFormat() {
+    check(languageNumber(0, lang::BrazilianPortuguese) == "0", "format: 0");
+    check(languageNumber(999, lang::BrazilianPortuguese) == "999", "format: three digits, no separator");
+    check(languageNumber(1200, lang::BrazilianPortuguese) == "1.200", "format: '.' in Brazilian Portuguese");
+    check(languageNumber(-1234567, lang::BrazilianPortuguese) == "-1.234.567", "format: a negative one");
+    check(languageNumber(20500, lang::EnglishUS) == "20,500", "format: ',' in US English");
+    check(languageNumber(12345, 3) == "12\xC2\xA0" "345", "format: French's no-break space");
+    check(languageTime(17, 0, lang::BrazilianPortuguese) == "17:00", "format: 17:00 in Portuguese");
+    check(languageTime(7, 0, lang::BrazilianPortuguese) == "7:00", "format: 7:00, no leading zero");
+    check(languageTime(17, 0, lang::EnglishUS) == "5:00 pm", "format: 5:00 pm in US English");
+    check(languageTime(0, 0, lang::EnglishUS) == "12:00 am", "format: midnight is 12 am");
+    check(languageTime(12, 0, lang::EnglishUS) == "12:00 pm", "format: noon is 12 pm");
+    check(languageTime(7, 0, 4) == "07:00", "format: German's two-digit hour");
 }
 
 // cTSObjectDialog::SetParams (BV 0x1d2b20): with byte 8 0x0E (the career's
@@ -659,6 +678,7 @@ int main() {
     testYesNoCancel();
     testTokens();
     testChanceCardTemps();
+    testLanguageFormat();
     testNotification();
     testSpecialDialogs();
     testLightAndOutfit();

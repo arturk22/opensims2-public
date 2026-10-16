@@ -123,14 +123,6 @@ std::string neighborName(VM& vm, int16_t id) {
     return {};
 }
 
-// "17:00": the hour of $TimeLocal with minute 0, as ParseUIString asks the
-// language's time formatter for it (vtable 0x24(hour, 0, -1)); the
-// 24-hour form of Brazilian Portuguese is inferred.
-std::string clockTime(int hour, int minute) {
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "%d:%02d", ((hour % 24) + 24) % 24, std::clamp(minute, 0, 59));
-    return buf;
-}
 
 // Live.package's STR# 0x99, one-based: 1 Sunday ... 7 Saturday.
 std::string dayName(int oneBased) {
@@ -184,6 +176,64 @@ std::string stringAt(const StringTable* t, int oneBased) {
 }
 
 } // namespace
+
+// The language's formatter (cRZLanguageUtility, the one RZ::FS()'s
+// GetLanguageUtility(0) gives, BV 0x12b5a8; docs/primitives-mac.md "Dialog",
+// round n45). GetThousandSeparator (BV 0x136dd4) by the STR# language code.
+static std::string thousandSeparator(uint8_t language) {
+    switch (language) {
+    case 4: case 5: case 6: case 7: case 8: case 0x0E: case 0x23: return ".";
+    case 3: case 9: case 10: case 0x0B: case 0x0D: case 0x10: case 0x1A: return "\xC2\xA0"; // no-break space (+0x18)
+    default: return ","; // 1, 2, 0x0C, 0x0F, 0x11-0x14, 0x1C and the others
+    }
+}
+
+// MakeNumberString (BV 0x138448, base 1.0 the same): "%lld" of the
+// magnitude, its digits in threes from the right joined by the thousand
+// separator, "-" in front of a negative one.
+std::string languageNumber(int64_t value, uint8_t language) {
+    const bool negative = value < 0;
+    const std::string digits = std::to_string(negative ? uint64_t(0) - uint64_t(value) : uint64_t(value));
+    const std::string sep = thousandSeparator(language);
+    std::string out;
+    size_t first = digits.size() % 3;
+    if (first == 0)
+        first = 3;
+    out = digits.substr(0, std::min(first, digits.size()));
+    for (size_t i = first; i < digits.size(); i += 3)
+        out += sep + digits.substr(i, 3);
+    return negative ? "-" + out : out;
+}
+
+// MakeTimeString(hour, minute, -1) (BV 0x137700): US English (1) and 0x2A
+// in 12 hours with am / pm (0 is 12), else the language's 24-hour form;
+// Brazilian Portuguese (0x23) is "%u:%.2u". (The BV's force12HrTime
+// property, not in base 1.0, is not read.)
+std::string languageTime(int hour, int minute, uint8_t language) {
+    hour = ((hour % 24) + 24) % 24;
+    minute = ((minute % 60) + 60) % 60;
+    char buf[24];
+    switch (language) {
+    case 1:
+    case 0x2A:
+        std::snprintf(buf, sizeof buf, "%d:%02d %s", hour == 0 ? 12 : hour > 12 ? hour - 12 : hour, minute,
+                      hour < 12 ? "am" : "pm");
+        break;
+    case 2: case 3: case 4: case 5: case 0x10: case 0x1D:
+        std::snprintf(buf, sizeof buf, "%02d:%02d", hour, minute);
+        break;
+    case 8: case 0x24: case 0x27: case 0x28:
+        std::snprintf(buf, sizeof buf, "%02d.%02d", hour, minute);
+        break;
+    case 0x0B: case 0x1C: case 0x1A:
+        std::snprintf(buf, sizeof buf, "%d.%02d", hour, minute);
+        break;
+    default:
+        std::snprintf(buf, sizeof buf, "%d:%02d", hour, minute);
+        break;
+    }
+    return buf;
+}
 
 DialogClassInfo dialogClass(int type) {
     // cTSUIDialogManager::GetObjectDialog (BV 0x21c5a8) switches on the type
@@ -414,7 +464,8 @@ std::string expandDialogTokens(Context& c, const std::string& text, int depth) {
         auto f = vm.families.find(family);
         return f == vm.families.end() ? nullptr : &f->second;
     };
-    auto number = [](int64_t v) { return std::to_string(v); }; // the language's formatter, %d without it (inferred: no grouping)
+    // The language's MakeNumberString (ParseUIString: utility vtable 0x48).
+    auto number = [](int64_t v) { return languageNumber(v, lang::preferred()); };
     auto table = [&](uint32_t group, int t, int index) -> std::optional<std::string> {
         const StringTable* st = group ? vm.code().strings(group, uint16_t(t)) : nullptr;
         if (!st)
@@ -485,7 +536,7 @@ std::string expandDialogTokens(Context& c, const std::string& text, int depth) {
         {"$timelocal", [&](const TokenMatch& m) -> std::optional<std::string> {
              if (!validLocal(m.a) || local(m.a) < 0 || local(m.a) >= 24)
                  return std::nullopt;
-             return clockTime(local(m.a), 0);
+             return languageTime(local(m.a), 0, lang::preferred()); // utility vtable 0x24(hour, 0, -1)
          }},
         {"$attrib", [&](const TokenMatch& m) -> std::optional<std::string> {
              const Object* s = vm.object(stackId);
