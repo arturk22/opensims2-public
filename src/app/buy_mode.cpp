@@ -44,7 +44,19 @@ constexpr uint32_t kToolHand = 0xCC607031, kToolEyedropper = 0xCC607032, kToolDe
 // original's screenshots: 592, 640, 688 over 500, 548; the script's own
 // margins are the collections window's, inferred, and go unused here).
 constexpr float kGridX = 52, kGridY = 19;
-constexpr int kColumns = 3, kRows = 2;
+constexpr float kCell = 44, kCellStep = 48, kCellInX = 4, kCellInY = 8, kThumb = 40, kCellRadius = 8;
+constexpr int kRows = 2;
+// The original keeps the catalog's left part and stretches its right one
+// (docs/buy-build-mac.md §1.6): the first cell at x 589 over a first row at
+// height-126 in both resolutions, and the strip's own last cap at the right
+// edge — 20 px wide with its right at width-30 — with the cells' block
+// (44 px plates on a 48 px pitch, its 4 last px of slack) filling up to it
+// (13 columns at 1280 wide, 3 at 800).
+constexpr float kGridLeft = 589, kStripRight = 29, kCapW = 20;
+int catalogColumns(float width) {
+    const float capL = width - kStripRight - kCapW; // the cap's left edge
+    return std::max(1, int((capL - (kGridLeft - 1) + kCellInX) / kCellStep));
+}
 // The expanded catalog (window 0x2000, opened by "Expandir" 0x1009 and shut
 // by "Recolher" 0x2009): 4 rows on the same pitch.
 constexpr uint32_t kExpanded = 0x2000, kExpandedPrev = 0x2004, kExpandedNext = 0x2005, kExpand = 0x1009,
@@ -955,7 +967,8 @@ UiScreen BuyMode::screen(int width, int height) {
 
     // Joined to the puck as the live panel is (live_ui.cpp, inferred): the
     // panel's hidden rectangle captioned "4bdeffaa:bl" over the puck's
-    // window 0x4BDEFFAA, the puck at the bottom left.
+    // window 0x4BDEFFAA, the puck at the client's left edge (measured at
+    // both 800x600 and 1280x720, docs/buy-build-mac.md §1.6).
     const UiElement& puck = puck_.roots.front();
     // The catalog keeps the script's place (x 447, over the strip's own end)
     // and the strip its own width there; the end cap closes the bar at the
@@ -977,7 +990,7 @@ UiScreen BuyMode::screen(int width, int height) {
     }
     const UiElement& root = panel_.roots.front();
     const auto pa = puck.area();
-    const float puckX = 8, puckY = float(height) - float(pa[3] - pa[1]);
+    const float puckX = 0, puckY = float(height) - float(pa[3] - pa[1]);
     float x0 = puckX, y0 = puckY - 137;
     if (const UiElement* a = puck.child(0x4BDEFFAA))
         if (const UiElement* b = root.child(0x0000AAAA))
@@ -1047,8 +1060,9 @@ UiScreen BuyMode::screen(int width, int height) {
     // The grid: the current page's cells, the selected one marked, the ones
     // the family cannot afford dimmed (UpdateAffordability, §1.5: frame 0,
     // inferred). The list was taken above, for the catalog's show state.
+    const int columns = catalogColumns(float(width));
     const int rows = expanded_ ? kExpandedRows : kRows;
-    const size_t perPage = size_t(kColumns * rows);
+    const size_t perPage = size_t(columns * rows);
     const size_t pages = std::max<size_t>(1, (list.size() + perPage - 1) / perPage);
     page_ = std::min(page_, pages - 1);
     const int64_t funds = vm::noCharge(vm_) ? INT64_MAX : vm::funds(vm_); // no charge: nothing is too dear
@@ -1058,6 +1072,31 @@ UiScreen BuyMode::screen(int width, int height) {
     if (catalog)
         if (const UiElement* other = catalog->child(expanded_ ? kCollapsed : kExpanded))
             hk.hide.insert(other);
+    // The catalog's right side rides its stretched end: the strip's last cap
+    // lands with its right edge at width-30 with the middle piece filling up
+    // to it, and the next and expand buttons over the cap — their right edge
+    // 5 px in (their glyphs at width-61; measured at 800x600 and 1280x720,
+    // docs/buy-build-mac.md §1.6). The left cap and the prev arrow keep the
+    // script's place.
+    if (UiElement* cat = panel_.roots.front().child(kCatalog))
+        if (UiElement* win = cat->child(expanded_ ? kExpanded : kCollapsed)) {
+            const float base = x0 + 447; // the catalog window's left on the client
+            const float capL = float(width) - kStripRight - kCapW;
+            const uint32_t d = expanded_ ? 0x2000 : 0x1000;
+            if (UiElement* e = win->child(d | 2)) { // middle: up to the cap
+                const auto a = e->area();
+                e->set("area", area(a[0], a[1], int(capL - base), a[3]));
+            }
+            if (UiElement* e = win->child(d | 3)) { // cap: at the end
+                const auto a = e->area();
+                e->set("area", area(int(capL - base), a[1], int(capL + kCapW - base), a[3]));
+            }
+            for (uint32_t k : {d | 5, d | 9}) // next and expand/collapse: over the cap
+                if (UiElement* e = win->child(k)) {
+                    const auto a = e->area();
+                    e->set("area", area(int(capL + 5 - base) - (a[2] - a[0]), a[1], int(capL + 5 - base), a[3]));
+                }
+        }
 
     // The cells' plates, drawn by the game in code (the grid window has no
     // art of its own): a 44 px rounded rect (radius 8) of the fill over a
@@ -1066,7 +1105,6 @@ UiScreen BuyMode::screen(int width, int height) {
     // navy over the fill (sampled from the original's screenshots: the
     // fill (143,153,216), the navy (5,6,113), the rings' outer line
     // (43,50,127), the hover (204,214,255), the selection (0,255,0)).
-    constexpr float kCell = 44, kCellStep = 48, kCellInX = 4, kCellInY = 8, kThumb = 40, kCellRadius = 8;
     auto makePlate = [&](const uint8_t* ring) {
         constexpr int S = 4; // supersampled, for the rounded corners
         RgbaImage img;
@@ -1112,12 +1150,14 @@ UiScreen BuyMode::screen(int width, int height) {
     const RgbaImage* plateHover = makePlate(kRingHover);
     const RgbaImage* plateSelect = makePlate(kRingSelect);
 
-    // The page slider (window 0x1008 of 0x1000): a 141 x 12 track under the
-    // cells — from a pixel left of the first column to the last column's
-    // edge — and a 19 px knob at its head; the original draws it at the
-    // cells' block, not at the script's own rectangle (4 px in and a row
-    // lower; sampled: the track (135,163,152) under a 1 px navy edge, the
-    // knob (174,189,255) over a (157,171,241) inner edge).
+    // The page slider (window 0x1008 of 0x1000): a 12 px tall stadium under
+    // the cells — three px past the first column's left, three over the
+    // block's end — and a knob of the page's share of the block at its head
+    // (the knob 6 px wider than that fill; measured: 304 px of fill for a 26
+    // of 53 list, its own frame 2 px of navy on the ends); the original
+    // draws it at the cells' block, not at the script's own rectangle (4 px
+    // in and a row lower; sampled: the track (135,163,152) under a 1 px navy
+    // edge, the knob (174,189,255) over a (157,171,241) inner edge).
     auto makeSlider = [&](float w, bool knob) {
         constexpr int S = 4;
         RgbaImage img;
@@ -1149,14 +1189,23 @@ UiScreen BuyMode::screen(int width, int height) {
                 if (n)
                     o[0] = uint8_t(r / n), o[1] = uint8_t(g / n), o[2] = uint8_t(b / n), o[3] = uint8_t(255 * n / (S * S));
             }
+        if (knob) // its own frame is two px of navy on the ends (measured)
+            for (int py = 0; py < 12; ++py)
+                for (int px : {0, 1, 2, int(w) - 3, int(w) - 2, int(w) - 1}) {
+                    uint8_t* o = &img.pixels[(size_t(py) * size_t(w) + size_t(px)) * 4];
+                    if (px < 2 || px > int(w) - 3)
+                        o[0] = 5, o[1] = 6, o[2] = 113;
+                    else
+                        o[0] = 157, o[1] = 171, o[2] = 241;
+                }
         frameImages_.push_back(std::make_unique<RgbaImage>(std::move(img)));
         return frameImages_.back().get();
     };
     auto drawGrid = [&](UiScreen& s, float x, float y) {
         for (size_t i = 0; i < perPage && page_ * perPage + i < list.size(); ++i) {
             const CatalogEntry* e = list[page_ * perPage + i];
-            const float cx = x + kGridX + kCellInX + float(i % kColumns) * kCellStep;
-            const float cy = y + kGridY + kCellInY + float(i / kColumns) * kCellStep;
+            const float cx = x + kGridX + kCellInX + float(i % columns) * kCellStep;
+            const float cy = y + kGridY + kCellInY + float(i / columns) * kCellStep;
             UiQuad q;
             q.image = e == selected_ ? plateSelect : e == hovered_ ? plateHover : plateNormal;
             q.x0 = cx, q.y0 = cy, q.x1 = cx + kCell, q.y1 = cy + kCell;
@@ -1172,20 +1221,32 @@ UiScreen BuyMode::screen(int width, int height) {
             cells.push_back({{cx, cy, cx + kCell, cy + kCell}, e});
         }
         const float ty = y + kGridY + kCellInY + float(rows - 1) * kCellStep + kCell + 4;
-        const float sx = x + kGridX + kCellInX - 1;
+        const float trackX = x + kGridX + kCellInX + 2;
+        const float trackW = float(columns) * kCellStep - 3;
+        const float blockW = float(columns) * kCellStep - 4; // the cells' block
+        const float fill = list.empty() ? blockW
+                                        : std::clamp(float(int(blockW * float(perPage) / float(list.size()))), 4.0f, trackW - 6);
+        const float knobW = fill + 6;
         UiQuad track;
-        track.image = makeSlider(141, false);
-        track.x0 = sx, track.y0 = ty, track.x1 = sx + 141, track.y1 = ty + 12;
+        track.image = makeSlider(trackW, false);
+        track.x0 = trackX, track.y0 = ty, track.x1 = trackX + trackW, track.y1 = ty + 12;
         s.quads.push_back(track);
         const float head = pages > 1 ? float(page_) / float(pages - 1) : 0;
         UiQuad knob;
-        knob.image = makeSlider(19, true);
-        knob.x0 = sx + head * (141 - 19), knob.y0 = ty, knob.x1 = knob.x0 + 19, knob.y1 = ty + 12;
+        knob.image = makeSlider(knobW, true);
+        knob.x0 = trackX + head * (trackW - knobW), knob.y0 = ty, knob.x1 = knob.x0 + knobW, knob.y1 = ty + 12;
         s.quads.push_back(knob);
     };
+    // The original shows no prev arrow on the first page (measured at 800x600
+    // and 1280x720; the row's start sits without it).
+    if (collapsed && page_ == 0)
+        if (const UiElement* e = collapsed->child(expanded_ ? kExpandedPrev : kPrev))
+            hk.hide.insert(e);
+    // The original's grid sits one px right of the script's slot and 4 px
+    // higher (measured at 1280x720 against the script's own place).
     place(root, x0, y0, hk);
     if (auto r = rectOf(collapsed))
-        drawGrid(out, (*r)[0], (*r)[1]);
+        drawGrid(out, (*r)[0] + 1, (*r)[1] - 4);
     for (const auto& [r, e] : cells)
         targets_.push_back({r, Action::Item, int(std::find(list.begin(), list.end(), e) - list.begin())});
     // Targets.
@@ -1199,7 +1260,8 @@ UiScreen BuyMode::screen(int width, int height) {
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
     if (collapsed) {
-        target(collapsed->child(expanded_ ? kExpandedPrev : kPrev), Action::Prev, 0);
+        if (page_ > 0) // no prev arrow on the first page (as the original)
+            target(collapsed->child(expanded_ ? kExpandedPrev : kPrev), Action::Prev, 0);
         target(collapsed->child(expanded_ ? kExpandedNext : kNext), Action::Next, 0);
         target(collapsed->child(expanded_ ? kCollapse : kExpand), Action::Expand, 0);
     }
@@ -1392,9 +1454,10 @@ bool BuyMode::press(simd_float2 p) {
             break;
         case Action::Expand: {
             // The first item shown stays on the page.
-            const size_t first = page_ * size_t(kColumns * (expanded_ ? kExpandedRows : kRows));
+            const int cols = catalogColumns(float(canvasW_));
+            const size_t first = page_ * size_t(cols * (expanded_ ? kExpandedRows : kRows));
             expanded_ = !expanded_;
-            page_ = first / size_t(kColumns * (expanded_ ? kExpandedRows : kRows));
+            page_ = first / size_t(cols * (expanded_ ? kExpandedRows : kRows));
             sound(expanded_ ? "ui_panel_expand" : "ui_panel_collapse");
             break;
         }
