@@ -39,6 +39,7 @@
 // Sims of their room directly (point lights, docs/lighting-mac.md 6).
 
 #include "formats/lighting_config.hpp"
+#include "formats/lot_lamps.hpp"
 #include "formats/lot_lightmap.hpp"
 #include "formats/xform.hpp"
 
@@ -104,26 +105,7 @@ public:
     std::optional<float> floorIllumination(int vmLevel, float x, float y) const;
 
     // What update() found (for the log and tests).
-    struct Lamp {
-        int16_t id = 0;
-        std::string light;
-        Vec3 position{};
-        Vec3 color{};      // colour x intensity, before the level
-        float falloff = 1; // falloffRate
-        bool spot = false; // a spot: cone, penumbra, world direction
-        float cone = 0, penumbra = 0;
-        Vec3 direction{0, 0, -1};
-        int level = 0;     // 0-100
-        int16_t room = 0;
-        int objectLevel = 0; // the object's level, as the lot numbers them (VM level - 1)
-        // Its diffusion source (diffusionSource* attributes): colour x intensity, falloff, scales.
-        Vec3 diffusionColor{};
-        float diffusionFalloff = 1, floorScale = 1, wallScale = 1, interFloor = 0.5f;
-        bool directional = false;
-        float directionalFalloff = 0;
-        bool portal = false; // a window's or door's light (outside light coming in)
-        bool doorOrArch = false; // of a door or arch (OBJD type 8)
-    };
+    using Lamp = LotLamp;
     const std::vector<Lamp>& lamps() const { return lamps_; }
 
     // Extra point lights on some objects and Sims (a cinematic's light rig
@@ -141,24 +123,6 @@ public:
     const std::string& stateName() const { return current_; }
 
 private:
-    struct ModelLight {
-        std::string name; // lowercased
-        Vec3 position{};  // model space
-        Vec3 color{1, 1, 1};
-        float intensity = 1, falloff = 1;
-        // A cSpotLight: its cone and penumbra (radians) and where it shines
-        // (the light's -Z, model space: cSpotLight's light at a point, Mac BV
-        // 0xc9f3ac, docs/cinematics-mac.md §9; so the models have it: ceiling
-        // canisters down, garden uplights up, the portals' lights into their room).
-        bool spot = false;
-        float cone = 0, penumbra = 0;
-        Vec3 direction{0, 0, -1};
-        // Its cDiffusionLightExtension (the extension's defaults).
-        Vec3 diffusionColor{1, 1, 1};
-        float diffusionIntensity = 0, diffusionFalloff = 1, floorScale = 1, wallScale = 1, interFloor = 0.5f;
-        bool directional = false;
-        float directionalFalloff = 0;
-    };
     const std::vector<ModelLight>& modelLights(const std::string& cres);
     LightingState blended() const;
     float global(const std::string& group, const std::string& name, float fallback) const;

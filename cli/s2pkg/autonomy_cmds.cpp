@@ -18,6 +18,7 @@
 #include "vm/environment.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
+#include "vm/lot_light.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/lot_neighborhood.hpp"
 #include "vm/lot_resume.hpp"
@@ -35,6 +36,7 @@
 #include <array>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <set>
 #include <optional>
 #include <stdexcept>
@@ -867,8 +869,9 @@ int cmdMoodSweep(const std::filesystem::path& dir) {
 // The saved environment (motive 13) of every Sim on the lots under a
 // Neighborhoods folder, against cTSEnvironmentScoreManager's score of its
 // place in the loaded lot (vm/environment.hpp; docs/motives-mac.md §8).
-// Headless there are no light maps: the score leaves the light's term out
-// (0 to -20), so a saved value up to 20 under the room's score is the
+// The light's term (0 to -20) comes from the lot's light maps made without
+// a window (vm/lot_light.hpp, round n42), as the app's; with S2PKG_NO_LIGHT=1
+// it is left out, and a saved value up to 20 under the room's score is the
 // light. --verbose: every room's sums.
 int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
     namespace fs = std::filesystem;
@@ -879,7 +882,8 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
         if (e.path().extension() == ".package" && e.path().parent_path().filename() == "Lots")
             lots.push_back(e.path());
     std::sort(lots.begin(), lots.end());
-    size_t sims = 0, exact = 0, close = 0, light = 0, other = 0, outdoors = 0, noRoom = 0;
+    size_t sims = 0, exact = 0, close = 0, within2 = 0, light = 0, other = 0, outdoors = 0, noRoom = 0;
+    const bool withLight = !std::getenv("S2PKG_NO_LIGHT");
     for (const auto& file : lots) try {
         DbpfPackage pkg(file);
         const Lot lot = Lot::load(pkg);
@@ -887,6 +891,13 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
         vm::VM machine(code);
         const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(file));
         vm::startSavedLot(machine, load, saved); // the objects' saved data, motives, the simulator's counter
+        // The lot's light maps, as the app makes them (vm/lot_light.hpp),
+        // for the light's term; S2PKG_NO_LIGHT=1 leaves the term out.
+        std::unique_ptr<vm::HeadlessLotLighting> lighting;
+        if (withLight) {
+            lighting = std::make_unique<vm::HeadlessLotLighting>(index, lot, pkg, resRoot(file), machine);
+            lighting->install();
+        }
         const vm::EnvironmentRooms rooms = vm::environmentRooms(machine);
         if (verbose) {
             const PatternScores& ps = patternScores(index);
@@ -935,11 +946,12 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
             ++sims;
             const float d = savedEnv - score;
             const bool same = std::abs(d) < 0.01f, near = std::abs(d) < 0.5f;
-            const bool byLight = !near && d < 0 && d >= -20.01f && score - 20.0f > -100.0f;
+            const bool byLight = !withLight && !near && d < 0 && d >= -20.01f && score - 20.0f > -100.0f;
             exact += same;
             close += near;
+            within2 += std::abs(d) < 2.0f;
             light += byLight;
-            other += !near && !byLight;
+            other += withLight ? std::abs(d) >= 2.0f : !near && !byLight;
             outdoors += key >= 0 && key < vm::kEnvironmentIndoorBase;
             noRoom += key < 0;
             if (!header) {
@@ -951,6 +963,9 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
                         (o.definition ? o.definition->fileName : std::string("?")).c_str(), id, room, key,
                         double(o.position.x), double(o.position.y), o.position.level, double(savedEnv), double(oldEnv),
                         double(score), what.c_str());
+            if (lighting)
+                if (const auto lit = machine.floorIllumination(o.position.level, o.position.x, o.position.y))
+                    std::printf(" (light %.3f)", double(*lit));
             if (byLight)
                 std::printf(" -> illuminance %.3f", double(vm::envtuning::LightDark +
                                                            (vm::envtuning::LightBright - vm::envtuning::LightDark) *
@@ -968,9 +983,14 @@ int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
     } catch (const std::exception& err) {
         std::printf("%s: %s\n", file.filename().string().c_str(), err.what());
     }
-    std::printf("%zu Sims on %zu lots: the environment score of the loaded lot is the saved environment for %zu "
-                "(within 0.5 for %zu), up to 20 over it (the light's term) for %zu, other %zu; %zu outdoors, %zu in no room\n",
-                sims, lots.size(), exact, close, light, other, outdoors, noRoom);
+    if (withLight)
+        std::printf("%zu Sims on %zu lots, with the light maps: the environment score of the loaded lot is the saved "
+                    "environment for %zu (within 0.5 for %zu, within 2 for %zu), other %zu; %zu outdoors, %zu in no room\n",
+                    sims, lots.size(), exact, close, within2, other, outdoors, noRoom);
+    else
+        std::printf("%zu Sims on %zu lots: the environment score of the loaded lot is the saved environment for %zu "
+                    "(within 0.5 for %zu), up to 20 over it (the light's term) for %zu, other %zu; %zu outdoors, %zu in no room\n",
+                    sims, lots.size(), exact, close, light, other, outdoors, noRoom);
     return 0;
 }
 

@@ -99,6 +99,8 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 # The coverings' niceness and crap for the environment score (round n33).
 target_sources(os2_formats PRIVATE src/formats/environment_catalog.cpp)
+# The lamps for the light maps, shared by the app and the headless hosts (round n42).
+target_sources(os2_formats PRIVATE src/formats/lot_lamps.cpp)
 
 add_library(os2_vm
   src/vm/hood_bridge.cpp
@@ -155,6 +157,8 @@ target_link_libraries(os2_vm PUBLIC os2_formats)
 target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp src/vm/build_edit_walls.cpp src/vm/build_edit_ground.cpp src/vm/build_edit_stairs.cpp)
 # The environment motive, cTSEnvironmentScoreManager (round n33).
 target_sources(os2_vm PRIVATE src/vm/environment.cpp)
+# The lot's light maps without a window, for the environment's light term (round n42).
+target_sources(os2_vm PRIVATE src/vm/lot_light.cpp)
 
 # Sound: decoding to PCM (MP3 through AudioToolbox), name lookup and playback.
 add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp src/audio/mixer.cpp src/audio/sound_system.cpp)
@@ -302,9 +306,11 @@ add_test(NAME autonomy COMMAND test_autonomy)
 add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
 # With the game's data: the shipped lots' Sims' saved environment (motive 13)
 # against the environment score of their place in the loaded lot (round n33,
-# docs/motives-mac.md §8): what the light's term (0 to -20) cannot explain.
-add_test(NAME env_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'other 0; (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" env-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
-set_tests_properties(env_sweep PROPERTIES PASS_REGULAR_EXPRESSION "other [0-2];")
+# docs/motives-mac.md §8), with the light maps made without a window (round
+# n42: 24 of the 55 exact and 40 within 2, the app's own numbers; without the
+# light, 14 and 20).
+add_test(NAME env_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'environment for 24 (within 0.5 for 34, within 2 for 40) (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" env-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+set_tests_properties(env_sweep PROPERTIES PASS_REGULAR_EXPRESSION "environment for (2[4-9]|[3-5][0-9]) \\(within 0.5 for [0-9]+, within 2 for (4[0-9]|5[0-5])\\)")
 
 add_executable(test_reach tests/test_reach.cpp)
 target_link_libraries(test_reach PRIVATE os2_vm)

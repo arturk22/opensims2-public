@@ -14,6 +14,7 @@
 #include "formats/skeleton.hpp"
 #include "render/renderer.hpp"
 #include "vm/dialog.hpp"
+#include "vm/lot_light.hpp"
 #include "vm/vm.hpp"
 
 #include <algorithm>
@@ -25,7 +26,6 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeCres = 0xE519C933;
 
 std::string lower(std::string s) {
     for (auto& c : s)
@@ -35,9 +35,6 @@ std::string lower(std::string s) {
 
 simd_float3 f3(const Vec3& v) { return simd_make_float3(v[0], v[1], v[2]); }
 
-
-// The day/night phase of the hour (docs/lighting-mac.md 2).
-const char* stateOfHour(int hour) { return hour >= 7 && hour <= 18 ? "day" : "night"; }
 
 } // namespace
 
@@ -91,103 +88,11 @@ LotLighting::LotLighting(Renderer& renderer, ResourceIndex& index, LotSimulation
     : renderer_(renderer), index_(index), sim_(simulation), objects_(objects), config_(std::move(config)),
       overrides_(std::move(overrides)) {}
 
-const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::string& cres) {
+const std::vector<ModelLight>& LotLighting::modelLights(const std::string& cres) {
     auto it = modelLights_.find(cres);
     if (it != modelLights_.end())
         return it->second;
-    std::vector<ModelLight> out;
-    try {
-        if (auto loc = index_.findByName(cres + "_cres", kTypeCres)) {
-            const auto bytes = index_.read(*loc);
-            const Rcol rc(bytes);
-            // Parents of blocks, by the transform nodes' children.
-            std::map<uint32_t, size_t> parent;
-            for (size_t i = 0; i < rc.blocks.size(); ++i)
-                if (rc.blocks[i].className == "cTransformNode")
-                    for (const auto& c : TransformNode::parse(rc.blocks[i].body).children)
-                        parent[c.index] = i;
-            const Skeleton sk = Skeleton::fromCres(rc);
-            const auto world = sk.world(sk.restPose());
-            for (size_t i = 0; i < rc.blocks.size(); ++i) {
-                if (rc.blocks[i].className != "cLightRefNode")
-                    continue;
-                const LightRefNode node = LightRefNode::parse(rc.blocks[i].body);
-                if (node.lightLink < 0 || size_t(node.lightLink) >= rc.links.size())
-                    continue;
-                const auto lb = index_.read(rc.links[size_t(node.lightLink)]);
-                if (!lb)
-                    continue;
-                const Rcol lr(*lb);
-                for (const auto& blk : lr.blocks) {
-                    if (blk.className != "cPointLight" && blk.className != "cSpotLight")
-                        continue;
-                    const StandardLight l = StandardLight::parse(blk.className, blk.body);
-                    if (l.values.size() < 6)
-                        continue;
-                    // cStandardLightBase::ReadFrom (Mac BV 0xca2fb4): DiffuseScale (the
-                    // intensity), RelSpecularScale, RGB; a point light then FalloffRate, range.
-                    ModelLight m;
-                    m.name = lower(l.name.empty() ? node.renderable.transform.name() : l.name);
-                    m.intensity = l.values[0];
-                    m.color = {l.values[2], l.values[3], l.values[4]};
-                    m.falloff = l.values[5];
-                    // cSpotLight::ReadFrom (Mac BV 0xca3208): ..., cone, penumbra, range.
-                    if (blk.className == "cSpotLight" && l.values.size() >= 8) {
-                        m.spot = true;
-                        m.cone = l.values[6], m.penumbra = l.values[7];
-                    }
-                    const auto& t = node.renderable.transform;
-                    Xform at{t.rotation, t.translation};
-                    if (auto p = parent.find(uint32_t(i)); p != parent.end())
-                        for (size_t b = 0; b < sk.bones.size(); ++b)
-                            if (sk.bones[b].block == p->second)
-                                at = world[b].then(at);
-                    m.position = at.t;
-                    m.direction = at.rotate({0, 0, -1});
-                    // LotLights.txt's overrides, by light name. A light is a
-                    // diffusion source only with a cDiffusionLightExtension
-                    // (BuildLightFromObjectLight, Mac BV 0xd7d404: no
-                    // extension, black, no source), which the game's lights
-                    // get from their diffusionSource* overrides (the models
-                    // have none); its fields default to the extension's
-                    // (constructor 0x79f024): intensity 0, colour white,
-                    // falloff 1, wall and floor scales 1.
-                    bool diffuses = false;
-                    if (auto o = overrides_.find(m.name); o != overrides_.end()) {
-                        auto one = [&](const char* name, float& v) {
-                            if (auto it = o->second.find(name); it != o->second.end() && !it->second.empty())
-                                v = it->second[0];
-                        };
-                        for (const auto& [key, value] : o->second)
-                            diffuses = diffuses || key.starts_with("diffusionsource");
-                        one("diffusionsourceintensity", m.diffusionIntensity);
-                        one("diffusionsourcefalloff", m.diffusionFalloff);
-                        one("diffusionsourcefloorintensityscale", m.floorScale);
-                        one("diffusionsourcewallintensityscale", m.wallScale);
-                        one("diffusionsourceinterfloorfalloff", m.interFloor);
-                        one("diffusionsourcedirectionalfalloff", m.directionalFalloff);
-                        float directional = 0;
-                        one("diffusionsourceisdirectional", directional);
-                        m.directional = directional != 0;
-                        if (auto v = o->second.find("diffusionsourcecolor"); v != o->second.end() && v->second.size() >= 3)
-                            m.diffusionColor = {v->second[0], v->second[1], v->second[2]};
-                        if (auto v = o->second.find("intensity"); v != o->second.end() && !v->second.empty())
-                            m.intensity = v->second[0];
-                        if (auto v = o->second.find("falloffrate"); v != o->second.end() && !v->second.empty())
-                            m.falloff = v->second[0];
-                        if (auto v = o->second.find("color"); v != o->second.end() && v->second.size() >= 3)
-                            m.color = {v->second[0], v->second[1], v->second[2]};
-                    }
-                    if (!diffuses)
-                        m.diffusionIntensity = 0;
-                    out.push_back(m);
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "opensims2: lights of %s: %s\n", cres.c_str(), e.what());
-    }
-    return modelLights_[cres] = std::move(out);
+    return modelLights_[cres] = loadModelLights(index_, cres, overrides_);
 }
 
 LightingState LotLighting::blended() const {
@@ -313,29 +218,8 @@ bool LotLighting::outside(int16_t room) {
 // and a lighting state, cached by both: recomputed when Change Light moves a
 // lamp, crossfaded from the previous state's over the transition.
 std::shared_ptr<const LotLightMap> LotLighting::lightMap(const std::string& stateName) {
-    std::string key = stateName;
-    std::vector<LightMapLight> lights;
-    for (const auto& l : lamps_) {
-        if (!l.level)
-            continue;
-        LightMapLight m;
-        m.position = l.position;
-        const float k = float(l.level) / 100.0f;
-        m.color = {l.diffusionColor[0] * k, l.diffusionColor[1] * k, l.diffusionColor[2] * k};
-        m.falloff = l.diffusionFalloff;
-        m.floorScale = l.floorScale;
-        m.wallScale = l.wallScale;
-        m.interFloor = l.interFloor;
-        m.directional = l.directional, m.directionalFalloff = l.directionalFalloff;
-        m.direction = {l.direction[0], l.direction[1], l.direction[2]};
-        m.level = l.objectLevel;
-        m.portal = l.portal;
-        m.doorOrArch = l.doorOrArch;
-        m.object = l.id;
-        m.name = l.light;
-        lights.push_back(m);
-        key += "|" + std::to_string(l.id) + ":" + l.light + ":" + std::to_string(l.level);
-    }
+    std::string key;
+    const std::vector<LightMapLight> lights = lightMapLights(lamps_, stateName, &key);
     for (const auto& [k, map] : lightMaps_)
         if (k == key)
             return map;
@@ -376,36 +260,13 @@ void LotLighting::updateLightMaps(double seconds) {
 std::optional<float> LotLighting::floorIllumination(int vmLevel, float x, float y) const {
     if (!layout_ || !shownTo_)
         return std::nullopt;
-    const int level = vmLevel - 1; // the lot's levels
-    // LookupFloorLightMap (Mac BV 0x6f6a24): the texel (frac(x) 8, frac(y) 8)
-    // of the tile's page; off the pages, black.
-    if (level < layout_->minLevel || level >= layout_->minLevel + layout_->levels || x < 0 || y < 0 ||
-        x >= float(layout_->lotWidth) || y >= float(layout_->lotHeight))
-        return 0.0f;
-    const auto uv = layout_->floorTexel(level, x, y);
-    const auto texel = [&](const LotLightMap* map, int c) -> float {
-        if (!map)
-            return 0.0f;
-        const RgbaImage& im = map->image;
-        const auto u = uint32_t(std::floor(uv[0])), v = uint32_t(std::floor(uv[1]));
-        if (u >= im.width || v >= im.height)
-            return 0.0f;
-        return float(im.pixels[(size_t(v) * im.width + u) * 4 + size_t(c)]) / 255.0f;
-    };
-    std::array<float, 3> rgb{};
-    const LotLightMap* from = shownFrom_ ? shownFrom_.get() : shownTo_.get();
-    for (int c = 0; c < 3; ++c) {
-        const float a = texel(from, c), b = texel(shownTo_.get(), c);
-        rgb[size_t(c)] = (a + (b - a) * lightMapMix_) * 2.0f; // cLightMapManager +0x70
-    }
-    // ColourToIlluminance (Mac BV 0x1808dd4).
-    return std::fmaf(rgb[2], 0.11f, std::fmaf(rgb[0], 0.3f, rgb[1] * 0.59f));
+    return floorIlluminationAt(*layout_, shownFrom_.get(), shownTo_.get(), lightMapMix_, vmLevel, x, y);
 }
 
 void LotLighting::update(double seconds) {
     last_ = seconds;
     vm::VM& m = sim_.machine();
-    const std::string want = forced_.empty() ? stateOfHour(m.clock.hour) : forced_;
+    const std::string want = forced_.empty() ? lightingStateOfHour(m.clock.hour) : forced_;
     if (want != current_) {
         previous_ = current_;
         current_ = want;
@@ -428,35 +289,13 @@ void LotLighting::update(double seconds) {
         const auto at = objects_.placement(id);
         if (!at)
             return;
-        const std::string objd = o->definition ? lower(o->definition->fileName) : std::string();
-        const bool portal = objd.starts_with("window") || objd.starts_with("door");
-        // Doors and arches are OBJD type 8 (the portal builder's +0x3c, docs/lighting-mac.md 11.4).
-        const bool doorOrArch = o->definition && o->definition->objectType() == 8;
+        // Windows' and doors' lights are portals; doors and arches are OBJD
+        // type 8 (vm/lot_light.hpp, shared with the headless light maps).
+        const bool portal = vm::lampIsPortal(*o), doorOrArch = vm::lampIsDoorOrArch(*o);
         for (const auto& l : lights) {
-            int level = vm::lightLevel(m, *o, l.name);
-            if (portal)
-                level = 100; // the outside's light, not a lamp
-            else if (level < 0) // not changed since the lot loaded: the lamps keep on/off in semi-attribute 2 (inferred)
-                level = defaultLevel_ >= 0 ? defaultLevel_ : o->semiAttributes.size() > 2 && o->semiAttributes[2] ? 100 : 0;
-            Lamp lamp;
-            lamp.id = id;
-            lamp.light = l.name;
-            lamp.position = at->apply(l.position);
-            lamp.color = {l.color[0] * l.intensity, l.color[1] * l.intensity, l.color[2] * l.intensity};
-            lamp.falloff = l.falloff;
-            lamp.spot = l.spot, lamp.cone = l.cone, lamp.penumbra = l.penumbra;
-            lamp.direction = at->rotate(l.direction);
-            lamp.level = std::clamp(level, 0, 100);
-            lamp.portal = portal;
-            lamp.doorOrArch = portal && doorOrArch;
-            lamp.objectLevel = o->position.level - 1; // the VM numbers levels from 1 (lot level + 1)
-            for (int c = 0; c < 3; ++c)
-                lamp.diffusionColor[size_t(c)] = l.diffusionColor[size_t(c)] * l.diffusionIntensity;
-            lamp.diffusionFalloff = l.diffusionFalloff;
-            lamp.floorScale = l.floorScale;
-            lamp.wallScale = l.wallScale;
-            lamp.interFloor = l.interFloor;
-            lamp.directional = l.directional, lamp.directionalFalloff = l.directionalFalloff;
+            // (the VM numbers levels from 1: lot level + 1)
+            Lamp lamp = placedLamp(id, l, *at, vm::lampLevel(m, *o, l.name, defaultLevel_), o->position.level - 1,
+                                   portal, doorOrArch);
             lamp.room = lightingRoom(o->position.level, lamp.position[0], lamp.position[1]);
             lamps_.push_back(lamp);
         }
