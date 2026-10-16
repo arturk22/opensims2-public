@@ -187,23 +187,30 @@ using namespace os2app;
         _camera->setFirstPerson(gFreeCamera->pose());
         return;
     }
-    // Shift: "Move ... Faster" (twice the speed).
+    // The accelerators' Start / Stop Move (arrows and a d w s; Shift + an arrow:
+    // "Move ... Faster", the argument 2), Start / Stop Rotate (, .) and Zoom (= -):
+    // velocities the camera turns into requests each update (docs/camera-ui-mac.md 1.11).
     const float fast = (NSEvent.modifierFlags & NSEventModifierFlagShift) ? 2.0f : 1.0f;
-    float right = float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]);
-    float forward = float([self held:kW orKey:kUp]) - float([self held:kS orKey:kDown]);
-    right *= fast, forward *= fast;
+    const float right = float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]);
+    const float forward = float([self held:kW orKey:kUp]) - float([self held:kS orKey:kDown]);
+    _camera->setKeyMove(right * fast, forward * fast);
+    _camera->setKeyZoom(int(_held.count(kEquals)) - int(_held.count(kMinus)));
+    _camera->setKeyRotate(int(_held.count(kPeriod)) - int(_held.count(kComma)));
+    // The window's edge (DoWindowEdgeScrolling, once a frame): the step requests.
     if (self.window.isKeyWindow) {
         _mouse.config().edgeScroll = !argument(@"--no-edge-scroll") && gSettings.edgeScrolling;
-        const auto [mr, mf] = _mouse.panAxes(float(self.bounds.size.width), float(self.bounds.size.height));
-        right = std::clamp(right + mr, -fast, fast);
-        forward = std::clamp(forward + mf, -fast, fast);
+        const os2::CameraMouseInput::EdgeSteps edge = _mouse.edgeSteps(float(self.bounds.size.width),
+                                                                         float(self.bounds.size.height));
+        if (edge.sendSideways)
+            _camera->stepSideways(edge.sideways);
+        if (edge.sendForward)
+            _camera->stepForward(edge.forward);
     }
-    _camera->pan(right, forward, dt);
-    // Right button: the anchor's offset x 0.25 as a move request, per 50 ms frame.
-    const auto [dragX, dragY] = _mouse.dragMove();
-    _camera->movePixels(dragX * float(dt) * 20.0f, dragY * float(dt) * 20.0f);
-    _camera->zoomHeld(int(_held.count(kEquals)) - int(_held.count(kMinus)), dt);
-    _camera->rotateHeld(int(_held.count(kPeriod)) - int(_held.count(kComma)), dt);
+    // The right button held (DragCamera): the anchor's offset x 0.25 as the move request.
+    if (_mouse.anchored()) {
+        const auto [dragX, dragY] = _mouse.dragMove();
+        _camera->moveRequest(dragX, dragY);
+    }
 }
 
 // Headless (--key hold-<key>:<seconds>): the key held that long, frame by
@@ -215,9 +222,8 @@ using namespace os2app;
         _camera->update(0.05);
     }
     _held.erase(key);
-    for (int k = 0; k < 40; ++k) { // the smoothing settles
-        if (freeCameraActive())
-            [self applyHeldKeys:0.05];
+    for (int k = 0; k < 40; ++k) { // the smoothing settles (the key's velocity back to 0)
+        [self applyHeldKeys:0.05];
         _camera->update(0.05);
     }
 }
@@ -432,7 +438,7 @@ using namespace os2app;
         gFreeCamera->look(float(e.deltaX), float(e.deltaY));
         return;
     }
-    _camera->rotateRequest(float(e.deltaX), float(e.deltaY));
+    _camera->mouseRotate(float(e.deltaX), float(e.deltaY)); // dx negated unless rotateCameraSims1Mode
 }
 
 // The mouse position for edge and anchor scrolling.
@@ -512,6 +518,8 @@ using namespace os2app;
 
 - (void)rightMouseUp:(NSEvent*)e {
     [self trackMouse:e];
+    if (_mouse.anchored() && _camera)
+        _camera->moveRequest(0, 0); // DragCamera on release: velocity 0
     _mouse.endAnchor();
     if (_rotating)
         [self holdCursor:NO];

@@ -33,6 +33,30 @@ int main() {
     in.mouseAt(0, 0);
     check(in.panAxes(800, 600) == std::pair<float, float>{0, 0}, "edge scrolling off");
 
+    // DoWindowEdgeScrolling (BV 0x1fbe2c): within 4 points of the edge, 16
+    // while it already scrolls; the step requests in the binary's senses (+
+    // = left / forward) x 1.25, and one 0 when the mouse leaves.
+    {
+        CameraMouseInput e;
+        e.mouseAt(10, 300);
+        CameraMouseInput::EdgeSteps s = e.edgeSteps(800, 600);
+        check(!s.sendSideways && !s.sendForward, "10 points in: no edge");
+        e.mouseAt(2, 300);
+        s = e.edgeSteps(800, 600);
+        check(s.sendSideways && s.sideways == 1.25f && !s.sendForward, "the left edge: sideways +1.25 (left)");
+        e.mouseAt(10, 300);
+        s = e.edgeSteps(800, 600);
+        check(s.sendSideways && s.sideways == 1.25f, "scrolling: the edge is 16 points wide");
+        e.mouseAt(20, 300);
+        s = e.edgeSteps(800, 600);
+        check(s.sendSideways && s.sideways == 0, "out of the edge: one 0");
+        s = e.edgeSteps(800, 600);
+        check(!s.sendSideways, "then nothing");
+        e.mouseAt(400, 1);
+        s = e.edgeSteps(800, 600);
+        check(s.sendForward && s.forward == 1.25f, "the top edge: forward");
+    }
+
     check(in.wheelNotches(3.5, false) == 1 && in.wheelNotches(-0.1, false) == -1, "a wheel event is a notch");
     check(in.wheelNotches(30, true) == 3 && in.wheelNotches(-5, true) == -0.5f, "trackpad points per notch");
 

@@ -8,26 +8,7 @@ namespace os2 {
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
-constexpr float kFrameMs = 50.0f;
 float radians(float deg) { return deg * kPi / 180.0f; }
-
-// FUN_008c7c64: a vector approaches its target along the line, a step of
-// remaining * dt / 50 ms / steps, never less than minChange, never past the target.
-void smoothVector(simd_float3& value, simd_float3 target, float ms, int steps, float minChange) {
-    const simd_float3 r = target - value;
-    const float r2 = simd_length_squared(r);
-    if (r2 == 0)
-        return;
-    const simd_float3 step = r * (ms / kFrameMs / float(std::max(steps, 1)));
-    const float s2 = simd_length_squared(step), m2 = minChange * minChange;
-    if (s2 >= m2) {
-        value = s2 <= r2 ? value + step : target;
-    } else if (m2 < r2) {
-        value = value + simd_normalize(r) * minChange;
-    } else {
-        value = target;
-    }
-}
 
 } // namespace
 

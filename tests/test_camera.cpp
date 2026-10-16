@@ -39,6 +39,15 @@ static CameraDef liveCamera() {
     c.spinSmoothing = 8;
     c.params["pivotheightabovefloor"] = 1;
     c.params["keyboardtranslationspeed"] = 50;
+    c.params["keyboardtranslationlerpsteps"] = 1;
+    c.params["keyboardtranslationlerpminchange"] = 0.001f;
+    c.params["keyboardrotationspeed"] = 200;
+    c.params["keyboardrotationlerpsteps"] = 1;
+    c.params["keyboardrotationlerpminchange"] = 0.5f;
+    c.params["keyboardzoomspeed"] = 1;
+    c.params["keyboardzoomlerpsteps"] = 1;
+    c.params["keyboardzoomlerpminchange"] = 1;
+    c.params["keyboardzoomscale"] = 2;
     c.params["defaultminchange"] = 0.02f;
     c.params["constraintwidth"] = -10;
     c.wheel = 5;
@@ -192,26 +201,33 @@ int main() {
         }
     }
 
-    // Moving forward moves the pivot along the view direction on the floor.
+    // The keys held (Start / Stop Move, docs/camera-ui-mac.md 1.11): forward moves
+    // the pivot along the view direction on the floor.
+    auto holdMove = [&](LotCamera& c, float right, float forward, int frames) {
+        c.setKeyMove(right, forward);
+        for (int i = 0; i < frames; ++i)
+            c.update(0.05);
+        c.setKeyMove(0, 0);
+        settle(c);
+    };
     cam.reset();
     settle(cam);
     cam.setPivot(simd_make_float3(0, 0, 0));
-    cam.pan(0, 1, 0.1);
-    settle(cam);
+    holdMove(cam, 0, 1, 2);
     simd_float3 p = cam.pivot();
     float y = 55 * rad; // looking along -(cos y, sin y)
     check(near(p.z, 0) && p.x * std::cos(y) + p.y * std::sin(y) < 0 &&
               near(p.x * std::sin(y) - p.y * std::cos(y), 0, 1e-2f),
           "pan forward");
     // Sideways (Right / d, "Start Move Right" of the accelerators
-    // 0x6A9362F2/F3): the pivot moves across the view, the heading stays.
+    // 0x6A9362F2/F5): the pivot moves across the view, the heading stays.
     {
         const float yaw0 = cam.yaw();
         cam.setPivot(simd_make_float3(0, 0, 0));
-        cam.pan(1, 0, 0.1);
-        settle(cam);
+        holdMove(cam, 1, 0, 2);
         const simd_float3 q = cam.pivot();
-        check(near(cam.yaw(), yaw0) && simd_length(q) > 0.1f && near(q.x * std::cos(y) + q.y * std::sin(y), 0, 1e-2f),
+        check(near(cam.yaw(), yaw0) && simd_length(q) > 0.1f && near(q.x * std::cos(y) + q.y * std::sin(y), 0, 1e-2f) &&
+                  q.x * std::sin(y) - q.y * std::cos(y) < 0,
               "pan right moves across the view without turning");
     }
     // Farther away, the same pixels move the pivot farther.
@@ -219,9 +235,135 @@ int main() {
     cam.zoomBy(-1);
     settle(cam);
     cam.setPivot(simd_make_float3(0, 0, 0));
-    cam.pan(0, 1, 0.1);
-    settle(cam);
+    holdMove(cam, 0, 1, 2);
     check(simd_length(cam.pivot()) > near1 * 1.3f, "pan scales with the distance");
+    {
+        // The move request 0x9b66110a: the offset at the pivot's depth (800 x 600,
+        // fov 45: 2 d tan 22.5 / 800 a pixel), kept as a velocity; UpdateSubjectMotion
+        // aims the pivot at pivot + velocity x 5 (the zoom's smoothing). Up on the
+        // screen is forward, as long as across (no stretch by the pitch).
+        LotCamera c(liveCamera());
+        c.setViewport(800, 600);
+        c.setPivot(simd_make_float3(0, 0, 0));
+        settle(c);
+        const float h = c.yaw() * rad;
+        const simd_float3 f = c.forward();
+        const float depth = 40 - f.z; // the floor point, 1 under the look-at point
+        const float px = 2 * depth * std::tan(22.5f * rad) / 800;
+        c.moveRequest(50, 0);
+        c.update(0);
+        simd_float3 t = c.pivotTarget();
+        check(near(t.x, -std::sin(h) * 50 * px * 5, 0.02f) && near(t.y, std::cos(h) * 50 * px * 5, 0.02f),
+              "move request: across, 5 x the offset at the pivot's depth");
+        for (int i = 0; i < 10; ++i)
+            c.update(0.05);
+        // (UpdateSubjectMotion runs before the pivot's smoothing: 6/7 of it left after the update.)
+        check(near(simd_length(c.pivotTarget() - c.pivot()), 50 * px * 5 * 6 / 7, 0.05f) && c.pivot().x < -1,
+              "the velocity aims from where the pivot is, every update");
+        c.moveRequest(0, 0);
+        c.setPivot(simd_make_float3(0, 0, 0));
+        c.moveRequest(0, -50);
+        c.update(0);
+        t = c.pivotTarget();
+        check(near(t.x, -std::cos(h) * 50 * px * 5, 0.02f) && near(t.y, -std::sin(h) * 50 * px * 5, 0.02f),
+              "up on the screen: forward, not stretched by the pitch");
+        c.moveRequest(0, 0);
+        c.setPivot(simd_make_float3(0, 0, 0));
+        c.update(0);
+        check(near(simd_length(c.pivotTarget()), 0), "a 0 request stops it");
+        // The pivot's smoothing: 7 steps of 50 ms whoever moves it (Reset).
+        c.moveTo(simd_make_float3(7, 0, 0));
+        c.update(0.05);
+        check(near(c.pivot().x, 1, 1e-3f), "the pivot: 7 steps");
+    }
+    {
+        // The window's edge (the step requests 0xbb6c7808 / 0x3b6c780f): sqrt(fov x 30)
+        // x -axis x distance x 0.002 (sideways) / 0.0032 (forward) x the repeat count,
+        // from the pivot where it is; an axis of 0 resets the count and stops it.
+        LotCamera c(liveCamera());
+        c.setPivot(simd_make_float3(0, 0, 0));
+        settle(c);
+        const float h = c.yaw() * rad, k = std::sqrt(45 * rad * 30) * 40;
+        c.stepSideways(1.25f);
+        simd_float3 t = c.pivotTarget();
+        check(near(t.x, std::sin(h) * k * 1.25f * 0.002f * 2, 1e-3f) &&
+                  near(t.y, -std::cos(h) * k * 1.25f * 0.002f * 2, 1e-3f),
+              "edge step: to the left, the count at 2");
+        c.stepSideways(1.25f);
+        check(near(simd_length(c.pivotTarget()), k * 1.25f * 0.002f * 3, 1e-3f), "the next step: the count at 3, not added up");
+        c.stepSideways(0);
+        check(near(simd_length(c.pivotTarget()), 0), "0: stops where it is");
+        c.stepForward(-1.25f);
+        t = c.pivotTarget();
+        check(near(t.x, std::cos(h) * k * 1.25f * 0.0032f * 2, 1e-3f) &&
+                  near(t.y, std::sin(h) * k * 1.25f * 0.0032f * 2, 1e-3f),
+              "edge step: back, 0.0032");
+    }
+    {
+        // The rotation keys: a velocity (keyboardrotationspeed 200 px) sent as a rotate
+        // request each update, from the current heading: 0.6 rad ahead, so 0.6 / (8 x
+        // 50 ms) = 1.5 rad/s. rotateCameraSims1Mode off (the default) swaps , and .:
+        // '.' turns the heading up.
+        LotCamera c(liveCamera());
+        settle(c);
+        const float y0 = c.yaw();
+        c.setKeyRotate(1);
+        for (int i = 0; i < 20; ++i)
+            c.update(0.05);
+        check(near(c.yaw() - y0, 1.5f / rad, 2), "'.': 1.5 rad/s, the heading up");
+        c.setKeyRotate(0);
+        settle(c);
+        const float y1 = c.yaw();
+        settle(c);
+        // (Each update aims from where the heading is: the decaying velocity's
+        // requests replace the 0.6 rad ahead, so it stops soon after.)
+        check(y1 - y0 > 1.5f / rad && y1 - y0 < 2.1f / rad && near(c.yaw(), y1), "released: it stops");
+        c.setRotateSims1Mode(true);
+        c.setKeyRotate(1);
+        for (int i = 0; i < 20; ++i)
+            c.update(0.05);
+        check(c.yaw() < y1 - 60, "rotateCameraSims1Mode: '.' turns it down");
+        c.setKeyRotate(0);
+        settle(c);
+        // The mouse's drag: dx negated unless rotateCameraSims1Mode.
+        const float y2 = c.yaw();
+        c.mouseRotate(100, 0);
+        settle(c);
+        check(near(c.yaw(), y2 - 0.3f / rad, 0.05f), "Sims 1 mode: the drag's dx as it is");
+        c.setRotateSims1Mode(false);
+        c.mouseRotate(100, 0);
+        settle(c);
+        check(near(c.yaw(), y2, 0.05f), "default: dx negated");
+        // Both axes at a ratio of 1 both count.
+        const float t0 = c.pitch();
+        c.rotateRequest(10, 10);
+        settle(c);
+        check(near(c.yaw(), y2 - 0.03f / rad, 0.05f) && c.pitch() < t0, "|dx| = |dy|: both");
+    }
+    {
+        // The zoom keys: the velocity (keyboardzoomspeed 1, its min change 1 makes
+        // it jump) sent as a wheel step of keyboardzoomscale 2 each update after
+        // the first: d += 2 (d + 10) / -50.
+        LotCamera c(liveCamera());
+        settle(c);
+        c.setKeyZoom(1);
+        c.update(0);
+        check(near(c.pose().dist, 40), "the first update: no step yet");
+        c.update(0);
+        check(near(c.pose().dist, 38), "then d += 2 (d + 10) / -50");
+        c.update(0);
+        check(near(c.pose().dist, 38 - 2 * 48 / 50.0f), "each update");
+        c.setKeyZoom(0);
+        c.update(0);
+        c.update(0);
+        check(near(c.pose().dist, 36.08f), "released: stops");
+    }
+    {
+        // The Build camera has no pivotheightabovefloor: cCameraLive::Reset's 1.2.
+        LotCamera b(buildCamera());
+        const simd_float4 cb = clip(b, simd_make_float3(0, 0, 1.2f));
+        check(near(cb.x / cb.w, 0) && near(cb.y / cb.w, 0), "Build: the pivot 1.2 over the floor");
+    }
 
     // The pivot stays inside the lot shrunk by constraintwidth: -10 lets it
     // 10 tiles out (clamp(x, min + w, max - w), FUN_006a456c).
@@ -398,7 +540,9 @@ int main() {
         f.follow(machine, other.id);
         check(near(c.pivotTarget().x, 36), "measured from the target: 0.2 tiles from it is inside the dead zone");
         // The player pans: tracking ends.
-        c.pan(1, 0, 0.05);
+        c.moveRequest(10, 0);
+        c.update(0.05);
+        c.moveRequest(0, 0);
         sim.position.x = 50;
         f.follow(machine, other.id);
         check(f.tracked() == 0 && c.pivotTarget().x < 49, "a move the player asked for ends the following");

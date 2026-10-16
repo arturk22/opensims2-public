@@ -12,11 +12,29 @@ constexpr float kFrameMs = 50.0f;       // the lerps count steps in 50 ms frames
 constexpr float kRotatePerPixel = 0.003f; // radians of heading per pixel (cCameraLive::HandleRequest)
 constexpr float kPitchPerPixel = 0.005f;  // of the pitch range per pixel
 constexpr float kEyeOverFloor = 0.5f;     // how far over the floor the eye is kept (inferred)
+constexpr int kSubjectSteps = 7;          // the pivot's smoothing (cTSCameraSmoothSims1Controller::Reset, BV 0x86d688)
+constexpr float kSideStep = 0.002f;       // the edge steps' constants (DAT_02c426d8 / DAT_02c426dc,
+constexpr float kForwardStep = 0.0032f;   // written by the static initializer at BV 0x2170d64)
 
 float radians(float deg) { return deg * float(M_PI) / 180.0f; }
 float degrees(float rad) { return rad * 180.0f / float(M_PI); }
 
 } // namespace
+
+void smoothVector(simd_float3& value, simd_float3 target, float ms, int steps, float minChange) {
+    const simd_float3 r = target - value;
+    const float r2 = simd_length_squared(r);
+    if (r2 == 0)
+        return;
+    const simd_float3 step = r * (ms / kFrameMs / float(std::max(steps, 1)));
+    const float s2 = simd_length_squared(step), m2 = minChange * minChange;
+    if (s2 >= m2)
+        value = s2 <= r2 ? value + step : target;
+    else if (m2 < r2)
+        value = value + simd_normalize(r) * minChange;
+    else
+        value = target;
+}
 
 void LotCamera::Smooth::update(float ms, bool angle) {
     float r = target - value;
@@ -36,8 +54,17 @@ void LotCamera::Smooth::update(float ms, bool angle) {
         value += step;
 }
 
+// pivotheightabovefloor without the parameter: cCameraLive::Reset (BV 0x6a3c70)
+// puts 1.2 before the spec is read (the "Live" and "Build" cameras, BuildCamera.txt
+// has none); the base controller's Reset sets a zero subject offset (the
+// neighbourhood's).
+static float defaultPivotHeight(const CameraDef& d) {
+    const bool live = d.controller == "Live" || d.controller == "Build";
+    return d.param("pivotheightabovefloor", live ? 1.2f : 0.0f);
+}
+
 LotCamera::LotCamera(CameraDef def) : def_(std::move(def)) {
-    pivotHeight_ = def_.param("pivotheightabovefloor", 1.0f);
+    pivotHeight_ = defaultPivotHeight(def_);
     minChange_ = def_.param("defaultminchange", 0.02f);
     dist_.value = dist_.target = def_.distances.empty() ? 40.0f : def_.distances.front();
     reset();
@@ -113,19 +140,13 @@ void LotCamera::zoomBy(int levels) {
     dist_.set(t[size_t(at)], def_.zoomSmoothing, minChange_);
 }
 
-void LotCamera::wheel(float notches) {
-    const float d = dist_.target;
-    dist_.set(clampDistance(d + notches * def_.wheel * (d + 10) / -50.0f), def_.zoomSmoothing, minChange_);
-}
+void LotCamera::wheel(float notches) { wheelBy(notches, def_.wheel); }
 
-void LotCamera::zoomHeld(int direction, double dt) {
-    if (direction == 0)
-        return;
-    const float frames = float(dt) * 1000.0f / kFrameMs;
-    const float rate = def_.param("keyboardzoomspeed", 1) * def_.param("keyboardzoomscale", 2);
+// The wheel request 0x9c17e415: d += delta * sensitivity * (d + 10) / -50, held
+// between the first and last levels, smoothed as the zoom.
+void LotCamera::wheelBy(float delta, float sensitivity) {
     const float d = dist_.target;
-    dist_.set(clampDistance(d + float(direction) * rate * (d + 10) / -50.0f * frames),
-              int(def_.param("keyboardzoomlerpsteps", 1)), def_.param("keyboardzoomlerpminchange", 1));
+    dist_.set(clampDistance(d + delta * sensitivity * (d + 10) / -50.0f), def_.zoomSmoothing, minChange_);
 }
 
 void LotCamera::rotateBy(int steps) {
@@ -148,17 +169,54 @@ void LotCamera::rotateBy(int steps) {
 }
 
 void LotCamera::rotateRequest(float dx, float dy) {
-    const int steps = int(def_.param("keyboardrotationlerpsteps", 1));
-    const float m = def_.param("keyboardrotationlerpminchange", 0.5f);
-    if (std::fabs(dx) > std::fabs(dy))
-        heading_.set(heading_.target - std::clamp(dx * kRotatePerPixel, -3.0f, 3.0f), steps, m);
-    else if (dy != 0)
-        pitchT_.set(std::clamp(pitchT_.target - dy * kPitchPerPixel, 0.0f, 1.0f), steps, m);
+    if (dx != 0 && dy != 0) {
+        const float ratio = std::fabs(dx / dy);
+        if (ratio > 1)
+            dy = 0;
+        else if (ratio < 1)
+            dx = 0;
+    }
+    if (dx != 0)
+        heading_.set(heading_.value - std::clamp(dx * kRotatePerPixel, -3.0f, 3.0f), heading_.steps, heading_.minChange);
+    if (dy != 0)
+        pitchT_.set(std::clamp(pitchT_.value - dy * kPitchPerPixel, 0.0f, 1.0f), pitchT_.steps, pitchT_.minChange);
 }
 
-void LotCamera::rotateHeld(int direction, double dt) {
-    if (direction != 0)
-        rotateRequest(float(direction) * def_.param("keyboardrotationspeed", 200) * float(dt), 0);
+void LotCamera::mouseRotate(float dx, float dy) { rotateRequest(rotateSims1Mode_ ? dx : -dx, dy); }
+
+namespace {
+// The keyboard velocities' smoothing (SetCameraSpec, BV 0x86f310): the
+// <prefix>lerpsteps / lerpminchange pair when both are given, else Reset's 20
+// steps and defaultminchange (Reset: 0.05).
+void keyLerp(const CameraDef& d, const char* steps, const char* minChange, int& n, float& m) {
+    n = 20;
+    m = d.param("defaultminchange", 0.05f);
+    if (d.params.count(steps) && d.params.count(minChange))
+        n = int(d.param(steps, 20)), m = d.param(minChange, m);
+}
+} // namespace
+
+void LotCamera::setKeyMove(float right, float forward) {
+    // DoMessage (FUN_00871c0c): left x = -speed, right +speed, forward y = -speed, back +speed (pixels, y down).
+    const float speed = def_.param("keyboardtranslationspeed", 0);
+    keyMoveTarget_ = simd_make_float3(right * speed, -forward * speed, 0);
+}
+
+void LotCamera::setKeyRotate(int direction) {
+    // cCameraLive / cCameraNeighborhood::DoMessage swap the two starts unless rotateCameraSims1Mode.
+    if (!rotateSims1Mode_)
+        direction = -direction;
+    int n;
+    float m;
+    keyLerp(def_, "keyboardrotationlerpsteps", "keyboardrotationlerpminchange", n, m);
+    keyRotate_.set(float(direction) * def_.param("keyboardrotationspeed", 5), n, m);
+}
+
+void LotCamera::setKeyZoom(int direction) {
+    int n;
+    float m;
+    keyLerp(def_, "keyboardzoomlerpsteps", "keyboardzoomlerpminchange", n, m);
+    keyZoom_.set(float(direction) * def_.param("keyboardzoomspeed", 5), n, m);
 }
 
 void LotCamera::freeRotate(float deg) {
@@ -173,38 +231,43 @@ void LotCamera::tilt(float deg) {
     pitchT_.value = pitchT_.target = std::clamp(pitchT_.target + deg / (hi - lo), 0.0f, 1.0f);
 }
 
-void LotCamera::movePixels(float dx, float dy) {
+void LotCamera::moveRequest(float dx, float dy) {
+    ++userMoves_; // SetTracking(false)
+    subjectVel_ = simd_make_float3(0, 0, 0);
     if ((dx == 0 && dy == 0) || viewW_ <= 0 || viewH_ <= 0)
         return;
-    // The pivot's point on the screen, moved and cast back onto its height.
-    const simd_float3 p = raisedPivot();
+    // The pivot's point on the screen and the point (dx, dy) pixels away at the
+    // same depth, back in the world (the viewer's 0x238 / 0x240).
     const simd_float4x4 vp = simd_mul(projection(viewW_ / viewH_), view());
-    const simd_float4 c = simd_mul(vp, simd_make_float4(p.x, p.y, p.z, 1));
+    const simd_float4 c = simd_mul(vp, simd_make_float4(pivot_.x, pivot_.y, pivot_.z, 1));
     if (c.w <= 0)
         return;
-    const float sx = (c.x / c.w + 1) / 2 * viewW_ + dx, sy = (1 - c.y / c.w) / 2 * viewH_ + dy;
-    const simd_float4 q =
-        simd_mul(simd_inverse(vp), simd_make_float4(2 * sx / viewW_ - 1, 1 - 2 * sy / viewH_, 0.5f, 1));
-    const simd_float3 e = eye(), dir = q.xyz / q.w - e;
-    if (dir.z > -1e-4f)
-        return; // at or above the horizon
-    const float t = (p.z - e.z) / dir.z;
-    simd_float3 delta = e + dir * t - p;
-    delta.z = 0;
-    const float len = simd_length(delta), most = distance(); // no runaway near the horizon
-    if (len > most)
-        delta *= most / len;
-    pivotTarget_ = constrain(pivotTarget_ + delta);
-    ++userMoves_;
-    pivotSteps_ = int(def_.param("keyboardtranslationlerpsteps", 1));
-    pivotMin_ = def_.param("keyboardtranslationlerpminchange", 0.001f);
+    const simd_float4 q = simd_mul(simd_inverse(vp), simd_make_float4(c.x / c.w + 2 * dx / viewW_,
+                                                                      c.y / c.w - 2 * dy / viewH_, c.z / c.w, 1));
+    const simd_float3 delta = q.xyz / q.w - pivot_;
+    // In the viewer's frame (x right, z up), onto the floor by the heading.
+    const simd_float3 f = forward();
+    const simd_float3 side = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
+    const simd_float3 up = simd_cross(side, f);
+    const float lx = simd_dot(delta, side), lz = simd_dot(delta, up), h = heading_.value;
+    subjectVel_ = simd_make_float3(-lz * std::cos(h) - lx * std::sin(h), -lz * std::sin(h) + lx * std::cos(h), 0);
 }
 
-void LotCamera::pan(float right, float forward, double dt) {
-    if (right == 0 && forward == 0)
-        return;
-    const float px = def_.param("keyboardtranslationspeed", 50.0f) * float(dt) * 1000.0f / kFrameMs;
-    movePixels(right * px, -forward * px);
+void LotCamera::step(float axis, simd_float2 dir, float k) {
+    ++userMoves_; // SetTracking(false)
+    stepCount_ = axis == 0 ? 1.0f : stepCount_ + 1;
+    const float s = std::sqrt(fov() * float(M_PI) / 180.0f * 30.0f) * (-axis * dist_.value * k) * stepCount_;
+    trackTo(simd_make_float3(pivot_.x + dir.x * s, pivot_.y + dir.y * s, pivot_.z));
+}
+
+void LotCamera::stepSideways(float axis) {
+    const float h = heading_.value;
+    step(axis, simd_make_float2(-std::sin(h), std::cos(h)), kSideStep);
+}
+
+void LotCamera::stepForward(float axis) {
+    const float h = heading_.value;
+    step(axis, simd_make_float2(std::cos(h), std::sin(h)), kForwardStep);
 }
 
 void LotCamera::reset() {
@@ -216,7 +279,7 @@ void LotCamera::reset() {
                           : def_.yaws[size_t(std::clamp(def_.defaultOrientation, 0, int(def_.yaws.size()) - 1))];
     heading_.set(heading_.value + std::remainder(radians(yaw) - heading_.value, 2 * float(M_PI)),
                  def_.spinSmoothing, minChange_);
-    pitchT_.set(std::clamp(def_.param("defaultcamerapitch", 0.15f), 0.0f, 1.0f), def_.zoomSmoothing, minChange_);
+    pitchT_.set(std::clamp(def_.param("defaultcamerapitch", 0.15f), 0.0f, 1.0f), kSubjectSteps, minChange_); // the pitch: 7 steps (Reset)
 }
 
 void LotCamera::setBounds(simd_float2 lo, simd_float2 hi) {
@@ -260,11 +323,7 @@ void LotCamera::moveTo(simd_float3 p) {
     trackTo(p);
 }
 
-void LotCamera::trackTo(simd_float3 p) {
-    pivotTarget_ = constrain(p);
-    pivotSteps_ = def_.zoomSmoothing;
-    pivotMin_ = minChange_;
-}
+void LotCamera::trackTo(simd_float3 p) { pivotTarget_ = constrain(p); }
 
 void LotCamera::savePosition(int slot) {
     if (slot >= 0 && slot < int(saved_.size()))
@@ -276,12 +335,10 @@ bool LotCamera::restorePosition(int slot, bool smooth) {
         return false;
     const Saved& s = *saved_[size_t(slot)];
     pivotTarget_ = constrain(s.pivot);
-    pivotSteps_ = def_.zoomSmoothing;
-    pivotMin_ = minChange_;
     dist_.set(s.dist, def_.zoomSmoothing, minChange_);
     heading_.set(heading_.value + std::remainder(s.heading - heading_.value, 2 * float(M_PI)), def_.spinSmoothing,
                  minChange_);
-    pitchT_.set(s.pitchT, def_.zoomSmoothing, minChange_);
+    pitchT_.set(s.pitchT, kSubjectSteps, minChange_);
     if (!smooth)
         snap();
     return true;
@@ -291,7 +348,7 @@ void LotCamera::setPose(const Pose& p) {
     pivotTarget_ = constrain(p.pivot);
     dist_.set(p.dist, def_.zoomSmoothing, minChange_);
     heading_.set(p.heading, def_.spinSmoothing, minChange_);
-    pitchT_.set(p.pitchT, def_.zoomSmoothing, minChange_);
+    pitchT_.set(p.pitchT, kSubjectSteps, minChange_);
     snap();
 }
 
@@ -299,7 +356,7 @@ void LotCamera::setDefinition(CameraDef def) {
     const Pose p = pose();
     savedByCamera_[def_.name] = saved_;
     def_ = std::move(def);
-    pivotHeight_ = def_.param("pivotheightabovefloor", 1.0f);
+    pivotHeight_ = defaultPivotHeight(def_);
     minChange_ = def_.param("defaultminchange", 0.02f);
     if (auto it = savedByCamera_.find(def_.name); it != savedByCamera_.end())
         saved_ = it->second;
@@ -338,6 +395,30 @@ simd_float3 LotCamera::raisedPivot() const { return pivot_ + simd_make_float3(0,
 
 void LotCamera::update(double dt) {
     const float ms = float(dt) * 1000.0f;
+    // The keyboard (cTSCameraSmoothSims1Controller::Update, BV 0x86ffb8): the
+    // rotation's velocity, then a rotate request of its whole pixels.
+    keyRotate_.update(ms);
+    rotateRequest(float(int(keyRotate_.value)), 0);
+    // The zoom's velocity: while it was moving, a wheel step of keyboardzoomscale.
+    const float zoomBefore = keyZoom_.value;
+    keyZoom_.update(ms);
+    if (zoomBefore != 0) {
+        const int pos = int(float(wheelPos_) + keyZoom_.value);
+        wheelBy(float(pos - wheelPos_), def_.param("keyboardzoomscale", 1));
+        wheelPos_ = pos;
+    }
+    // The translation's velocity (pixels): while it was moving, a move request.
+    const simd_float3 moveBefore = keyMove_;
+    int n;
+    float m;
+    keyLerp(def_, "keyboardtranslationlerpsteps", "keyboardtranslationlerpminchange", n, m);
+    smoothVector(keyMove_, keyMoveTarget_, ms, n, m);
+    if (simd_length_squared(moveBefore) != 0)
+        moveRequest(keyMove_.x, keyMove_.y);
+    // UpdateSubjectMotion (BV 0x86b9d4): the pivot's target, the velocity x the zoom's smoothing ahead.
+    if (simd_length(subjectVel_) > 0.001f)
+        trackTo(pivot_ + subjectVel_ * float(def_.zoomSmoothing));
+
     dist_.update(ms);
     heading_.update(ms, true);
     pitchT_.update(ms);
@@ -348,8 +429,8 @@ void LotCamera::update(double dt) {
     simd_float2 r = pivotTarget_.xy - pivot_.xy;
     const float len = simd_length(r);
     if (len > 0) {
-        float step = len * ms / kFrameMs / float(std::max(pivotSteps_, 1));
-        step = std::max(step, std::min(pivotMin_, len));
+        float step = len * ms / kFrameMs / float(kSubjectSteps);
+        step = std::max(step, std::min(minChange_, len));
         pivot_.xy = step >= len ? pivotTarget_.xy : pivot_.xy + r * (step / len);
     }
     // Height: the subject height lerp.

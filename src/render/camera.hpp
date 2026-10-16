@@ -32,6 +32,11 @@ inline simd_float2 fovScales(float fovRadians, float aspect, bool vertical = fal
     return simd_make_float2(ys / aspect, ys);
 }
 
+// A vector approaching its target along the line (FUN_008c7c64 in the Mac
+// binary): a step of remaining * ms / 50 / steps, never less than minChange
+// (when farther than that), never past the target.
+void smoothVector(simd_float3& value, simd_float3 target, float ms, int steps, float minChange);
+
 // The live-mode lot camera, driven by a CameraDef from the game's camera
 // configuration (LiveCamera.txt), as the Mac binary's nTSSG::cCameraLive
 // does it (docs/camera-ui-mac.md §1). World space is the game's: Z up, 1 unit
@@ -49,25 +54,38 @@ inline simd_float2 fovScales(float fovRadians, float aspect, bool vertical = fal
 //   change per update (`defaultminchange`), angles the short way round.
 //   `smoothing 5 8` are the N of the zoom and the spin; requests from the
 //   keyboard or the mouse use the keyboard*lerpsteps/lerpminchange params.
-// - Requests: rotate (dx, dy pixels: only the dominant axis counts; heading
-//   -= dx * 0.003 rad, t -= dy * 0.005), move (pixels on the screen:
-//   the pivot's screen point moved and unprojected back onto its floor, so
-//   panning scales with the zoom), wheel (d += notches * wheel * (d + 10) /
-//   -50, held between the first and last levels), zoom a level (z/x).
+// - Requests (cTSCameraSmoothSims1Controller::HandleRequest, BV 0x870cb0;
+//   docs/camera-ui-mac.md 1.4 and 1.11): rotate (dx, dy pixels: the
+//   dominant axis; the heading's target = the current heading - dx * 0.003
+//   rad, the pitch fraction's = the current one - dy * 0.005); move
+//   (0x9b66110a: the screen offset at the pivot's depth kept as a world
+//   velocity, up on the screen = forward; UpdateSubjectMotion aims the pivot
+//   at pivot + velocity x the zoom smoothing every update); the steps of the
+//   window's edge (0x3b6c780f / 0xbb6c7808: sqrt(fov x 30) x axis x distance
+//   x 0.0032 / 0.002 x a repeat count, from the current pivot); the wheel
+//   (d += notches * wheel * (d + 10) / -50, held between the first and last
+//   levels); zoom a level (z/x).
+// - Keys (the accelerators' Start/Stop messages, DoMessage FUN_00871c0c):
+//   each sets the target of a smoothed velocity (keyboard*lerpsteps /
+//   lerpminchange) that every update turns into a request: the
+//   translation in pixels (keyboardtranslationspeed x 1, Shift 2) into a
+//   move, the rotation (keyboardrotationspeed) into a rotate of its whole
+//   pixels, the zoom (keyboardzoomspeed) into a wheel step of
+//   keyboardzoomscale. rotateCameraSims1Mode (off by default) leaves , and .
+//   as they are; off, they are swapped and the mouse's dx is negated.
 // - Pivot: held inside the lot rectangle shrunk by `constraintwidth`
 //   (clamp(x, min + w, max - w): the -10 of LiveCamera.txt lets it 10 tiles
 //   out past the edges; a positive width wider than the lot keeps the pivot
 //   in the middle), at `pivotheightabovefloor` over the floor sampled by the app
-//   (the selected Sim's level), raised if the eye would be under the floor.
+//   (the selected Sim's level), raised if the eye would be under the floor;
+//   smoothed in 7 steps (cTSCameraSmoothSims1Controller::Reset) whoever moves it.
 //
 // The lerp's dt is in milliseconds (binary). The FOV is the full
 // horizontal angle (binary: the view volume's matrix, BV 0xccd254, takes
 // x scale = 1 / tan(fov / 2) and y scale = x scale x aspect) at the game's
 // 4:3 (its default 800x600); wider windows keep the 4:3 height and see more
-// at the sides (ours, see fovScales). Inferred: keyboard
-// translation speed is pixels per 50 ms frame, keyboard rotation pixels per
-// second; the floor sample (centre and four corners mixed by
-// `cornersampleratio`); the minimum change is per update.
+// at the sides (ours, see fovScales). Inferred: the floor sample (centre and
+// four corners mixed by `cornersampleratio`).
 class LotCamera {
 public:
     explicit LotCamera(CameraDef def);
@@ -75,14 +93,37 @@ public:
     // --- Requests ----------------------------------------------------------
     void zoomBy(int levels);         // positive zooms in (towards the closer levels), smoothed
     void wheel(float notches);       // positive zooms in, continuous
-    void zoomHeld(int direction, double dt); // = / - held: continuous zoom (+1 in)
     void rotateBy(int steps);        // to the next/previous orientation of the table, smoothed
-    void rotateRequest(float dx, float dy); // pixels, as the mouse sends them
-    void rotateHeld(int direction, double dt); // , / . held (+1 = right)
+    // The rotate request 0xbc17e41c (pixels): with both axes, |dx / dy| < 1 keeps
+    // only dy, > 1 only dx, = 1 both; the heading's target = the current heading -
+    // clamp(dx * 0.003, -3, 3) rad, the pitch fraction's = clamp(the current one -
+    // dy * 0.005, 0, 1).
+    void rotateRequest(float dx, float dy);
+    // The rotate tool's drag (cTSUserToolCameraMiddleClick::MouseEvent, BV
+    // 0x34cf1c): the rotate request with dx negated unless rotateCameraSims1Mode.
+    void mouseRotate(float dx, float dy);
     void freeRotate(float degrees);  // heading, immediate (tests, scripted views)
     void tilt(float degrees);        // pitch, kept inside the zoom level's range
-    void movePixels(float dx, float dy); // screen pixels (x right, y down); the pivot follows, smoothed
-    void pan(float right, float forward, double dt); // axes in [-1, 1] at the keyboard translation speed
+    // The move request 0x9b66110a (screen pixels, x right, y down): the offset at
+    // the pivot's depth becomes the pivot's velocity until the next request (0
+    // stops it). The right-button drag sends it, and the keyboard every update.
+    void moveRequest(float dx, float dy);
+    // The step requests of the window's edge (DoWindowEdgeScrolling, once a frame):
+    // 0xbb6c7808 sideways (+ = left) and 0x3b6c780f forward (+ = forward). Each
+    // one counts up the repeat count, and an axis of 0 resets it to 1 and stops
+    // the pivot where it is.
+    void stepSideways(float axis);
+    void stepForward(float axis);
+    // The keyboard (the accelerators' Start / Stop messages), as held now:
+    // move right / forward (-1..1, x2 with Shift: the message's argument),
+    // rotate (+1 "Start Rotate Right" = '.', -1 left = ','), zoom (+1 in = '=',
+    // -1 out = '-'); 0 = released.
+    void setKeyMove(float right, float forward);
+    void setKeyRotate(int direction);
+    void setKeyZoom(int direction);
+    // The option rotateCameraSims1Mode (cTSMainToolbar +0xad, off by default).
+    void setRotateSims1Mode(bool on) { rotateSims1Mode_ = on; }
+    bool rotateSims1Mode() const { return rotateSims1Mode_; }
     void reset();                    // default zoom, orientation and pitch
     void setPivot(simd_float3 floorPoint); // immediate (also the target)
     // Centre on a point, smoothed (Return: centre on the active Sim; the HandleRequest
@@ -186,10 +227,17 @@ private:
     std::optional<std::pair<simd_float2, simd_float2>> bounds_;
     std::function<float(float, float)> floor_;
 
+    void wheelBy(float delta, float sensitivity);
+    void step(float axis, simd_float2 dir, float k);
+
     simd_float3 pivot_{0, 0, 0}, pivotTarget_{0, 0, 0};
     unsigned userMoves_ = 0;
-    int pivotSteps_ = 1;
-    float pivotMin_ = 0.001f;
+    simd_float3 subjectVel_{0, 0, 0}; // +0x1b0: the pivot's velocity (move request)
+    float stepCount_ = 1;            // +0x1c0: the edge steps' repeat count
+    simd_float3 keyMove_{0, 0, 0}, keyMoveTarget_{0, 0, 0}; // +0x238: pixels a request
+    Smooth keyRotate_, keyZoom_;     // +0x200, +0x21c
+    int wheelPos_ = 0;               // +0x1fc: the wheel's position, in notches
+    bool rotateSims1Mode_ = false;
     float lift_ = 0; // extra pivot height so the eye stays over the floor
     Smooth dist_, heading_, pitchT_; // heading in radians, unwrapped
 
