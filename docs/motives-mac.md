@@ -230,3 +230,173 @@ Fica fora (no `TODO.md`):
   `+0x264` volta do arquivo e qual relógio o simulador passa não foi
   conferido); aqui é o mesmo relógio das memórias, que começa em 0;
 - com pesos somando 0 o jogo divide por 0; aqui o humor fica só o dado 163.
+
+## 8. Ambiente (motivo 13): `cTSEnvironmentScoreManager`
+
+Rodada n33 (Ghidra MCP, só leitura; base 1.0 e BV). Endereços do base
+pelo RTTI (`26cTSEnvironmentScoreManager`, vtable base `0x15dddf0`); nomes
+do `baserom.sym` e do BV (`GetEnvironmentRoomID` BV `0x57ffa8`, construtor
+BV `0x5805a0` / base `0xc8342c`). O base e o BV fazem a mesma conta; o BV
+só desloca os campos do `cRoomInfo` (+4) e tem uma escolha a mais na
+parede (abaixo). **Vale o base.**
+
+### 8.1 O gerenciador
+
+Um serviço global (`cTSGlobals` vtable `0x50`). Vtable base: `0x0c`
+`DoMessage` (`0xc85560`), `0x10` init, `0x18` `InitTuningCurves`
+(`0xc83698`), `0x1c` `SetTuningConstant(i, f)` (`+4 + 4i`), `0x20`
+`GetEnvironmentScore(pessoa)` (`0xc841ac`), `0x24`
+`GetEnvironmentRoomID(sala, local)` (`0xc84620`).
+
+Constantes do construtor (`+4..+0x24`, nada as muda no jogo base):
+
+| | valor | uso |
+|---|---|---|
+| `c0` `+0x04` | 14 | teto da niceness média de parede |
+| `c1` `+0x08` | 23 | teto da niceness média de piso |
+| `c2` `+0x0c` | 0,25 | peso do piso |
+| `c3` `+0x10` | 0,25 | peso da parede |
+| `c4` `+0x14` | 0,2 | peso da luz |
+| `c5` `+0x18` | 0,55 | luz "escura" |
+| `c6` `+0x1c` | 0,9 | luz "clara" |
+| `c7` `+0x20` | 0,5 | (não usado na conta) |
+| `c8` `+0x24` | 5 | lado da célula de fora, em tiles |
+
+A curva (`+0x28`, um `cTSPiecewiseFunction` de até 32 pontos) sai do texto
+1 (o primeiro, o STR# conta de 1) do **STR# `0x2BC` "Environment Score
+Curves" do grupo global `0x7FD46CD0`**: `(0;0) (1000;1000000) -- Max total
+object niceness vs Room Size`, ou seja `1000 · x`. (O texto 2, "OLD", não
+é lido.)
+
+Mensagens (`DoMessage`): `0x8b` entrar no modo vivo
+(`OnEnteringLiveMode` `0xc83790`: liga `+0x38`, esvazia o mapa, refaz
+paredes, pisos, objetos e as notas), `0x8c` sair (desliga `+0x38`),
+`0x8d`/`0x8a` hora do dia (`UpdateTimeofDay` guarda em `+0x39` se o
+relógio diz 2; **ninguém lê `+0x39`**; refaz só as notas), e, com o
+modo vivo ligado, `0x90` sala de ambiente do objeto mudou
+(`OnObjectsEnvRoomChanged`: tira a contribuição da sala velha e põe na
+nova), `0x91` niceness do objeto mudou (soma `preço · (nova − velha)/100`,
+cada uma presa em ≥ 0), `0x92` crap do objeto mudou (soma `nova − velha`),
+`0xcdbd0900` "tem modelo" mudou (põe ou tira o objeto). Quem manda:
+`cTSObject::OnEnvScoreRoomChanged` (BV `0xb04f10`, quando `+0x288` ≠
+`+0x28c`), `OnCrapScoreChanged` (BV `0xb05288`), `SetHasModel` (BV
+`0xafbe64`). Paredes e pisos só são lidos ao entrar no modo vivo (no modo
+vivo eles não mudam). Então a soma incremental é a mesma conta refeita do
+zero com o estado do momento.
+
+### 8.2 A sala de ambiente (`GetEnvironmentRoomID`)
+
+```
+sala −1      → −1
+sala r > 0   → r + 0x10000
+sala 0 (fora) → célula: cx = (int)((x − origem_x) / max(c8, 1)), cy idem (trunca),
+                cada uma presa em 0..255; chave = cx + 256 · cy
+```
+
+A origem é a do lote no mundo (`cWorldDB` `0xdc`/`0xe0` = mínimo do
+lote × tamanho do tile: 0 nos lotes). A sala é a de colocação (definição
+2, 3ARY `0x09`, a mesma do dado de objeto 29): um quintal cercado é uma
+sala, não "fora". A chave do objeto fica em `cTSObject +0x288` (BV),
+posta junto com a sala (`SetRoom`, vtable `0x98`) por quem acha a sala do
+objeto (`cEdithObjectModule::UpdateObjectsInRoom` BV `0x52e170` chama a
+`0x24` com a sala e o local do objeto).
+
+### 8.3 O `cRoomInfo` (um por chave, `std::map<long, cRoomInfo>` em `+0x2c`)
+
+Campos (base, a partir do nó `+0x10`; no BV +4): `+0x10` fora, `+0x11`
+fora já decidido (só informativos), `+0x14` nº de objetos de categoria
+`0x16` (janelas), `+0x18` de categoria `0x17`, **parede** `+0x1c` niceness
+`+0x20` crap `+0x24` contagem `+0x28` nota, **piso** `+0x2c` niceness
+`+0x30` crap `+0x34` área `+0x38` nota, **objetos** `+0x3c` niceness
+`+0x40` crap `+0x44` contagem `+0x48` nota. A entrada nasce ao ser pedida
+(`RoomInfo` `0xc8474c`).
+
+**Paredes** (`UpdateWallScores` `0xc84840`): cada parede do grafo 5 (o de
+colocação: paredes e cercas, sem as saias de deck), os dois lados. Lado A
+(o do localizador das pontas, à direita de a → b): a sala desse lado do
+grafo; o ponto `meio + 0,05 · (dy, −dx)` dá a chave (só importa fora);
+o revestimento desse lado (`cWorldDB` `0x88`) → produto de parede do
+catálogo (tipo 0); **sem produto, o lado não conta**. Com produto:
+`niceness += fmadds(preço, NicenessMultiplier)`, `crap += CrapScore`,
+`contagem += 1`. Lado B igual, com o localizador oposto e `meio + 0,05 ·
+(−dy, dx)`. (O BV, se o estilo da parede não bloqueia colocação, lê o
+revestimento por outra vtable; no base não há essa escolha.)
+
+**Pisos** (`UpdateFloorScores` `0xc84d8c`): cada sala `r` de 0 até o nº
+de salas, cada tile da lista da sala (todos os andares, x por fora, y por
+dentro; um tile com a máscara dos quartos que são da sala; a sala 0 tem os
+tiles de fora de **todos** os andares): chave pelo local do tile;
+`FloorTileNicenessAndCrapScores` (`0x103929c`): tile no lote → padrão do
+piso → produto de piso (tipo 1) → `niceness = preço · NicenessMultiplier`
+(fmuls), `crap = CrapScore`; sem produto, 0 e 0. A área soma 1 **sempre**.
+
+**Objetos** (`UpdateObjectScores` `0xc8504c` + `AddObjectsContribution`
+`0xc83830`), os que `ShouldProcessObject` (`0xc851bc`) deixa: no mundo
+(`IsInWorld`), com modelo (`HasModel`, `+0x1d2` do BV, posto pela cena),
+tipo do OBJD ≠ 2 (pessoa) e ≠ 6, e de um multi-tile só o líder. Na chave
+`+0x288` do objeto:
+
+```
+m = fdivs((float)dado 7 "Niceness Score", 100)   (< 0 → 0, com aviso)
+c = (float)dado 86 "Crapness Score"                (< 0 → 0, com aviso)
+niceness = fmadds((float)preço, m, niceness)       (preço = campo 0x12 do OBJD, short)
+crap += c;  contagem += 1;  categoria (dado 59) 0x16/0x17 → contadores
+```
+
+**Notas** (`UpdateEnvScoreForRoom` `0xc85364`, float):
+
+```
+objetos = área > 0 ? clamp01(niceness_obj / curva(sqrt(área))) · ((1 − c2) − c3) · 100 : 0   (curva ≤ 0 → 0)
+piso    = área > 0 ? min(1, (niceness_piso / área) / c1) · c2 · 100 : 0                      (≥ 0)
+parede  = contagem > 0 ? min(1, (niceness_parede / contagem) / c0) · c3 · 100 : 0            (≥ 0)
+base(chave) = clamp(parede + objetos + piso, ±100) − (crap_parede + crap_obj + crap_piso)    (0 sem entrada)
+```
+
+(`GetBaseEnvironmentScore` `0xc84558`; o crap não é preso.) Os máximos
+dão 25 + 25 + 50 = 100.
+
+### 8.4 A nota do Sim (`GetEnvironmentScore` `0xc841ac`)
+
+```
+k = chave do Sim (+0x288);  k < 0 → 0
+luz = AggregateIllumination(local do Sim)
+se k < 0x10000 (fora):
+    fx = (x − origem)/c8 − 0,5;  fy idem;  ix = floor(fx), iy = floor(fy)
+    s = Σ_{yy = iy−2..iy+2, 0 ≤ yy < 256} Σ_{xx = ix−2..ix+2, 0 ≤ xx < 256}
+          w · base(xx + 256 yy),  w = tenda((fx − xx)·0,5) · tenda((fy − yy)·0,5)
+    (tenda(t) = 1 − |t| até |t| = 1: base 0xc8338c; **sem normalizar**: os pesos somam 4)
+senão s = base(k)
+t = (luz − c5)/(c6 − c5)  (0,5 se c5 = c6), preso em 0..1
+nota = clamp(s + (t − 1) · c4 · 100, ±100)
+```
+
+O termo da luz vai de 0 (luz ≥ 0,9) a −20 (luz ≤ 0,55).
+
+**A luz.** `cTSObject::AggregateIllumination` (BV `0xafa538`) pergunta ao
+objeto de cena do Sim (interface `0xdf8ec21`, `nTSSG::cObject`) a
+`Illumination(local)` (BV `0x653d10`): a `LocationIlluminationStrength`
+do `cLightingManager` (vtable `0x88`, BV `0x70051c`) =
+`ColourToIlluminance(cLightMapManager::LookupFloorLightMap(local))`.
+`LookupFloorLightMap` (BV `0x6f6a24`) acha a página de piso do tile do
+local, o texel `(⌊frac(x)·8⌋, ⌊frac(y)·8⌋)` do tile (8 por tile,
+`+0x50`), e devolve a cor do texel × `+0x70` (2, o construtor `0x6fa6e0`:
+desfaz a escala 0,5 da página); sem página, preto.
+`ColourToIlluminance` (BV `0x1808dd4`) = `fmadds(b, 0,11, fmadds(r, 0,3,
+g · 0,59))`. Sem objeto de cena, 0. Ou seja: **o light map de piso
+debaixo do Sim**, com a luz direta e a do sol já somadas.
+
+### 8.5 Quem chama e quando
+
+`cTSMotives` vtable `0x10` (§3): depois do decaimento, `motivo 13 =
+GetEnvironmentScore(pessoa)` se o gerenciador existe; depois a trava e o
+conjunto antigo.
+
+**O tique.** `cTSPerson +0x264` (base; `+0x2e4` BV) é zerado no
+construtor (BV `0xae1670`) e não é gravado nem lido do arquivo. O
+simulador passa a cada objeto o seu contador de tiques (`cTSSimulator
++0xa0`, `TickAllObjects` BV `0x498544`), que **vem do SIMI**
+(`cTSSimulator::Read` BV `0x499c20`: o u32 depois dos globais, preso em ≥ 0)
+e sobe 1 depois de todos os objetos terem rodado
+(`SimulateOneTick` BV `0x49a814`, só com o relógio andando). Então, ao
+carregar um lote salvo com contador ≥ 60, o primeiro passo de 60 cai **no
+primeiro tique** e os seguintes a cada 60 a partir dele.
