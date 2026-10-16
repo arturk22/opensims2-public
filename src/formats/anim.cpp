@@ -549,6 +549,36 @@ float twistY(const Quat& q) { return 2 * std::atan2(q.y, q.w); }
 
 } // namespace
 
+std::optional<Quat> lookAtIkRotation(const Xform& beginWorld, const Quat& parentWorld, float endOffset,
+                                     const Vec3& target, const Vec3& pole) {
+    // In the frame of the begin bone's place and its parent's rotation
+    // (here in the given space): G the target, U the pole, from the bone.
+    const Vec3 G = sub(target, beginWorld.t), U = sub(pole, beginWorld.t);
+    const float d2 = dot(G, G), L = endOffset;
+    if (!(d2 - L * L > 0))
+        return std::nullopt;
+    Vec3 c = cross(U, G);
+    const float lc = length(c);
+    if (!(lc > 0))
+        return std::nullopt;
+    c = scale(c, 1 / lc);
+    Vec3 b = cross(G, c);
+    b = scale(b, 1 / length(b)); // across G, on the pole's side
+    const float d = std::sqrt(d2);
+    // A, the angle at the bone between the target and the end bone, so
+    // that the end bone sees the target straight along the bone's +Z: cos A
+    // = ((d^2 + L^2) - (d^2 - L^2)) / (2 d L) = L / d (the game's sum);
+    // pi / 2 when that is not above 0.
+    const float cosA = L > 0 ? (d2 + L * L - (d2 - L * L)) / (d * 2 * L) : 0.0f;
+    const float A = cosA > 0 ? std::acos(std::min(cosA, 1.0f)) : float(M_PI / 2);
+    // The axes (c, b, G / d) turned by pi / 2 - A about the first (the
+    // columns of that matrix times Rx(pi / 2 - A), FUN_00edd6e0).
+    const float th = float(M_PI / 2) - A, ct = std::cos(th), st = std::sin(th);
+    const Vec3 g = scale(G, 1 / d);
+    const Vec3 Y = add(scale(b, ct), scale(g, st)), Z = sub(scale(g, ct), scale(b, st));
+    return normalized(conjugate(parentWorld) * quatFromAxes(c, Y, Z));
+}
+
 void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local,
              const std::vector<Xform>* goals, const Xform& modelFrame, const IkObjectBone* ikObjectBone,
              bool mirrored, std::vector<IkReach>* reach) {
@@ -613,17 +643,18 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         return world[size_t(frame)].then(node);
     };
 
+    // The strategies: two joints (seven degrees of freedom) for arms and
+    // legs, look at for the head (head -> head_grip, docs/anim-mac.md
+    // §12.2; 338 animations of the base game, the sink's cleaning, the
+    // chessboard's, the shelves'). The dog's look at is not in the base game.
+    constexpr uint32_t k7Dof = 0x48EE7A41, kLookAt = 0x09F9E87E;
     for (const auto& chain : target.ikChains) {
-        if (chain.strategy != 0x48EE7A41 || chain.targets.empty())
-            continue; // only the two-joint (seven degrees of freedom) chains
+        if ((chain.strategy != k7Dof && chain.strategy != kLookAt) || chain.targets.empty())
+            continue;
         const int b0 = bone(chain.crcs[0]), b2 = bone(chain.crcs[2]);
         if (b0 < 0 || b2 < 0)
             continue;
-        // The chain's bones, begin to end, and each one's IK channel type
-        // (cIKStrategy7DOF::SetUberChannelIKTypes, Mac BV 0xd36d38): three
-        // bones (thigh, calf, foot) are 1, 4, 6; otherwise (upperarm, bicep,
-        // forearm, wrist, hand) 2, 3, 4, 7, 8 and 0 past the fifth.
-        std::vector<int> bones;
+        std::vector<int> bones; // the chain's bones, begin to end
         for (int b = b2; b >= 0; b = s.bones[size_t(b)].parent) {
             bones.push_back(b);
             if (b == b0)
@@ -632,6 +663,14 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         if (bones.back() != b0)
             continue;
         std::reverse(bones.begin(), bones.end());
+        // The look-at strategy solves two-bone chains only (its
+        // ComputeIKTranslationSolution wants the chain's 0x4c == 2).
+        if (chain.strategy == kLookAt && bones.size() != 2)
+            continue;
+        // Each bone's IK channel type (cIKStrategy7DOF::SetUberChannelIKTypes,
+        // Mac BV 0xd36d38): three bones (thigh, calf, foot) are 1, 4, 6;
+        // otherwise (upperarm, bicep, forearm, wrist, hand) 2, 3, 4, 7, 8
+        // and 0 past the fifth.
         std::vector<int> types(bones.size(), 0);
         static constexpr int kThree[] = {1, 4, 6}, kFive[] = {2, 3, 4, 7, 8};
         for (size_t i = 0; i < bones.size(); ++i)
@@ -640,9 +679,9 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         for (size_t i = 0; i < bones.size(); ++i)
             if (types[i] == 4)
                 joint = int(i);
-        if (joint < 0)
+        if (joint < 0 && chain.strategy == k7Dof)
             continue;
-        const int b1 = bones[size_t(joint)];
+        const int b1 = joint >= 0 ? bones[size_t(joint)] : b2;
         const std::optional<Xform> pole = nodeLocal(chain.crcs[4]);
         const int poleFrame = bone(chain.crcs[5]);
         float weight = 1;
@@ -742,6 +781,20 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
                 continue;
             T = g->t, endRotation = g->q;
             contact = chain.targets.size() > 1 ? 0.0f : 1.0f;
+        }
+        if (chain.strategy == kLookAt) {
+            // The head turns to look at the goal (the head_ikctr), upright by
+            // the pole (head_ikpole): its IK channel (type 1) takes the
+            // solution, by the chain's weight.
+            objectFrame.reset();
+            if (!pole)
+                continue; // no pole: no up for the head (the game needs the pole's outlet)
+            const Xform poleWorld = inFrame(world, poleFrame, *pole, false);
+            const Quat before = local[size_t(b0)].q;
+            if (const auto q = lookAtIkRotation(world[size_t(b0)], parentWorld(s, world, b0).q,
+                                                local[size_t(b2)].t[1], T, poleWorld.t))
+                local[size_t(b0)].q = weight < 1 ? nlerp(before, *q, weight) : *q;
+            continue;
         }
         if (reach)
             reach->push_back({b2, T, weight * contact, chain.crcs[0]});

@@ -242,6 +242,18 @@ void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ti
              const std::vector<Xform>* goals = nullptr, const Xform& modelFrame = Xform{},
              const IkObjectBone* ikObjectBone = nullptr, bool mirrored = false, std::vector<IkReach>* reach = nullptr);
 
+// The look-at strategy's solution (cIKStrategyLookAt::
+// ComputeIKTranslationSolution, Mac BV 0xd46cdc; docs/anim-mac.md §12.2): the
+// local rotation of a chain's begin bone (the head) that turns its +Z from
+// its end bone (its child, `endOffset` along its +Y: head_grip) to `target`,
+// with its +X across the plane of the target and `pole` (its +Y towards the
+// pole: the head stays upright). `beginWorld` is the begin bone and
+// `parentWorld` its parent, all in one space. nullopt where the game finds
+// no solution (the target within `endOffset`, or on the pole's line): the
+// bone keeps what it had.
+std::optional<Quat> lookAtIkRotation(const Xform& beginWorld, const Quat& parentWorld, float endOffset,
+                                     const Vec3& target, const Vec3& pole);
+
 // Snap events (ANIM event type 1005): "snapObjectRoot=<object>:__<model>__"
 // and "snapTargetSlot=<skeleton>:__<bone>__" or "Oblivion". They move a
 // model an object shows into a slot of the animated skeleton or out of

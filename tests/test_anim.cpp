@@ -365,6 +365,69 @@ static void testIk() {
     check(near(thigh, 0.5f, 1e-3f), "IK: bone lengths kept");
 }
 
+static void testLookAtIk() {
+    // cIKStrategyLookAt (docs/anim-mac.md §12.2): the head (its +Y up the
+    // neck, +Z the face, as auskel's) turns so that its +Z, seen from
+    // head_grip (0.08 up the head), meets the target, upright by the pole.
+    Skeleton s;
+    s.bones.push_back({"root", -1, Xform{}, -1, 0});
+    // The neck turned as auskel's root_trans: its +Y the model's up, +Z its
+    // front (+Y), +X the model's -X.
+    s.bones.push_back({"neck", 0, Xform{Quat{0, 0.70710678f, 0.70710678f, 0}, {0, 0, 1.6f}}, 0, 1});
+    s.bones.push_back({"head", 1, Xform{{}, {0, 0.075f, 0}}, 1, 2});
+    s.bones.push_back({"head_grip", 2, Xform{{}, {0, 0.08f, 0}}, -1, 3});
+    s.bones.push_back({"head_ikctr", 0, Xform{{}, {0, 1, 1.7f}}, -1, 4});
+    s.bones.push_back({"head_ikpole", 0, Xform{{}, {0, 0, 2.1f}}, -1, 5});
+    const auto rest = s.world(s.restPose());
+    check(near(rest[2].rotate({0, 0, 1})[1], 1, 1e-4f) && near(rest[2].rotate({0, 1, 0})[2], 1, 1e-4f),
+          "look-at IK: the test head faces +Y, up +Z");
+    Animation::Target t;
+    Animation::IkChain chain;
+    chain.strategy = 0x09F9E87E;
+    chain.crcs[0] = nameInstanceHiHash("head");
+    chain.crcs[2] = nameInstanceHiHash("head_grip");
+    chain.crcs[4] = nameInstanceHiHash("head_ikpole");
+    Animation::IkTarget goal;
+    goal.crcs[4] = nameInstanceHiHash("head_ikctr");
+    chain.targets.push_back(goal);
+    t.ikChains.push_back(chain);
+    auto aims = [&](const std::vector<Xform>& local, const Vec3& target) {
+        const auto w = s.world(local);
+        const Vec3 face = w[2].rotate({0, 0, 1}), grip = w[3].t;
+        Vec3 d{target[0] - grip[0], target[1] - grip[1], target[2] - grip[2]};
+        const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        return (face[0] * d[0] + face[1] * d[1] + face[2] * d[2]) / n;
+    };
+    {
+        // To the left and down: the face meets the target from head_grip.
+        auto local = s.restPose();
+        local[4].t = {-0.8f, 0.6f, 1.2f};
+        applyIk(t, s, 0, local);
+        check(aims(local, local[4].t) > 0.9999f, "look-at IK: the head's +Z from head_grip on the target");
+        // Upright: its X across the plane of the target and the pole, as
+        // seen from the head (the pole is straight up: no roll).
+        const auto w = s.world(local);
+        check(std::fabs(w[2].rotate({1, 0, 0})[2]) < 1e-4f, "look-at IK: the head's X level (no roll)");
+        check(w[2].rotate({0, 1, 0})[2] > 0.5f, "look-at IK: the head stays upright");
+    }
+    {
+        // A target within head_grip's reach of the head: no solution, the
+        // head keeps the animation's rotation.
+        auto local = s.restPose();
+        local[4].t = {0, 0.02f, 1.67f};
+        const Quat before = local[2].q;
+        applyIk(t, s, 0, local);
+        check(near(local[2].q.w, before.w) && near(local[2].q.x, before.x), "look-at IK: nothing when the target is that near");
+    }
+    {
+        // The helper alone: straight ahead, far, the head tilts only by
+        // asin(L / d) (head_grip sits above the head's centre of turn).
+        const auto w = s.world(s.restPose());
+        const auto q = lookAtIkRotation(w[2], w[1].q, 0.08f, {0, 10, w[3].t[2]}, {0, 0, 5});
+        check(q && near(q->w, 1, 1e-3f), "look-at IK: a far target ahead, the head as at rest");
+    }
+}
+
 static void testArmIk() {
     // An arm along +X from the shoulder at (0, 0, 1.5): upperarm 0.3, a
     // twist bone halfway, forearm 0.3, wrist twist bone, hand. The goal is
@@ -1278,6 +1341,7 @@ int main() {
     testDeltaIk();
     testIk();
     testArmIk();
+    testLookAtIk();
     testSnaps();
     testSimCatalog();
     testSkinning();
