@@ -100,9 +100,11 @@ uint16_t enqueueSub(VM& vm, Object& sim, QueuedInteraction q) {
 // stack object and code owner, its parameters, with the Sim's person data
 // 33 (priority) and 166 (autonomous) set to the interaction's for that
 // time and put back after. False (Push Interaction's result 6, "the target
-// refused") when the check fails or one is already running. Inferred: the
-// tree's temps are fresh, and an error in it is a refusal rather than an
-// error of the pushing tree.
+// refused") when the check fails or one is already running. Person data 166
+// is the interaction's autonomous bit (cTSInteraction vtable 0xbc), which
+// AddAction also lends the current action for the time of the run (0xc0).
+// Inferred: the tree's temps are fresh, and an error in it is a refusal
+// rather than an error of the pushing tree.
 bool runImmediately(VM& vm, Object& sim, const QueuedInteraction& q) {
     static bool running = false;
     if (running || !sim.person || !vm.object(q.object))
@@ -115,8 +117,17 @@ bool runImmediately(VM& vm, Object& sim, const QueuedInteraction& q) {
     running = true;
     auto& d = sim.person->data;
     const int16_t priority = d[persondata::Priority], autonomous = d[persondata::InteractionAutonomous];
+    // The current action's autonomous bit, lent (by its ID: the run may move the queue).
+    auto current = [](Object& s) -> QueuedInteraction* {
+        return s.activeInteraction >= 0 && size_t(s.activeInteraction) < s.queue.size() ? &s.queue[size_t(s.activeInteraction)]
+                                                                                        : nullptr;
+    };
+    const uint16_t currentUid = current(sim) ? current(sim)->uid : 0;
+    const bool currentAutonomous = current(sim) && current(sim)->autonomous;
+    if (QueuedInteraction* a = current(sim))
+        a->autonomous = q.autonomous;
     d[persondata::Priority] = q.priority;
-    d[persondata::InteractionAutonomous] = q.priority == kPriorityAutonomous;
+    d[persondata::InteractionAutonomous] = q.autonomous;
     const ObjectId id = sim.id;
     std::array<int16_t, kTempCount> temps{};
     try {
@@ -127,6 +138,10 @@ bool runImmediately(VM& vm, Object& sim, const QueuedInteraction& q) {
     if (Object* s = vm.object(id); s && s->person) {
         s->person->data[persondata::Priority] = priority;
         s->person->data[persondata::InteractionAutonomous] = autonomous;
+        if (currentUid)
+            for (auto& x : s->queue)
+                if (x.uid == currentUid)
+                    x.autonomous = currentAutonomous;
     }
     return true;
 }
@@ -233,8 +248,21 @@ Exit pushInteraction(Context& c) {
             if (!m->person->foundActionName.empty())
                 q->name = m->person->foundActionName;
         }
+    // The interaction's autonomous bits (cTSInteraction +0x54; TryPushAction
+    // BV 0xe33530): with 0x02 both, "autonomous" (0x400, vtable 0xc0: person
+    // data 166 when it runs) and "test as autonomous" (0x800, 0xc8: the check
+    // tree's parameter 0 when Idle for Input takes it). Without it a Sim
+    // that pushes passes on its current interaction's 0x400 (0xbc -> 0xc0);
+    // an object's push leaves both 0 (Init zeroes them).
+    if (flags2 & 0x02) {
+        q->autonomous = q->testAutonomous = true;
+    } else if (const Object* m = c.vm.object(c.thread.me); m && m->person) {
+        if (m->activeInteraction >= 0 && size_t(m->activeInteraction) < m->queue.size())
+            q->autonomous = m->queue[size_t(m->activeInteraction)].autonomous;
+    }
     if (flags & 0x20) {
-        const CheckResult r = checkInteraction(c.vm, targetId, *q);
+        // TryPushAction's own test: "autonomous" is byte 14 bit 0x02.
+        const CheckResult r = checkInteraction(c.vm, targetId, *q, nullptr, flags2 & 0x02);
         if (r != CheckResult::NoGuard && r != CheckResult::True)
             return failed(2);
     }
@@ -805,7 +833,11 @@ bool attemptPush(VM& vm, Thread& t, bool nested) {
         clearSubActions(*sim);
         bool ok = vm.object(item.object) != nullptr;
         if (ok) {
-            const CheckResult r = checkInteraction(vm, t.me, item);
+            // The check tree's parameter 0: the entry's "test as autonomous"
+            // bit (TryIdleForInput BV 0xadeb6c: cEdithObjectTestSim::Init
+            // with the interaction's vtable 0xc4), 1 for the entry the Find
+            // Best Interaction found and Main pushed.
+            const CheckResult r = checkInteraction(vm, t.me, item, nullptr, item.testAutonomous);
             ok = r == CheckResult::NoGuard || r == CheckResult::True;
             sim = vm.object(t.me); // the check tree may have removed the Sim
             if (!sim)
@@ -924,7 +956,9 @@ void syncQueueData(Object& sim) {
     const QueuedInteraction* a = running ? &q[size_t(sim.activeInteraction)] : nullptr;
     d[persondata::CurrentInteractionIndex] = a ? int16_t(a->interaction) : 0;
     d[persondata::CurrentInteractionObject] = a ? a->object : 0;
-    d[persondata::InteractionAutonomous] = a && a->priority == kPriorityAutonomous;
+    // 166: the running interaction's autonomous bit (cTSInteraction vtable
+    // 0xbc, which SetCurrentAction copies; BV 0xadc6d8). Was "priority 20".
+    d[persondata::InteractionAutonomous] = a && a->autonomous;
     // 109 "ci: Current Interaction GUID": the running interaction's ID, which
     // trees hand to Push Interaction's link (flag 0x40; "Interaction - Read to").
     d[109] = a ? int16_t(a->uid) : 0;

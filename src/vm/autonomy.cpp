@@ -599,6 +599,9 @@ Exit gosubFoundAction(Context& c) {
     if (!q)
         throw VMError("Last Find Best Action was Not Successful. Quit trying to run gosub.");
     q->priority = kPriorityAutonomous;
+    // try_gosub_action_found (BV 0xade17c): the interaction's autonomous
+    // bits, 0x400 and 0x800 (vtable 0xc0 and 0xc8), both on.
+    q->autonomous = q->testAutonomous = true;
     q->pushedBy = sim.id;
     q->args = sim.person->foundActionArgs;
     if (!sim.person->foundActionName.empty())

@@ -154,6 +154,8 @@ std::optional<QueuedInteraction> entryOf(VM& vm, Object& sim, const LotObjects::
     q->link = rec.u42;
     if (rec.u54 & 2) // the continuation (lot_save.cpp toRecord)
         q->flags |= 0x04;
+    q->autonomous = rec.u54 & 0x400;     // autonomous (cTSInteraction vtable 0xbc)
+    q->testAutonomous = rec.u54 & 0x800; // tested as autonomous (vtable 0xc4)
     return q;
 }
 
@@ -225,6 +227,8 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
         q->link = rec->u42;
         if (rec->u54 & 2) // the continuation (lot_save.cpp toRecord)
             q->flags |= 0x04;
+        q->autonomous = rec->u54 & 0x400;     // autonomous (cTSInteraction vtable 0xbc)
+        q->testAutonomous = rec->u54 & 0x800; // tested as autonomous (vtable 0xc4)
         sim.queue.push_back(std::move(*q));
     }
     if (sim.queue.empty())

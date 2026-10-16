@@ -244,8 +244,11 @@ static void testCancelRunning() {
     Thread& t = fx.vm.threads[fx.sim];
     check(s.activeInteraction == 0 && inInteraction(t) && s.person->data[persondata::Priority] == kPriorityAutonomous &&
               s.person->data[persondata::CurrentInteractionObject] == fx.fridge &&
-              s.person->data[persondata::InteractionAutonomous] == 1,
-          "a long interaction is running; person data 33/80/166 say so");
+              s.person->data[persondata::InteractionAutonomous] == 0,
+          "a long interaction is running; person data 33/80 say so, 166 is its autonomous bit (not its priority)");
+    s.queue[0].autonomous = true;
+    syncQueueData(s);
+    check(s.person->data[persondata::InteractionAutonomous] == 1, "person data 166: the running interaction's autonomous bit");
     for (int i = 0; i < 5; ++i)
         fx.vm.tick();
     check(s.activeInteraction == 0 && !interactionCancelled(s), "it keeps running");
@@ -638,6 +641,119 @@ static void testStarEntryStringsFromNamedTree() {
           "a picked Run Immediately entry runs at once, not queued");
 }
 
+// Push Interaction with byte 14 flags.
+static Behavior::Instruction pushFlags2(uint8_t interaction, uint8_t loc, uint8_t prio, uint8_t flags, uint8_t flags2,
+                                       Target t, Target f) {
+    return instr(0x0D, t, f, {interaction, loc, prio, flags, 0, 0x0A, 0, 0, 0x0A, 0, 0, 0x0A, 0, 0, flags2, 1});
+}
+
+// Round n31 (docs/primitives-mac.md §4g "Rodada n31"): the interaction's
+// autonomous bits, cTSInteraction +0x54 0x400 (person data 166) and 0x800
+// (the check tree's parameter 0 when Idle for Input takes the entry). The
+// Find Best Interaction's entry, pushed with byte 14 bit 0x02, has both: an
+// entry whose check tree only takes autonomy (parameter 0 = 1) runs; pushed
+// by an object without 0x02 it is refused. A Sim's push passes on its
+// current interaction's 0x400, not 0x800. Push's own forced check (byte 3
+// 0x20) is autonomous with 0x02 (TryPushAction BV 0xe33530).
+static void testAutonomousBits() {
+    Fixture fx;
+    constexpr uint32_t kTubGroup = 0x7F000050;
+    fx.code.add(kTubGroup, 0x80, definition(4, 2, 0x0B1E0004));
+    InteractionTable t;
+    t.version = 0x4D;
+    t.interactions = {entry(0x1002, 0x1005, 0)};
+    fx.code.add(kTubGroup, 2, std::move(t));
+    fx.code.addInteractionStrings(kTubGroup, 2, ttas({"Only Alone"}, {"So Sozinho"}));
+    // action: waits 1000 ticks; guard: parameter 0 == 1 (autonomous only)
+    fx.code.add(kTubGroup, 0x1002, tree({expr(Param, 0, Assign, Lit, 1000, go(1), E), idle(0, false, go(2)),
+                                         expr(SAttr, 1, Assign, Lit, 1, T, E)},
+                                        4));
+    fx.code.add(kTubGroup, 0x1005, tree({expr(Param, 0, Eq, Lit, 1, T, F)}, 1));
+    const ObjectId tub = fx.vm.instantiate(kTubGroup, 0x80).id;
+    // The Sim's own push of its last Find Best Interaction's entry (Main's
+    // "Push Interaction" after Find Best Interaction): byte 14 bit 0x02.
+    fx.code.add(kSimGroup, 0x1020, tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x00, 0x02, T, F)},
+                                        0, 1));
+    // The same with "force run check tree" (byte 3 0x20), and without 0x02.
+    fx.code.add(kSimGroup, 0x1021, tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x20, 0x02, T, F)},
+                                        0, 1));
+    fx.code.add(kTubGroup, 0x1022, tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x20, 0x00, T, F)},
+                                        1, 1));
+    // An object's push of the entry, object in parameter 0, without 0x02.
+    fx.code.add(kTubGroup, 0x1023, tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x00, 0x00, T, F)},
+                                        1, 1));
+    // The Sim pushes the fridge's "Clean" (TTA 1) onto itself, object in parameter 0.
+    fx.code.add(kSimGroup, 0x1024, tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E),
+                                         pushFlags2(1, 0, 2, 0x00, 0x00, T, F)},
+                                        1, 1));
+    Object& s = fx.s();
+    s.person->data[kPersondataFindBestObject] = tub;
+    s.data[kObjdataTreeTableEntry] = 0;
+    auto runOn = [&](ObjectId me, uint16_t tree, int16_t arg = 0) {
+        const int16_t args[] = {arg};
+        Thread th = fx.vm.start(me, tree, args);
+        fx.vm.run(th);
+        if (th.status == Thread::Status::Failed)
+            std::fprintf(stderr, "  %s\n", th.error.c_str());
+        return th.status == Thread::Status::Finished && th.result;
+    };
+    check(runOn(fx.sim, 0x1020) && s.queue.size() == 1 && s.queue[0].object == tub && s.queue[0].autonomous &&
+              s.queue[0].testAutonomous,
+          "the Find Best Interaction's entry (byte 14 0x02) is autonomous and tested as autonomous");
+    fx.vm.tick();
+    check(s.activeInteraction == 0 && s.queue.size() == 1 && s.person->data[persondata::InteractionAutonomous] == 1,
+          "Idle for Input runs its check tree with parameter 0 = 1: it runs, person data 166 = 1");
+    check(runOn(fx.sim, 0x1024, int16_t(fx.fridge)) && s.queue.size() == 2 && s.queue[1].autonomous &&
+              !s.queue[1].testAutonomous,
+          "a Sim's push passes on its current interaction's autonomous bit, not the test bit");
+
+    Fixture fy;
+    fy.code.add(kTubGroup, 0x80, definition(4, 2, 0x0B1E0004));
+    InteractionTable t2;
+    t2.version = 0x4D;
+    t2.interactions = {entry(0x1002, 0x1005, 0)};
+    fy.code.add(kTubGroup, 2, std::move(t2));
+    fy.code.addInteractionStrings(kTubGroup, 2, ttas({"Only Alone"}, {"So Sozinho"}));
+    fy.code.add(kTubGroup, 0x1002, tree({expr(Param, 0, Assign, Lit, 1000, go(1), E), idle(0, false, go(2)),
+                                         expr(SAttr, 1, Assign, Lit, 1, T, E)},
+                                        4));
+    fy.code.add(kTubGroup, 0x1005, tree({expr(Param, 0, Eq, Lit, 1, T, F)}, 1));
+    fy.code.add(kTubGroup, 0x1022, tree({expr(StackId, 0, Assign, Lit, int16_t(fy.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x20, 0x00, T, F)},
+                                        1, 1));
+    fy.code.add(kTubGroup, 0x1023, tree({expr(StackId, 0, Assign, Lit, int16_t(fy.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x00, 0x00, T, F)},
+                                        1, 1));
+    fy.code.add(kSimGroup, 0x1021, tree({expr(StackId, 0, Assign, Lit, int16_t(fy.sim), go(1), E),
+                                         pushFlags2(0, 0, 2, 0x20, 0x02, T, F)},
+                                        0, 1));
+    const ObjectId tub2 = fy.vm.instantiate(kTubGroup, 0x80).id;
+    Object& s2 = fy.s();
+    s2.person->data[kPersondataFindBestObject] = tub2;
+    s2.data[kObjdataTreeTableEntry] = 0;
+    auto runOn2 = [&](ObjectId me, uint16_t tree, int16_t arg = 0) {
+        const int16_t args[] = {arg};
+        Thread th = fy.vm.start(me, tree, args);
+        fy.vm.run(th);
+        return th.status == Thread::Status::Finished && th.result;
+    };
+    check(!runOn2(tub2, 0x1022, int16_t(tub2)) && fy.vm.object(tub2)->data[kObjdataPrimitiveResult] == 2 && s2.queue.empty(),
+          "Push's forced check without byte 14 0x02 is not autonomous: refused (result 2)");
+    check(runOn2(fy.sim, 0x1021) && s2.queue.size() == 1 && s2.queue[0].testAutonomous,
+          "with 0x02 it is: the push goes in");
+    s2.queue.clear();
+    syncQueueData(s2);
+    check(runOn2(tub2, 0x1023, int16_t(tub2)) && s2.queue.size() == 1 && !s2.queue[0].autonomous &&
+              !s2.queue[0].testAutonomous,
+          "an object's push without 0x02: neither bit");
+    fy.vm.tick();
+    check(s2.queue.empty() && s2.activeInteraction == -1, "Idle for Input runs its check tree with parameter 0 = 0: refused");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -655,6 +771,7 @@ int main() {
     testLinkedInteractions();
     testRunImmediately();
     testStarEntryStringsFromNamedTree();
+    testAutonomousBits();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

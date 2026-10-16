@@ -413,6 +413,16 @@ struct QueuedInteraction {
     std::array<int16_t, 4> args{};  // the action tree's parameters
     uint16_t uid = 0;               // unique across Sims (links.cpp; global 36), for cancelling a specific entry; saved at +0x40
     uint16_t link = 0;              // the interaction it is linked to (Push Interaction flag 0x40), or 0
+    // Two bits of the binary's cTSInteraction +0x54 (saved at +0x54;
+    // docs/primitives-mac.md §4g "Rodada n31"): `autonomous` (0x400,
+    // vtable 0xbc/0xc0), which SetCurrentAction copies into person data 166,
+    // set for the Find Best Interaction's entry (Gosub Found Action, Push
+    // Interaction byte 14 bit 0x02) and inherited from the pushing Sim's
+    // current interaction otherwise; `testAutonomous` (0x800, vtable
+    // 0xc4/0xc8), the check tree's parameter 0 when Idle for Input takes the
+    // entry from the queue, set only for the Find Best Interaction's entry.
+    bool autonomous = false;
+    bool testAutonomous = false;
     // Cancelled by the user or by something more important queued behind it:
     // Idle for Input in its action tree returns at once (FreeSO's NotifyIdle).
     bool cancelled = false;
