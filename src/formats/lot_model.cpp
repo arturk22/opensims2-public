@@ -261,8 +261,24 @@ MeshGroup terrainMesh(const Lot& lot, const LotLightMapLayout& lm, Keep&& keep) 
     return std::move(b.mesh);
 }
 
+// The floors' thickness (nTSSG::cFloorThicknessGeometryNode; docs/walls-floors-mac.md
+// §6.1): the FloorThickness material (Materials.package: a StandardMaterial,
+// diffuse 0.5, no specular, texture floor-edge), lit like an object.
+constexpr const char* kFloorThicknessMaterial = "FloorThickness";
+constexpr float kFloorThickness = 0.15f; // Mac BV 0x274b638
+MaterialDefinition floorThicknessMaterial() {
+    MaterialDefinition m;
+    m.materialType = "StandardMaterial";
+    m.properties = {{"stdMatBaseTextureName", "floor-edge"},
+                    {"stdMatBaseTextureEnabled", "true"},
+                    {"stdMatDiffCoef", "0.5,0.5,0.5,1"},
+                    {"stdMatSpecPower", "0"}};
+    return m;
+}
+
 // Quarter-tile triangles (west, north, east, south) of each floor tile, with
-// the tile's own texture coordinates, one mesh per material.
+// the tile's own texture coordinates, one mesh per material; and the floors'
+// thickness on levels 1 and up.
 // Levels above `maxLevel` are not drawn (their light-map materials are still set);
 // nor, with `lowestCut` below it, the tiles of `maxLevel` a story over the
 // ground (storyOverGround).
@@ -270,6 +286,22 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
                std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings, int maxLevel,
                int lowestCut) {
     std::map<std::string, MeshBuilder> hidden;
+    // cFloorThicknessGeometryNode (docs/walls-floors-mac.md §6.1): on levels
+    // 1 and up (cFloor gives every floor subset that is not a grid one a
+    // FloorThickness subset; none on the ground or below it) each edge of
+    // each quarter's triangle toggles its ordered locator in a set
+    // (UpdateOrderedLocatorSet: in if absent, out if there), leaving the
+    // edges round the level's floor; each gets a quad from the floor down
+    // 0.15 (cFloorTilePiece, Mac BV 0x7ab07c), normal Perp(b - a) (out of
+    // the triangle), u 0 to 1 from a to b, v 0 at the top to 1 at the
+    // bottom. Kept with the quarter it came from (drawn or hidden as its
+    // floor triangle).
+    struct Edge {
+        Vec3f a, b;
+        bool shown = true;
+    };
+    using EdgeKey = std::array<long, 4>; // the ends in half tiles, the lesser first
+    const std::string thicknessKey = std::string("floorthickness:") + kFloorThicknessMaterial;
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.floorPatterns) {
         const std::string m = patterns.floorMaterial(pattern);
@@ -280,6 +312,16 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
     for (int level = lot.minLevel; level < lot.minLevel + lot.levelCount; ++level) {
         const float lift = level == 0 ? kGroundFloorLift : 0.0f;
         const bool withBelow = level == maxLevel && lowestCut < maxLevel;
+        std::map<EdgeKey, Edge> edgeSet;
+        auto toggle = [&](const Vec3f& a, const Vec3f& b, bool shown) {
+            const std::array<long, 2> ka{std::lround(a[0] * 2), std::lround(a[1] * 2)},
+                kb{std::lround(b[0] * 2), std::lround(b[1] * 2)};
+            const EdgeKey key = ka < kb ? EdgeKey{ka[0], ka[1], kb[0], kb[1]} : EdgeKey{kb[0], kb[1], ka[0], ka[1]};
+            if (auto it = edgeSet.find(key); it != edgeSet.end())
+                edgeSet.erase(it);
+            else
+                edgeSet.emplace(key, Edge{a, b, shown});
+        };
         for (uint32_t x = 0; x < lot.width; ++x)
             for (uint32_t y = 0; y < lot.height; ++y) {
                 const auto& quarters = lot.floor(level, x, y);
@@ -338,8 +380,21 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
                         return b.vertex(p, n, fy + 0.5f + lu, fx + 0.5f + lv, lm.floorTexel(level, p[0], p[1]));
                     };
                     b.triangle(v(a), v(e), v(c));
+                    if (level >= 1)
+                        for (const auto& [from, to] : {std::pair{a, e}, std::pair{e, c}, std::pair{c, a}})
+                            toggle(from, to, &out == &drawn);
                 }
             }
+        for (const auto& [key, edge] : edgeSet) {
+            MeshBuilder& t = (edge.shown ? drawn : hidden)[thicknessKey];
+            const float dx = edge.b[0] - edge.a[0], dy = edge.b[1] - edge.a[1], len = std::hypot(dx, dy);
+            const Vec3f n{dy / len, -dx / len, 0};
+            const uint32_t v0 = t.vertex(edge.a, n, 0, 0), v1 = t.vertex(edge.b, n, 1, 0),
+                           v2 = t.vertex({edge.a[0], edge.a[1], edge.a[2] - kFloorThickness}, n, 0, 1),
+                           v3 = t.vertex({edge.b[0], edge.b[1], edge.b[2] - kFloorThickness}, n, 1, 1);
+            t.triangle(v0, v2, v1);
+            t.triangle(v1, v2, v3);
+        }
     }
 }
 
@@ -1881,6 +1936,9 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
                         {"stdMatSpecPower", "0"}};
         model.materials[kWallTopMaterial] = m;
     }
+    if (std::any_of(model.parts.begin(), model.parts.end(),
+                    [](const ObjectModel::Part& p) { return p.material == kFloorThicknessMaterial; }))
+        model.materials[kFloorThicknessMaterial] = floorThicknessMaterial();
     for (const auto& part : model.parts) {
         if (part.material.empty() || model.materials.count(part.material))
             continue;

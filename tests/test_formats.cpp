@@ -1652,6 +1652,73 @@ static void testWallGeometry() {
     }
 }
 
+// The floors' thickness (cFloorThicknessGeometryNode, docs/walls-floors-mac.md
+// §6.1): on levels 1 and up, a 0.15 strip under each edge round the level's
+// floor quarters (the edges two quarters share cancel), facing out, u along
+// the edge and v down; none on the ground.
+static void testFloorThickness() {
+    const auto empty = std::filesystem::temp_directory_path() / "os2_test_empty_res";
+    std::filesystem::create_directories(empty);
+    ResourceIndex index(empty);
+    const PatternCatalog patterns(index, empty);
+    Lot lot;
+    lot.width = 3, lot.height = 3, lot.levelCount = 2;
+    lot.elevations.assign(2 * 4 * 4, 0.0f);
+    for (size_t i = 16; i < 32; ++i)
+        lot.elevations[i] = 3.0f;
+    lot.floors.assign(2 * 3 * 3, {});
+    lot.floorPatterns[1] = "tile";
+    auto at = [&](int level, int x, int y) -> std::array<uint16_t, 4>& { return lot.floors[size_t((level * 3 + x) * 3 + y)]; };
+    at(0, 0, 0) = {1, 1, 1, 1}; // the ground: no thickness
+    at(1, 1, 1) = {1, 1, 1, 1}; // a whole tile up: its four sides
+    at(1, 2, 1) = {1, 0, 0, 1}; // the half tile east of it (west and south quarters): the diagonal and its south side
+    const ObjectModel m = buildLotModel(lot, index, patterns);
+    const ObjectModel::Part* t = nullptr;
+    for (const auto& p : m.parts)
+        if (p.material == "FloorThickness")
+            t = &p;
+    check(t && m.materials.count("FloorThickness") &&
+              m.materials.at("FloorThickness").property("stdMatBaseTextureName") == "floor-edge",
+          "floor thickness: a FloorThickness part with the floor-edge texture");
+    if (!t)
+        return;
+    // Quads: tile (1, 1) south, west, north (its east side is shared), the
+    // half tile's south side and the two halves of its diagonal (from the
+    // tile's centre: the quarters' own edges).
+    check(t->mesh.positions.size() == 6 * 4 && t->mesh.triangles.size() == 6 * 6,
+          "floor thickness: one quad per edge round the level's floor, none between quarters or on the ground");
+    auto inFloor = [](float x, float y) {
+        return (x > 1 && x < 2 && y > 1 && y < 2) || (x > 2 && y > 1 && (x - 2) + (y - 1) < 1);
+    };
+    bool depth = true, outward = true, uvs = true, diagonal = false, wound = true;
+    const auto& p = t->mesh.positions;
+    for (size_t q = 0; q < p.size(); q += 4) {
+        const auto& n = t->mesh.normals[q];
+        depth = depth && std::abs(p[q][2] - 3) < 1e-4f && std::abs(p[q + 2][2] - 2.85f) < 1e-4f;
+        // Past the edge's middle along the normal: off the floor; before it: on it.
+        const float mx = (p[q][0] + p[q + 1][0]) / 2, my = (p[q][1] + p[q + 1][1]) / 2;
+        outward = outward && !inFloor(mx + n[0] * 0.1f, my + n[1] * 0.1f) && inFloor(mx - n[0] * 0.1f, my - n[1] * 0.1f);
+        const auto& uv = t->mesh.uvs;
+        uvs = uvs && uv[q] == std::array<float, 2>{0, 0} && uv[q + 1] == std::array<float, 2>{1, 0} &&
+              uv[q + 2] == std::array<float, 2>{0, 1} && uv[q + 3] == std::array<float, 2>{1, 1};
+        diagonal = diagonal || (std::abs(std::abs(n[0]) - std::sqrt(0.5f)) < 1e-3f && std::abs(std::abs(n[1]) - std::sqrt(0.5f)) < 1e-3f);
+    }
+    // Front faces (counter-clockwise: the cross of the triangle's edges) face the normal.
+    const auto& tri = t->mesh.triangles;
+    for (size_t i = 0; i < tri.size(); i += 3) {
+        const auto &a = p[tri[i]], &b = p[tri[i + 1]], &c = p[tri[i + 2]];
+        const float ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+        const float cx = uy * vz - uz * vy, cy = uz * vx - ux * vz;
+        const auto& n = t->mesh.normals[tri[i]];
+        wound = wound && cx * n[0] + cy * n[1] > 0;
+    }
+    check(depth, "floor thickness: from the floor down 0.15");
+    check(outward, "floor thickness: each strip faces out of the floor");
+    check(uvs, "floor thickness: u 0 to 1 along the edge, v 0 at the top to 1 below");
+    check(diagonal, "floor thickness: a half tile's diagonal gets its strips");
+    check(wound, "floor thickness: wound to face out");
+}
+
 // Fences as cFenceGeometryNode places them (docs/roof-fence-water-mac.md
 // §2.1): rails turned and sheared to the floor at the far end, scale 1; the
 // catalog's default fence for a style it lacks; the diagonal model on a
@@ -2163,6 +2230,7 @@ int main() {
     testPropertySet();
     testLotModel();
     testWallGeometry();
+    testFloorThickness();
     testFencePieces();
     testDeckFoundationMarkers();
     testLotLightMap();
