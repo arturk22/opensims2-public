@@ -442,3 +442,27 @@ mexe nas rotas e na VM). As outras podem rodar já, em áreas livres.
 **Precisam de análise dinâmica** (o jogo rodando; não gastar rodadas lendo):
 UV da parede da piscina, o `+0x194` de início das cinemáticas, o valor
 inicial de alguns globais que nada no binário escreve.
+
+## 8. Plano de rodadas 43 em diante (as linhas que seguem "inferido" ou "faltando")
+
+Feito em 2026-10-16, com a §7 toda feita (índice 86,8%, 95,5 / 110). As
+rodadas vêm das linhas de §3 que não são "fiel" e das sobras de cada rodada
+no `TODO.md`. **Uma rodada por vez** (pedido do usuário, 2026-10-16): a
+seguinte só depois da anterior entrar no main. Opus com Ghidra (só
+leitura). Ordem por impacto no jogo base: primeiro o que se vê em todo Sim.
+
+| # | Rodada | Linhas de §3 | Área |
+|---|---|---|---|
+| 43 | **Corpo do Sim: transições** — como um pedido de animação passa ao seguinte: a forma dos intervalos de blend (`cBlendInterval::Value`, baserom `0x3436c8`; o app faz entrada e saída lineares), a saída do pedido velho enquanto o novo entra (`CreateTransitionBlend`/`FUN_00a46c00`, `EndActionTicksOfPreviousBlockingPrimitive`; hoje o nível −1 é nosso), a velocidade dos pedidos pelo dado 85 (`OnPreSimulatorTick` `0x6980d8`, vtable `0x34`) e as sobras da locomoção (n14: a janela do `ComputeLocoStartTicks` com o fim da primitiva anterior, a troca centrada ±b/2, a rampa de velocidade `FUN_00a47144`, a parada fraca, o fade de entrada ao replanejar andando, o começo 5/100 ms adiantado) | 3.3 mistura, coreografia, locomoção | animação |
+| 44 | **Sentar, resto**: o salto da raiz (`PostSnap`, `cObject::ApplyAnimationOffsets`, `GlobalRootTransPosition`; o `stayInWorld` inferido), a faixa do STR# 0x92 pela altura em metros e a bandeja do bar, o susto com o Sim sentado (o jogo tira do slot antes?), as sobras de IK da n02 (ordem de Euler `0x01020100`, contatos em 0, alvo do outlet do nó) | 3.4 D, F; 3.3 IK | animação |
+| 45 | **Diálogos de escolha**: `dialog_window_pickers.cpp` (telefone, arara, aspiração; 10 marcadores), o formatador de números e hora do idioma (`FUN_0006e164`), o `SetBuffer` da caixa de fechar, a pausa dos lotes 1 e 4 do Tutorial, as strings do diálogo de árvore semi-global | 3.13 diálogos | UI |
+| 46 | **VM, resto**: os registros de objetos da pessoa (`cTSPerson +0x60c`, a única linha "faltando": quem os cria, trocar o `useCount` calculado), o 109 da sub-ação, o 37/38/40/55 do `UpdatePersonDataFields`, `cTSGlobals`, `cTSDataTables`, as sobras da fila (dado 164, evento 4 do `ActionSkipped`, `0x214`/`0x2e8`, a troca da fila cheia `0x1FC`) | 3.1 fila, dados; 3.7 registros | VM |
+| 47 | **Salvar, resto** (a 26 da §6): `cTSSaveNeighborhoodController`, `cTSPersistSystem`, o u32 `+0x34`/`+0x38` e o u8 `+0xFD` do NGBH | 3.9 controladores, persist | salvar |
+| 48 | **Colocação, resto**: a camada de visibilidade do piso, a árvore "allow intersection", as pegadas dentro do tile, a ferramenta da lareira (`TryPlace` lido na n37), o `0x2c(1)` do `0xFBA4DA53`; terreno: `ConformsToCeiling`, `ObjectMayBeInFoundation`, a água ligada (`FUN_008b02d4`) | 3.5 colocação, terreno | construção |
+| 49 | **Rotas, resto**: obstáculos (tile da parte de multi-tile, a caixa sem lista, o `+10` do `WorldOutsideSupport`, o estado 7), a escala 1/16 do slot por versão, os retângulos de custo 10 da escada, o "drop to floor below" (`0x98`), a direção relativa dos tipos 1/2; a quina da mesa do N001_Lot68 (semente 7) | 3.2 obstáculos, slots, objetivos | rotas |
+| 50 | **Água, objetos e cinema**: o bump e as cáusticas da piscina, os objetos animados pela malha de repouso (`nTSSG::cObject`), o fade da câmera de cinema (caixa `0x148`, bits `+0x108`), a velocidade da cena (`cCustomAnimTimer2`) | 3.12 água, objetos; 3.3 cinemáticas | desenho |
+| 51 | **CAS, resto**: qual aba abre qual painel de rosto, a pose dos traços, a aspiração sugerida, a rotação do zoom (`SetActive`), o gerador de números e os tons 1–4 | 3.11 telas, câmera, corpo | CAS |
+| 52 | **Bairro, resto**: a cor do `cTerrainShadeLight` (`terrainShade`), os nomes das flags do FAMI/SREL e as unidades da distância do `hood_bridge` | 3.10 imposters, famílias | bairro |
+
+Cada rodada marca a sua linha "feita" com uma linha do que foi feito, como na
+§7, e põe o que sobrar no `TODO.md`.
