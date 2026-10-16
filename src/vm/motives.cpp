@@ -318,9 +318,11 @@ void tickMotives(VM& vm) {
             continue;
         Object& sim = *po;
         Person& p = *sim.person;
-        // cTSPerson::OnSimulatorTick (base 0xb876bc, BV 0xad1040).
-        if (p.memoriesTick + kUpdateTicks <= vm.ticks) {
-            p.memoriesTick = vm.ticks;
+        // cTSPerson::OnSimulatorTick (base 0xb876bc, BV 0xad1040) with the
+        // simulator's tick; the person's last step (+0x264) starts at 0 and
+        // is not saved (docs/motives-mac.md §8.5).
+        if (p.memoriesTick + kUpdateTicks <= vm.simulatorTicks) {
+            p.memoriesTick = vm.simulatorTicks;
             if (p.data[persondata::MotivesStatic] == 0) {
                 std::optional<float> environment;
                 if (vm.environmentKnown) {

@@ -23,6 +23,9 @@
 //   (per 24 game hours), the environment from the environment score
 //   manager (vm/environment.hpp), every motive clamped to -100..100 and
 //   copied to the old set; then the mood, and the memories (memories.hpp).
+//   The step comes when the simulator's tick (VM::simulatorTicks, from the
+//   lot's SIMI) is 60 past the person's last one (0 at load: with a saved
+//   counter of 60 or more the first step is the first tick).
 // - Mood is the average of the motives weighted by the "Happy Curve Data"
 //   (global STR# 0x226-0x22D, one per age: weight as a function of the
 //   motive's value), leaving out 0-2, 10-12 and the motives whose bit is

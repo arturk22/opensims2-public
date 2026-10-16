@@ -1344,6 +1344,12 @@ public:
     } clock;
     void setClockGlobals(); // also Time Of Day (global 4) from the hour
     uint64_t ticks = 0;
+    // The simulator's tick counter (cTSSimulator +0xa0): read from the lot's
+    // SIMI (lot_resume.cpp applySavedSimulator) and written back to it,
+    // passed to every person's OnSimulatorTick (its 60-tick motive step,
+    // motives.cpp) and counted up after the objects have run (SimulateOneTick,
+    // Mac BV 0x49a814; docs/motives-mac.md §8.5).
+    uint64_t simulatorTicks = 0;
     // The tick (+ 1) flushMoveOutOfWayDestinations last ran in (once a tick;
     // it was a static map by VM address, which a later VM can reuse).
     uint64_t moveOutOfWayFlushedAt = 0;

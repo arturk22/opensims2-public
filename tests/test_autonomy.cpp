@@ -181,9 +181,11 @@ static void testMotiveChangeAndDecay() {
 
     // Decay per day: -1440 a day is -1 a game minute, applied as -2 every
     // 60 ticks (cTSMotives vtable 0x10: data / 24 / 30).
+    // The step comes when the simulator's tick (passed before it counts up)
+    // is 60 past the person's last (0): from a counter of 0, the 61st tick.
     Fixture fy;
     fy.p().data[93] = -1440;
-    for (int i = 0; i < 59; ++i)
+    for (int i = 0; i < 60; ++i)
         fy.vm.tick();
     check(fy.p().motives[7] == 0, "no decay before the 60-tick update");
     fy.vm.tick();
@@ -207,7 +209,7 @@ static void testMotiveChangeAndDecay() {
     fy.p().data[persondata::MotivesStatic] = 2;
     fy.p().motives[7] = 0;
     fy.vm.tick();
-    check(fy.p().data[persondata::TickCounter] == 661 && fy.p().motives[7] == 0, "static motives (person data 29 >= 2) do not move");
+    check(fy.p().data[persondata::TickCounter] == 662 && fy.p().motives[7] == 0, "static motives (person data 29 >= 2) do not move");
 }
 
 static void testMood() {
@@ -219,7 +221,7 @@ static void testMood() {
     fx.p().data[persondata::MotivesNotInMood] = 1 << 9;
     check(std::abs(computeMood(fx.vm, *fx.vm.object(fx.sim)) + 50.0f) < 1e-3f, "person data 118 leaves motives out");
     fx.p().data[persondata::MotivesNotInMood] = 0;
-    for (int i = 0; i < 59; ++i)
+    for (int i = 0; i < 60; ++i)
         fx.vm.tick();
     check(fx.p().motives[3] == 0, "the mood waits for the 60-tick update");
     fx.vm.tick();
@@ -289,7 +291,8 @@ static void testFindBestInteraction() {
 
 // The environment motive (vm/environment.hpp, docs/motives-mac.md §8): the
 // environment room, the room's three scores less the crap, the light's term,
-// the outdoor cells' tent, the walls and floors of a lot.
+// the outdoor cells' tent, the walls and floors of a lot, and the step's
+// tick from the simulator's counter.
 static void testEnvironment() {
     check(environmentRoomId(-1, 3, 3) == -1 && environmentRoomId(3, 12.5f, 7.2f) == 0x10003 &&
               environmentRoomId(0, 12.5f, 7.2f) == 2 + 256 && environmentRoomId(0, -4, 4000) == 0xFF00,
@@ -353,12 +356,14 @@ static void testEnvironment() {
     check(environmentScore(fx.vm, sim) == 0, "no room (out of the world): 0");
     sim.position = {7.5f, 7.5f, 1};
 
-    // The 60-tick step sets it.
+    // The 60-tick step sets it; from a SIMI counter of 60 or more the first
+    // step is the first tick.
     sim.person->motives[motive::Environment] = -70;
-    for (int i = 0; i < 60; ++i)
-        fx.vm.tick();
+    fx.vm.simulatorTicks = 1234;
+    fx.vm.tick();
     check(sim.person->motives[motive::Environment] == 38 && exactMotive(sim, motive::Environment) == 37.5f,
-          "the 60-tick step sets the environment");
+          "the 60-tick step sets the environment, at once after loading a saved counter");
+    check(sim.person->memoriesTick == 1234 && fx.vm.simulatorTicks == 1235, "the step's tick is the simulator's");
 
     // A lot's floors: every tile of a room (a tile in each room it has a
     // quarter of), the outdoors by cells of every level; without catalog

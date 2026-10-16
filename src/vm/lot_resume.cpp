@@ -249,6 +249,11 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
 } // namespace
 
 void applySavedSimulator(VM& vm, const LotObjects& saved) {
+    // The simulator's tick counter (cTSSimulator::Read, Mac BV 0x499c20:
+    // the u32 after the globals, at least 0), the clock of the persons'
+    // 60-tick motive steps (docs/motives-mac.md §8.5).
+    if (saved.simulator.read)
+        vm.simulatorTicks = uint64_t(std::max<int32_t>(int32_t(saved.simulator.fA0), 0));
     // The base game's lots hold 54 globals (0x94/0x9F: 46; the rest keep
     // what the VM has).
     if (saved.globals.size() <= global::Year)

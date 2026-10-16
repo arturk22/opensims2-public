@@ -1082,6 +1082,9 @@ void VM::tick() {
     flushDestinations(*this); // go_here.hpp
     followContainers();
     notifyRoomChanges(*this); // rooms.hpp: OnRoomChanged
+    // The simulator's tick counts up once every object has run
+    // (cTSSimulator::SimulateOneTick, Mac BV 0x49a814).
+    ++simulatorTicks;
 }
 
 // The object's reset after a SimAntics error (cTSObject::HandleError, BV
