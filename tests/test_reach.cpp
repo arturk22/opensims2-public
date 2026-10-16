@@ -228,6 +228,66 @@ static void testReachPut() {
     check(t.status == Thread::Status::Finished && !t.result, "picking up nothing: false (Mac binary)");
 }
 
+// The body's reach animation (try_new_reach, BV 0x69111c; docs/seat-mac.md
+// §F): ComputeReachAnimIndex of the slot point's height over the Sim's root
+// and its distance from it, or the operand's index (flag 0x08, byte 15),
+// looked up in the surface's Reach Animations, then the global ones.
+static void testReachIndex() {
+    Fixture fx;
+    // The table's slot 0.75 high; its own list has two entries (the bar's).
+    Slots surface;
+    surface.slots.resize(1);
+    surface.slots[0].offset = {0, 0, 0.75f};
+    fx.code.add(kGroup, 0x83, surface);
+    StringTable own;
+    for (const char* a : {"a2o-barstool-seated-get", "a2o-barstool-seated-put"})
+        own.entries.push_back({lang::EnglishUS, a, "", 0});
+    fx.code.add(kGroup, 0x92, own);
+    StringTable global;
+    for (int i = 0; i < 16; ++i) {
+        static const char* const kSurfaces[] = {"floor", "tableCoffee", "table", "counter"};
+        const std::string name = std::string("a2o-") + kSurfaces[i & 3] + (i & 8 ? "-put" : "-get") + (i & 4 ? "-far" : "");
+        global.entries.push_back({lang::EnglishUS, name, "", 0});
+        fx.vm.animations.add(name, 1.0f);
+        fx.vm.animations.addEvent(name, "event=0", 500);
+    }
+    fx.code.add(kGlobalGroup, 0x92, global);
+    for (const char* a : {"a2o-barstool-seated-get", "a2o-barstool-seated-put"}) {
+        fx.vm.animations.add(a, 1.0f);
+        fx.vm.animations.addEvent(a, "event=0", 500);
+    }
+    Object& sim = *fx.vm.object(fx.sim);
+    Object& paper = *fx.vm.object(fx.paper);
+    auto played = [&](uint16_t tree, ObjectId stack, std::array<int16_t, 4> args = {}) {
+        std::string name;
+        Thread t = fx.vm.start(fx.sim, tree, args, stack, stack);
+        for (int i = 0; i < 100 && t.status == Thread::Status::Running; ++i) {
+            fx.vm.run(t);
+            if (name.empty())
+                name = sim.animation.name;
+        }
+        return name;
+    };
+    auto put = [&](uint8_t flags, uint8_t index) {
+        return instr(0x74, T, F, {0, 0, 0, Param, 0, 0, 0, 0, 0, flags, 1, 0xFF, 0xFF, 0xFF, 0xFF, index});
+    };
+    auto get = [&](uint8_t flags, uint8_t index) {
+        return instr(0x74, T, F, {0, 0, 0, StackId, 0, 0, 0, 0, 0, flags, 0, 0xFF, 0xFF, 0xFF, 0xFF, index});
+    };
+    fx.code.add(kGroup, 0x1001, tree({put(0, 0)}, 1));
+    fx.code.add(kGroup, 0x1002, tree({get(0, 0)}));
+    fx.code.add(kGroup, 0x1003, tree({get(0x08, 0)}));
+    fx.vm.setContainer(paper, fx.sim, 0);
+    // The table a tile away along +Y: 1 from the Sim's root, far (index 14).
+    check(played(0x1001, 0, {int16_t(fx.table)}) == "a2o-table-put-far", "put: table height, farther than 0.8");
+    check(fx.vm.containedIn(fx.table, 0) == fx.paper, "put into the table's slot");
+    sim.position = {2.5f, 2.8f, 1};
+    check(played(0x1002, fx.paper) == "a2o-table-get", "get: table height, close (index 2: past the table's two entries)");
+    check(fx.vm.containedIn(fx.sim, 0) == fx.paper, "picked up");
+    fx.vm.setContainer(paper, fx.table, 0);
+    check(played(0x1003, fx.paper) == "a2o-barstool-seated-get", "flag 0x08: the operand's entry of the surface's list");
+}
+
 // Relationship flag 0x08: an object's relationship with a neighbor (ownership).
 static void testOwnership() {
     Fixture fx;
@@ -405,6 +465,7 @@ static void testFindBestAndSnap() {
 int main() {
     testRunFunctionalTree();
     testReachPut();
+    testReachIndex();
     testOwnership();
     testTestObjectType();
     testCreateObject();
