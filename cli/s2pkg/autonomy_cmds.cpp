@@ -8,12 +8,14 @@
 #include "formats/bhav.hpp"
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/environment_catalog.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_arrivals.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
 #include "vm/autonomy.hpp"
 #include "vm/engine.hpp"
+#include "vm/environment.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/hood_bridge.hpp"
@@ -849,11 +851,114 @@ int cmdMoodSweep(const std::filesystem::path& dir) {
     return close == sims ? 0 : 1;
 }
 
+// The saved environment (motive 13) of every Sim on the lots under a
+// Neighborhoods folder, against cTSEnvironmentScoreManager's score of its
+// place in the loaded lot (vm/environment.hpp; docs/motives-mac.md §8).
+// Headless there are no light maps: the score leaves the light's term out
+// (0 to -20), so a saved value up to 20 under the room's score is the
+// light. --verbose: every room's sums.
+int cmdEnvSweep(const std::filesystem::path& dir, bool verbose) {
+    namespace fs = std::filesystem;
+    ResourceIndex index(resRoot(dir / "x"));
+    vm::CodeLibrary code(&index);
+    std::vector<fs::path> lots;
+    for (const auto& e : fs::recursive_directory_iterator(dir))
+        if (e.path().extension() == ".package" && e.path().parent_path().filename() == "Lots")
+            lots.push_back(e.path());
+    std::sort(lots.begin(), lots.end());
+    size_t sims = 0, exact = 0, close = 0, light = 0, other = 0, outdoors = 0, noRoom = 0;
+    for (const auto& file : lots) try {
+        DbpfPackage pkg(file);
+        const Lot lot = Lot::load(pkg);
+        const LotObjects saved = LotObjects::load(pkg);
+        vm::VM machine(code);
+        const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(file));
+        vm::startSavedLot(machine, load, saved); // the objects' saved data, motives, the simulator's counter
+        const vm::EnvironmentRooms rooms = vm::environmentRooms(machine);
+        if (verbose) {
+            const PatternScores& ps = patternScores(index);
+            for (const auto& [ref, name] : lot.floorPatterns) {
+                const PatternScore* p = ps.floor(name);
+                std::printf("  floor pattern %d %-24s %s price %d niceness %g crap %g\n", ref, name.c_str(),
+                            p ? "" : "(none)", p ? p->price : 0, p ? double(p->niceness) : 0.0, p ? double(p->crap) : 0.0);
+            }
+            for (const auto& [ref, name] : lot.wallPatterns) {
+                const PatternScore* p = ps.wall(name);
+                std::printf("  wall pattern %d %-24s %s price %d niceness %g crap %g\n", ref, name.c_str(),
+                            p ? "" : "(none)", p ? p->price : 0, p ? double(p->niceness) : 0.0, p ? double(p->crap) : 0.0);
+            }
+        }
+        if (verbose)
+            for (const auto& [id, o] : machine.objects())
+                if (!o.person && o.definition && o.position.inWorld())
+                    std::printf("  object %d %-40s price %5d niceness %4d crap %3d room %3d lead %d type %d\n", id,
+                                o.definition->fileName.c_str(), int16_t(o.definition->price()), o.data[7], o.data[86],
+                                o.data[vm::objdata::Room], o.data[vm::objdata::LeadTileObjectId],
+                                o.definition->objectType());
+        std::map<int16_t, const LotObjects::State*> states;
+        for (const auto& st : saved.objects)
+            states[st.id] = &st;
+        bool header = false;
+        for (const auto& [id, o] : machine.objects()) {
+            if (!o.person)
+                continue;
+            auto it = states.find(id);
+            if (it == states.end() || !it->second->personRead)
+                continue;
+            const float savedEnv = it->second->motives[vm::motive::Environment];
+            const float oldEnv = it->second->motives2[vm::motive::Environment];
+            const float score = vm::environmentScore(machine, o, rooms);
+            const int16_t room = o.position.inWorld() ? o.data[vm::objdata::Room] : int16_t(-1);
+            const int32_t key = vm::environmentRoomId(room, o.position.x, o.position.y);
+            ++sims;
+            const float d = savedEnv - score;
+            const bool same = std::abs(d) < 0.01f, near = std::abs(d) < 0.5f;
+            const bool byLight = !near && d < 0 && d >= -20.01f && score - 20.0f > -100.0f;
+            exact += same;
+            close += near;
+            light += byLight;
+            other += !near && !byLight;
+            outdoors += key >= 0 && key < vm::kEnvironmentIndoorBase;
+            noRoom += key < 0;
+            if (!header) {
+                std::printf("%s (simulator tick %u):\n", file.filename().string().c_str(), saved.simulator.fA0);
+                header = true;
+            }
+            const std::string what = same ? "" : near ? " (close)" : byLight ? " (light?)" : " (DIFFERENT)";
+            std::printf("  %-28s room %3d key %6d at (%.1f, %.1f, %d): saved %8.3f (old %8.3f), room score %8.3f%s",
+                        (o.definition ? o.definition->fileName : std::string("?")).c_str(), room, key,
+                        double(o.position.x), double(o.position.y), o.position.level, double(savedEnv), double(oldEnv),
+                        double(score), what.c_str());
+            if (byLight)
+                std::printf(" -> illuminance %.3f", double(vm::envtuning::LightDark +
+                                                           (vm::envtuning::LightBright - vm::envtuning::LightDark) *
+                                                               (1.0f + d / (vm::envtuning::LightWeight * 100.0f))));
+            std::printf("\n");
+            if (verbose || (!near && key >= vm::kEnvironmentIndoorBase))
+                if (auto r = rooms.find(key); r != rooms.end()) {
+                    const auto& e = r->second;
+                    std::printf("      walls %g / %g crap %g -> %.3f; floors %g / %g crap %g -> %.3f; objects %g (%g) crap %g -> %.3f\n",
+                                double(e.wallNice), double(e.wallCount), double(e.wallCrap), double(e.wallScore),
+                                double(e.floorNice), double(e.floorArea), double(e.floorCrap), double(e.floorScore),
+                                double(e.objectNice), double(e.objectCount), double(e.objectCrap), double(e.objectScore));
+                }
+        }
+    } catch (const std::exception& err) {
+        std::printf("%s: %s\n", file.filename().string().c_str(), err.what());
+    }
+    std::printf("%zu Sims on %zu lots: the environment score of the loaded lot is the saved environment for %zu "
+                "(within 0.5 for %zu), up to 20 over it (the light's term) for %zu, other %zu; %zu outdoors, %zu in no room\n",
+                sims, lots.size(), exact, close, light, other, outdoors, noRoom);
+    return 0;
+}
+
 } // namespace
 
 int autonomyCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "mood-sweep" && argc == 3)
         return cmdMoodSweep(argv[2]);
+    if (cmd == "env-sweep" && (argc == 3 || (argc == 4 && std::string(argv[3]) == "--verbose")))
+        return cmdEnvSweep(argv[2], argc == 4);
     if (cmd != "autonomy" || argc < 3)
         return -1;
     std::string lotPath, sim;
@@ -911,7 +1016,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
 
 const char* autonomyUsage() {
     return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--no-dialog-timeout] [--skip-failures] [--name-babies]\n"
-           "       s2pkg mood-sweep <Neighborhoods dir>\n";
+           "       s2pkg mood-sweep <Neighborhoods dir>\n"
+           "       s2pkg env-sweep <Neighborhoods dir> [--verbose]\n";
 }
 
 } // namespace os2

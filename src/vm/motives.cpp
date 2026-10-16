@@ -5,6 +5,7 @@
 #include "motives.hpp"
 
 #include "animation.hpp"
+#include "environment.hpp"
 #include "memories.hpp"
 #include "formats/binreader.hpp"
 #include "formats/strings.hpp"
@@ -278,7 +279,7 @@ int16_t decayDataOf(int16_t m) {
     }
 }
 
-void updateMotives(Object& sim) {
+void updateMotives(Object& sim, std::optional<float> environment) {
     Person& p = *sim.person;
     // The daily decays, a 720th each (2 game minutes of 24 h), in the
     // base game's order and single precision: (float(data) / 24) / 30.
@@ -294,9 +295,11 @@ void updateMotives(Object& sim) {
             const float step = perHour / 30.0f;
             p.exactMotives[size_t(m)] = p.exactMotives[size_t(m)] + step;
         }
-    // The environment (13) would come from the environment score manager
-    // (not modelled: it keeps its value). Every motive within -100..100,
-    // and the old set takes them.
+    // The environment (13): cTSEnvironmentScoreManager::GetEnvironmentScore
+    // (vtable 0x20) of the person, when the manager is there (a lot's).
+    // Every motive within -100..100, and the old set takes them.
+    if (environment)
+        p.exactMotives[size_t(motive::Environment)] = *environment;
     for (size_t k = 0; k < kMotiveCount; ++k) {
         float& v = p.exactMotives[k];
         if (v > 100.0f)
@@ -309,6 +312,7 @@ void updateMotives(Object& sim) {
 }
 
 void tickMotives(VM& vm) {
+    std::optional<EnvironmentRooms> rooms; // the environment scores of this tick, once
     for (Object* po : vm.objectTable()) {
         if (!po || !po->person)
             continue;
@@ -318,7 +322,13 @@ void tickMotives(VM& vm) {
         if (p.memoriesTick + kUpdateTicks <= vm.ticks) {
             p.memoriesTick = vm.ticks;
             if (p.data[persondata::MotivesStatic] == 0) {
-                updateMotives(sim);
+                std::optional<float> environment;
+                if (vm.environmentKnown) {
+                    if (!rooms)
+                        rooms = environmentRooms(vm);
+                    environment = environmentScore(vm, sim, *rooms);
+                }
+                updateMotives(sim, environment);
                 // UpdateMood; Mood+Mem is the mood (the memories do not
                 // enter it; their score is person data 54, memories.cpp;
                 // docs/relationships-mac.md §4).

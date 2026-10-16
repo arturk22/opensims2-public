@@ -12,6 +12,7 @@
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
 #include "engine.hpp"
+#include "environment.hpp"
 #include "interactions.hpp"
 
 #include <cmath>
@@ -150,6 +151,8 @@ void setLotRooms(VM& vm, const Lot& lot) {
             room.known = 0x1E;
         }
     }
+    // The environment score manager's walls and floors (environment.hpp).
+    setLotEnvironment(vm, lot);
 }
 
 std::function<std::filesystem::path(uint32_t)> useCharacterFiles(CodeLibrary& code,

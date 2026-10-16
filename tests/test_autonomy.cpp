@@ -3,8 +3,10 @@
 
 #include "vm/autonomy.hpp"
 #include "vm/animation.hpp"
+#include "vm/environment.hpp"
 #include "vm/interactions.hpp"
 #include "vm/motives.hpp"
+#include "formats/lot.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -285,6 +287,90 @@ static void testFindBestInteraction() {
     check(x.status == Thread::Status::Finished && !x.result, "false when no entry scores above 0");
 }
 
+// The environment motive (vm/environment.hpp, docs/motives-mac.md §8): the
+// environment room, the room's three scores less the crap, the light's term,
+// the outdoor cells' tent, the walls and floors of a lot.
+static void testEnvironment() {
+    check(environmentRoomId(-1, 3, 3) == -1 && environmentRoomId(3, 12.5f, 7.2f) == 0x10003 &&
+              environmentRoomId(0, 12.5f, 7.2f) == 2 + 256 && environmentRoomId(0, -4, 4000) == 0xFF00,
+          "environment room: -1, room + 0x10000, the outdoor cell of 5 tiles (0-255)");
+    check(environmentLightTerm(0.9f) == 0 && environmentLightTerm(2) == 0 && environmentLightTerm(0.55f) == -20 &&
+              environmentLightTerm(0.1f) == -20 && std::abs(environmentLightTerm(0.725f) + 10) < 1e-4f,
+          "the light's term: 0 from 0.9 up, -20 from 0.55 down, linear between");
+
+    constexpr uint32_t kRugGroup = 0x7F000050, kBinGroup = 0x7F000060;
+    Fixture fx;
+    StringTable curve;
+    curve.format = 0xFFFD;
+    curve.entries.push_back({lang::EnglishUS, "(0;0) (1000;1000000)  -- Max total object niceness vs Room Size", "", 0});
+    fx.code.add(kGlobalGroup, 0x2BC, curve);
+    auto priced = [](uint16_t price) {
+        ObjectDefinition d = definition(4, 0, 0x0E000000u + price);
+        d.fields[(0x64 - 0x44) / 2] = price; // field 0x12 "price"
+        return d;
+    };
+    fx.code.add(kRugGroup, 0x80, priced(400));
+    fx.code.add(kBinGroup, 0x80, priced(200));
+    Object& rug = fx.vm.instantiate(kRugGroup, 0x80);
+    rug.position = {6.5f, 6.5f, 1};
+    rug.data[7] = 100; // Niceness Score: x 1
+    Object& bin = fx.vm.instantiate(kBinGroup, 0x80);
+    bin.position = {6.5f, 7.5f, 1};
+    bin.data[7] = 50, bin.data[86] = 3; // x 0.5, crap 3
+    for (ObjectId id : {fx.sim, rug.id, bin.id, fx.food, fx.loo})
+        fx.vm.object(id)->data[objdata::Room] = 2;
+    fx.vm.object(fx.food)->data[objdata::Room] = 1; // another room: not counted
+    fx.vm.object(fx.loo)->data[objdata::Room] = 1;
+    // Room 2: walls 28 over 2 sides (mean 14: 25), floors 46 over 4 tiles
+    // (mean 11.5: 12.5), objects 400 + 100 against 1000 x sqrt(4) (12.5),
+    // crap 0.2 + 3 + 1: 45.8.
+    VM::EnvironmentArchitecture a;
+    a.wallNice = 28, a.wallCrap = 0.2f, a.wallCount = 2, a.floorNice = 46, a.floorCrap = 1, a.floorArea = 4;
+    fx.vm.environmentArchitecture[0x10002] = a;
+    fx.vm.environmentKnown = true;
+    const EnvironmentRooms rooms = environmentRooms(fx.vm);
+    const EnvironmentRoom& r = rooms.at(0x10002);
+    check(r.objectNice == 500 && r.objectCrap == 3 && r.objectCount == 2 && r.wallScore == 25 && r.floorScore == 12.5f &&
+              std::abs(r.objectScore - 12.5f) < 1e-4f, // the curve's 1 / 1000 is not exact in float
+          "a room's walls, floors and objects (price x niceness / 100, crap; 1000 x sqrt(area))");
+    check(std::abs(environmentScore(fx.vm, *fx.vm.object(fx.sim)) - 45.8f) < 1e-4f,
+          "a Sim's environment: its room's scores less the crap");
+    fx.vm.floorIllumination = [](int, float, float) -> std::optional<float> { return 0.725f; };
+    check(std::abs(environmentScore(fx.vm, *fx.vm.object(fx.sim)) - 35.8f) < 1e-4f, "less the light's term");
+    fx.vm.floorIllumination = nullptr;
+    // Outdoors: the cells around, by a tent two cells wide, not normalized.
+    // At (7.5, 7.5) the cell (1, 1) weighs 1 and (2, 1) 0.5.
+    VM::EnvironmentArchitecture lawn;
+    lawn.floorNice = 25 * 23, lawn.floorArea = 25; // 25
+    fx.vm.environmentArchitecture.clear();
+    fx.vm.environmentArchitecture[1 + 256] = lawn;
+    fx.vm.environmentArchitecture[2 + 256] = lawn;
+    Object& sim = *fx.vm.object(fx.sim);
+    sim.data[objdata::Room] = 0;
+    sim.position = {7.5f, 7.5f, 1};
+    check(environmentScore(fx.vm, sim) == 37.5f, "outdoors: the cells around by the tent, the weights not normalized");
+    sim.position = {-1, -1, 1};
+    check(environmentScore(fx.vm, sim) == 0, "no room (out of the world): 0");
+    sim.position = {7.5f, 7.5f, 1};
+
+    // The 60-tick step sets it.
+    sim.person->motives[motive::Environment] = -70;
+    for (int i = 0; i < 60; ++i)
+        fx.vm.tick();
+    check(sim.person->motives[motive::Environment] == 38 && exactMotive(sim, motive::Environment) == 37.5f,
+          "the 60-tick step sets the environment");
+
+    // A lot's floors: every tile of a room (a tile in each room it has a
+    // quarter of), the outdoors by cells of every level; without catalog
+    // products the area still counts.
+    Lot lot;
+    lot.width = 2, lot.height = 1, lot.minLevel = 0, lot.levelCount = 2;
+    lot.rooms = {{1, 1, 1, 1}, {0, 0, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}};
+    setLotEnvironment(fx.vm, lot);
+    check(fx.vm.environmentArchitecture.at(0x10001).floorArea == 2 && fx.vm.environmentArchitecture.at(0).floorArea == 3,
+          "floors: a room's tiles, the outdoors' of every level in its cell");
+}
+
 static void testFind5Worst() {
     Fixture fx;
     auto& m = fx.p().motives;
@@ -441,6 +527,7 @@ int main() {
     testCandidateOrder();
     testDynamicInteractions();
     testFind5Worst();
+    testEnvironment();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

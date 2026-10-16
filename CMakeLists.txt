@@ -96,6 +96,8 @@ target_include_directories(os2_formats PUBLIC src)
 target_compile_options(os2_formats PRIVATE -Wall -Wextra)
 find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
+# The coverings' niceness and crap for the environment score (round n33).
+target_sources(os2_formats PRIVATE src/formats/environment_catalog.cpp)
 
 add_library(os2_vm
   src/vm/hood_bridge.cpp
@@ -150,6 +152,8 @@ target_compile_options(os2_vm PRIVATE -Wall -Wextra)
 target_link_libraries(os2_vm PUBLIC os2_formats)
 # vm/routing.cpp and vm/build_edit.cpp split by area (round 26, docs/ideias/DEBITOS-TECNICOS.md 1.2).
 target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp src/vm/build_edit_walls.cpp src/vm/build_edit_ground.cpp src/vm/build_edit_stairs.cpp)
+# The environment motive, cTSEnvironmentScoreManager (round n33).
+target_sources(os2_vm PRIVATE src/vm/environment.cpp)
 
 # Sound: decoding to PCM (MP3 through AudioToolbox), name lookup and playback.
 add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp src/audio/mixer.cpp src/audio/sound_system.cpp)
@@ -294,6 +298,11 @@ add_test(NAME autonomy COMMAND test_autonomy)
 # With the game's data (OS2_DATA): the saved moods of the shipped lots' Sims
 # come out of the base game's UpdateMood (docs/motives-mac.md §4).
 add_test(NAME mood_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'within 0.05 for all (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" mood-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+# With the game's data: the shipped lots' Sims' saved environment (motive 13)
+# against the environment score of their place in the loaded lot (round n33,
+# docs/motives-mac.md §8): what the light's term (0 to -20) cannot explain.
+add_test(NAME env_sweep COMMAND sh -c "if [ -z \"$OS2_DATA\" ]; then echo 'other 0; (skipped: no OS2_DATA)'; else \"$<TARGET_FILE:s2pkg>\" env-sweep \"$OS2_DATA/TSData/Res/UserData/Neighborhoods\"; fi")
+set_tests_properties(env_sweep PROPERTIES PASS_REGULAR_EXPRESSION "other [0-2];")
 
 add_executable(test_reach tests/test_reach.cpp)
 target_link_libraries(test_reach PRIVATE os2_vm)

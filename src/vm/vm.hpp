@@ -1465,6 +1465,24 @@ public:
         uint8_t known = 0x3F; // bit per value
     };
     std::map<int16_t, Room> rooms;
+    // The environment score manager's walls and floors (UpdateWallScores,
+    // UpdateFloorScores; vm/environment.hpp): their sums by environment
+    // room, made with the rooms (setLotRooms). `environmentKnown` once a
+    // lot gave them: only then does the 60-tick motive step set the
+    // environment (13).
+    struct EnvironmentArchitecture {
+        float wallNice = 0, wallCrap = 0, wallCount = 0;
+        float floorNice = 0, floorCrap = 0, floorArea = 0;
+    };
+    std::map<int32_t, EnvironmentArchitecture> environmentArchitecture;
+    bool environmentKnown = false;
+    // The light the environment score reads under a Sim (the floor light
+    // map's colour there as an illuminance, cLightingManager's
+    // LocationIlluminationStrength; docs/motives-mac.md §8.4), given by
+    // the host that has the light maps (the app's LotLighting): the VM's
+    // level (1 = the ground) and (x, y) in tiles. Unset or nothing: the
+    // light is not known and the score leaves its term out (headless runs).
+    std::function<std::optional<float>(int level, float x, float y)> floorIllumination;
     Neighbor* neighbor(int16_t id) {
         auto it = neighbors.find(id);
         return it == neighbors.end() ? nullptr : &it->second;

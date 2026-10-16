@@ -20,8 +20,9 @@
 //   (cTSMotives vtable 0x10): the everyday decay, person data 93-101 "Decay
 //   <motive> per Day" (the trees set them: "Motives - Set Home
 //   Awake/Asleep" by age, from the personality), a 720th of it each time
-//   (per 24 game hours), every motive clamped to -100..100 and copied to
-//   the old set; then the mood, and the memories (memories.hpp).
+//   (per 24 game hours), the environment from the environment score
+//   manager (vm/environment.hpp), every motive clamped to -100..100 and
+//   copied to the old set; then the mood, and the memories (memories.hpp).
 // - Mood is the average of the motives weighted by the "Happy Curve Data"
 //   (global STR# 0x226-0x22D, one per age: weight as a function of the
 //   motive's value), leaving out 0-2, 10-12 and the motives whose bit is
@@ -36,6 +37,7 @@
 #include "vm.hpp"
 
 #include <array>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -107,8 +109,9 @@ void setExactMotive(Object& sim, int16_t m, float value);
 int16_t motiveView(float value);
 
 // The 60-tick update of a Sim's motives (cTSMotives vtable 0x10, base
-// 0xb945f0): decay, clamp, the old set.
-void updateMotives(Object& sim);
+// 0xb945f0): decay, the environment (13) the environment score manager
+// gives (vm/environment.hpp; none: it keeps its value), clamp, the old set.
+void updateMotives(Object& sim, std::optional<float> environment = std::nullopt);
 
 // The person data that holds the daily decay of a motive, or -1.
 int16_t decayDataOf(int16_t motive);
