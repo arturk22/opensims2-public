@@ -132,15 +132,14 @@ void setupTutorial(os2::ResourceIndex& index) {
         return;
     os2::vm::VM& vm = gSimulation->machine();
     const int created = os2::vm::ensureTutorialControllers(vm);
-    // The tutorial lots are saved paused (global 17); the episode plays in
-    // time (step 10: "this is the only mode in which time passes"), so it
-    // starts unpaused and the controller's first press of Buy mode pauses
-    // it. The toolbar's saved UI state of the episodes' lots 14, 18 and 19
-    // agrees (unpaused, docs/game-flow-mac.md §7.6); lots 1 and 4 have it
-    // paused, and kept paused their first window would not come up until
-    // the player pressed play (inferred: the game's tutorial start was not
-    // read, so they start unpaused too).
-    vm.globals[os2::vm::global::Paused] = 0;
+    // The pause is the toolbar's saved UI state, as for any lot
+    // (applySavedUiState): cTSTutorialManager::PlayEpisode (BV 0x217740)
+    // enters the lot by the neighborhood's message and ApplySavedUIState has
+    // no tutorial branch (docs/game-flow-mac.md §7.6), so the episodes'
+    // lots 14, 18 and 19 start running and lots 1 and 4 paused. Paused, the
+    // game ticks only the objects with SimFlag 2 (cTSSimulator::
+    // TickAllObjects); here the tutorial controllers (TutorialOverlay::update,
+    // inferred: who sets the flag was not found).
     gTutorialRequestsSeen = vm.engineRequests.size();
     gTutorial = std::make_unique<os2::TutorialOverlay>(vm, index, gameDir() / "TSData/Res");
     // The controls: Buy's and Build's panels while they are up, the live
