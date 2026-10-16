@@ -161,6 +161,7 @@ private:
         // the same one right after goes on in phase, LotSimulation::playOverlays).
         std::map<std::string, std::pair<double, double>> stoppedOverlays;
         std::shared_ptr<HeadLook> look;    // the head turning towards Object::lookAt
+        uint32_t lookSerial = 0;           // the last Look At seen (OS2_DEBUG_LOOK)
     };
 public:
     // Where a Sim's Look At points its head now (world space), if anywhere.

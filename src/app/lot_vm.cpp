@@ -635,6 +635,11 @@ void LotSimulation::updateScene(double seconds) {
             if (o->lookAt) {
                 const auto& l = *o->lookAt;
                 request = HeadLook::Request{l.serial, float(l.towards), float(l.away), l.durationMs, l.spine, l.noEarlyExit};
+                if (std::getenv("OS2_DEBUG_LOOK") && l.serial != b.lookSerial)
+                    std::fprintf(stderr, "tick %llu sim %d: Look At %u: object %d, %d/%d degrees a second, hold %d ms%s%s\n",
+                                 (unsigned long long)vm_->ticks, b.id, l.serial, l.target, l.towards, l.away, l.durationMs,
+                                 l.spine ? ", spine" : "", l.noEarlyExit ? ", no early exit" : "");
+                b.lookSerial = l.serial;
             }
             b.look->setRequest(request, target, float(o->lookAwayRate));
         }
