@@ -786,7 +786,9 @@ void setupPhone(Context& c, Dialog& d, Object* stack) {
             e.guid = n->guid;
             e.first = neighborName(vm, v);
             e.last = n->lastName;
-            e.name = n->lastName.empty() ? e.first : e.first + " " + n->lastName;
+            // GetFullName: the language utility's MakeFullName (BV 0x137c04),
+            // "first last", the one there is when the other is empty.
+            e.name = n->lastName.empty() ? e.first : e.first.empty() ? n->lastName : e.first + " " + n->lastName;
             // CreateNeighborCallList: the name of the lot whose residents are
             // the neighbor's family (SetLotName).
             if (auto f = vm.families.find(n->personData[persondata::FamilyNumber]); f != vm.families.end() && f->second.house)
@@ -805,18 +807,25 @@ void setupPhone(Context& c, Dialog& d, Object* stack) {
         d.entries.push_back(std::move(e));
     }
     // The neighbors' book opens in mode 5 (its constructor: slides sorted
-    // by name, SortNeighborCallListByName: last names, then first names) and
-    // PreShow's SetSelectedSim(0) picks the first of that order.
+    // by name) and PreShow's SetSelectedSim(0) picks the first of that
+    // order: SortNeighborCallListByName (BV 0xa7c664) compares the full
+    // names with the language utility's CompareStrings, case-blind:
+    // _CompareStringA -> FUN_0003d7dc lowers each byte sign-extended, so the
+    // UTF-8 bytes of accented letters come before every ASCII letter.
     if (d.cls.cls == DialogClass::PhoneNeighbors) {
-        auto key = [](const std::string& t) {
-            std::string k = t;
-            for (char& ch : k)
-                ch = char(std::tolower(static_cast<unsigned char>(ch)));
-            return k;
+        auto less = [](const std::string& a, const std::string& b) {
+            for (size_t i = 0;; ++i) {
+                const int x = i < a.size() ? int(static_cast<signed char>(a[i])) : 0;
+                const int y = i < b.size() ? int(static_cast<signed char>(b[i])) : 0;
+                const int lx = x >= 0 ? std::tolower(x) : x, ly = y >= 0 ? std::tolower(y) : y;
+                if (lx != ly)
+                    return lx < ly;
+                if (lx == 0)
+                    return false;
+            }
         };
-        std::stable_sort(d.entries.begin(), d.entries.end(), [&](const DialogEntry& a, const DialogEntry& b) {
-            return std::make_pair(key(a.last), key(a.first)) < std::make_pair(key(b.last), key(b.first));
-        });
+        std::stable_sort(d.entries.begin(), d.entries.end(),
+                         [&](const DialogEntry& a, const DialogEntry& b) { return less(a.name, b.name); });
     }
     if (d.cls.cls == DialogClass::PhoneParty)
         d.maxSelection = c.thread.temps[5];

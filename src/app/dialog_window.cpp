@@ -291,8 +291,9 @@ const RgbaImage* DialogWindow::icon(const vm::Dialog& d) {
     return (icons_[d.id] = std::move(out)).get();
 }
 
-const RgbaImage* DialogWindow::frame0(uint32_t image) {
-    if (auto it = frames_.find(image); it != frames_.end())
+const RgbaImage* DialogWindow::frame(uint32_t image, int index) {
+    const uint64_t key = (uint64_t(image) << 8) | uint64_t(index & 3);
+    if (auto it = frames_.find(key); it != frames_.end())
         return it->second.get();
     std::unique_ptr<RgbaImage> out;
     if (const RgbaImage* im = res_ ? res_->image(UiResourceRef{kTypeUiImage, kImageGroup, image}) : nullptr;
@@ -300,10 +301,12 @@ const RgbaImage* DialogWindow::frame0(uint32_t image) {
         out = std::make_unique<RgbaImage>();
         out->width = im->width / 4, out->height = im->height;
         out->pixels.resize(size_t(out->width) * out->height * 4);
+        const size_t x0 = size_t(index & 3) * out->width;
         for (uint32_t y = 0; y < out->height; ++y)
-            std::copy_n(&im->pixels[size_t(y) * im->width * 4], size_t(out->width) * 4, &out->pixels[size_t(y) * out->width * 4]);
+            std::copy_n(&im->pixels[(size_t(y) * im->width + x0) * 4], size_t(out->width) * 4,
+                        &out->pixels[size_t(y) * out->width * 4]);
     }
-    return (frames_[image] = std::move(out)).get();
+    return (frames_[key] = std::move(out)).get();
 }
 
 // --- cTSObjectDialog: cTSWinPictureDialog::DoLayout ---------------------------

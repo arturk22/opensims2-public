@@ -375,21 +375,47 @@ int main() {
         }
 
         {
-            // Party book: a long name ends in "..." before its row's icons,
-            // a short one is whole (without fonts a letter is 7 px wide).
+            // Party book: a long name ends in "..." within its column (the
+            // list's width - 33: onAttach's columns 3, w - 33, 15, 15), a
+            // short one is whole (without fonts a letter is 7 px wide).
             Fixture pf(dialogtype::PhoneParty);
             Dialog& pd = pf.vm.dialogs.at(pf.me->id);
             pd.entries = {{11, 0, "Drone Colono 1000101 de Souza", "", 0, 0}, {12, 0, "Ana", "", 0, 0}};
-            pd.entries[0].flags = 16; // a friend: the text stops before the friend column
+            pd.entries[0].flags = 16; // a friend: its icon in the last column
             DialogWindow pw(pf.vm, &ui, nullptr);
             pw.log = false;
             const auto L = pw.layout(pd, 1280, 720);
             bool cut = false, whole = false;
             for (const auto& [cid, text] : L.captions) {
-                cut |= text.size() > 3 && text.ends_with("...") && text.starts_with("Drone") && 7.0f * float(text.size()) <= 175 - 48;
+                cut |= text.size() > 3 && text.ends_with("...") && text.starts_with("Drone") && 7.0f * float(text.size()) <= 175 - 33 &&
+                       7.0f * float(text.size()) > 175 - 33 - 7 * 3;
                 whole |= text == "Ana";
             }
-            check(cut && whole, "party: a long name ends in ... before the icons, a short one is whole");
+            check(cut && whole, "party: a long name ends in ... at its column, a short one is whole");
+        }
+        {
+            // The party's lists by name (ListBoxSortPredicate_Name ->
+            // CompareByName, BV 0xa7a118): the last names, then the first
+            // names, each byte lowered sign-extended (FUN_0003d7dc), so an
+            // accented first letter (UTF-8 0xC3...) comes before "A".
+            Fixture pf(dialogtype::PhoneParty);
+            Dialog& pd = pf.vm.dialogs.at(pf.me->id);
+            auto entry = [](int16_t id, const char* first, const char* last) {
+                DialogEntry e;
+                e.id = id, e.first = first, e.last = last, e.name = std::string(first) + " " + last;
+                return e;
+            };
+            pd.entries = {entry(1, "Bruno", "Zeta"), entry(2, "abel", "Lima"), entry(3, "\xC3\x81gata", "Lima"),
+                          entry(4, "Caio", "alfa")};
+            DialogWindow pw(pf.vm, &ui, nullptr);
+            pw.log = false;
+            const auto L = pw.layout(pd, 1280, 720);
+            std::vector<std::string> order;
+            for (const auto& [cid, text] : L.captions)
+                if ((cid >> 20) == 0xF && ((cid >> 12) & 0xFF) == 0)
+                    order.push_back(text);
+            check(order == std::vector<std::string>{"Caio alfa", "\xC3\x81gata Lima", "abel Lima", "Bruno Zeta"},
+                  "party: by last name, then first name, case-blind, accented bytes first");
         }
         Fixture g(dialogtype::ClothingTryOn);
         Dialog& t = g.vm.dialogs.at(g.me->id);

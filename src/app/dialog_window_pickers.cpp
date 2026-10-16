@@ -3,7 +3,7 @@
 // (cTSWinProcSetAspirationDialog with its wants catalog), buying food
 // (cTSWinProcFillDialog) and the racks of items (cTSWinProcSelectItemsDialog).
 // Numbers marked "binary" are from the Mac BV executable
-// (docs/primitives-mac.md "Dialog"); the rest is inferred.
+// (docs/primitives-mac.md "Dialog"); what is marked inferred is not read.
 
 #include "app/dialog_window_internal.hpp"
 
@@ -21,24 +21,36 @@ namespace os2 {
 namespace {
 // Phone book window ids (scripts 0x8C159242-44).
 constexpr uint32_t kPhoneOk = 0xAAAA, kPhoneCancel = 0xBBBB;
-// cTSUIPhoneBookEntryNeighbor::CompareByName: the last names, then the
-// first names (case-insensitive; inferred from FUN_0003d7dc's use).
+// FUN_0003d7dc, the case-blind compare of the phone books' sorts: each byte
+// sign-extended and lowered (tolower leaves the negative ones, the UTF-8
+// bytes of accented letters, as they are), so those come before every ASCII
+// letter and a name sorts after a longer one whose next byte is one of them.
 int compareText(const std::string& a, const std::string& b) {
-    const size_t n = std::min(a.size(), b.size());
-    for (size_t i = 0; i < n; ++i) {
-        const int x = std::tolower(static_cast<unsigned char>(a[i])), y = std::tolower(static_cast<unsigned char>(b[i]));
-        if (x != y)
-            return x < y ? -1 : 1;
+    for (size_t i = 0;; ++i) {
+        const int x = i < a.size() ? int(static_cast<signed char>(a[i])) : 0;
+        const int y = i < b.size() ? int(static_cast<signed char>(b[i])) : 0;
+        const int lx = x >= 0 ? std::tolower(x) : x, ly = y >= 0 ? std::tolower(y) : y;
+        if (lx != ly)
+            return lx < ly ? -1 : 1;
+        if (lx == 0)
+            return 0;
     }
-    return a.size() == b.size() ? 0 : a.size() < b.size() ? -1 : 1;
 }
-bool byName(const vm::DialogEntry* a, const vm::DialogEntry* b) {
+// cTSUIPhoneBookEntryNeighbor::CompareByName (BV 0xa7a118), the party's
+// lists' name sort (ListBoxSortPredicate_Name): the last names, then the
+// first names.
+int compareByName(const vm::DialogEntry* a, const vm::DialogEntry* b) {
     if (int c = compareText(a->last, b->last))
-        return c < 0;
-    return compareText(a->first.empty() ? a->name : a->first, b->first.empty() ? b->name : b->first) < 0;
+        return c;
+    return compareText(a->first.empty() ? a->name : a->first, b->first.empty() ? b->name : b->first);
 }
-// CompareByRelationship: the ones with a crush or love first, then the
-// higher daily + lifetime score, then by name.
+bool byName(const vm::DialogEntry* a, const vm::DialogEntry* b) { return compareByName(a, b) < 0; }
+// The neighbors' book by name (SortNeighborCallListByName, BV 0xa7c664):
+// CompareStrings of the full names (GetFullName, MakeFullName's "first
+// last"), case-blind (_CompareStringA -> FUN_0003d7dc).
+bool byFullName(const vm::DialogEntry* a, const vm::DialogEntry* b) { return compareText(a->name, b->name) < 0; }
+// CompareByRelationship (BV 0xa7a204): the ones with love or a crush
+// first, then the higher daily + lifetime score, then CompareByName.
 bool byRelationship(const vm::DialogEntry* a, const vm::DialogEntry* b) {
     constexpr int Crush = 1, Love = 2;
     const bool fa = a->flags & (Crush | Love), fb = b->flags & (Crush | Love);
@@ -73,7 +85,7 @@ std::vector<const vm::DialogEntry*> DialogWindow::phoneRows(const vm::Dialog& d,
             sort = p.mode == 2 || p.mode == 5 ? 1 : 2;
     }
     if (sort == 1)
-        std::stable_sort(rows.begin(), rows.end(), byName);
+        std::stable_sort(rows.begin(), rows.end(), d.cls.cls == vm::DialogClass::PhoneParty ? byName : byFullName);
     else if (sort == 2)
         std::stable_sort(rows.begin(), rows.end(), byRelationship);
     return rows;
@@ -94,8 +106,10 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
     root.set("area", uiArea(0, 0, int(w), int(h)));
     using C = vm::DialogClass;
     // The window's panel: a GZWinBMP without an image under the frame
-    // overlay, filled with its fillcolor (inferred: the overlay's middle is
-    // transparent; the main menu's lists sit on the same teal).
+    // overlay, with transparentbkg=no: cGZWinBMP::GZPaint (BV 0x8c7320) fills
+    // its area with its fillcolor, opaque (GetFillColorARGB), when flag 2
+    // (transparentbkg, InterpretPropertiesGZWinBMP BV 0x95f068) is off.
+    // (The pictures with transparentbkg=no get no fill under them here.)
     for (auto& c : root.children)
         if (c.clsid() == "GZWinBMP" && !c.attr("image")) {
             c.set("clsid", "GZWinFlatRect");
@@ -308,16 +322,21 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
                 sel.set("fillcolor", c);
                 root.children.push_back(sel);
             }
-            // The name runs up to the first icon of its row (the friend/enemy
-            // column at bw - 42, the love/crush one at bw - 20) and, longer,
-            // ends in "..." (the game's list box clips the text; the
-            // ellipsis is inferred: "Drone Colono 1000101" was cut mid-number).
+            // cTSWinProcPhoneBookParty::onAttach (BV 0x34264c): the columns
+            // 3, width - 33, 15 and 15 (AddColumn, left aligned, no gutter);
+            // AddEntry (BV 0x340b48): the full name in column 1, cut to the
+            // column with "..." (FUN_0019450c), the love or else crush icon
+            // in column 2 and the friend or else (no friendship) enemy icon
+            // in column 3 (inferred: the neighbors' book has the party's
+            // columns; the services' list, without icons, its whole width).
+            // cWinListBoxRow::GZPaint (BV 0x194830): each element at its
+            // column's left, centred in the row ((row - height) >> 1), the
+            // icon strip's frame 1 on the chosen row, 0 on the others.
             constexpr int Crush = 1, Love = 2, Friend = 16, BestFriend = 32, Enemy = 128;
             const bool marks = d.cls.cls != C::PhoneServices;
-            const float right = marks && (e.flags & (Enemy | Friend | BestFriend)) ? bw - 44
-                                : marks && (e.flags & (Love | Crush))              ? bw - 22
-                                                                                   : bw - 4;
-            UiElement t = element("GZWinText", "IGZWinText", ox + 4, ry, ox + right, ry + rowH);
+            constexpr float kGutterColumn = 3, kIconColumn = 15;
+            const float nameX = marks ? kGutterColumn : 4, nameW = marks ? bw - kGutterColumn - 2 * kIconColumn : bw - 8;
+            UiElement t = element("GZWinText", "IGZWinText", ox + nameX, ry, ox + nameX + nameW, ry + rowH);
             const uint32_t id = 0x00F00000u | uint32_t(list.list << 12) | uint32_t(i);
             t.set("id", hex(id));
             t.set("font", listFont);
@@ -327,25 +346,23 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
             std::snprintf(c, sizeof c, "(%d,%d,%d)", int(tc[0] * 255), int(tc[1] * 255), int(tc[2] * 255));
             t.set("forecolor", c);
             root.children.push_back(t);
-            L.captions[id] = fitText(listFont, e.name, right - 4);
-            // SetMode: the relationship icons at the row's right (friend or
-            // enemy, crush or love; which column is which is inferred).
-            auto iconAt = [&](uint32_t image, float x) {
+            L.captions[id] = fitText(listFont, e.name, nameW);
+            auto iconAt = [&](uint32_t image, float x, uint32_t column) {
                 if (!res_ || !image)
                     return;
-                const RgbaImage* im = frame0(image);
+                const RgbaImage* im = frame(image, on ? 1 : 0);
                 if (!im || !im->width)
                     return;
-                UiElement p = element("GZWinBMP", "IGZWinBMP", x, ry + std::round((rowH - float(im->height)) / 2),
-                                      x + float(im->width), ry + std::round((rowH - float(im->height)) / 2) + float(im->height));
-                const uint32_t pid = 0x00E00000u | uint32_t(list.list << 12) | uint32_t(i << 1) | (x > ox + bw - 22 ? 1u : 0u);
+                const float y = ry + std::floor((rowH - float(im->height)) / 2);
+                UiElement p = element("GZWinBMP", "IGZWinBMP", x, y, x + float(im->width), y + float(im->height));
+                const uint32_t pid = 0x00E00000u | uint32_t(list.list << 12) | uint32_t(i << 1) | column;
                 p.set("id", hex(pid));
                 root.children.push_back(p);
                 L.images[pid] = im;
             };
             if (marks) {
-                iconAt(e.flags & Enemy ? iconEnemy : e.flags & (Friend | BestFriend) ? iconFriend : 0, ox + bw - 42);
-                iconAt(e.flags & Love ? iconLove : e.flags & Crush ? iconCrush : 0, ox + bw - 20);
+                iconAt(e.flags & Love ? iconLove : e.flags & Crush ? iconCrush : 0, ox + bw - 2 * kIconColumn, 0);
+                iconAt(e.flags & (Friend | BestFriend) ? iconFriend : e.flags & Enemy ? iconEnemy : 0, ox + bw - kIconColumn, 1);
             }
             L.regions.push_back({{L.x0 + ox, L.y0 + ry, L.x0 + ox + bw, L.y0 + ry + rowH}, Hit::Row,
                                  (list.list << 16) | int(i)});

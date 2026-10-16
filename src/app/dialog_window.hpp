@@ -216,7 +216,7 @@ private:
     Outfits* wardrobe(const vm::Dialog& d);
     const UiScript* script(uint32_t id);
     const RgbaImage* icon(const vm::Dialog& d);
-    const RgbaImage* frame0(uint32_t image); // a four-state strip's first frame
+    const RgbaImage* frame(uint32_t image, int index); // a frame (0-3) of a four-state strip
     float textWidth(const std::string& style, const std::string& s) const;
     float lineHeight(const std::string& style) const;
     std::string fitText(const std::string& style, const std::string& text, float width) const;
@@ -229,7 +229,7 @@ private:
     FontLibrary* fonts_;
     std::map<uint32_t, std::optional<UiScript>> scripts_;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> icons_; // by dialog id
-    std::map<uint32_t, std::unique_ptr<RgbaImage>> frames_; // by image instance
+    std::map<uint64_t, std::unique_ptr<RgbaImage>> frames_; // by image instance << 8 | frame
     int hover_ = -1;          // region index
     uint32_t edited_ = 0;     // the dialog whose default text a key replaced
     int editedBox_ = -1;
