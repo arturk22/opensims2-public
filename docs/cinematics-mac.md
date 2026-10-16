@@ -464,3 +464,50 @@ como funções no projeto). Endereços BV.
   --cinematic <cena> --time 8 --frames 4`): `docs/screenshots/
   n23-cinematic-movein.jpg` (o táxi e os enquadramentos mudam pouco: até
   2,4 % dos pixels) e `n23-cinematic-firstkiss.jpg` (quase igual).
+
+## 9. Rodada n34: quem começa a cena, o relógio e o eixo dos spots
+
+Leitura de 2026-10-15 (`docs/inventario-binario.md` §7, linha 34). Modo:
+**Ghidra MCP** e **Ghidra sem janela** (clone APFS, só leitura). Endereços
+BV.
+
+- **Quem começa a cena sem 0x04.** O `TryCinematic` (BV `0xe24960`) chama o
+  `Prep` do `cTSSGSystem` (vtable `0x6c`, BV `0x7c82ec`) com o espelho, a
+  flag 0x04, a 0x08 e a 0x80; o `Prep`, no fim (`0x7c9064`), com a cena
+  pronta (`+0x166`) e a 0x04 chama o `Start` (vtable `0x70`) na hora; sem a
+  0x04 só deixa a cena pronta e devolve verdadeiro; sem cena pronta chama o
+  `Stop(1)` e o erro `0x97`. Quem a começa depois é o **`try_animate_sim`**
+  (BV `0x69d634`, em `0x69e6d8`): depois de pôr a animação do Animate Sim,
+  se o Sim está numa cinemática (vtable `0x1fc` do `cAnimatable`, o mesmo
+  teste que faz o `try_look_at` dar falso) e o `cTSSGSystem` tem uma cena
+  pronta (`IsCinematicSceneReadyToPlay`, vtable `0xdc`, `+0x166`), chama o
+  `Start(deslocamento de tempo)` e lança o erro dele. Não há espera de 1 s
+  (era nossa, inferida): a cena começa no primeiro Animate Sim de um ator.
+- **O relógio.** O objeto em `+0xB4` do `cTSSGSystem` é o relógio de
+  animação do scene graph (o `0xd0` do `cTSSGSystem`, BV `0x7b3788`, devolve
+  `+0xB4`; o mesmo que o `try_look_at` e a locomoção leem pelo `0x38` da
+  base virtual), um `nTSSG::cCustomAnimTimer2` (vtable `0x27e4fd4`, o nome
+  do typeinfo `0x2aa40b8`). Vtable `0x74`/`0x5c` lê/escreve `+0x24`, `0x60`
+  escreve o byte `+0x58`. No `UpdateFrameTime` (BV `0x73ea10`, `+0x1c` da
+  vtable): `+0x58` liga o corte; com ele, o tempo real de um quadro (ms do
+  `cRZTimer` em `+8`) fica em no máximo `+0x24`, o que passar de `+0x20` vai
+  para os quadros seguintes (até 1000), e o tempo de animação do quadro
+  (× a escala `+0x1c`) em no máximo 200. O `Start` guarda `+0x24` em
+  `+0x168` do `cTSSGSystem` e põe **1**; o `Stop` (sem o argumento) chama
+  `0x60(0)` (desliga o corte) e devolve o `+0x24`; o outro ramo do `Stop`
+  chama `0x60(1)`. O simulador (`cTSSimulator`) não é tocado. Quem liga o
+  corte fora daí e a escala `+0x1c` não foram seguidos: o efeito na
+  velocidade da cena segue sem conclusão, e o `opensims2` mantém a sua
+  (velocidade normal, sem pausa durante a cena; nossa).
+- **O eixo dos spots.** O `cSpotLight` (vtable `0x2822a0c`) mede a luz num
+  ponto no quadro da luz (vtable `0xa4`, BV `0xc9f3ac`, usada pelo
+  `RepresentativeIrradiance`, `0xc9f908`): d² = |p|², cos = −p.z / d; cheia
+  a partir do cosseno interno (`+0x78`), nada abaixo do externo (`+0x74`),
+  linear entre eles, × I / (1 + C·d²) dentro do alcance. **O spot aponta
+  para o −Z do nó** (era inferido dos modelos): vale para os spots do rig
+  das cinemáticas e para as luzes práticas dos objetos. (À parte: o
+  `cDiffusionManager::BuildLightFromObjectLight`, BV `0xd7d404`, usa o +Z
+  do nó — `DAT_02d59e84` = (0, 0, 1), inicializador `0x2534a04` — só para a
+  direção no chão das luzes nos mapas de luz; e o `MacApplyLightSettings`
+  do OpenGL, BV `0x21db0`, passa o Theta do D3D como `GL_SPOT_CUTOFF` em
+  graus, ≤ 90, com expoente; isso é da frente de luz.)

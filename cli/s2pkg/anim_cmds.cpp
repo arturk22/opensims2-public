@@ -410,6 +410,14 @@ int cmdAnimSweep(const char* res) {
                 std::string tagLower = t.tag;
                 for (char& ch : tagLower)
                     ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                for (const auto& chain : t.ikChains) {
+                    char sk[64];
+                    std::snprintf(sk, sizeof sk, "strategy 0x%08X, %zu targets", chain.strategy, chain.targets.size());
+                    if (++ikKinds[sk] <= 4)
+                        ikExamples[sk] += " " + a.resource.fileName + ":" +
+                                          (anyBone.count(chain.crcs[0]) ? anyBone[chain.crcs[0]] : std::string("?")) +
+                                          "-" + (anyBone.count(chain.crcs[2]) ? anyBone[chain.crcs[2]] : std::string("?"));
+                }
                 for (const auto& chain : t.ikChains)
                     for (const auto& g : chain.targets) {
                         const auto own = skeletonBones.find(tagLower);

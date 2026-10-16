@@ -758,3 +758,146 @@ Angela --run-vm 262 --pivot 15.1,22.1,1.9 --zoom 6 --orientation 1`,
 dois Sims dançando que se olham: antes o rosto do outro, agora o queixo, a
 3/4 da altura dele). Faltam os slots (tipos 1–3), a câmera, os estados e
 eventos do olhar e o `AnimUpdate` inteiro (`TODO.md`).
+
+## 12. O olhar inteiro, as chaves de evento e a IK de olhar (rodada n34)
+
+Leitura de 2026-10-15 (`docs/inventario-binario.md` §7, linha 34). Modo:
+**Ghidra MCP** (só leitura) e, para o que o projeto não tem como função
+(`0xd46cdc`, `0xd3f46c`, `0xd38bec`, os inicializadores estáticos),
+**Ghidra sem janela** num clone APFS do projeto (`-readOnly -noanalysis`,
+`DecompRange.java`/`Listing.java`). Endereços BV.
+
+### 12.1 As chaves do motor (`cActiveAnimEvent`, construtor BV `0xd3a290`)
+
+O construtor (`FUN_00d3a290`, o que põe a vtable `0x2832d84`) cria as quatro
+chaves do pedido e lhes dá o tipo (vtable `0x20` da chave):
+
+| campo | tipo | `HandleEvents` | quando o `AnimUpdateDefault` (BV `0xd38bec`) a posta |
+|---|---|---|---|
+| `+0x3C` | 3 | 9999 | no fim do pedido (o tempo do fim, ou o atual se abortado) |
+| `+0x40` | 6 | 9998 | no fim de **cada volta**: quando o tempo passa da duração e dá a volta (`t1 < t0`), ou quando chega nela sem dar a volta (o fim de um pedido de uma volta) |
+| `+0x44` | 7 | 9997 | no começo do fade de saída (`ActualFadeOutStart`, intercalada com as chaves do ANIM pelo tempo) |
+| `+0x48` | −1 | −1 | uma vez, quando o pedido é abortado (`IsAborted`) |
+
+**Confirmado:** a 6 (9998) é a do fim de cada volta e a 3 (9999) a do fim
+do pedido (era a ordem 9998, 9999 no fim, inferida). Num pedido em laço
+(Animate Overlay com o temp 1 > 1, ou −1 até parar) o 9998 vem a cada volta,
+com as chaves do ANIM da volta seguinte de novo; o 9999 só no fim. A volta
+final só posta o 9998 se o fim do pedido cai na duração (`dVar21 ≥ dVar19`).
+
+### 12.2 O `cActiveAnimLookAt` é uma IK de duas cadeias
+
+`InitIKChannelNetworkPart1` (BV `0xd402fc`) cria duas cadeias de IK, ambas
+com a estratégia de olhar (`0x09F9E87E`, `cIKStrategyLookAt`, vtable
+`0x28349f8`), com o começo e o fim dados pelas vtables `0x120`/`0x124` do
+`cActiveAnimLookAt` (`0xd3f18c`/`0xd3f1c4`, lidas no Ghidra sem janela):
+
+| cadeia | começo → fim | canais (vtable `0x20(i)` do ativo) |
+|---|---|---|
+| `0x833D8054` (a mesma dos ANIM) | `head` → `head_grip` | 1 alvo (ponto), 2 polo (ponto) |
+| `0x171B63B7` | `spine0` → `neck` (`LastBoneOfSpineIKChain` = "neck", BV `0xd3f200`) | 0 torção (quatérnio) |
+
+`InitIKChannelNetworkPart2` (BV `0xd1fa78`) põe um canal de IK em cada osso
+da cadeia: **base** de nível 8 (`AddBaseChannel(canal, 8, 2)`) na cadeia da
+cabeça, **delta** (`AddDeltaChannel(canal, 8)`) na da coluna (começo
+`0xE446CAC7`). `SetUberChannelIKTypes` da estratégia (BV `0xd46864`): duas
+juntas → tipos 1 e 9; senão todos 6.
+
+- **`ComputeIKTranslationSolution`** da estratégia (BV `0xd46cdc`, a cadeia
+  da cabeça; só com 2 elementos): o quadro F = (posição do osso de começo,
+  **rotação do pai dele**), no espaço do modelo (`FUN_00946890`: o pai
+  relativo à raiz); G = F⁻¹·alvo, U = F⁻¹·polo, d = |G|, L = o Y da
+  translação local do osso do fim (`head_grip`: 0,0818). Se d² − L² > ε:
+  c = U × G (normalizado, se não nulo), b = normaliza(G × c), A = acos(L/d)
+  (≤ 1; π/2 se L/d ≤ ε), e a rotação local do osso de começo é a matriz de
+  colunas (c, b, G/d) vezes Rx(π/2 − A) (`FUN_00edd6e0`: a rotação em X de
+  sempre). O Z do osso aponta do `head_grip` para o alvo, o X perpendicular
+  ao plano do alvo e do polo (a cabeça de pé). Sem solução, os canais ficam
+  como estavam.
+- **`ComputeIKRotationSolution`** (BV `0xd46568`, a cadeia da coluna): o
+  ângulo do quatérnio da torção, a = 2·asin(q.y), vai como Euler (0, a·fᵢ,
+  0) a cada osso da cadeia, fᵢ = 0,2; 0,08; 0,05; 0,1 (`DAT_0273a700`), do
+  começo ao fim (spine0, spine1, spine2, neck; a ordem é inferida pela da
+  cadeia da cabeça, cujo canal 0 recebe a solução do osso de começo).
+- **Nos ANIM:** 338 animações têm a cadeia `0x833D8054` com essa estratégia
+  (`s2pkg anim-sweep`: "strategy 0x09F9E87E, 1 targets"; `head` →
+  `head_grip`, alvo na translação de `head_ikctr`, polo `head_ikpole`):
+  `a2o-sink-clean-loop2`, as do xadrez, das prateleiras, ... O `applyIk`
+  pulava toda cadeia que não fosse 7DOF.
+
+### 12.3 `cActiveAnimLookAt::AnimUpdate` (BV `0xd41e04`)
+
+Campos: `+0x94` o pedido corrente, `+0x98` o último tempo, `+0x9c` o estado,
+`+0xa0` o quatérnio do olhar q (no quadro de referência da cabeça),
+`+0xb0` os Euler dele, `+0xbc` a torção, `+0xc4` "já dentro dos limites",
+`+0xc8` o ângulo da rampa, `+0xcc` a velocidade, `+0xd0` os ticks da rampa,
+`+0xd4` o q no começo da fase, `+0xe4`/`+0xe8` os fatores das velocidades de
+ida e de volta, `+0xec` a rotação de repouso da cabeça. O tempo é o do
+relógio de animação (ms).
+
+1. **Pedidos.** O mais recente (`FindMostRecentChoreoRequest`) manda; os
+   outros vão a `0x26B2`. Um pedido novo: estado `0x26AD` ("virando"); o
+   `SetState` (BV `0xd3f46c`) guarda q em `+0xd4` e põe a velocidade em
+   0,3 × a do pedido (`FLOAT_0274b670`); na volta (`0x26AF`/`0x26B0`) idem
+   com a de volta; ao entrar na volta o pedido perde a função de blend e o
+   peso vai a 1. Só se avança de estado (ou se volta ao `0x26AD`).
+2. **Os quadros** (no espaço do mundo; o `0x18c` da fila, a raiz para a
+   torção): Fref = (posição do `head` pelo `neck` do mundo, rotação do
+   `neck` do mundo × a de repouso da cabeça), a cabeça "parada"; Fh =
+   (posição do `head_grip` em Fref, rotação de Fref). Na primeira vez q =
+   repouso⁻¹ × a rotação local da cabeça na animação.
+3. **A torção** (só fora do primeiro quadro do pedido): o ponto 10 à frente
+   de q (em Fh) no quadro da raiz dá o desvio a = atan2(x, z); com a flag
+   0x04 ("including Spine", vtable `0x178`) o alvo da torção é a − 10° se a
+   ≥ 0 (a + 10° se a < 0), preso em ±90° (`DAT_02d44e1c` = π/2, do
+   inicializador `0x24edca0`); sem a flag, 0. Ela anda até ele a
+   velocidade × 0,001 × ticks.
+4. **O alvo** G = Fh⁻¹ · (o ponto do alvo) dá d = |G|, a = atan2(−y,
+   √(x² + z²)) e b = atan2(x, z) − 0,6 × (o quanto a torção andou neste
+   quadro); limites (`FUN_00c49a8c`, inicializador `0x2447bb0`): a entre
+   −51° e +36° (positivo = para baixo), b ±70°, giro ±40° (sempre 0). O q
+   desejado é o dos Euler presos; "preso" lembra se o alvo saiu dos limites.
+5. **O perfil de velocidade** (estados `0x26AD`/`0x26AE`, alvo a 0,3 ou
+   mais): θr = ângulo entre o Z de q e o desejado, θt = entre o de `+0xd4` e
+   o desejado. No primeiro quadro: f = θt / 30°, preso em 0,3–1; a
+   velocidade de ida (graus/s × π/180 do pedido) e a de volta × f; rampa =
+   θt / 4 ÷ (velocidade × 0,001), presa em 25–300 ticks; o ângulo da rampa
+   = velocidade × 0,001 × rampa / 2. A cada passo: na rampa (ângulo andado
+   < ângulo da rampa) a velocidade sobe de 0,3 a 1 × a cheia (desacelera
+   0,7 × cheia / rampa por tick); longe do fim (θr > ½ rampa) a cheia; perto
+   do fim cai a (0,3 + 0,7 · θr / (½ rampa)) × cheia − 0,7 × cheia / rampa
+   × ticks, nunca abaixo de 0,3 × cheia. O passo = média das velocidades ×
+   ticks × 0,001; q vai ao desejado por slerp (passo / θr). Segurando
+   (`0x26AE`), a velocidade cheia, seguindo o alvo.
+6. **Chegou** (passo ≥ θr): q = o desejado; virando → `0x26AE`, ou
+   `0x26B0` (voltar) se o alvo estava fora dos limites e sem a flag 0x02
+   ("no early exit", vtable `0x16c`). Segurando, a duração (`HoldTicks`,
+   `0x7FFFFF00` = sem fim) desconta os ticks; zerada → `0x26AF`. Alvo a
+   menos de 0,3: a volta a 200°/s (`DAT_02d44e18`) e `0x26B0`.
+7. **A volta** (`0x26AF`/`0x26B0`): o mesmo perfil para o q = identidade
+   (a cabeça "parada" sobre o pescoço), com a desaceleração a partir de 3 ×
+   o ângulo da rampa; chegando, `0x26B1`/`0x26B2` (o pedido acaba).
+8. **O peso** (`cBlendFunction2` do pedido): ao virar, sem função ainda,
+   sobe do peso atual (0,001 no primeiro pedido) a 1 em metade do tempo
+   para chegar (θr / velocidade); na volta, desce de 1 a 0,001 no tempo da
+   volta (θt / velocidade de volta), e acabado o blend acaba o olhar.
+9. **A saída** (o ativo com os três canais): canal 1 = Fh · (q · (0, 0,
+   d)) no espaço do modelo (o alvo da IK da cabeça, à distância do alvo na
+   direção do olhar), canal 2 = Fh · (0, 1, 0) (o polo), canal 0 = giro em
+   Y de peso × torção. Com `displayLookAtBoxes`, duas caixas de 6 cm
+   ("Anim_LookAtBoxMaterial1/2") nos dois pontos.
+10. **Os estados viram eventos:** o `SetState` posta uma chave
+    "look_state" = o novo estado (`0x26AD` = 9901 ... `0x26B2` = 9906) para a
+    árvore de eventos do olhar (u16 9 do Look At; tipo 4 no `HandleEvents`).
+
+Assim a cabeça vira sozinha (o pescoço não), e com a flag 0x04 a coluna
+(spine0 0,2; spine1 0,08; spine2 0,05; neck 0,1 da torção, como delta: peso
+× peso × torção, inferido que o peso do delta é o do pedido) — não a
+divisão pescoço 40 % / cabeça 60 %, 75°/30° e velocidade constante que o
+`app/look_at.cpp` fazia (inferidos).
+
+Inferidos: o nó da vtable `0x18c` da fila, o quadro da torção (tomado o
+`root_rot`); `+0xec` ser a rotação de repouso da cabeça (`0x190` da fila);
+a forma linear do blend; que a coluna recebe as frações na ordem
+spine0→neck; o 0,3 de distância e o desconto da duração seguidos ao pé da
+letra (inclusive o `lVar26 −= sobra` da chegada, que parece um descuido).
