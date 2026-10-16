@@ -400,64 +400,9 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
 
 // A door or window: the vertices of its visible parts in lot space.
 struct WallHole {
-    std::vector<Vec3f> points;
-    Vec3f lo{}, hi{}; // bounds of the points (see bound())
     std::string cutout;            // its model name: its wall masks' names start with it
     Vec3f origin{}, east{1, 0, 0}; // the object's position and +x axis
-    void bound() {
-        lo = {1e9f, 1e9f, 1e9f}, hi = {-1e9f, -1e9f, -1e9f};
-        for (const auto& p : points)
-            for (size_t k = 0; k < 3; ++k)
-                lo[k] = std::min(lo[k], p[k]), hi[k] = std::max(hi[k], p[k]);
-    }
 };
-// A cut out of a wall stretch: along it from its start, and heights.
-struct Cut {
-    float u0, u1, z0, z1;
-    size_t hole = 0; // index into the holes
-};
-
-// Frames cover this much of the hole's edge (the hole is the object's extent less this).
-constexpr float kHoleInset = 0.1f;
-
-// Cuts of the holes whose objects sit across the stretch from (ax, ay) along
-// (dx, dy), `length` long, between z `bottom` and `top`.
-std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay, float dx, float dy, float length,
-                          float bottom, float top) {
-    std::vector<Cut> cuts;
-    const float nx = dy, ny = -dx;
-    const float bx = ax + dx * length, by = ay + dy * length;
-    const float x0 = std::min(ax, bx) - 0.25f, x1 = std::max(ax, bx) + 0.25f, y0 = std::min(ay, by) - 0.25f,
-                y1 = std::max(ay, by) + 0.25f;
-    for (const auto& h : holes) {
-        // Far from the stretch: nothing to cut (most holes for most walls).
-        if (h.hi[0] < x0 || h.lo[0] > x1 || h.hi[1] < y0 || h.lo[1] > y1 || h.hi[2] < bottom - 0.1f ||
-            h.lo[2] > top + 0.1f)
-            continue;
-        float u0 = 1e9f, u1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
-        size_t near = 0;
-        bool front = false, back = false;
-        for (const auto& p : h.points) {
-            const float rx = p[0] - ax, ry = p[1] - ay;
-            const float d = rx * nx + ry * ny, along = rx * dx + ry * dy;
-            if (std::abs(d) > 0.25f || p[2] < bottom - 0.1f || p[2] > top + 0.1f)
-                continue;
-            ++near;
-            front = front || d > 0.01f, back = back || d < -0.01f;
-            u0 = std::min(u0, along), u1 = std::max(u1, along), z0 = std::min(z0, p[2]), z1 = std::max(z1, p[2]);
-        }
-        // The object must stand across this wall (frame on both sides) and overlap the stretch.
-        if (near < 8 || !front || !back)
-            continue;
-        u0 = std::max(u0 + kHoleInset, 0.0f), u1 = std::min(u1 - kHoleInset, length);
-        // Doors go down to the floor; windows keep a sill.
-        z0 = z0 < bottom + 0.05f ? bottom : z0 + kHoleInset;
-        z1 = std::min(z1 - kHoleInset, top);
-        if (u1 - u0 > 0.05f && z1 - z0 > 0.05f)
-            cuts.push_back({u0, u1, z0, z1, size_t(&h - holes.data())});
-    }
-    return cuts;
-}
 
 // nTSSG::cObject::WallCutoutMaterialName (Mac BV 0x658428;
 // docs/walls-floors-mac.md §6.2): the name of the wall mask of the face whose
@@ -784,7 +729,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         const auto& w = *r.wall;
         const Built& b = built[i];
         const int level = w.a.level;
-        const bool attic = w.type == Lot::Attic, fence = Lot::isFence(w.type);
+        const bool attic = w.type == Lot::Attic;
         auto& out = r.shown ? drawn : hidden;
         const float off = r.node.offset;
         const float len = std::hypot(w.b.x - w.a.x, w.b.y - w.a.y);
@@ -803,7 +748,6 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         // drawn. Exact as planes over the face (the floor along a wall is
         // straight: walls require a flat bottom).
         std::array<int, 2> faceMask{-1, -1};
-        std::set<size_t> masking; // holes with a mask on this wall
         if (r.node.index == 0 || r.node.index == 2)
             for (int side = 0; side < 2; ++side) {
                 // The face's locator: a -> b for side 0, b -> a for side 1.
@@ -860,24 +804,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                                      m->mirror ? " mirrored" : "");
                     faceMask[size_t(side)] = int(masks.size());
                     masks.push_back(std::move(values));
-                    masking.insert(hi);
                 }
             }
-        // Doors and windows on this wall without a mask: intervals along it
-        // (from a) and heights cut out of both faces.
-        std::vector<Cut> cuts;
-        // Attic walls too: the sawtooth roofs of N002_Lot31 have their row
-        // of windows in the attic walls between the roofs.
-        if ((w.type == Lot::Normal || attic) && !fence)
-            cuts = wallCuts(holes, w.a.x, w.a.y, d[0], d[1], len, std::min(b.floorZ[0], b.floorZ[2]),
-                            std::max({b.top[0], b.top[1], b.top[2]}));
-        std::erase_if(cuts, [&](const Cut& c) { return masking.count(c.hole) > 0; });
-        if (debugMasks)
-            for (const auto& c : cuts)
-                std::fprintf(stderr, "boxcut: wall (%g, %g)-(%g, %g) level %d hole (%g, %g, %g) %s\n", w.a.x, w.a.y, w.b.x,
-                             w.b.y, w.a.level, holes[c.hole].origin[0], holes[c.hole].origin[1], holes[c.hole].origin[2],
-                             holes[c.hole].cutout.c_str());
-
         // The two faces: side 0 is a -> b's (A, the right: patterns[0]),
         // side 1 the opposite locator's (B). Each face runs from its own
         // locator's start: columns start, middle, end.
@@ -960,62 +888,22 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                     v += 0.05f;
                 return v;
             };
-            // Pieces between the columns and the holes' edges, each split
-            // around the holes over it.
-            std::vector<float> breaks{cols[0].t, cols[1].t, cols[2].t};
-            const bool rising = cols[2].t >= cols[0].t;
-            for (const auto& c : cuts)
-                for (float x : {c.u0, c.u1})
-                    if (rising ? (x > cols[0].t && x < cols[2].t) : (x < cols[0].t && x > cols[2].t))
-                        breaks.push_back(x);
-            std::sort(breaks.begin(), breaks.end());
-            if (!rising)
-                std::reverse(breaks.begin(), breaks.end());
-            // A point of the face at `t` (interpolated between its columns).
-            struct At {
-                V2 p;
-                float z0, z1, u, v0;
-            };
-            auto at = [&](float t) {
-                const bool first = rising ? t <= cols[1].t : t >= cols[1].t;
-                const Col& c0 = first ? cols[0] : cols[1];
-                const Col& c1 = first ? cols[1] : cols[2];
-                const float f = std::abs(c1.t - c0.t) > 1e-6f ? std::clamp((t - c0.t) / (c1.t - c0.t), 0.0f, 1.0f) : 0.0f;
-                auto lerp = [&](float x, float y) { return x + (y - x) * f; };
-                return At{V2{lerp(c0.p[0], c1.p[0]), lerp(c0.p[1], c1.p[1])}, lerp(c0.z0, c1.z0), lerp(c0.z1, c1.z1),
-                          lerp(c0.u, c1.u), lerp(vFloor(c0), vFloor(c1))};
-            };
-            for (size_t k = 0; k + 1 < breaks.size(); ++k) {
-                const float s0 = breaks[k], s1 = breaks[k + 1];
-                if (std::abs(s1 - s0) < 1e-4f)
+            // The face's two pieces, start to middle and middle to end. A door
+            // or window opens it through its mask alone (no mask, no hole:
+            // ComputeWallCutoutLocators names none without the model's
+            // STR# 0x85 text, docs/walls-floors-mac.md §6.3).
+            for (size_t k = 0; k < 2; ++k) {
+                const Col &c0 = cols[k], &c1 = cols[k + 1];
+                if (std::abs(c1.t - c0.t) < 1e-4f || (c0.z1 - c0.z0 < 1e-4f && c1.z1 - c1.z0 < 1e-4f))
                     continue;
-                const At p0 = at(s0), p1 = at(s1);
-                std::vector<std::pair<float, float>> gaps; // z ranges cut out of this piece
-                for (const auto& c : cuts)
-                    if (c.u0 <= std::min(s0, s1) + 1e-4f && c.u1 >= std::max(s0, s1) - 1e-4f)
-                        gaps.push_back({c.z0, c.z1});
-                std::sort(gaps.begin(), gaps.end());
-                // Solid bands: from the bottom (or a gap's top) to the next gap's bottom (or the top).
-                std::vector<std::array<float, 4>> bands; // z at s0 low/high, z at s1 low/high
-                std::array<float, 2> low{p0.z0, p1.z0};
-                for (const auto& [g0, g1] : gaps) {
-                    bands.push_back({low[0], std::min(g0, p0.z1), low[1], std::min(g0, p1.z1)});
-                    low = {std::max(g1, p0.z0), std::max(g1, p1.z0)};
-                }
-                bands.push_back({low[0], p0.z1, low[1], p1.z1});
-                for (const auto& band : bands) {
-                    if (band[1] - band[0] < 1e-4f && band[3] - band[2] < 1e-4f)
-                        continue;
-                    // v runs down a story per 3 up from the column's floor.
-                    auto vtx = [&](const At& p, float z) {
-                        const Vec3f pos{p.p[0], p.p[1], z + off};
-                        return mb.vertex(pos, nrm, p.u, p.v0 - (z - p.z0) / kStoryHeight, lmAt({p.p[0], p.p[1], z}));
-                    };
-                    const uint32_t i0 = vtx(p0, band[0]), i1 = vtx(p1, band[2]), i2 = vtx(p1, band[3]), i3 = vtx(p0, band[1]);
-                    // Counter-clockwise seen from the face's side (each
-                    // face runs along its own locator).
-                    mb.quad(i0, i1, i2, i3);
-                }
+                // v runs down a story per 3 up from the column's floor.
+                auto vtx = [&](const Col& c, float z) {
+                    const Vec3f pos{c.p[0], c.p[1], z + off};
+                    return mb.vertex(pos, nrm, c.u, vFloor(c) - (z - c.z0) / kStoryHeight, lmAt({c.p[0], c.p[1], z}));
+                };
+                // Counter-clockwise seen from the face's side (each face runs
+                // along its own locator).
+                mb.quad(vtx(c0, c0.z0), vtx(c1, c1.z0), vtx(c1, c1.z1), vtx(c0, c0.z1));
             }
             // The cap of the face's locator's start when no other wall of the
             // node meets it (cWallSide::InsertVertices 0x745ec4): from this
@@ -1039,27 +927,6 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 // Facing away from the face's locator: counter-clockwise from there.
                 mb.quad(i0, i1, i2, i3);
             }
-        }
-        // The holes' sides through the wall: jambs (where the hole ends
-        // inside the wall), sill and head, in the wall top's material (the
-        // game has none: its masks cut the faces and the frames cover the
-        // edges; these close the box cuts of objects without a mask).
-        for (const auto& c : cuts) {
-            MeshBuilder& rev = out[topKey];
-            auto pt = [&](float along, float sd, float z) {
-                return Vec3f{w.a.x + d[0] * along + n[0] * h * sd, w.a.y + d[1] * along + n[1] * h * sd, z};
-            };
-            auto quadFace = [&](Vec3f p0, Vec3f p1, Vec3f p2, Vec3f p3) {
-                const Vec3f nn = normalOf(p0, p1, p2);
-                auto vtx = [&](const Vec3f& p) { return rev.vertex(p, nn, p[0] + p[2], p[1] + p[2]); };
-                rev.quad(vtx(p0), vtx(p1), vtx(p2), vtx(p3));
-            };
-            if (c.u0 > 1e-3f) // jamb at u0, facing +along
-                quadFace(pt(c.u0, -1, c.z0), pt(c.u0, 1, c.z0), pt(c.u0, 1, c.z1), pt(c.u0, -1, c.z1));
-            if (c.u1 < len - 1e-3f) // jamb at u1, facing -along
-                quadFace(pt(c.u1, 1, c.z0), pt(c.u1, -1, c.z0), pt(c.u1, -1, c.z1), pt(c.u1, 1, c.z1));
-            quadFace(pt(c.u0, 1, c.z0), pt(c.u0, -1, c.z0), pt(c.u1, -1, c.z0), pt(c.u1, 1, c.z0)); // sill, up
-            quadFace(pt(c.u0, -1, c.z1), pt(c.u0, 1, c.z1), pt(c.u1, 1, c.z1), pt(c.u1, -1, c.z1)); // head, down
         }
         // The top (cWallTop::InsertVertices 0x745cfc): Q0..Q5 at the top of
         // their columns, normal up, the texture by the point's (x, y) in the
@@ -1119,64 +986,41 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         warnings.push_back(std::to_string(unknownFences) + " fence segments of unknown fences (drawn as the default fence)");
 }
 
-// Doors and windows cut holes in the walls they stand in. The game draws the
-// holes with per-tile WallMask textures (TXMTs "<object>_<x>_<y>_<level>_<dir>_wallmask",
-// only for some objects); here the hole is the extent of the object's visible
-// parts (not its wall shadows) less the frame, for objects whose definition
-// is named "Window ..." or "Door ...".
-std::vector<WallHole> findWallHoles(const Lot& lot, ResourceIndex& index, std::vector<std::string>& warnings) {
+// The objects that cut walls (doors, windows, arches): those whose model has
+// wall masks (cObject::ComputeWallCutoutLocators names them from the model's
+// STR# 0x85 text, the CRES name the lot keeps, docs/buy-build-mac.md 7.6;
+// nTSWorld::ObjectHasWallCutouts asks the object's cutout sides, which the
+// lot does not keep: here a model with the mask of its own tile's face, "0_0_0"
+// n, s, nw or se, has them). A door or window without masks cuts nothing
+// (docs/walls-floors-mac.md §6.3).
+std::vector<WallHole> findWallHoles(const Lot& lot, ResourceIndex& index) {
     std::vector<WallHole> holes;
-    std::map<std::string, std::optional<std::vector<Vec3f>>> models; // model -> visible vertices
+    std::map<std::string, bool> cuts; // model -> has wall masks
     for (const auto& o : lot.objects) {
-        const std::string def = lowerAscii(o.definition);
-        if (o.model.empty() || o.person || (o.position[0] == 0 && o.position[1] == 0) ||
-            !(def.starts_with("window") || def.starts_with("door")))
+        if (o.model.empty() || o.person || (o.position[0] == 0 && o.position[1] == 0))
             continue;
-        auto it = models.find(o.model);
-        if (it == models.end()) {
-            std::optional<std::vector<Vec3f>> points;
-            try {
-                const ObjectModel m = loadObjectModel(index, o.model);
-                points.emplace();
-                for (const auto& part : m.parts) {
-                    auto mat = m.materials.find(part.material);
-                    if (mat == m.materials.end() || lowerAscii(part.material).find("shadow") != std::string::npos ||
-                        !standardMaterial(mat->second).visible)
-                        continue;
-                    points->insert(points->end(), part.mesh.positions.begin(), part.mesh.positions.end());
-                }
-            } catch (const std::exception& e) {
-                warnings.push_back("wall hole of " + o.model + ": " + e.what());
-            }
-            it = models.emplace(o.model, std::move(points)).first;
+        const std::string model = lowerAscii(o.model);
+        auto it = cuts.find(model);
+        if (it == cuts.end()) {
+            bool any = false;
+            for (const char* face : {"_0_0_0_n", "_0_1s_0_s", "_0_0_0_nw", "_0_0_0_se"})
+                any = any || index.findByName(model + face + "_wallmask_txmt", kTypeTxmt).has_value();
+            it = cuts.emplace(model, any).first;
         }
         if (!it->second)
             continue;
-        // Rotate by the unit quaternion (x, y, z, w), then move.
         const auto& q = o.rotation;
         WallHole h;
-        // The wall masks' base: the object's model name, STR# 0x85 entry
-        // (tag 0xCC + 1), the CRES name the lot keeps (docs/buy-build-mac.md 7.6).
-        h.cutout = lowerAscii(o.model);
+        h.cutout = model;
         h.origin = {o.position[0], o.position[1], o.position[2]};
-        {
-            // +x rotated: 1 - 2(y^2 + z^2), 2(xy + wz), 2(xz - wy); snapped to an axis or diagonal.
-            float ex = 1 - 2 * (q[1] * q[1] + q[2] * q[2]), ey = 2 * (q[0] * q[1] + q[3] * q[2]);
-            const float len = std::hypot(ex, ey);
-            if (len > 1e-4f)
-                ex /= len, ey /= len;
-            for (float* c : {&ex, &ey})
-                *c = std::abs(*c) < 0.2f ? 0.0f : std::abs(*c) > 0.9f ? std::copysign(1.0f, *c) : *c;
-            h.east = {ex, ey, 0};
-        }
-        h.points.reserve(it->second->size());
-        for (const auto& v : *it->second) {
-            const float tx = 2 * (q[1] * v[2] - q[2] * v[1]), ty = 2 * (q[2] * v[0] - q[0] * v[2]),
-                        tz = 2 * (q[0] * v[1] - q[1] * v[0]);
-            h.points.push_back({v[0] + q[3] * tx + (q[1] * tz - q[2] * ty) + o.position[0],
-                                v[1] + q[3] * ty + (q[2] * tx - q[0] * tz) + o.position[1],
-                                v[2] + q[3] * tz + (q[0] * ty - q[1] * tx) + o.position[2]});
-        }
+        // +x rotated: 1 - 2(y^2 + z^2), 2(xy + wz), 2(xz - wy); snapped to an axis or diagonal.
+        float ex = 1 - 2 * (q[1] * q[1] + q[2] * q[2]), ey = 2 * (q[0] * q[1] + q[3] * q[2]);
+        const float len = std::hypot(ex, ey);
+        if (len > 1e-4f)
+            ex /= len, ey /= len;
+        for (float* c : {&ex, &ey})
+            *c = std::abs(*c) < 0.2f ? 0.0f : std::abs(*c) > 0.9f ? std::copysign(1.0f, *c) : *c;
+        h.east = {ex, ey, 0};
         holes.push_back(std::move(h));
     }
     return holes;
@@ -1896,21 +1740,16 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     addFloors(lot, patterns, lm, built, model.warnings, view.level, view.lowestCut);
     std::vector<WallHole> holes;
     if (cache && cache->holes) {
-        for (const auto& c : *cache->holes) {
-            WallHole h;
-            h.points = c.points, h.cutout = c.cutout, h.origin = c.origin, h.east = c.east;
-            holes.push_back(std::move(h));
-        }
+        for (const auto& c : *cache->holes)
+            holes.push_back({c.cutout, c.origin, c.east});
     } else {
-        holes = findWallHoles(lot, index, model.warnings);
+        holes = findWallHoles(lot, index);
         if (cache) {
             cache->holes.emplace();
             for (const auto& h : holes)
-                cache->holes->push_back({h.points, h.cutout, h.origin, h.east});
+                cache->holes->push_back({h.cutout, h.origin, h.east});
         }
     }
-    for (auto& h : holes)
-        h.bound();
     if (cache)
         cache->cut.clear();
     const bool roofShown =

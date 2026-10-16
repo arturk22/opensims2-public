@@ -199,10 +199,9 @@ bool storyOverGround(const Lot& lot, int level, int x, int y);
 // colours): a rebuild for a new view then only makes the geometry. Call
 // LotModelCache::geometryChanged after the lot itself changed.
 struct LotModelCache {
-    // A door or window: its visible points, the name its wall masks start
-    // with (its model name), its position and its +x axis.
+    // A door, window or arch: the name its wall masks start with (its model
+    // name), its position and its +x axis.
     struct Hole {
-        std::vector<std::array<float, 3>> points;
         std::string cutout;
         std::array<float, 3> origin{0, 0, 0}, east{1, 0, 0};
     };
