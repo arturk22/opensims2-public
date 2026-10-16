@@ -136,6 +136,9 @@ bool startGoalCheck(Context& c, Object& me, Object::Route& r) {
     if (!me.person || !owner || !c.vm.object(r.target) || r.goals.empty())
         return false;
     const uint16_t tree = c.vm.functionTree(*owner, 0x27);
+    if (std::getenv("OS2_DEBUG_GOALCHECK"))
+        std::fprintf(stderr, "t%llu %d goal check in \"%s\": owner %d tree %04X stack %d\n", (unsigned long long)c.vm.ticks, me.id,
+                     c.frame.behavior ? c.frame.behavior->fileName.c_str() : "?", owner->id, tree, c.frame.stackObject);
     if (!tree)
         return false;
     const ObjectId stack = c.vm.object(c.frame.stackObject) ? c.frame.stackObject : r.target;
@@ -386,10 +389,21 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.waiting = true;
         return Step::Call;
     }
-    if (r.blockedTree) { // back from "CT - Route Blocked"
-        r.blockedTree = false;
-        why = RouteFail::BlockedByPerson;
-        return Step::Failed;
+    if (std::exchange(r.blockedTree, false)) { // back from "CT - Route Blocked": true plans again (DoInitial)
+        if (!treeResult.value_or(false)) {
+            why = RouteFail::BlockedByPerson;
+            return Step::Failed;
+        }
+        r.blocker = 0, r.blockedTicks = 0;
+        Object::Route next = r;
+        RouteFail w;
+        if (!planRoute(vm, me, next, w)) {
+            why = w;
+            return Step::Failed;
+        }
+        r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
+        r.waiting = false;
+        return Step::Walking;
     }
     if (std::exchange(r.pausing, false)) { // DoContinueAfterPause: DoInitial
         treeResult.reset();
@@ -518,7 +532,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         pending = locoStep(vm, me, r);
         b = stepBlocker(vm, me, r, pending->x, pending->y, pending->level);
         if (b && std::getenv("OS2_DEBUG_BLOCK"))
-            std::fprintf(stderr, "t%llu %d step into %d\n", (unsigned long long)vm.ticks, me.id, b);
+            std::fprintf(stderr, "t%llu %d step into %d%s at (%.2f, %.2f, %d)\n", (unsigned long long)vm.ticks, me.id, b,
+                         vm.object(b) && vm.object(b)->person ? " (person)" : "", me.position.x, me.position.y, me.position.level);
     }
     if (b) {
         const Object& blocker = *vm.object(b);
@@ -612,11 +627,23 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
                 return Step::Walking;
             };
+            // Out of tries (DoBlockedGoalStillAvailable's LAB_0057ad98): on
+            // the base route, once a route (RouteBlockedTreeHasRun, route
+            // vtables 0xe4/0xe0), "CT - Route Blocked" (TriggerRouteBlockedTree,
+            // BV 0x57946c: the person's tree by name, the blocker as its
+            // stack object, parameters 0 the routing slot (WorkOutSlotIndex),
+            // 1 the route's target, 2 the goal's +0x14, 3 0); its true plans
+            // again (DoWaitingForRouteBlockedTree, BV 0x56d7dc: DoInitial),
+            // its false fails with 14. Then, or with the tree already run,
+            // "blocked by person" (14). Until round n30 the tree's true
+            // failed the route too.
             auto routeBlocked = [&]() {
                 if (r.aside)
                     return endAside();
-                if (base && runWalkTree(c, "CT - Route Blocked", {b, 0, 0, 0})) {
-                    r.blockedTree = true;
+                if (base && !r.blockedTreeRan && me.person &&
+                    runWalkTree(c, "CT - Route Blocked", {me.person->data[37], int16_t(r.target), me.person->data[38], 0})) {
+                    c.thread.stack.back().stackObject = b;
+                    r.blockedTree = r.blockedTreeRan = true;
                     return Step::Call;
                 }
                 why = RouteFail::BlockedByPerson;
@@ -911,6 +938,10 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees, b
         std::fprintf(stderr, "t%llu route of %d failed with %d in \"%s\" #%u op %02X (stack object %d) at (%.2f, %.2f, %d)\n", (unsigned long long)c.vm.ticks, me.id,
                      int(why), c.frame.behavior->fileName.c_str(), c.frame.pc, c.instruction.opcode, c.frame.stackObject, me.position.x,
                      me.position.y, me.position.level);
+    if (std::getenv("OS2_ROUTE_FAILS_TREE")) // the tree and the instruction's operand
+        std::fprintf(stderr, "  in %08X:%04X operand %02X %02X %02X %02X %02X %02X %02X %02X\n", c.frame.group, c.frame.instance,
+                     c.instruction.operands[0], c.instruction.operands[1], c.instruction.operands[2], c.instruction.operands[3],
+                     c.instruction.operands[4], c.instruction.operands[5], c.instruction.operands[6], c.instruction.operands[7]);
     if (std::getenv("OS2_ROUTE_FAILS_NEAR")) // and what blocks around the walker
         for (const auto& [id, x] : c.vm.eachObject())
             if (id != me.id && x.position.inWorld() && x.position.level == me.position.level &&

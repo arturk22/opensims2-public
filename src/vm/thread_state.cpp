@@ -20,7 +20,8 @@ namespace {
 // 6: the Sim a route asked to move and that interaction's uid; the move-out-
 //    of-way slot's directions, distances, spacing, gradient and weight.
 // 7: the routers' places noted at the last plan.
-constexpr uint32_t kVersion = 7;
+// 8: whether "CT - Route Blocked" has run for the route.
+constexpr uint32_t kVersion = 8;
 uint32_t readingVersion = kVersion; // of the state being read
 bool knownVersion(uint32_t v) {
     readingVersion = v;
@@ -116,6 +117,7 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     w.u32(uint32_t(r.places.size()));
     for (const auto& [id, at] : r.places)
         w.i16(id), w.f32(at[0]), w.f32(at[1]);
+    w.u8(r.blockedTreeRan);
 }
 
 Object::Route readRoute(BinReader& r, size_t& frame) {
@@ -192,6 +194,8 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
             const float a = r.f32(), b = r.f32();
             x.places.push_back({id, {a, b}});
         }
+    if (readingVersion >= 8)
+        x.blockedTreeRan = r.u8();
     return x;
 }
 

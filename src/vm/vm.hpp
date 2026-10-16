@@ -648,6 +648,7 @@ struct Object {
         // plans its route again; a pause ("CT - Route Blocked Animation")
         // or "CT - Route Blocked" tree runs; the pauses so far.
         bool aside = false, asideTried = false, pausing = false, blockedTree = false;
+        bool blockedTreeRan = false; // "CT - Route Blocked" has run for this route (RouteBlockedTreeHasRun)
         // The Sim the step-aside route gives way to (the binary sets it as
         // that route's blocker, route vtable 0x140, when TryGetSelfOutOfWay
         // pushes it).
