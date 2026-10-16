@@ -508,13 +508,40 @@ original. No jogo base os objetos com "Obstructs View" são, por exemplo, as
 `Tutorial_Lot14`, 4 objetos, e no zoom mais perto duas luminárias de teto ficam
 a 66% e 3%.
 
-**Câmera de cinema** (`+0x36d`): `FUN_0065deb0` (BV `0x65deb0`) dá o alfa de
-outra forma: um raio do olho da câmera (`vtable 0x140`) na direção de visão
-(`0x144`) contra a caixa de cada objeto, com `distância + 4`, e o alfa depende de
-quanto a caixa está dentro de um volume em volta do raio (`falloff ×
-distância`, mínimo 0,5); **não feita** (a leitura do raio contra a caixa
-e os limites é longa e precisa de cinemáticas para testar: rodada própria;
-durante uma cinemática o app não faz fade).
+**Câmera de cinema** (`+0x36d`; lido na rodada n39, não feito): quem entra na
+conta é outro teste — todo objeto sem os bits 0 e 2 do `+0x108` (com
+`allObjects`, todos) — e o alfa sai de `FUN_0065deb0` (BV `0x65deb0`; o sistema
+dá o olho `0x140`, a direção de visão `0x144` e uma caixa `0x148`):
+
+```
+só se |posição do objeto − olho| < distância + 4 e o objeto não tem o bit 1 de +0x108 (… & 2 do +0x42·4)
+t      = (centro da caixa do objeto − olho) · direção          (a profundidade do centro)
+razão  = 1;  t < 1: t' = max(t, 0,1), razão = t' / (5·(1 − t') + 1)   (t < 0,1: 1 − t' = 0,9)
+t > distância: razão = min(2·(t − distância) + 1, 4) e t = distância
+P      = olho + direção · t ;  r = max(t · queda, 0,5)
+se |centro − P| < r + |meia-diagonal da caixa|:
+    f  = a fração do segmento centro → P que fica fora da caixa (os planos das faces, 1 − entrada)
+    s  = f · razão · |centro − P|
+    s ≥ r: alfa = 1
+    senão a = clamp((s − r/4) / (3r/4), 0, 1); g = min sobre os eixos da folga entre a caixa 0x148 e a do
+          objeto no sentido da visão; g > 0,1: b = 1 − min(g − 0,1, 0,4) · (1 − a) / 0,4 (b < 1 conta)
+    alfa = max(a, b)
+senão alfa = 1
+```
+
+Depois o `ParentFadeAlpha` (abaixo) e, só com a câmera de cinema, os bits do
+`+0x108`: bit 1 esconde sempre; sem o bit 3 o objeto some com alfa 0; com o
+bit 3 é tudo ou nada com histerese (some em ≤ 0,75 e marca o bit 4, volta em
+≥ 1), e o alfa vira 0 ou 1. Quem preenche a caixa `0x148` e os bits do
+`+0x108` não foi lido (as opções das cenas, `docs/cinematics-mac.md` §8:
+"ObjectHiding"); sem isso a conta não pode ser feita, e o app segue sem fade
+durante as cinemáticas.
+
+**`ParentFadeAlpha`** (BV `0x662c30`, rodada n39): para quem entrou na conta, o
+alfa vira o mínimo entre o seu e o do objeto que o contém (o `0x1f8` do pai
+depois do seu próprio `UpdateVisibilityAndRendering`; 1 sem pai ou se o pai
+não é um `cObject`). Feito no app (`lot_actors.cpp`: o contêiner é o dado de
+objeto 2, e conta só se a regra também o desbota).
 
 No app: `object_fade.hpp` (a regra, sem Metal, testada em `test_camera`),
 `Renderer::setInstanceAlpha`/`instanceBounds` (alfa por instância: mistura
@@ -523,7 +550,7 @@ por alfa, sem escrever a profundidade, o alfa dos materiais vezes o fade) e
 ...` do log e `OS2_FADE_LOG=1` mostram o que desbota). **Inferido:** que o
 eixo de profundidade do viewer é o `y` local (o código usa o segundo
 componente do ponto no espaço do viewer; o viewer olha para +Y como o resto do
-jogo), e o `ParentFadeAlpha` (objetos dentro de objetos) não foi feito.
+jogo).
 
 ### 1.11 Teclado, borda da janela, giro e órbita (binário, rodada n39)
 
