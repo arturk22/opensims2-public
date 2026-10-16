@@ -922,4 +922,14 @@ letra (inclusive o `lVar26 −= sobra` da chegada, que parece um descuido).
   corta mais o olhar pelo tempo (quem conta é o `HeadLook`).
 - Capturas: `docs/screenshots/n34-olhar-*.jpg` (antes = main, depois =
   n34).
+- `vm/animation.cpp` (`tickOverlayEvents`): o 9998 no fim de **cada
+  volta** de um overlay em laço (temp 1 > 1), com o resto das chaves da
+  volta antes e as da volta seguinte de novo; um overlay de Sim até parar
+  (temp 1 = −1, agora `forever` também nos Sims e salvo como `0xFFFFFFFF`
+  voltas, como o jogo) roda a árvore de eventos a cada volta (as chaves do
+  ANIM e o 9998; o 9999 não). Antes: o 9998 só no fim, e o overlay de Sim
+  até parar não andava na VM (nenhuma chave). Medido no `N001_Lot68`, 12.000
+  ticks: 378 → 1.162 eventos 9998 (o "a-facePose-frown-loop" de −1 voltas
+  da árvore `0x1004` do 156 em dois Sims, a maior parte), o resumo da
+  autonomia igual; `N001_Lot11` 313 → 345. Teste `test_animation_vm`.
 

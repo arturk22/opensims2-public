@@ -728,6 +728,7 @@ Exit animateOverlay(Context& c) {
     const float length = library(c.vm).seconds(ov->name).value_or(0) * 1000.0f;
     const int loops = o[2] & 0x20 ? c.thread.temps[1] : 1;
     ov->loops = length > 0 && loops > 0 ? loops : 0;
+    ov->forever = loops == -1; // until stopped (saved as 0xFFFFFFFF loops, as the game's)
     ov->requestLoops = int16_t(loops);
     ov->length = length;
     ov->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
@@ -1184,14 +1185,16 @@ void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r) {
     o.perTick = float(1000.0 / vm.clock.ticksPerSecond) * (r.speed > 0 ? r.speed : 1.0f);
     o.played = r.played;
     // The events of the loop it is in not reached yet (tickOverlayEvents;
-    // a pose held until stopped never reaches any).
-    if (o.loops > 0) {
+    // a pose held until stopped never reaches any; one looping until
+    // stopped goes on round).
+    if (o.loops > 0 || (o.forever && o.length > 0)) {
         const float inPlay = std::fmod(o.played, o.length);
         if (r.treeEvents)
             for (const auto& e : library(vm).treeEvents(r.name))
                 if (float(e.first) > inPlay)
                     o.pending.push_back(e);
-        o.blendOutSent = o.played >= o.length * float(o.loops) - kBlendTicks;
+        if (o.loops > 0)
+            o.blendOutSent = o.played >= o.length * float(o.loops) - kBlendTicks;
     }
     ++target.animation.overlaySerial;
 }
@@ -1286,9 +1289,26 @@ void tickOverlayEvents(VM& vm) {
     for (Object* po : vm.objectTable()) {
         if (!po)
             continue;
-        // Animate Overlay's: tree events as they are reached, 9997 as the
-        // last play starts blending out, 9999 and off the object at its end.
+        // Animate Overlay's: tree events as they are reached, 9998 at the
+        // end of every loop (cActiveAnimEvent's +0x40 key, type 6, posted
+        // each time the request's time goes round: BV 0xd3a290/0xd38bec,
+        // docs/anim-mac.md §12.1) with the next loop's tree events again,
+        // 9997 as the last play starts blending out, 9999 and off the object
+        // at its end.
         auto& ov = po->animation.overlays;
+        // The loops `it` went round this tick: the rest of each loop's tree
+        // events, its 9998, and the next loop's events from the start.
+        auto goRound = [&](std::vector<Overlay>::iterator it, float before, float portion) {
+            const int from = int(before / it->length), to = int(it->played / it->length);
+            for (int k = from; k < to; ++k) {
+                for (const auto& e : it->pending)
+                    fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, e.second, portion,
+                                     it->requestLoops});
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::ActionEnd, portion,
+                                 it->requestLoops});
+                it->pending = library(vm).treeEvents(it->name);
+            }
+        };
         for (auto it = ov.begin(); it != ov.end();) {
             if (it->loops <= 0 || it->length <= 0) {
                 // Animate Object's: played until stopped, holding its last
@@ -1296,22 +1316,40 @@ void tickOverlayEvents(VM& vm) {
                 if (!po->person && it->perTick > 0)
                     it->played = it->forever && it->length > 0 ? std::fmod(it->played + it->perTick, it->length)
                                                                : std::min(it->played + it->perTick, it->length);
+                // A Sim's overlay looping until stopped (Animate Overlay's
+                // temp 1 = -1) runs its event tree every loop too (no 9999
+                // while it loops; stopped, it gets -1, aborted).
+                if (po->person && it->forever && it->length > 0 && it->eventTree && it->perTick > 0) {
+                    const float before = it->played;
+                    it->played += it->perTick;
+                    const float inPlay = std::fmod(it->played, it->length);
+                    const float portion = inPlay / it->length;
+                    goRound(it, before, portion);
+                    while (!it->pending.empty() && it->pending.front().first <= inPlay) {
+                        fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree,
+                                         it->pending.front().second, portion, it->requestLoops});
+                        it->pending.erase(it->pending.begin());
+                    }
+                    // (No float drift over hours: the loops played are not needed.)
+                    if (it->played > it->length * 1000)
+                        it->played = std::fmod(it->played, it->length);
+                }
                 ++it;
                 continue;
             }
+            const float before = it->played;
             it->played += it->perTick;
             const float total = it->length * float(it->loops);
             const bool ended = it->played >= total;
             const float inPlay = std::fmod(it->played, it->length);
             const float portion = ended ? 1.0f : inPlay / it->length;
+            if (!ended)
+                goRound(it, before, portion);
             while (!it->pending.empty() && (ended || it->pending.front().first <= inPlay)) {
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second,
                                  portion, it->requestLoops});
                 it->pending.erase(it->pending.begin());
             }
-            // A loop that wraps gets its events again.
-            if (!ended && it->pending.empty() && it->loops > 1 && inPlay < it->perTick)
-                it->pending = library(vm).treeEvents(it->name);
             if (!it->blendOutSent && it->played >= total - kBlendTicks) {
                 it->blendOutSent = true;
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut, portion,

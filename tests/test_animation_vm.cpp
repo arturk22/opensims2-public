@@ -330,6 +330,37 @@ static void testOverlayLifetime() {
     check(s.attributes[1] == int16_t(animevent::BlendOut + animevent::ActionEnd + animevent::End),
           "9997, then 9998 and 9999 at its end (cCustomEventHandler2: key types 7, 6, 3)");
     check(s.attributes[2] == 0 && s.attributes[3] == s.id, "not aborted; parameter 1 is the request's stack object");
+    {
+        // Loops (flag 0x20, temp 1 times): 9998 at the end of every loop
+        // (cActiveAnimEvent's +0x40 key, type 6, BV 0xd3a290), 9999 only at
+        // the end of the last; until stopped (-1): 9998 every loop, no 9999.
+        code.add(kGroup, 0x1009, tree({instr(0x6B, T, E, {3, 0, 0x20, 0x20, 0x05, 0x10, 0x0A, 0, 0, 0x80})}));
+        for (const int16_t times : {int16_t(3), int16_t(-1)}) {
+            s.attributes.assign(4, 0);
+            Thread lt = vm.start(s.id, 0x1009, {}, s.id);
+            lt.temps[1] = times;
+            vm.run(lt);
+            check(s.animation.overlays.size() == 1 && s.animation.overlays[0].forever == (times == -1),
+                  "a looping overlay (temp 1)");
+            for (int i = 0; i < ticks + 1; ++i)
+                tickOverlayEvents(vm);
+            check(s.animation.overlays.size() == 1 && s.attributes[0] == animevent::ActionEnd,
+                  times > 0 ? "9998 at the end of the first of three loops" : "9998 at the end of a loop until stopped");
+            for (int i = 0; i < ticks; ++i)
+                tickOverlayEvents(vm);
+            check(s.animation.overlays.size() == 1 && s.attributes[0] == animevent::ActionEnd,
+                  "9998 again at the end of the second loop");
+            for (int i = 0; i < ticks + 1; ++i)
+                tickOverlayEvents(vm);
+            if (times > 0)
+                check(s.animation.overlays.empty() && s.attributes[0] == animevent::End, "9999 at the end of the third");
+            else
+                check(s.animation.overlays.size() == 1 && s.attributes[0] == animevent::ActionEnd,
+                      "looping on, no 9999");
+            s.animation.overlays.clear();
+        }
+        s.attributes.assign(4, 0);
+    }
     for (int i = 0; i < 3; ++i) {
         t = vm.start(s.id, 0x1007, {}, s.id);
         vm.run(t);
