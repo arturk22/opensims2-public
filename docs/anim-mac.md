@@ -47,8 +47,8 @@ novo no passo 2 e **tira o pedido da lista** (vtable `0x2ec`). Não há um
 (`0xd1864c`) existe mas este caminho usa o comum (`0xd180f8`).
 
 O mesmo `OnPreSimulatorTick` escala a velocidade dos pedidos pelo **dado de
-pessoa 85** (em %; `v = 1 + p/100` se p > 0, `1/(1 − p/100)` se p < 0) — não
-feito, fora desta rodada (`TODO.md`).
+objeto 85** "Hurry Speed" (em %; `v = 1 + p/100` se p > 0, `1/(1 − p/100)`
+se p < 0) — feito na rodada n43 (§13.4).
 
 ## 2. Quando um pedido expira (`cChoreoRequest::IsExpired`)
 
@@ -92,7 +92,10 @@ pedido terminado no nível −1: é o nosso modelo da sobreposição no fim de u
 pedido (o `CreateTransitionBlend` e o fim da ação do primitivo bloqueante,
 que deixam o pedido velho sair por blend enquanto o novo entra, não foram
 lidos); tirá-lo na hora faria cada troca de animação saltar, porque um
-canal sozinho entrando já toma o osso inteiro (normalização).
+canal sozinho entrando já toma o osso inteiro (normalização). **Rodada
+n43** (§13.3): o jogo não segura o pedido no fim; o Animate Sim acaba quando
+o pedido começa a sair, e o próximo entra enquanto ele sai. Feito; o nível
+−1 ficou só para o que não tem função de peso própria.
 
 ## 3. O peso de um canal (`cChannelUber::Weight`)
 
@@ -118,10 +121,9 @@ função de peso em intervalos (`cBlendInterval`, CLSID `0x4b96aa16`): entrada
 flag de "rampa" e sem duração de rampa, as rampas viram 50 ticks no máximo,
 metade tirada de cada lado. `Value(t)` (`0xd32498`) acha o intervalo pelo
 tempo desde o início (`+0x18`) e pede o valor a ele (vtable `0x34`).
-**Não lido:** o `cBlendInterval::Value` (no baserom, `0x3436c8`, 20
-instruções; no BV não achei o endereço: a vtable do intervalo não foi
-localizada). Fica **inferido** que entrada e saída são lineares (o
-`AnimPlayer` faz assim).
+O `cBlendInterval::Value` (BV `0xd28880`; o `0x3436c8` do baserom) é
+**linear** — lido na rodada n43 (§13.1): entrada e saída lineares,
+confirmado.
 
 ## 4. O solucionador de IK de duas juntas (`cIKStrategy7DOF`)
 
@@ -1057,3 +1059,45 @@ identificados) — e o `HurrySpeed` vira o fator. Todo pedido começa com
 o `try_animate_sim` chama `0x40(0)`). Quem escreve o 85 no jogo base:
 "Function - Pre Route" (149), "Setup Kid" (200), "CT - Setup" (o
 parâmetro), "Hurry - End" e "Interaction - Cancel" (0).
+
+### 13.5 O que mudou no código (rodada n43, partes 1–3)
+
+- **VM** (`vm/animation.cpp`): o Animate Sim tem a função de peso do pedido
+  (`requestFades`: entrada e saída de `T`, 0 com 0x80/0x40, encolhidas num
+  pedido curto) e **devolve verdadeiro quando a saída começa** (`T` antes do
+  fim; no fim sem saída), no mínimo um tick depois de começar. O resto do
+  pedido segue como "cauda" (`AnimationState::tails`, rodada pelo
+  `tickOverlayEvents`): as chaves do ANIM que faltam e 9998/9999 no fim. O
+  9997 só com saída. O Sim guarda o fim do pedido e o fim da ação
+  (`previousEndMs`/`previousActionEndMs`, os `+0x13C`/`+0x140`); o byte 8
+  0x02/0x08 do Animate Sim seguinte começa ali (dentro de 140 ms) e os
+  limpa. Os overlays têm as mesmas entradas/saídas e o 9997 quando a saída
+  começa (as flags do byte 2 como as do Animate Sim: inferido).
+- **Pressa** (`tickHurry`, antes das árvores a cada tick): o dado de objeto
+  85 escala a velocidade do Animate Sim, das caudas, dos overlays e dos
+  eventos do Animate Object como acima; o "não apressável" de cada primitiva
+  (Animate Sim byte 8 0x20; Animate Overlay byte 12 bit 0 e Animate Object
+  byte 10 0x80, pelas strings do editor: inferido). Fica de fora a da
+  locomoção (os valores `0x160`/`0x164`/`0x174` do seguidor de rota não
+  foram identificados).
+- **App** (`formats/anim_player.*`, `app/lot_vm.cpp`): o Animate Sim toca
+  com a entrada e a **saída própria** do pedido (`Options::fadeOut`: linear
+  nos últimos segundos, até o fim, onde a camada sai; um pedido novo da
+  mesma prioridade não a corta, e os eventos de som dela seguem até o fim) e
+  na velocidade do pedido (antes tocava a 1); os overlays com as entradas,
+  saídas e velocidade deles. O próximo pedido entra enquanto o velho sai: é
+  a sobreposição do jogo. O nível −1 do pedido expirado fica só para o que
+  não tem função de peso própria (animações de objetos, os "grasp"),
+  inferido. A idle em pé (nossa, §6 E) mistura sobre a pose que o último
+  pedido deixou (`Options::overHeld`) em vez de tomar o osso inteiro.
+- Testes: `test_animation_vm` (fim da ação 8 ticks depois num pedido de 0,5
+  s, a cauda, a sincronia, as entradas/saídas, a pressa), `test_anim` ("own
+  blend out", "over held"). O teste `front_door` passou a mover as portas a
+  cada passo sem janela (como um quadro ao vivo) e a conferir porta por
+  porta.
+- Medido (`s2pkg autonomy`, 14 sementes × 12.000 ticks, `OS2_ROUTE_FAILS=1`;
+  main → n43): `N001_Lot68` interações autônomas que acabam verdadeiras 615 →
+  653, falsas 26 → 17, escolhas 664 → 684, falhas de rota 366 → 387 (sem o 13
+  dos sociais 78 → 53), bloqueios 167 → 100; `N001_Lot11` 404 → 429 / 0 → 0,
+  escolhas 439 → 459, falhas 426 → 391 (74 → 79), bloqueios 70 → 98. Cada
+  Animate Sim acaba 7 ticks antes: cabem mais interações no mesmo tempo.
