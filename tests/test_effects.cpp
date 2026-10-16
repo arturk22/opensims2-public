@@ -652,8 +652,36 @@ static void testScrew() {
     check(turned.stretch == 2, "the stretch goes to the layer");
 }
 
+// cTSVisualEffect::SetTransforms (BV 0xeb1760): a view-relative effect turns
+// about Z by the camera's view direction (its X away from the camera), a
+// camera-facing one turns its X towards the camera.
+static void testFacing() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    Particles& p = lib.particles[0];
+    p.flags = 0;
+    p.force = {0, 0, 0};
+    p.emitSpeed = {0, 0};
+    p.preRoll = 0;
+    auto bornAt = [&](uint32_t flags) {
+        lib.visuals[0].flags = flags;
+        EffectSystem sys(lib, 3);
+        // The camera at +X looking back along -X.
+        sys.setView({10, 0, 0}, {0, 0, 1}, {-1, 0, 0});
+        sys.start("Smoke", {});
+        sys.update(0.2f);
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        return q.empty() ? V3{} : q[0].position;
+    };
+    // The component sits 0.5 along the effect's X.
+    check(std::fabs(bornAt(vflag::ViewRelative)[0] + 0.5f) < 1e-3f, "view-relative: X along the view, away from the camera");
+    check(std::fabs(bornAt(vflag::CameraFacing)[0] - 0.5f) < 1e-3f, "camera-facing: X towards the camera");
+}
+
 int main() {
     try {
+        testFacing();
         testScrew();
         testSequence();
         testParse();

@@ -149,10 +149,10 @@ public:
     // 0xF = 0..3): the meta particles of a behaviour chain go to that step
     // (the aquarium's fish: 0 swimming, 1 feeding, 2 dead).
     void setState(int handle, int state);
-    // The camera (its position and up axis): effects that face it
-    // (vflag::ViewRelative / CameraFacing) turn towards it.
-    void setView(const V3& eye, const V3& up) {
-        eye_ = eye, up_ = up;
+    // The camera (its position, up axis and view direction): effects that
+    // face it (vflag::ViewRelative / CameraFacing) turn by it.
+    void setView(const V3& eye, const V3& up, const V3& forward) {
+        eye_ = eye, up_ = up, forward_ = forward;
         hasView_ = true;
     }
     // The lot for the floors and walls colliders (none: they never hit).
@@ -406,7 +406,7 @@ private:
 
     const EffectsLibrary& lib_;
     SwarmRandom rng_;
-    V3 eye_{}, up_{0, 0, 1};
+    V3 eye_{}, up_{0, 0, 1}, forward_{0, 1, 0};
     bool hasView_ = false;
     float lod_ = kMaxLod;
     const ColliderWorld* world_ = nullptr;

@@ -196,7 +196,8 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
     if (gCamera) { // the camera, for the effects that face it (balloons)
         const simd_float3 eye = gCamera->eye();
         const simd_float4x4 v = gCamera->view();
-        gEffects->setView({eye.x, eye.y, eye.z}, {v.columns[0].y, v.columns[1].y, v.columns[2].y});
+        const simd_float3 fwd = gCamera->forward();
+        gEffects->setView({eye.x, eye.y, eye.z}, {v.columns[0].y, v.columns[1].y, v.columns[2].y}, {fwd.x, fwd.y, fwd.z});
         // The effects' LOD: the zoom table's level of the camera's distance and
         // its fraction, + 1 (BV 0x86ffb8 -> cTSEffectsManager::SetLOD(float)).
         gEffects->setLod(gCamera->zoom() + 1);

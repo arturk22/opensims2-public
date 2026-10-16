@@ -63,8 +63,8 @@ public:
     // Effects by hand at a placement (a cinematic's, the animations'):
     // start returns -1 if there is no such effect.
     int start(const std::string& name, const fx::Placement& at, bool hard = true) { return system_->start(name, at, hard); }
-    // The camera (position, up axis), for the effects that face it (balloons).
-    void setView(const fx::V3& eye, const fx::V3& up) { system_->setView(eye, up); }
+    // The camera (position, up axis, view direction), for the effects that face it (balloons).
+    void setView(const fx::V3& eye, const fx::V3& up, const fx::V3& forward) { system_->setView(eye, up, forward); }
     // The lot the floors and walls colliders of the particles meet (null:
     // none); kept by pointer, set again when it changes.
     void setLot(const Lot* lot);

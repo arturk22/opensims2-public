@@ -293,22 +293,32 @@ Placement EffectSystem::facing(const Instance& inst) const {
     p.rotation = identity;
     if (!hasView_ || !(inst.flags & (vflag::ViewRelative | vflag::CameraFacing)))
         return p;
+    // cTSVisualEffect::SetTransforms (BV 0xeb1760); the viewer looks along
+    // its local +Y with +Z up (docs/camera-ui-mac.md).
+    if (!(inst.flags & vflag::CameraFacing)) {
+        // View-relative only: turned about Z by the heading of the camera's
+        // +Y, the view direction (X away from the camera).
+        const float h = std::atan2(forward_[1], forward_[0]), c = std::cos(h), s = std::sin(h);
+        p.rotation = {c, -s, 0, s, c, 0, 0, 0, 1};
+        return p;
+    }
+    // Camera-facing: X from the effect to the camera, Y = the camera's up x
+    // X, Z = X x Y; (1, 0, 0) / (0, 1, 0) when up and X are parallel.
     V3 x = sub(eye_, p.position);
-    if (!(inst.flags & vflag::CameraFacing))
-        x[2] = 0; // view-relative: only the heading
     const float l = len(x);
     if (l < 1e-6f)
         return p;
     x = mul(x, 1 / l);
-    // +X towards the camera, Z up as the camera's up (inferred: the axes
-    // after X are read only roughly).
-    const V3 up = (inst.flags & vflag::CameraFacing) ? up_ : V3{0, 0, 1};
+    const V3& up = up_;
     V3 y{up[1] * x[2] - up[2] * x[1], up[2] * x[0] - up[0] * x[2], up[0] * x[1] - up[1] * x[0]};
     const float ly = len(y);
-    if (ly < 1e-6f)
-        return p;
-    y = mul(y, 1 / ly);
-    const V3 z{x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]};
+    V3 z;
+    if (ly <= 0) {
+        y = {1, 0, 0}, z = {0, 1, 0};
+    } else {
+        y = mul(y, 1 / ly);
+        z = {x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]};
+    }
     p.rotation = {x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]};
     return p;
 }
