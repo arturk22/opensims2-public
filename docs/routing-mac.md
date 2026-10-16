@@ -2255,6 +2255,44 @@ y = 26,25 (andar 2), as "Bridge" em 26,50…27,25 e a "End" em 27,50 (andar
   `N001_Lot68` com o passo dentro do balcão 151, a Cassandra do `N001_Lot11`
   no 691), e a "Wait - Person X State" do outro Sim também não acabava.
 
+### O cercado das urnas do `N003_Lot52` (não é a mesma causa)
+
+O cenário (main `a18ad74d`, semente 10, 3 dias): a Hérmia faz "Chutar" na
+urna 153 às 23:49, anda até o **centro** dela (50,50; 41,50; 1) e de lá
+toda rota para a casa falha com 2 (264 vezes) até ela morrer. O cercado (x
+43–55, y 40–45) tem cerca nos quatro lados e o portão (423/460) a oeste.
+
+- **Por que o centro**: "Interaction - Kick" (`objects.package`,
+  `0x7F38B8A7` `0x2062`) vai ao slot de rota 18 da urna (literal, sem
+  árvores de falha; se falhar, o 19): um slot de osso (`0x20000`) com o nome
+  12 do STR# `0x90` = "route_tombstonemoderate_0_n,_ne,_nw" (o 19: "_s,_se,
+  _sw"), os ossos da **lápide**, que o modelo da urna não tem. No binário:
+  `NumModelBones` (BV `0xaf4cbc`) conta os nomes da lista (3), sem olhar o
+  modelo; o ponto de cada um é o `SlotOffsetFromContainer` (BV `0xafa28c`) →
+  `AggregateSlotOffset` (BV `0xafd7ac`) → `nTSSG::cObject::SlotOffset` (BV
+  `0x65b03c`): osso que não existe → um vetor estático (`DAT_02c0a948`,
+  escrito só na inicialização, BV `0x20a544c`; inferido zero) → o ponto do
+  objeto. O `EvalTileForGoal` desses pontos (chamado pelo
+  `GetPossibleSlotsFromModelRoutingSlot` com as flags 0 e o alvo como 10º
+  argumento) testa o Sim no ponto (`TSObjectCanSetPositionAndOrientation`)
+  sem exceção para o alvo, mas a urna deixa pessoas passarem (od 8 `0x10`):
+  o centro vale. **O VM faz o mesmo.**
+- **Por que não sai**: o caminho do portão até a casa passa pelos lances
+  "Stair Modular - Loft" (x 36, y 23–27, as duas pontas no andar 1). O
+  "Function - Portal - TEST" das escadas modulares (`0x7F117CD9` `0x2016`:
+  a idade; o slot 1 da ponta de saída, "Get in Temp 0 - Stair - Top/Bottom";
+  um Snap de teste, `0x2E` modo 3 flags `0x12`) falha com 8 para quem está
+  no cercado: o `TrySnap` (BV `0xe43084`), com o slot sem a RS flag
+  `0x80000`, no mesmo andar e **com x e y diferentes**, procura parede entre
+  onde o Sim está e o ponto (gerente de partições `0xa0(5)` → `0x4c`; não
+  porta; e o `0xac` da parede) — e a cerca do cercado está no meio: os
+  quatro lances ficam trancados nos dois sentidos e o planejador não acha a
+  casa. Pela leitura **o binário faz o mesmo teste** (não lidos: o alcance do
+  `0x4c` — se é o segmento inteiro — e o que o `0xac` da parede diz); não
+  conferido no jogo (TESTAR). Diferença do VM: ele procura a parede mesmo
+  quando x ou y é igual (o binário só com os dois diferentes); não muda este
+  caso.
+
 ## 10. O que falta
 
 - Os retângulos de custo 10 junto das pontas das escadas reta e modular
