@@ -121,7 +121,8 @@ antigas desta seção (arrasto = primeiro float do segundo grupo, bits 0/1 =
 
 Outros pontos do desenho e dos componentes:
 
-- LOD: escalas do fim (detalhe máximo). Alinhamentos: 0 câmera, 1 chão
+- LOD: pela distância da câmera desde a rodada n38 (§4f.2; antes, as
+  escalas do fim sempre). Alinhamentos: 0 câmera, 1 chão
   (ondas, manchas), 2 velocidade (chuva), 6 eixo Z (jatos de água, feixes);
   5 (anéis, peças do despertador) desenhado como 0.
 - Decalques (rodada 9): um quadrado no chão sob o componente, tamanho,
@@ -405,9 +406,9 @@ força V2, giro, giro mínimo, mistura vertical) em +0x17c e +0x198.
   `cycles` ciclos.
 - `MaintainParticles` (`0xeb822c`): `ceil(curva[0])` vivas (sem a escala de
   emissão), as que faltam criadas na hora e já andadas dt.
-- Densidade: com os bits 0/1, `ApplyEffect` multiplica a taxa e o tamanho
-  pela densidade de partículas do gerente (se a curva[0] > 20 no inject);
-  não fizemos (a densidade padrão é 1, **[inferido]**).
+- Densidade: corrigido na rodada n38 (§4f.2): são os emissores de curva de
+  taxa (e o `inject` acima de 20) que levam a densidade e a escala do
+  gerente, as duas 1 no `Graphics Rules.sgr`; nada a fazer.
 
 ### 4e.4 Física
 
@@ -520,20 +521,20 @@ meta-partícula e a fonte da meta (`UpdateActiveParticles` `0xf5f5b0`).
   partes animadas segue os vértices posados.
 - **Balões**: sem a subida de 0,2 m (o caminho sobe); a foto do ícone com
   as alternativas da §4b.
-- **Ainda inferido** (marcado no código): os itens de uma sequência começam
-  suaves (`cTSSequenceEffect` não lido); os eixos depois do X nos efeitos que
-  encaram a câmera; atrator sem ponto próprio (puxa para o alvo do efeito,
-  que nada liga aqui) não puxa; sem vento do mundo no lote; o rumo
-  amortecido da meta a cada passo de 1/15 s; nas cadeias de estado só
-  nascem partículas no estado 0 (`SwitchDescription` não seguido); no
-  `lot_effects`, o SLOT tipo 4 como "alvo", os efeitos salvos voltando com
-  começo forte, as alternativas da foto do balão; a malha das partículas
-  de forma girada só no Z.
-- **Não feito**: colisores das partículas e terreno (bits 3/4, 15/17/18),
-  `wiggle`, `screw`, a escolha de LOD pela distância da câmera (as moscas têm
-  3 componentes de LOD; usamos as escalas do fim), a iluminação (bit 23
-  `light`), o trator das metas (bit 29), `cTSSequenceEffect`, efeitos de
-  colisão e de morte, a densidade de partículas do gerente.
+- **Ainda inferido** (marcado no código): ~~os itens de uma sequência
+  começam suaves~~ (n38: lido, §4f.4); ~~os eixos depois do X nos efeitos
+  que encaram a câmera~~ (n38: lidos, §4f.5); atrator sem ponto próprio
+  (puxa para o alvo do efeito, que nada liga aqui) não puxa; ~~sem vento
+  do mundo no lote~~ (n38: zero, §4f.2); o rumo amortecido da meta a cada
+  passo de 1/15 s; ~~nas cadeias de estado só nascem partículas no estado
+  0~~ (n38: §4f.5); no `lot_effects`, o SLOT tipo 4 como "alvo", os efeitos
+  salvos voltando com começo forte, as alternativas da foto do balão; a
+  malha das partículas de forma girada só no Z.
+- **Não feito** (rodada n15): ~~colisores das partículas~~ e terreno
+  (bits 3/4, 15/17/18), ~~`wiggle`, `screw`, a escolha de LOD pela
+  distância da câmera, a iluminação (bit 23 `light`), o trator das metas
+  (bit 29), `cTSSequenceEffect`, efeitos de colisão e de morte, a
+  densidade de partículas do gerente~~ (rodada n38, §4f).
 - **Provas** (antes = main `4e9084e5`, depois = a branch; `--run-vm` em
   passos, mesma câmera): `docs/screenshots/n15-particulas-1.jpg` (PlumbBob
   de perto: o ponto branco atrás do diamante; balão; fogo da lareira; vapor
@@ -733,6 +734,56 @@ os blocos que usam cada coisa e os efeitos que os levam (conta abaixo).
 - **Atrator sem ponto próprio**: o ponto vem dos `SetFloatParams` 7/8/9 do
   efeito (`0xeb62f0`, alvo do efeito); o `TryChangeEffect` não os passa
   (só 0xD e 0xF), quem os passa não foi achado: segue sem puxar.
+
+### 4f.6 O que mudou no código (rodada n38) e o que segue inferido
+
+- **LOD** (`EffectSystem::setLod`, `lodScales`, `updateLod`): o app passa o
+  `zoom()` da câmera + 1 a cada quadro; cada parte guarda o caminho de
+  componentes até ela e toma as escalas do LOD; fora da faixa não emite (e
+  volta quando a câmera volta); com `-scaleExisting` (bit 28, 166 blocos)
+  a escala de tamanho vale para as vivas. O padrão dos componentes é 1–5
+  (o do parser). Inferidos: as escalas de efeitos aninhados multiplicam; a
+  saída e a entrada na faixa suaves (o padrão do `effectLODSoftChange` não
+  foi achado).
+- **Iluminação**: `ParticleQuad::lit` (bit 23) e o `LotEffects` multiplica a
+  cor pela luz `environment` do estado de luz do renderer. Partículas de
+  malha (sempre iluminadas pelas luzes comuns) não feitas.
+- **Colisores** (`EffectSystem::collide`, `hitPlane`, `hitFloors`,
+  `ColliderWorld`): partículas e metas com a mesma resposta; `plane`
+  montado uma vez; `floors`/`walls` pelo `LotColliders` do app (níveis,
+  piso por quarto de tile, o chão vale em todo o lote). Inferidos: o quarto
+  do ponto (`FUN_0015d2f0`), o terreno como piso, as paredes (um andar de
+  altura, sem cercas, ponto e normal nossos: as consultas `0x4c`/`0x54` do
+  `WorldDB` não lidas), o raio da meta (o `ApplyColliderForces` da meta não
+  lido). Os efeitos de colisão/morte nascem suaves no ponto (no máximo 256
+  instâncias, guarda nossa).
+- **Meta**: a filha de quem morre para suave e termina (`dying`), o
+  `<base>_death`; cadeias de estado pela descrição do estado (emissão e
+  física), a filha e a vida ficam; o trator; `tractorReset` lido.
+- **Sequências** (`SequencePart`, `stepSequence`): cada item uma instância
+  filha; `-loop`, `-hardStart`, `-hardStop`, `-overlap`, itens < 0
+  esperando o filho. O relógio do app avança no máximo 1 s por
+  atualização (nas capturas com `--frames` espaçados, a sequência anda 1 s
+  por quadro).
+- **Desenho**: `screw` e `wiggle` na posição desenhada (`collectInstance`),
+  `stretch` no `ParticleLayer` (alinhamentos 0 e 5).
+- **Encarar a câmera**: só o bit 0 vira pelo +Y da câmera (para longe dela).
+- **Segue não feito**: terreno das partículas (bits 15–18: só as pombas do
+  casamento e o riacho do bairro) e das metas (bits 6/8, `%s_terrain`,
+  `%s_water`), matar fora do lote (bit 18 / meta bit 9), o "gruda"
+  (`+0x34`, 0 no jogo base), o `screenBloom` (bytes `+0x100`), a cor da
+  meta passada à filha (`SetFloatParams` 3/4: só o alfa aqui), o meta
+  `0x101` (só dois floats), a meta com bit 15 (altura do trator pelo
+  terreno), o atrator do alvo (`SetFloatParams` 7/8/9).
+- **Provas** (antes = o build do main `13168cc5`, efeitos iguais aos da
+  base; depois = a branch; `N001_Lot11`, um efeito por vez em (29, 10) com
+  `--effect`, câmera a 8, 40 e 70 m): `docs/screenshots/n38-particulas-lod.jpg`
+  (fogo da lareira e fumaça do fogão: de longe menos partículas, maiores e
+  mais opacas; as brasas e faíscas só de perto) e `n38-particulas-2.jpg`
+  (fogo à noite × 0,8; o jato do chuveiro esticado pela velocidade; o
+  confete parando no chão; a pia lavando louça: esfrega, pausa e de novo
+  pelo `-loop`). Testes: `test_effects` (LOD, luz, colisores, morte,
+  sequência, estado, trator, parafuso, encarar).
 
 ## 5. Uso
 
