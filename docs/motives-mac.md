@@ -430,9 +430,9 @@ primeiro tique** e os seguintes a cada 60 a partir dele.
   o jogo dá a quem sai do mundo). A luz vem de `VM::floorIllumination`, que
   o app liga ao light map de piso mostrado (`LotLighting::floorIllumination`:
   o texel em `floorTexel`, os dois mapas na mistura do crossfade, × 2,
-  `ColourToIlluminance`). **Sem host (s2pkg, testes) a luz fica de fora**:
-  o termo é 0 (como um cômodo claro); no app, o primeiro passo depois de
-  carregar vem antes dos light maps e também fica sem ele.
+  `ColourToIlluminance`; os light maps são feitos antes do primeiro tique).
+  **Sem host (s2pkg, testes) a luz fica de fora**: o termo é 0 (como um
+  cômodo claro).
 - **O passo de 60** usa `VM::simulatorTicks` (o `+0xa0` do simulador: lido
   do SIMI, sobe no fim de cada tique, gravado de volta pelo lot-save) contra
   `Person::memoriesTick` (0 ao carregar, não gravado). Nos lotes do jogo o
@@ -448,7 +448,15 @@ escuros na hora em que o lote foi salvo; os outros dão luz entre 0,58 e
 0,89); 2 não se explicam (Johnny e Jill no N002_Lot10, 21,3 abaixo: talvez
 estivessem noutro lugar no último passo). No app (headless, `OS2_DEBUG_ENV`),
 no N001_Lot68 salvo às 07:08, a Lilith e o Daniel no quarto escuro ficam com
-luz 0,44 e 0,48, termo −20 e nota 47,236, **o salvo exato**.
+luz 0,44 e 0,48, termo −20 e nota 47,236, **o salvo exato**. Com a luz do
+app no primeiro passo (o app headless com `--run-vm 2` e `OS2_DEBUG_ENV`
+em 14 dos 17 lotes com Sims; os 3 do tutorial não dão passo em 2 tiques),
+dos 50 Sims **24 batem exatos** com a luz (N003_Lot46: Patrizio e Isabella
+com luz 0,87 e 0,85; N003_Lot52: Romeo com 0,61; os quartos escuros com
+−20) e 38 ficam a menos de 2 (os de fora do N003_Lot192 0,05 acima; o
+Johnny e a Jill, no quarto escuro, 1,3 acima); o resto difere pelos nossos
+light maps (Angela −12,6, Circe −14,9: a luz deles não é a do jogo naquele
+ponto, ou as lâmpadas salvas acesas/apagadas diferem).
 
 3 dias de jogo antes (main) e depois (`s2pkg autonomy --ticks 129600`,
 semente padrão): no N001_Lot11 o ambiente passa de fixo (46 e 34) a variar
