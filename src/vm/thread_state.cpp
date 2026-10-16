@@ -19,7 +19,8 @@ namespace {
 // 5: the goal check's notes (DoAlongRouteCheckTest).
 // 6: the Sim a route asked to move and that interaction's uid; the move-out-
 //    of-way slot's directions, distances, spacing, gradient and weight.
-constexpr uint32_t kVersion = 6;
+// 7: the routers' places noted at the last plan.
+constexpr uint32_t kVersion = 7;
 uint32_t readingVersion = kVersion; // of the state being read
 bool knownVersion(uint32_t v) {
     readingVersion = v;
@@ -112,6 +113,9 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     w.u32(r.plans), w.u32(r.checkPlans), w.i32(r.checkRoom), w.i32(r.checkLevel), w.f32(r.checkWalked);
     w.u8(r.blockCheckDone);
     w.i16(r.asked), w.u16(r.askedUid);
+    w.u32(uint32_t(r.places.size()));
+    for (const auto& [id, at] : r.places)
+        w.i16(id), w.f32(at[0]), w.f32(at[1]);
 }
 
 Object::Route readRoute(BinReader& r, size_t& frame) {
@@ -182,6 +186,12 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
         x.blockCheckDone = r.u8();
     if (readingVersion >= 6)
         x.asked = r.i16(), x.askedUid = r.u16();
+    if (readingVersion >= 7)
+        for (uint32_t n = r.u32(); n; --n) {
+            const ObjectId id = r.i16();
+            const float a = r.f32(), b = r.f32();
+            x.places.push_back({id, {a, b}});
+        }
     return x;
 }
 

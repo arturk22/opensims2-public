@@ -55,6 +55,8 @@ std::optional<Object::Route::Point> turnPoint(VM& vm, const Object& me, int step
 float facingOf(const Object& me);
 // Plans the route's points from where the walker stands to its goals.
 bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why);
+// Notes where a router stands in the route's map (SetRouterLastKnownLocation).
+void notePlace(Object::Route& r, const Object& who);
 
 // routing_loco.cpp
 // Where a walker will be `tiles` further along its route points.

@@ -91,6 +91,14 @@ int16_t hundredths(float tiles) {
     return int16_t(std::clamp(tiles * 100.0f, 0.0f, 32767.0f));
 }
 
+// The route's map of routers' places (cTSRoute +0x134).
+const std::array<float, 2>* placeOf(const Object::Route& r, ObjectId id) {
+    for (const auto& [who, at] : r.places)
+        if (who == id)
+            return &at;
+    return nullptr;
+}
+
 // Pushes a route callback tree (`tree` of `owner`) on the walker's thread
 // with `stackObject` and `params`; the routing instruction runs again when it
 // returns.
@@ -298,7 +306,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             why = w;
             return Step::Failed;
         }
-        r.points = std::move(next.points), r.plans = next.plans;
+        r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
     }
     if (r.inPortal) {
         // Back from the portal tree (DoWaitingForPortal): the walk goes on
@@ -378,7 +386,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             why = w;
             return Step::Failed;
         }
-        r.points = std::move(next.points), r.plans = next.plans;
+        r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
         // DoInitial and DoFoundPath are states of their own: the walk goes
         // on from the next tick, not in the pause's tick (where the same
         // blocker, not moved yet, counted the second try at once and failed
@@ -507,22 +515,10 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         // from standing.
         r.loco.kind = Object::Route::Loco::None;
         r.loco.moving = false;
-        // DoBlockedGoalStillAvailable's tries start again when the blocker
-        // differs from the one the route remembers (+0x3e: kept when the
-        // way is free again, BV 0x57a8d4) or has moved 0.25 tile since.
-        // Forgetting it once the way was free started the count again at
-        // every block: two Sims 0.285 apart, each stepping into the other,
-        // paused and planned again for ever (N001_Lot11, OS2_SEED=12).
-        // (Not while waiting for it to move: DoWaitingForPersonToMove
-        // does not come here.)
+        // (Not while waiting for it to move: DoWaitingForPersonToMove does
+        // not come here.)
         if (b != r.blocker)
             r.blocker = b, r.blockedTicks = 0;
-        if (b != r.lastBlocker ||
-            (r.blockedTicks == 0 &&
-             std::hypot(blocker.position.x - r.blockerX, blocker.position.y - r.blockerY) >= kBlockerMovedTries)) {
-            r.lastBlocker = b, r.replans = 0;
-            r.blockerX = blocker.position.x, r.blockerY = blocker.position.y;
-        }
         if (r.blockedTicks == 0 && !std::exchange(r.blockCheckDone, false) && !r.aside) {
             // DoBlocked (BV 0x5762a4), a blocker found: DoAlongRouteCheckTest
             // forced (its last argument 1) and the goal check tree first
@@ -542,9 +538,25 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         }
         if (r.blockedTicks == 0) {
             // DoBlocked -> DoBlockedGoalStillAvailable (BV 0x57a8d4,
-            // docs/routing-mac.md §6): the try counter (1 for a new blocker
-            // or one that moved 0.25 tile), then by what the blocker does.
-            const int counter = ++r.replans;
+            // docs/routing-mac.md §6, §9.3): the try counter (+0x3c) goes up,
+            // and starts again at 1 when the blocker differs from the one
+            // the route remembers (+0x3e: kept when the way is free again;
+            // forgetting it then started the count again at every block: two
+            // Sims 0.285 apart, each stepping into the other, paused and
+            // planned again for ever, N001_Lot11, OS2_SEED=12) or when the
+            // walker itself has moved 0.25 tile from the place the route
+            // noted for it (at its last plan or last count: the map of
+            // routers' places, Get/SetRouterLastKnownLocation, 0x1d8/0x1d4);
+            // then that place is noted again. Until round n30 the VM took
+            // the blocker's move, not the walker's.
+            ++r.replans;
+            if (b != r.lastBlocker)
+                r.lastBlocker = b, r.replans = 1;
+            if (const auto* at = placeOf(r, me.id);
+                at && std::hypot(me.position.x - (*at)[0], me.position.y - (*at)[1]) >= kBlockerMovedTries)
+                r.replans = 1;
+            notePlace(r, me);
+            const int counter = r.replans;
             if (std::getenv("OS2_DEBUG_BLOCK"))
                 std::fprintf(stderr, "t%llu %d blocked by %d (%s, its blocker %d) counter %d at (%.2f,%.2f) it (%.2f,%.2f)\n",
                              (unsigned long long)vm.ticks, me.id, b, blocker.route ? "routing" : "standing",
@@ -555,9 +567,13 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     std::fprintf(stderr, "   point (%.2f,%.2f,%d)%s%s\n", p.x, p.y, p.level, p.portal ? " portal" : "", p.ticks ? " phase" : "");
             }
             const bool base = c.thread.stack.size() == r.depth; // the route stack holds only this route
-            const TilePos blockerTile = VM::tileOf(blocker);
-            const bool offRecordedTile = int(std::floor(r.blockerX)) != blockerTile.x ||
-                                         int(std::floor(r.blockerY)) != blockerTile.y;
+            // "It moved" (the branches that plan again): the blocker is not
+            // where the route noted it at its last plan (InitRoute notes every
+            // router: FUN_01655330 compares the places exactly); not noted,
+            // no. Was its tile against the one of when the count started.
+            const auto* noted = placeOf(r, b);
+            const bool offRecordedTile =
+                noted && ((*noted)[0] != blocker.position.x || (*noted)[1] != blocker.position.y);
             // Out of tries: "CT - Route Blocked" on the base route, then
             // "blocked by person" (what the tree's result changes is not
             // decoded; the game's returns true).
@@ -574,7 +590,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     why = w;
                     return Step::Failed;
                 }
-                r.points = std::move(next.points), r.plans = next.plans;
+                r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
                 return Step::Walking;
             };
             auto routeBlocked = [&]() {
@@ -595,7 +611,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     why = w;
                     return Step::Failed;
                 }
-                r.points = std::move(next.points), r.plans = next.plans;
+                r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
                 return Step::Walking;
             };
             // DoPause: "CT - Route Blocked Animation" (parameter 0 the
@@ -750,7 +766,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 why = w;
                 return Step::Failed;
             }
-            r.points = std::move(next.points), r.plans = next.plans;
+            r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
             return Step::Walking;
         }
         if (r.blockedTicks >= limit) { // DoBlocked again
@@ -814,7 +830,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             why = w;
             return Step::Failed;
         }
-        r.points = std::move(next.points), r.plans = next.plans;
+        r.points = std::move(next.points), r.plans = next.plans, r.places = std::move(next.places);
         return Step::Walking;
     }
     setDirection(me, r.facing);

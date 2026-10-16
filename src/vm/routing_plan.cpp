@@ -490,7 +490,23 @@ void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
 
 namespace routing_internal {
 
+void notePlace(Object::Route& r, const Object& who) {
+    for (auto& [id, at] : r.places)
+        if (id == who.id) {
+            at = {who.position.x, who.position.y};
+            return;
+        }
+    r.places.push_back({who.id, {who.position.x, who.position.y}});
+}
+
 bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
+    // InitRoute (BV 0x5737cc) notes where every router of the route manager
+    // stands (SetRouterLastKnownLocation), the walker among them: what
+    // DoBlockedGoalStillAvailable compares (docs/routing-mac.md §9.3).
+    r.places.clear();
+    for (const ObjectId id : vm.people())
+        if (const Object* o = vm.object(id); o && o->position.inWorld())
+            notePlace(r, *o);
     PathPlanner& planner = plannerOf(vm);
     addObstacles(vm, planner, me, r.ignore);
     // The goals go to the planner by tiers, as TSCreateGotoRelativeSlot

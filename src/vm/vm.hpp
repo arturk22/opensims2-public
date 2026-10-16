@@ -633,7 +633,8 @@ struct Object {
         ObjectId chair = 0;           // the planned goal's chair: the post-route tree's parameter 0
         std::vector<ObjectId> ignore;
         int blockedTicks = 0, replans = 0;
-        // Where the Sim in the way stood at the last try (routing_walk.cpp).
+        // Unused since round n30 (the routers' places below), kept in the
+        // saved thread state.
         float blockerX = 0, blockerY = 0;
         bool waiting = false;
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
@@ -656,6 +657,10 @@ struct Object {
         // (0x18c); cleared when the asked Sim's route in it ends.
         ObjectId asked = 0;
         uint16_t askedUid = 0;
+        // Where each router stood at the last plan (InitRoute: cTSRoute
+        // +0x134, Get/SetRouterLastKnownLocation), the walker's own place
+        // noted again at each count of DoBlockedGoalStillAvailable.
+        std::vector<std::pair<ObjectId, std::array<float, 2>>> places;
         int pauses = 0;
         bool inPortal = false;    // a portal tree runs (routing_walk.cpp)
         // The goal check / along route trees (routing_walk.cpp): which one runs
