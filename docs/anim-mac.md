@@ -1,7 +1,7 @@
 # O corpo do Sim no binário de Mac: fila de coreografia, mistura e IK
 
 Leitura do binário de Mac (Bon Voyage 1.10, `sims2_bv.ppc`) para a rodada
-n02 (`docs/inventario-binario.md` §5, linha 2), 2026-10-15. Endereços BV.
+n02 (`docs/inventario-historico.md` §5, linha 2), 2026-10-15. Endereços BV.
 
 Modo: **Ghidra MCP** (só leitura: nada renomeado, retipado nem salvo no
 projeto do usuário) e, para as funções que o projeto não tem como função
@@ -250,7 +250,7 @@ feitas em parte na rodada n14, §8).
 
 ## 8. Locomoção: o relógio das fases, as transições e as paradas (rodada n14)
 
-Leitura da rodada n14 (`docs/inventario-binario.md` §6, linha 14),
+Leitura da rodada n14 (`docs/inventario-historico.md` §6, linha 14),
 2026-10-15. Modo: **Ghidra MCP** (só leitura); as funções que o projeto não
 tem como função (o `PushLocoCycle`, BV `0xd3144c`) foram lidas na listagem
 (desmontagem sem gravar nada). Endereços BV. Complementa o
@@ -494,7 +494,7 @@ Inferido / sobrou (no `TODO.md`):
 
 ## 9. O arquivo ANIM e a leitura das curvas (rodada n23)
 
-Leitura da rodada n23 (`docs/inventario-binario.md` §6, linha 23),
+Leitura da rodada n23 (`docs/inventario-historico.md` §6, linha 23),
 2026-10-15. Modo: **Ghidra MCP** (só leitura) e, para as funções que o
 projeto não tem como função, **Ghidra sem janela** num clone APFS do
 projeto (`-readOnly -noanalysis`, `DecompileList.java`). Endereços BV.
@@ -761,7 +761,7 @@ eventos do olhar e o `AnimUpdate` inteiro (`TODO.md`).
 
 ## 12. O olhar inteiro, as chaves de evento e a IK de olhar (rodada n34)
 
-Leitura de 2026-10-15 (`docs/inventario-binario.md` §7, linha 34). Modo:
+Leitura de 2026-10-15 (`docs/inventario-historico.md` §7, linha 34). Modo:
 **Ghidra MCP** (só leitura) e, para o que o projeto não tem como função
 (`0xd46cdc`, `0xd3f46c`, `0xd38bec`, os inicializadores estáticos),
 **Ghidra sem janela** num clone APFS do projeto (`-readOnly -noanalysis`,

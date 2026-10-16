@@ -1,6 +1,6 @@
 # Telhados, cercas, água e sombras de objetos no binário de Mac
 
-Rodada n06 (2026-10-15), linha 6 do `docs/inventario-binario.md` §5.
+Rodada n06 (2026-10-15), linha 6 do `docs/inventario-historico.md` §5.
 Binário: Bon Voyage 1.10 (`sims2_bv.ppc`), endereços BV. Modo: **Ghidra MCP**
 (só leitura) para memória e nomes, e **Ghidra headless** num clone APFS do
 projeto (`-readOnly`, nada salvo) para as funções que o projeto não tem
@@ -181,7 +181,7 @@ não existir na grade.
 
 ### 1.5 O caminho do jogo, lido inteiro (rodada n13)
 
-Rodada n13 (2026-10-15), linha 13 do `docs/inventario-binario.md` §6. Modo:
+Rodada n13 (2026-10-15), linha 13 do `docs/inventario-historico.md` §6. Modo:
 **Ghidra MCP** (só leitura) para o que o projeto tem como função, e
 **Ghidra headless** num clone APFS do projeto (`-readOnly`, nada salvo) para
 as funções sem definição (`nTSSG` em `0xc6…`/`0xc7…`/`0xec…`, as do tipo do
@@ -366,7 +366,7 @@ dividido por √2 no diagonal dá 1) e o poste também. Fica de fora o +0,75
 
 ### 2.1 Lido inteiro (rodada n25)
 
-Rodada n25 (2026-10-15), linha 25 do `docs/inventario-binario.md` §6.
+Rodada n25 (2026-10-15), linha 25 do `docs/inventario-historico.md` §6.
 Modo: **Ghidra MCP**, só leitura (decompilar, ler memória,
 `disassemble_bytes` com `dry_run` para o que não é função no projeto); os
 nomes do `cFenceManager` vêm do symxfer ("exact" nesta área) e os do

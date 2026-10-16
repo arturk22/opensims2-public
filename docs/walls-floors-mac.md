@@ -1,6 +1,6 @@
 # Paredes e pisos no binário de Mac
 
-Rodada n19 (2026-10-15), linha 19 do `docs/inventario-binario.md` §6.
+Rodada n19 (2026-10-15), linha 19 do `docs/inventario-historico.md` §6.
 Binário: Bon Voyage 1.10 (`sims2_bv.ppc`), endereços BV. Modo: **Ghidra
 MCP**, só leitura (decompilar, ler memória e `disassemble_bytes` com
 `dry_run`, sem criar função nem renomear). Os nomes vêm do `symxfer` (mapa
@@ -236,7 +236,7 @@ inclinada:
 
 ## 6. Rodada n36: borda dos pisos, máscaras, sem máscara, meia parede
 
-Rodada n36 (2026-10-15), linha 36 do `docs/inventario-binario.md` §7.
+Rodada n36 (2026-10-15), linha 36 do `docs/inventario-historico.md` §7.
 Modo: **Ghidra MCP**, só leitura (decompilar, ler memória e
 `disassemble_bytes` com `dry_run`; nada criado nem renomeado). A classe da
 borda dos pisos quase não tem função no projeto BV: foi lida no **1.0 base**

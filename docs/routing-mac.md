@@ -1554,17 +1554,17 @@ Clique com um objeto sob o mouse (rodada 13):
   (`AddManagedDestinationObject`); sem chão ou sem destino → o pie só do
   tapete.
 
-## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
+## 9. Comparação com o código (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`; as rodadas seguintes estão em §9.1–9.4)
 
 | jogo | código |
 |---|---|
 | célula mínima 0,125 tile | 1/8 tile (igual; o código marcava como aproximação) |
 | custo do portal = 1 + OBJD[0x35]·escala; trava = árvore de portal (entrada 15) em modo teste | custo aproximado; portas sempre abertas para o A* |
 | ao chegar no portal roda a entrada 15 de verdade e espera; portal ocupado → espera 24 ticks, até 126 | a VM segura o Sim no portal e o app abre a porta (aproximação) |
-| `MoveOutOfWay`: interação "sair do caminho" (tipo 3) na fila do bloqueador, com a prioridade de quem pede, só se a dele é menor (ou dado 159 bit 0x02), a ≤ 4 tiles | pede até 3 vezes e espera, sem pôr nada na fila do bloqueador |
+| `MoveOutOfWay`: interação "sair do caminho" (tipo 3) na fila do bloqueador, com a prioridade de quem pede, só se a dele é menor (ou dado 159 bit 0x02), a ≤ 4 tiles | hoje como o jogo (`routing_loco.cpp`: a interação na fila do bloqueador, o destino com slot sintético; §8.1, §9.3); na `3b4c4db` pedia até 3 vezes e esperava |
 | tipo 1 (1–3 tiles) quando o bloqueador está a < 1,5 tile do objeto de destino, senão tipo 0 (0,3 tile) | igual desde a rodada 12 (direções do tipo 1 relativas a quem pede, inferido) |
 | slots de osso de um objeto multi-tile: o modelo é o do líder | ossos a partir do líder desde a rodada 12 (inferido; a escada reta só funciona assim) |
-| objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | aproximação da busca de objetivos (`routing.cpp`) |
+| objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | hoje o `EvalTileForGoal` do jogo (`routing.cpp`; o cone antes dele, §9.3); na `3b4c4db`, uma aproximação |
 | pegada do objeto: a do modelo (CRES "footprint", máscara 16×16 reduzida a 1/8 tile) ou a caixa do OBJD (flag 0x80 do od 8) | igual desde a rodada 14 (`VM::routingFootprint`); o tile da parte no modelo e a caixa do modelo sem lista são inferidos; `OS2_TILE_FOOTPRINTS=1` volta ao tile inteiro para comparar |
 | quadtree, inflação 1/8, filtros, A* com ruído, Sims como retângulos de custo, códigos de falha, "CT - Route Blocked" | seguem o doc |
 | portais de objeto (pares de slots, a escada da piscina e o trampolim), parâmetros 2/3 das árvores de portal = andares (§8, §8.5) | desde a rodada 15; a flag `0x200000` do par e o portal de mão única por ligação conferidos na rodada n03 (§8.6) |

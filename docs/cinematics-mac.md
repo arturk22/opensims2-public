@@ -416,7 +416,7 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
 
 ## 8. Rodada n23: o que o binário faz no Start/Stop e o que sobrou
 
-Leitura de 2026-10-15 (`docs/inventario-binario.md` §6, linha 23). Modo:
+Leitura de 2026-10-15 (`docs/inventario-historico.md` §6, linha 23). Modo:
 **Ghidra MCP** e **Ghidra sem janela** (clone APFS do projeto, só leitura:
 `FUN_007c3898` Start, `FUN_007c56b4` Stop e `FUN_007c82ec` Prep não existem
 como funções no projeto). Endereços BV.
@@ -470,7 +470,7 @@ como funções no projeto). Endereços BV.
 
 ## 9. Rodada n34: quem começa a cena, o relógio e o eixo dos spots
 
-Leitura de 2026-10-15 (`docs/inventario-binario.md` §7, linha 34). Modo:
+Leitura de 2026-10-15 (`docs/inventario-historico.md` §7, linha 34). Modo:
 **Ghidra MCP** e **Ghidra sem janela** (clone APFS, só leitura). Endereços
 BV.
 
