@@ -1,0 +1,31 @@
+# Builds the Windows viewer and runs the tests on every push and pull
+# request, the same `tools/build_windows.cmd` does locally (Visual Studio
+# 2022 Build Tools, Ninja, SDL3 and zlib from vcpkg). The macOS app is not
+# built here: the Windows port's own files (win_main.cpp, gpu_renderer.*)
+# are what this keeps honest against main's shared code.
+name: windows
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies (SDL3 and zlib from vcpkg)
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP/vcpkg"
+          & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:RUNNER_TEMP/vcpkg/vcpkg.exe" install sdl3 zlib --triplet x64-windows --clean-after-build
+      - name: Configure, build and test
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS=%%i"
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" >nul
+          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_TOOLCHAIN_FILE=%RUNNER_TEMP%/vcpkg/scripts/buildsystems/vcpkg.cmake
+          if errorlevel 1 exit /b 1
+          cmake --build build-win
+          if errorlevel 1 exit /b 1
+          if not exist build-win\opensims2_win.exe exit /b 1
+          ctest --test-dir build-win --output-on-failure -j 8
