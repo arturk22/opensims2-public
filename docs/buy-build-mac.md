@@ -129,7 +129,11 @@ O layout está no script (`s2pkg ui-dump … 49060004`). O código
 
   Em negrito estão as exceções ao padrão 20→1, 30→2, 40→4, 50→8, 80→0x10. No B7, o
   `…60` é crianças (0x10) e o "Diversos" é `B770` (0x80); o "Tudo" é `B780`.
-  O histograma do campo 94 nos dados confere com esses bits.
+  O histograma do campo 94 nos dados confere com esses bits, mas **por
+  conferir**: na captura do jogo em 1280x720 o `B120` (cadeiras de jantar)
+  mostrou 53 itens (barra: 304 px de 620, 26 por página) contra os nossos
+  17 (`campo 94 & 1` sobre os 75 do Conforto); deste lado as contagens por
+  bit particionam exatamente os 75 (17+12+20+8+11+7).
 - **Sala** `0xC100…0xC900`: C100 sala de estar = 8, C200 jantar = 0x20,
   C300 exterior = 0x10, C400 diversos = 0x40 (oculto), C500 estudo = 0x80,
   C600 quarto = 2, C700 cozinha = 1, C800 crianças = 0x100, C900 banheiro
@@ -174,18 +178,27 @@ Coordenadas de cliente, medidas nas capturas do jogo em janela (o mesmo
 binário; o jogo estava preso no preset `$Low` do `Graphics Rules.sgr`,
 máx 800x600 — destravado para o 1280x720). Com o catálogo cheio de itens:
 
-- À esquerda nada anda com a tela: o puck em x 0 e o catálogo começando em
-  x ≈549 nas duas resoluções (a barra do sort fecha logo antes).
+- À esquerda nada anda com a tela: o puck em x 0 e o catálogo (a janela
+  `0x1000`/`0x2000`) começando em x ≈533 nas duas resoluções (coluna 1 em
+  589 = 533 + 56; a barra do sort fecha logo antes).
 - A grade também não anda: coluna 1 em x 589 e topo da linha 1 em
   `altura − 126` (474 em 800x600, 594 em 1280x720); placas 44x44 de passo
   48, duas linhas.
-- Quem estica é só o catálogo: a borda direita fica em `largura − 36` e a
-  última faixa (~31 px) leva a seta ▶ (o ⌃ em cima dela e a barra de
-  rolagem embaixo). Dá 3 colunas em 800x600 e 13 em 1280x720.
+- Quem estica é só o catálogo: o cap final (20 px, `0x1003`/`0x2003`) fica
+  com a borda direita visível em `largura − 30`, o miolo (`…02`) se estica
+  até ele e o bloco de células (colunas × 48 − 4) cabe até lá — 3 colunas
+  em 800x600 e 13 em 1280x720. O `▶` e o `⌃` vão por cima do cap (o glifo
+  do `▶` em `largura − 61`, o `⌃` 3 px à direita) e o `◀` some na página 0.
+- A barra de rolagem (`0x1008`, um estádio de 12 px em `altura − 30`) vai
+  da coluna 1 mais 2 px (x 591) até `largura − 68`; o knob (moldura de
+  2 px de navy nas pontas) preenche a fração da página sobre o bloco — 304
+  px de 620 numa lista de 26 de 53.
 
-**Para nós** (medido contra a captura do app em 1280x720): o app usa a
-largura fixa do script (265) e mostra 4 colunas; a grade fica +7 px em x e
-+4 em y, o fundo do catálogo +3 e o puck em x 8.
+**Para nós**: o app agora segue isso (puck em x 0, largura fixa 265
+descartada, colunas dinâmicas até o cap) e bate a captura do jogo em
+1280x720 pixel a pixel (cap 1244..1250, `▶` (1219,615)-(1231,662), `⌃`
+(1222,584)-(1230,596), trilho até o navy 1211 com teal em 1212); sobra 1 px
+na costura do catálogo (o app em 532, o jogo em 533).
 
 ---
 
