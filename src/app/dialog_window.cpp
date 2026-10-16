@@ -475,13 +475,14 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
         L.caretText = d.text;
         L.caretFont = kTextFont;
     }
-    // The close box (AddCloseBox, BV 0x25d444) is a button of its own that
-    // nothing places: neither DoLayout nor the window's SetArea (BV
-    // 0x25aae4) moves it, and a new window has an empty area (cGZWin's
-    // constructor, BV 0x8a2980), so it is not drawn and takes no click; its
-    // picture 0x11110002 is not in the base game's ui.package either
-    // (inferred: the button's SetBuffer was not read). The dialog closes
-    // by Return (button 1), Esc or its time out, as SetupDialog's keys say.
+    // The close box (AddCloseBox, BV 0x25d444) is not there: the button is
+    // made only when its picture 0x11110002 is found, and the base game's
+    // ui.package has none; even with it, nothing places the button (neither
+    // DoLayout nor the window's SetArea, BV 0x25aae4) and its SetBuffer (BV
+    // 0x8c87d0 -> SetStyle 0x8cb3bc -> on_layout 0x8c9c78) sizes only the
+    // picture's frame, not the window, which a new window has empty (cGZWin's
+    // constructor, BV 0x8a2980): no drawing, no click. The dialog closes by
+    // Return (button 1), Esc or its time out, as SetupDialog's keys say.
     // DoLayout: the row centred ((width - row) / 2, rounded down), 12 px apart.
     float bx = std::floor((w - bTotal) / 2);
     for (size_t k = 0; k < row.size(); ++k) {
