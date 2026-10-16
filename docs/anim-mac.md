@@ -728,7 +728,7 @@ O que faltava ler além do que o `vm/view.cpp` já fazia:
   objeto, `SlotID` = slot | tipo << 12) e os dados de pessoa 41–44 (alvo,
   slot, estado `0x26AD`, duração).
 
-### 11.2 O que o `cActiveAnimLookAt::AnimUpdate` faz (BV `0xd41e04`, não portado)
+### 11.2 O que o `cActiveAnimLookAt::AnimUpdate` faz (BV `0xd41e04`; lido inteiro e portado na rodada n34, §12)
 
 É uma função de ~11 KB: a cadeia de IK de olhar (estratégia `0x09F9E87E`,
 `cIKStrategyLookAt`) vira a cabeça e, com o "spine twist" ligado, 0,6 do
@@ -901,3 +901,25 @@ Inferidos: o nó da vtable `0x18c` da fila, o quadro da torção (tomado o
 a forma linear do blend; que a coluna recebe as frações na ordem
 spine0→neck; o 0,3 de distância e o desconto da duração seguidos ao pé da
 letra (inclusive o `lVar26 −= sobra` da chegada, que parece um descuido).
+
+### 12.4 O que mudou no código (rodada n34)
+
+- `formats/anim.cpp`: `lookAtIkRotation` (a solução de translação da
+  estratégia) e o `applyIk` resolvendo as cadeias de olhar dos ANIM
+  (`head` → `head_grip`, alvo `head_ikctr`, polo `head_ikpole`, pelo peso
+  da cadeia). Teste `test_anim` "look-at IK".
+- `app/look_at.*` (`HeadLook`): o `AnimUpdate` como acima — estados, rampa,
+  limites, torção (com "including Spine"), "no early exit", a duração
+  contada a partir da chegada (0 = uma olhada; −1 sem fim), a volta a 200°/s
+  com o alvo a menos de 0,3, o STOP pela velocidade dele, o peso entrando e
+  saindo — e a IK das duas cadeias sobre a pose animada (a cabeça pela
+  solução de translação misturada pelo peso; spine0..neck girando em Y
+  pelas frações, como delta). Era: pescoço 40 % e cabeça 60 %, 75°/30°,
+  velocidade constante e a duração contada do pedido. Teste `test_look_at`.
+- `vm/view.cpp`: o Look At guarda a duração em ms (`durationMs`; antes a
+  duração 0 virava "sem fim"), as flags 0x04 e 0x02 e um número por pedido
+  (`serial`: um pedido novo começa outra virada); o `lookTarget` do app não
+  corta mais o olhar pelo tempo (quem conta é o `HeadLook`).
+- Capturas: `docs/screenshots/n34-olhar-*.jpg` (antes = main, depois =
+  n34).
+

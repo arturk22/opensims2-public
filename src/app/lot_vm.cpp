@@ -504,7 +504,9 @@ IkObjectBone LotSimulation::ikObjectBones(const SimActor& self, int16_t object) 
 // model: inferred). Objects: objectLookPoint, else 0.75 over the floor
 // (inferred). Not done: the slots of types 1-3 (byte 14) and the camera.
 std::optional<Vec3> LotSimulation::lookTarget(const vm::Object& o) const {
-    if (!o.lookAt || (o.lookAt->ticks > 0 && vm_->ticks >= o.lookAt->since + uint64_t(o.lookAt->ticks)))
+    // (How long the head stays on it is the look's own hold, from when it
+    // gets there: HeadLook.)
+    if (!o.lookAt)
         return std::nullopt;
     const vm::Object* x = vm_->object(o.lookAt->target);
     if (!x || x->id == o.id)
@@ -626,11 +628,15 @@ void LotSimulation::updateScene(double seconds) {
         seats.place(b.id, *b.actor, b.motion, seconds + slip_, t, dt, z, b.zOffset);
         if (const vm::Object* o = vm_->object(b.id)) {
             const auto target = lookTarget(*o);
-            if (std::getenv("OS2_DEBUG_LOOK") && target.has_value() != b.look->target().has_value())
+            if (std::getenv("OS2_DEBUG_LOOK") && target.has_value() != b.look->hasTarget())
                 std::fprintf(stderr, "tick %llu sim %d %s %d\n", (unsigned long long)vm_->ticks, b.id,
                              target ? "looks at" : "stops looking at", o->lookAt ? o->lookAt->target : 0);
-            b.look->setTarget(target);
-            b.look->setRates(o->lookAt ? float(o->lookAt->towards) : 0.0f, float(o->lookAwayRate));
+            std::optional<HeadLook::Request> request;
+            if (o->lookAt) {
+                const auto& l = *o->lookAt;
+                request = HeadLook::Request{l.serial, float(l.towards), float(l.away), l.durationMs, l.spine, l.noEarlyExit};
+            }
+            b.look->setRequest(request, target, float(o->lookAwayRate));
         }
     }
 }

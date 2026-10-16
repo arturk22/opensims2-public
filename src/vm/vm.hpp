@@ -825,8 +825,17 @@ struct Object {
         // byte 4 x 2 or temp 1 towards, byte 5 x 2 or temp 1/2 away; the
         // choreo request takes them x pi/180 as radians a second).
         int16_t towards = 0, away = 0;
+        // The request's HoldTicks (the duration in ms; -1: until the next
+        // Look At), and byte 0's 0x04 "including Spine" and 0x02 "no early
+        // exit" (cChoreoRequestLookAt vtable 0x154 and 0x148, read by
+        // cActiveAnimLookAt::AnimUpdate as 0x178 and 0x16c; docs/anim-mac.md
+        // §12.3). Which Look At this is: a new one starts a new turn.
+        int32_t durationMs = -1;
+        bool spine = false, noEarlyExit = false;
+        uint32_t serial = 0;
     };
     std::optional<LookAt> lookAt;
+    uint32_t lookAtSerial = 0; // Look Ats so far (LookAt::serial)
     // The rate the head turns back at, degrees a second: the last Look At's
     // (STOP's own included: try_look_at sets it on the looks it stops).
     int16_t lookAwayRate = 0;

@@ -388,8 +388,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (comma == std::string::npos)
             throw std::runtime_error("--look-at: expected <sim>,<object-id>");
         const os2::vm::ObjectId sim = os2::vm::findSim(gSimulation->machine(), look->substr(0, comma));
-        if (auto* o = gSimulation->machine().object(sim))
+        if (auto* o = gSimulation->machine().object(sim)) {
             o->lookAt = os2::vm::Object::LookAt{int16_t(std::stoi(look->substr(comma + 1))), 0, 0};
+            o->lookAt->serial = ++o->lookAtSerial;
+        }
         else
             throw std::runtime_error("--look-at: no Sim " + look->substr(0, comma));
     }

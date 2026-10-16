@@ -106,12 +106,16 @@ namespace {
 // 0 bit 0x20 ("ignoring Room"; the room is object data "room", inferred the
 // same as the game's); without bit 0x40 the game also refuses a target
 // outside what the Sim's head can turn to (a test on its skeleton, not
-// done here). The duration: s16 at 6, or temp 0 with bit 0x10 (-1: the
-// game's default, a tunable; here until the next request), in ms
-// (inferred). The look runs on its own: the primitive is true at once. Not
-// done: the slots (byte 14: 0 three quarters of the target's height, 1
-// targeting, 2 routing, 3 containment slot byte 8, past the slots error
-// 0x1B), the event tree (u16 9), the spine (0x04), "no early exit" (0x02).
+// done here). The duration: s16 at 6, or temp 0 with bit 0x10, the
+// request's HoldTicks in the animation clock's ms, counted down once the
+// head is on the target (0: a glance; -1 the game's DAT_02c0e324, no end:
+// until the next request); with 0x04 the spine twists too, with 0x02 a
+// target past the head's limits is held at them instead of given up
+// (app/look_at.cpp, docs/anim-mac.md §12.3). The look runs on its own: the
+// primitive is true at once. Not done: the slots (byte 14: 0 three
+// quarters of the target's height, 1 targeting, 2 routing, 3 containment
+// slot byte 8, past the slots error 0x1B), the event tree (u16 9: the
+// look's states as events 9901-9906).
 Exit lookAt(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
@@ -156,7 +160,12 @@ Exit lookAt(Context& c) {
     if (!(flags & 0x20) && x->data[objdata::Room] != me.data[objdata::Room])
         return Exit::False;
     const int ms = flags & 0x10 ? int(c.thread.temps[0]) : int(int16_t(le16(&o[6])));
-    me.lookAt = Object::LookAt{*target, c.vm.ticks, ms < 0 ? 0 : ms * 30 / 1000, int16_t(towards), int16_t(away)};
+    Object::LookAt look{*target, c.vm.ticks, ms < 0 ? 0 : ms * 30 / 1000, int16_t(towards), int16_t(away)};
+    look.durationMs = ms < 0 ? -1 : ms;
+    look.spine = flags & 0x04;
+    look.noEarlyExit = flags & 0x02;
+    look.serial = ++me.lookAtSerial;
+    me.lookAt = look;
     return Exit::True;
 }
 

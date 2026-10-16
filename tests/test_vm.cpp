@@ -844,6 +844,12 @@ static void testLookAt() {
           "Look At ignoring the room records the look (1000 ms)");
     check(me.lookAt->towards == 90 && me.lookAt->away == 90 && me.lookAwayRate == 90,
           "the turn rates: byte 4 and 5 x 2 degrees a second (try_look_at)");
+    check(me.lookAt->durationMs == 1000 && !me.lookAt->spine && !me.lookAt->noEarlyExit,
+          "the hold in ms, no spine, early exit (cChoreoRequestLookAt)");
+    const uint32_t serial = me.lookAt->serial;
+    t = run(look(0x26, 45, 45, T, F));
+    check(me.lookAt && me.lookAt->spine && me.lookAt->noEarlyExit && me.lookAt->serial == serial + 1,
+          "byte 0 0x04 \"including Spine\", 0x02 \"no early exit\"; a new Look At is a new request");
     t = run(look(0x21, 45, 30, T, F));
     check(t.status == Thread::Status::Finished && t.result && !me.lookAt && me.lookAwayRate == 60,
           "STOP turns back at its own rate");
