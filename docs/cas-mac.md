@@ -1486,9 +1486,17 @@ Conferidas no binário: `operator*(cVector<3,float>, cSqMatrix<3,float>)` (BV
 `0x14cf93c`) é `M·v` com a matriz guardada por linhas; `operator*(cVector,
 cQuaternion)` (`0x1522800` → `FUN_000e9510`) é a rotação padrão `R(q)·v` com
 `q = (x, y, z, w)` (a mesma do `simd_act` do app); `FUN_000ea0dc(a, b, c)` monta
-`Rz(c)·Ry(b)·Rx(a)` por linhas. O quaternion do localizador já está certo (a
-frente `R(q)·(0,1,0)` olha o Sim). Falta só a ordem dos produtos dentro da conta
-do olho (BV `0x7aa284`, que o Ghidra não tem como função: a leitura da n21 foi
-`Q·Rx(−elevação)·Rz(heading)`), de que depende se os giros do zoom são nos
-eixos da câmera (a leitura ao pé da letra, que leva a câmera das roupas para
-cima da cabeça) ou nos do mundo (o app); segue inferido.
+`Rz(c)·Ry(b)·Rx(a)` por linhas. A conta do olho (BV `0x7aa284`, que o Ghidra não
+tem como função; lida com um desmontador próprio) faz `A = Rz(heading)`, `B =
+Rx(elevação guardada = −zoomelevation·π/180)`, `C = FUN_00083498(A, B)` (que
+devolve o segundo × o primeiro, `FUN_014cbafc`: `out[r][c] = Σ Y[r][k]·X[k][c]`),
+`D = FUN_00083498(C, Q)` com `Q` a matriz do quaternion da câmera (vtable `0xc0`,
+`FUN_000ea66c`) e a direção `D·(0, 1, 0)`; refeita em números com os mesmos
+arranjos, dá `R(q)·Rx(e)·Rz(h)·(0, 1, 0)`: **os giros do zoom são nos eixos da
+própria câmera** (confirmado). Com o quaternion do localizador como o app o lê,
+isso leva a câmera das roupas de adulto para cima da cabeça no zoom máximo
+(captura sem janela `--cas --cas-step 5 --cas-zoom 2.3`: o Sim no pé da tela e a
+parede), enquanto nos eixos do mundo (o app) enquadra o tronco e o rosto. Então
+a rotação que o controlador usa (a do `SetActive`, vtable `0xc0`) não deve ser a
+do localizador como lida (outro quadro, ou o +Z da câmera não é o "para cima"
+do localizador); não achado. O app segue com os eixos do mundo (inferido).
