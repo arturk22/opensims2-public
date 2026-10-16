@@ -477,12 +477,15 @@ tipos, 11/13 do "Route - Dynamic w/Lead in").
 
 Inferido / sobrou (no `TODO.md`):
 
-- a janela do `ComputeLocoStartTicks` com o fim da primitiva anterior
+- ~~a janela do `ComputeLocoStartTicks` com o fim da primitiva anterior
   (`EndTicks`/`EndActionTicks`/porção final de um Animate: começar em
-  `eA + 70` ou `e − 70`) — o VM não guarda esses tempos;
-- a troca centrada (±b/2 em volta da fronteira): aqui começa na fronteira;
+  `eA + 70` ou `e − 70`) — o VM não guarda esses tempos~~ — **rodada n43**
+  (§13.6): feito;
+- a troca centrada (±b/2 em volta da fronteira): aqui começa na fronteira
+  (rodada n43, §13.6: lido, não feito);
 - a rampa de velocidade do pedido (`FUN_00a47144`, também a da parada
-  forte) e o fim do ciclo na parada fraca (1/6 ou 2/3);
+  forte) e o fim do ciclo na parada fraca (1/6 ou 2/3) (rodada n43, §13.6:
+  lidos em parte, não feitos);
 - ~~o espaço da parada ao bloquear continua limitado aos 2 passos da previsão
   (inferido)~~ — **rodada n18** (`routing-mac.md` §9.1): o `CollisionCheck`
   bloqueia na primeira colisão do horizonte e a parada (meio ciclo e clipe)
@@ -490,9 +493,10 @@ Inferido / sobrou (no `TODO.md`):
   (`EndFollow`). No jogo base quase sempre na hora (paradas com clipe nas
   medidas: 80 → 16 em 14 sementes);
 - o começo 5/100 ms adiantado de um pedido seguinte (a virada do fim depois
-  de uma parada não acontece aqui: a parada já vira para a direção final);
-- um novo pedido ao replanejar andando (o `BeginFollow` de novo) não entra
-  pelo fade de entrada.
+  de uma parada não acontece aqui: a parada já vira para a direção final;
+  rodada n43: não se aplica);
+- ~~um novo pedido ao replanejar andando (o `BeginFollow` de novo) não entra
+  pelo fade de entrada~~ — **rodada n43** (§13.6): feito.
 
 ## 9. O arquivo ANIM e a leitura das curvas (rodada n23)
 
@@ -1101,3 +1105,68 @@ parâmetro), "Hurry - End" e "Interaction - Cancel" (0).
   dos sociais 78 → 53), bloqueios 167 → 100; `N001_Lot11` 404 → 429 / 0 → 0,
   escolhas 439 → 459, falhas 426 → 391 (74 → 79), bloqueios 70 → 98. Cada
   Animate Sim acaba 7 ticks antes: cabem mais interações no mesmo tempo.
+
+### 13.6 As sobras da locomoção (rodada n43, parte 4)
+
+**Lido e feito:**
+
+- **A janela do `ComputeLocoStartTicks`** (BV `0x6ad69c`, lido inteiro):
+  `início = agora`; com `eA` = `EndActionTicks` da primitiva bloqueante
+  anterior NENHUM, ou o Sim seguindo andando (`+0x1b4` ≥ 0), nada; senão,
+  se o estado "terminando" (`+0x25c`, o pedido da rota anterior ainda
+  tocando) está ativo, `início = max(início, EndTicks dele` — ou o guardado
+  —`)`; senão, fora do passo curto e com `−140 < agora − eA < 140`, `início
+  = eA + 70`; senão, com `e` = `EndTicks` guardado e `W` = 40 (curto) ou
+  140, `−W < agora − e < W`: `início = e − W/2` se `agora < e`; nesses casos
+  a porção do ciclo (`+0x1bc`) = `FinalCyclePortionCompleted` guardado; no
+  fim `EndTicks` e `EndActionTicks` voltam a NENHUM (vtables `0x2f0`/`0x2f4`).
+  O `FollowOneStep` (BV `0x6b8848`) guarda, no começo do fade de saída do
+  último pedido, `max(EndTicks(false), +0x254)`, `ActualFadeOutStart` e
+  `FinalCyclePortionCompleted` (`0x188`). **Feito** (`routing_loco.cpp`):
+  com o Animate Sim acabando quando o pedido começa a sair (§13.3), a rota
+  que vem logo depois começa 70 ms depois desse começo (1 a 2 ticks depois
+  de agora); a entrega da rota guarda os três valores e o fim da parada que
+  segue tocando (`AnimationState::locoEndingUntilMs`): uma rota logo depois
+  de outra espera a parada acabar. O passo do quadro em cada tick é a sua
+  fração do caminho do clipe com a fase começada `lead` ticks antes (menos:
+  depois, parado até lá), e o app começa os clipes atrasado ou adiantado
+  nisso. A porção guardada escolhe o pé do começo ("turnAndGoR" a partir de
+  0, §8.5). Inferido: o "passo curto" (`BeginShortStepPath`) como o passo
+  de lado da VM. Teste `test_routing` "loco start window".
+- **O pedido novo ao replanejar andando**: um `BeginFollow` de novo é um
+  pedido novo de rota, que entra pelo fade de entrada (linear) enquanto o
+  anterior sai (`CreateTransitionBlend` com `tARType` 5, §13.2). Feito: o
+  app toca de novo as camadas do andar na porção em que o andar está (a VM
+  roda igual).
+
+**Lido e não feito:**
+
+- **A troca centrada** (±b/2 em volta de cada fronteira, `cLocoCycle::AnimUpdate`,
+  §8.4): o app só fica sabendo da troca de fase no tick em que a VM a faz;
+  centrar pede a deixa b/2 antes (o próximo clipe parado no primeiro quadro
+  antes da fronteira). Segue começando na fronteira (inferido).
+- **A rampa de velocidade** (`FUN_00a47144` = `CreateVelocityBlendFunction`,
+  chamada pelo `CreateLocoRequest` `0x6b2390`, o `InitChannelNetwork`
+  `0xd2ef8c` e o `StopLocomotion` `0xd30afc`): a velocidade do quadro em
+  intervalos de rampa entre a de partida, a do andar e a final, com as
+  durações encolhidas por `√(disponível/pedido)` e 0,98 quando não cabem;
+  os parâmetros de cada chamada (os campos `+0x4c`, `+0x50`, `+0xa4` do
+  pedido) não foram seguidos. A VM move o quadro pela distância de cada
+  clipe no comprimento dele (inferido).
+- **A parada fraca** (§8.7: o ciclo de andar até o próximo apoio, 1/6 ou
+  2/3, sem clipe): vem do `InterruptActiveLocoState` (BV `0x6b4fa0`) com um
+  tipo de fim que não é o bloqueio (2); ele é virtual e quem manda os outros
+  tipos não foi achado. A VM não tem esse fim.
+- **O começo 5/100 ms adiantado** do pedido seguinte (§8.3): é a troca para
+  a fase seguinte de uma mesma rota (passo curto → caminho → virada do fim);
+  a rota da VM é um pedido só (começo, andar, parada) e a parada já vira
+  para a direção final: não se aplica.
+- **A pressa da locomoção** (§13.4: os `0x160`/`0x164`/`0x174` do seguidor
+  de rota): não identificados.
+
+Medido (48 sementes × 12.000 ticks do `N001_Lot68`, `s2pkg autonomy`,
+antes → depois da janela): interações autônomas verdadeiras 2.216 → 2.162,
+falsas 53 → 62; bloqueios por semente média 11,1 → 14,4 (mediana 7 → 6);
+falhas de rota sem o 13 dos sociais média 4,9 → 6,0 (mediana 2 → 3). Os
+episódios de bloqueio variam muito de semente para semente (o main tinha 54
+numa das 14).
