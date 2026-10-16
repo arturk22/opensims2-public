@@ -230,3 +230,123 @@ inclinada:
 - as laterais dos buracos sem máscara (batentes) são nossas, no material do
   topo;
 - `cFloorThicknessGeometryNode` (a borda dos pisos) não é desenhado.
+
+## 6. Rodada n36: borda dos pisos, máscaras, sem máscara, meia parede
+
+Rodada n36 (2026-10-15), linha 36 do `docs/inventario-binario.md` §7.
+Modo: **Ghidra MCP**, só leitura (decompilar, ler memória e
+`disassemble_bytes` com `dry_run`; nada criado nem renomeado). A classe da
+borda dos pisos quase não tem função no projeto BV: foi lida no **1.0 base**
+(`sims2_base_1.0.ppc`, onde as funções existem) e conferida no BV pelo
+`disassemble_bytes` (o construtor da peça e a espessura); os nomes vêm do
+`baserom.sym` (o outro build ppc com símbolos: `0xcb2808..0xcb5a7c`).
+
+### 6.1 A borda dos pisos (`nTSSG::cFloorThicknessGeometryNode`)
+
+- **Quem a cria:** o andar de pisos (`cFloor`, BV `FUN_006503f0`, o que
+  monta os subconjuntos `floorTile_%s_room_%d_sector_%d_%d_grid_%s`) dá a
+  cada subconjunto de piso **de andar ≥ 1** que não é de grade (`grid_no`)
+  um subconjunto no nó de espessura (`param_1[9]`), com o material
+  **`FloorThickness`**. No térreo (0) e nos andares negativos (piscinas,
+  porões) não há borda.
+- **O material** (`Materials.package`, `materialDefinition FloorThickness`):
+  `StandardMaterial`, `stdMatDiffCoef (0.5, 0.5, 0.5)`, `stdMatSpecPower 0`,
+  textura `floor-edge`. Iluminado pelas luzes como um objeto (sem light map).
+- **Que arestas** (`UpdateOrderedLocatorSet`, 1.0 `0x9d6628`): para cada
+  quarto de tile do nó, as três arestas do triângulo do quarto viram
+  localizadores ordenados (`OrderedLocator`, 1.0 `0x9d41b4`: as pontas na
+  ordem menor primeiro) e cada um **entra no conjunto se não está e sai se
+  está** (`+0x14c`). Sobram as arestas da borda da união dos quartos do
+  andar: a beira do piso (de tile inteiro ou de meio tile diagonal); as
+  arestas entre dois quartos com piso se cancelam.
+- **A peça** (`cFloorTilePiece`, BV `0x7ab07c`, 1.0 `0x9d4320`): o
+  triângulo do quarto (`FUN_0015cb40`: quarto 0 `(x, y+1) → (x, y)`, 1
+  `(x+1, y+1) → (x, y+1)`, 2 `(x+1, y) → (x+1, y+1)`, 3 `(x, y) → (x+1, y)`,
+  depois as duas meias diagonais até o centro), cada aresta `a → b` um quad
+  de 4 vértices (32 bytes: posição, normal, UV): `a` e `b` no
+  `SampledFloorElevation` (`0x8a5fc0`) e os mesmos **0,15 abaixo**
+  (constante `0x274b638`), normal `Perp(b − a)` normalizada
+  (`0x7ab05c`: `(d.y, −d.x, 0)`, a direita da aresta, para fora do
+  triângulo), UV `(0, 0)` em `a` em cima, `(1, 0)` em `b` em cima,
+  `(0, 1)` e `(1, 1)` embaixo; índices `0 2 1, 1 2 3`. Só os quads das
+  arestas do conjunto vão para o subconjunto
+  (`InsertFloorTilePieceInGeomPart`, 1.0 `0x9d5c10`).
+- Os 0,15 batem com o `walls.txt`: `floorToFloorBasedCeiling` (as saias de
+  deck) "tem o topo no fundo da geometria de espessura do piso de cima".
+
+### 6.2 Máscara de porta e janela: UV, espelho, topo
+
+- **O material** (`CombinedWallMaterial`, BV `0x6c1738`, sem função no
+  projeto): com a máscara, lê do TXMT da máscara a propriedade
+  **`tsMirrorWallMask`** (vtable `0x60` do material, padrão de
+  `0x2c13d50`) e a passa como **`wallMaskMirrorFlag`** ao
+  `WallpaperAndMask` (o nome do material inclui o valor:
+  `%s%s%s_%d%s%s` = papel, máscara, espelho, página, ...). O shader espelha o
+  UV 1 por `ffTextureMatrix -scalev (−1,1) -trans (1,0)` (`u → 1 − u`,
+  `shaders-mac.md` §5). Nos dados: 283 dos 306 TXMTs `WallMask` têm a
+  propriedade; as faces `s` retas têm todas 1, as `n` 0 (as duas usam quase
+  sempre a mesma textura, a do `n`); nas diagonais `nw`/`se` o valor varia
+  por objeto (`s2pkg material-survey <Res> WallMask --list` mostra o
+  `mirror=`).
+- **O UV da máscara é o UV1 da face** (§2.1): `u` ao longo do localizador
+  da própria face, 0 no começo e 1 no fim (com o chanfro: `(d̂·A₀)/L` no
+  canto), `v` = 1 no chão da coluna e `1 − H/3` no alto (H a altura
+  desenhada: baixada, `1 − 0,2/3`). As duas faces de uma parede correm em
+  sentidos opostos; o espelho da face `s` põe o buraco no mesmo lugar do
+  mundo que o da `n`.
+- **Quem recebe a máscara** (`SetCutoutMaterialImpl`, BV `0x6c5bb0`): para
+  o localizador dado (a face), `0x6c5564(localizador, nó, peça, …, máscara)`
+  nos nós **0 e 2** (paredes de andar a andar e sótão; não as meias
+  paredes, saias de deck nem o palco), na peça **0 (a face) e 1 (o topo)**.
+  O topo (um por parede, no localizador `a → b`) só acha o subconjunto
+  quando o localizador é o dele: a máscara da face A vai também para o topo,
+  que a amostra com o seu UV1 (`u` ao longo de `a → b`, `v = 1 − H/3`, +0,01
+  no lado A): numa parede inteira (H = 3) cai na linha de cima da máscara
+  (sólida: o topo fica), numa parede baixada (H = 0,2) cai perto do pé, onde
+  a porta é vazada: **o topo da parede cortada some sobre a porta**.
+- **O nome de cada face** (`cObject::ComputeWallCutoutLocators` `0x6612d8`
+  → `WallCutoutMaterialName` `0x658428`): o localizador da face, relativo ao
+  centro do tile do objeto líder (a parte + a diferença das posições,
+  `0x8b5130`), num referencial `(X, Y)` em que o dígito E/W vem de `Y` e o
+  N/S de `−X`; a direção da face pelo sentido do localizador (`X` igual: `Y`
+  crescendo `S`, decrescendo `N`; `Y` igual: `X` crescendo `W`,
+  decrescendo `E`; diagonais `X↑ Y↓ NW`, `X↓ Y↑ SE`, `X↑ Y↑ SW`,
+  `X↓ Y↓ NE`, tabela `0x27cdeac`) e os dígitos com o arredondamento do lado
+  da face (`S`: `X + 0,5`; `N`: `X − 0,5`; E/W pelo `Y` do mesmo jeito), o
+  nível = andar da parte − andar do líder. No referencial do objeto (o seu
+  `+x` = leste, `+y` = norte), `X = −y`, `Y = x` (inferido: com ele os nomes
+  saem os dos dados, a janela de 1 tile na borda `y = −0,5` do seu tile:
+  face `n` `0_0`, face `s` `0_1s`).
+- O `+0x124` do objeto (os lados com recorte, `0xaf815c`) não foi achado
+  em quem escreve; o código usa os nomes que existem.
+
+### 6.3 Sem máscara, sem buraco
+
+`ComputeWallCutoutLocators`: com o texto do STR# `0x85` vazio não há
+localizador nenhum, e `SetCutoutMaterialImpl` só troca o material da face
+(e do topo) pelo da máscara: o jogo **não abre caixa** em parede nenhuma.
+Uma porta ou janela sem o TXMT da face deixa a parede inteira (rodada n20
+já tinha lido; agora feito).
+
+### 6.4 Meia parede e cerca
+
+- **`AddWallImpl`** (BV `0x6c64c8`; o symxfer o chama
+  `cNHoodAutomata::ReadTrackData`): sai sem geometria se o estilo não é
+  parede (`PartitionStyleIsWall` `0x8b566c`: `PartitionType` 0 ou 3) nem
+  palco (`IsStageWall`); nem se os dois tiles ao lado da parede estão fora do
+  lote (WorldDB `0xf8`). O nó: `floorToRoof` 2, `floorToFloor` 0, meia
+  parede (`PartitionType` 3) 5 com `FUN_00166414` senão 3, palco 4, o resto
+  1. **Cerca (`PartitionType` 1) nunca vira parede**, com ou sem papel.
+- **`PartitionType`** (`0x8b5614`) = o campo `+0xc0` do produto da partição
+  (`PartitionProductOfStyle` → interface, vtable `0x10c` → `0xf1bde4`;
+  quem grava, vtable `0xcc` → `0xf1b8ec`). Os parsers do `walls.txt`
+  (`wall`, `defaultPattern`, `wallThickness`, `invisibleLightBlocking`,
+  `stageWall`), do `fences.txt` (`fence`, `railModel`, `diagRailModel`,
+  `postModel`) e do `fencearches.txt` não têm palavra de meia parede; a
+  cerca do catálogo (property set `0x2CB230B8`) tem **`ishalfwall`**
+  (`ReadProperties` BV `0x84f518`, campo `+0x64`; `FillProperties`
+  `0x84d910` escreve `rail`, `diagrail`, `post`, `height`, `maywalkover`,
+  `posttilespacing`, `ishalfwall`, `bearsload`, `noshadow`,
+  `isgreenhouse`). Quem passa o `ishalfwall` ao tipo 3 não foi achado
+  (inferido: é o produto feito da cerca do catálogo com `ishalfwall`).
+  Nenhuma cerca do catálogo do jogo base tem `ishalfwall` verdadeiro.

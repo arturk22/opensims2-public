@@ -43,8 +43,13 @@ int cmdMaterialSurvey(const std::string& root, const std::string& filter, bool l
             ++total;
             if (!filter.empty() && m.materialType.find(filter) == std::string::npos)
                 continue;
-            if (list)
-                std::printf("%s %s\n", m.resource.fileName.c_str(), m.property("stdMatBaseTextureName").c_str());
+            if (list) {
+                // Wall masks also print their mirror flag (tsMirrorWallMask,
+                // which CombinedWallMaterial passes on as wallMaskMirrorFlag).
+                const std::string mirror = m.property("tsMirrorWallMask");
+                std::printf("%s %s%s%s\n", m.resource.fileName.c_str(), m.property("stdMatBaseTextureName").c_str(),
+                            mirror.empty() ? "" : " mirror=", mirror.c_str());
+            }
             auto& t = types[m.materialType];
             ++t.count;
             if (t.examples.size() < 3)
