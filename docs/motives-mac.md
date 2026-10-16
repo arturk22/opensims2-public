@@ -519,7 +519,13 @@ não (o teste acima põe todo Sim no escuro à noite: −20 sempre depois das
   Shoo Sims off Tile` (`0x2056`) → global `Shoo - Sims from tile Object X is
   on` (`0x2FC`, X = o próprio Sim, od 11): Set to Next 8 acha quem está no
   tile dele com dado de pessoa 39 "route status" = 0 e empurra a interação
-  221 do próprio Sim ("Afastar-se") com **prioridade 1 = 100**. No
+  221 do próprio Sim ("Afastar-se") com **prioridade 1 = 100**. (O 39: no
+  base 1.0 o `UpdatePersonDataFields` do roteador, `FUN_00c64a70`, grava
+  40/37/55/38 e, quando pedido, o 39: 1 em `0xc57cb4` e 0 em `0xc58130`, no
+  começo da rota, e 0 em `0xc55514`, quando a pilha de rotas esvazia; no BV,
+  `cTSRoutingObjectAggregate::UpdatePersonDataFields` BV `0x570674`, o 39
+  sumiu. Então no jogo base só quem **anda** escapa do "Afastar-se"; quem
+  frita parado leva, como no VM, que deixa o 39 em 0 sempre: `TODO.md`.) No
   N001_Lot68 o lugar do forno (21,5; 25,25) e o das bocas (21,5; 25,75)
   ficam no mesmo tile, e o "Afastar-se" interrompe quem frita: a panela fica
   no fogão, queima e pega fogo 30 min depois (`Tuning - Cook Fire Time`).
