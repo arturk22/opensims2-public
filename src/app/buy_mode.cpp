@@ -963,7 +963,13 @@ UiScreen BuyMode::screen(int width, int height) {
     // The catalog follows the open sort area (inferred: the script keeps it
     // at x 447 under the collections' layout): it starts where that area
     // ends, the dark green strip runs up to it and the end cap gives way
-    // to the catalog's own joint ("center piece").
+    // to the catalog's own joint ("center piece"). The top-level sorts
+    // have no items: there the catalog is out and the end cap closes the
+    // bar where the sort area ends (the original's screenshots show only
+    // the sort panel there; same as Build mode's panel,
+    // build_mode_panel.cpp).
+    const auto list = items();
+    const bool showCatalog = !list.empty();
     {
         UiElement& r = panel_.roots.front();
         const UiElement* sortArea = r.child(sort_ == Sort::Function ? kFunctionSort : kRoomSort);
@@ -972,12 +978,14 @@ UiScreen BuyMode::screen(int width, int height) {
             const auto a = c->area();
             c->set("area", area(right, a[1], right + (a[2] - a[0]), a[3]));
         }
-        if (UiElement* g = r.child(0x4CC48AA6)) {
+        if (UiElement* g = r.child(0x4CC48AA6)) { // the strip: the script's width while the catalog is out
             const auto a = g->area();
-            g->set("area", area(a[0], a[1], right, a[3]));
+            g->set("area", area(a[0], a[1], showCatalog ? right : 447, a[3]));
         }
-        if (UiElement* e = r.child(0x4CC48AA4))
-            e->set("winflag_visible", "no");
+        if (UiElement* e = r.child(0x4CC48AA4)) { // the end cap: at the open sort's end either way
+            const auto a = e->area();
+            e->set("area", area(right, a[1], right + (a[2] - a[0]), a[3]));
+        }
     }
     const UiElement& root = panel_.roots.front();
     const auto pa = puck.area();
@@ -998,6 +1006,10 @@ UiScreen BuyMode::screen(int width, int height) {
         hk.buttonState[e] = byFunction ? 1 : 2;
     if (const UiElement* e = root.child(kTabCollections)) // collections are Bon Voyage's
         hk.hide.insert(e);
+    if (const UiElement* e = root.child(kCatalog)) // out with nothing to show (as Build mode's panel)
+        (showCatalog ? hk.show : hk.hide).insert(e);
+    if (const UiElement* e = root.child(0x4CC48AA4))
+        (showCatalog ? hk.hide : hk.show).insert(e);
     if (const UiElement* e = root.child(kToolHand))
         hk.buttonState[e] = (held_ && !heldNew_) || (tool_ == Tool::Hand && !held_) ? 2 : 1;
     if (const UiElement* e = root.child(kToolEyedropper))
@@ -1043,8 +1055,8 @@ UiScreen BuyMode::screen(int width, int height) {
     }
     // The grid: thumbnails of the current page with their prices, the
     // selected one marked, the ones the family cannot afford dimmed
-    // (UpdateAffordability, §1.5: frame 0, inferred).
-    const auto list = items();
+    // (UpdateAffordability, §1.5: frame 0, inferred). The list was taken
+    // above, for the catalog's show state.
     const int rows = expanded_ ? kExpandedRows : kRows;
     const float gridH = expanded_ ? kExpandedGridH : kGridH;
     const size_t perPage = size_t(kColumns * rows);
