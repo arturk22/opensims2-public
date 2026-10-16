@@ -327,12 +327,26 @@ void ParticleLayer::prepare(const simd_float4x4& view, const simd_float4x4& view
                     ax = simd_normalize(x);
             }
         }
+        float height = q.height;
+        if (q.stretch != 0 && (q.alignment == 0 || q.alignment == 5)) {
+            // stretch (the vertex fill, BV 0xeb8dbc): the quad's height along
+            // the velocity on the screen, lengthened by speed / stretch past it.
+            const simd_float3 v = simd_make_float3(q.velocity[0], q.velocity[1], q.velocity[2]);
+            const float vr = simd_dot(v, right), vu = simd_dot(v, up), l = std::sqrt(vr * vr + vu * vu);
+            if (l > 1e-6f) {
+                const float s = vr / l, cc = vu / l;
+                const simd_float3 rx = ax * cc - ay * s, ry = ay * cc + ax * s;
+                ax = rx, ay = ry;
+                if (q.stretch < l)
+                    height *= l / q.stretch;
+            }
+        }
         if (q.alignment != 2 && q.rotation != 0) {
             const float cs = std::cos(q.rotation), sn = std::sin(q.rotation);
             const simd_float3 rx = ax * cs + ay * sn, ry = ay * cs - ax * sn;
             ax = rx, ay = ry;
         }
-        const simd_float3 hx = ax * (q.width * 0.5f), hy = ay * (q.height * 0.5f);
+        const simd_float3 hx = ax * (q.width * 0.5f), hy = ay * (height * 0.5f);
         const Mesh* shape = mesh(qp.texture);
         MTL::Texture* tex = shape ? shape->texture : texture(qp.texture);
         const int pipe = pipelineFor(q.draw), dep = depthFor(q.draw);

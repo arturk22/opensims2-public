@@ -615,8 +615,46 @@ static void testSequence() {
     check(!once.alive(h2), "sequence: no -loop, over after its last item");
 }
 
+// screw and wiggle move where a particle is drawn (the vertex fill, BV
+// 0xeb8dbc), not where it is: about the emitter's vertical by its height x
+// screw radians; stretch is handed to the layer.
+static void testScrew() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    Particles& p = lib.particles[0];
+    p.flags = 0;
+    p.force = {0, 0, 0};
+    p.drag = 0;
+    p.emitSpeed = {1, 1};
+    p.emitDirection = {{0, 0, 1}, {0, 0, 1}};
+    p.emitVolume = {{0.5f, 0, 0}, {0.5f, 0, 0}};
+    lib.visuals[0].components[0].offset = {0, 0, 0};
+    auto first = [&]() {
+        EffectSystem sys(lib, 3);
+        sys.start("Smoke", {});
+        sys.update(0.5f);
+        std::vector<ParticleQuad> q;
+        sys.collect(q);
+        // The oldest particle (born first, highest).
+        ParticleQuad top = q.empty() ? ParticleQuad{} : q[0];
+        for (const auto& x : q)
+            if (x.position[2] > top.position[2])
+                top = x;
+        return top;
+    };
+    const ParticleQuad straight = first();
+    p.screw = 1;
+    p.stretch = 2;
+    const ParticleQuad turned = first();
+    const float h = straight.position[2], a = std::atan2(turned.position[1], turned.position[0]);
+    check(std::fabs(straight.position[1]) < 1e-4f, "no screw: straight up");
+    check(std::fabs(a - h) < 0.02f && std::fabs(turned.position[2] - h) < 1e-4f, "screw 1: turned by its height in radians");
+    check(turned.stretch == 2, "the stretch goes to the layer");
+}
+
 int main() {
     try {
+        testScrew();
         testSequence();
         testParse();
         testLod();

@@ -1747,10 +1747,31 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
         const V3 center = mul(add(lo, hi), 0.5f);
         const int key = (d.flags & pflag::DirectLayer) ? int(d.layer) : int(d.layer) * 8 + 7;
         const int g = group++;
+        const V3 emitterAt = emitterFrame(inst, e).position;
         for (const auto& p : e.particles) {
             const float t = p.age / p.life;
             ParticleQuad q;
-            q.position = transformPoint(frame, p.position);
+            // Where it is drawn (the vertex fill, BV 0xeb8dbc): turned about
+            // the emitter's vertical by its height over it x screw radians,
+            // then moved by the wiggles (WigglePoint BV 0x1c2b5fc: sin(clock x
+            // rate + (its offset from the emitter) . rate direction) x the
+            // wiggle direction), then into the world.
+            V3 at = p.position;
+            if (d.screw != 0) {
+                const float ang = (at[2] - emitterAt[2]) * d.screw, cs = std::cos(ang), sn = std::sin(ang);
+                const float dx = at[0] - emitterAt[0], dy = at[1] - emitterAt[1];
+                at[0] = dx * cs - dy * sn + emitterAt[0];
+                at[1] = dx * sn + dy * cs + emitterAt[1];
+            }
+            if (!d.wiggles.empty()) {
+                const V3 rel = sub(at, emitterAt);
+                for (const auto& w : d.wiggles) {
+                    const float s = std::sin(e.time * w.timeRate + dot(rel, w.rateDirection));
+                    at = add(at, mul(w.wiggleDirection, s));
+                }
+            }
+            q.position = transformPoint(frame, at);
+            q.stretch = d.stretch;
             q.group = g;
             q.groupCenter = center;
             q.layerKey = key;

@@ -45,6 +45,10 @@ struct ParticleQuad {
     // (AddElementsToDisplayList BV 0xeba5cc), and StandardParticlesMaterial
     // multiplies its colour by the environmentCube light's (the host's).
     bool lit = false;
+    // stretch (+0x1e4): a camera-facing quad turns its height along the
+    // velocity seen on the screen and, faster than this, lengthens by the
+    // speed / this (the vertex fill, BV 0xeb8dbc). 0: off.
+    float stretch = 0;
     // Drawing order (cTSParticlesRenderable::AddElementsToDisplayList): an
     // emitter's particles are one group, drawn together in their birth
     // order; the group sorts among the blended parts by its key (layer x 8
