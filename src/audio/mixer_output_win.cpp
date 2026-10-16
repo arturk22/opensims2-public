@@ -63,17 +63,22 @@ bool AudioOutput::start() {
     std::future<bool> done = ready.get_future();
     slot.thread = std::thread([&slot, ready = std::move(ready)]() mutable {
         const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        auto uncom = [&] {
-            if (SUCCEEDED(co))
-                CoUninitialize();
-        };
+        // Every COM pointer below is released before CoUninitialize runs:
+        // releasing one after it is what crashes on a machine with no audio
+        // device (mmdevapi tore down with the apartment).
+        struct Uninit {
+            HRESULT co;
+            ~Uninit() {
+                if (SUCCEEDED(co))
+                    CoUninitialize();
+            }
+        } uncom{co};
         IMMDeviceEnumerator* rawEnum = nullptr;
         HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
                                       reinterpret_cast<void**>(&rawEnum));
         ComPtr<IMMDeviceEnumerator> enumerator(rawEnum);
         if (FAILED(hr) || !enumerator) {
             ready.set_value(false);
-            uncom();
             return;
         }
         IMMDevice* rawDevice = nullptr;
@@ -81,7 +86,6 @@ bool AudioOutput::start() {
         ComPtr<IMMDevice> device(rawDevice);
         if (FAILED(hr) || !device) {
             ready.set_value(false);
-            uncom();
             return;
         }
         auto activate = [&] {
@@ -92,7 +96,6 @@ bool AudioOutput::start() {
         ComPtr<IAudioClient> client = activate();
         if (!client) {
             ready.set_value(false);
-            uncom();
             return;
         }
         WAVEFORMATEX format{};
@@ -122,7 +125,6 @@ bool AudioOutput::start() {
             if (event)
                 CloseHandle(event);
             ready.set_value(false);
-            uncom();
             return;
         }
         IAudioRenderClient* rawRender = nullptr;
@@ -133,7 +135,6 @@ bool AudioOutput::start() {
         if (FAILED(hr) || !render || bufferFrames == 0 || FAILED(client->Start())) {
             CloseHandle(event);
             ready.set_value(false);
-            uncom();
             return;
         }
         slot.wake = event;
@@ -156,7 +157,6 @@ bool AudioOutput::start() {
         client->Stop();
         slot.wake = nullptr;
         CloseHandle(event);
-        uncom();
     });
     return done.get();
 }
