@@ -794,6 +794,54 @@ static void testSkippedEntryUnlinks() {
           "ClearSubActions undoes the waiting sub-actions' links");
 }
 
+// Round n31: TryPushAction always runs cEdithObjectTestSim::TestInteraction
+// for the target (BV 0x4c6214), and Idle for Input before an entry runs: a
+// debug entry (TTAB 0x80) is refused, and so is one without "allow
+// visitors" (TTAB 0x0001) for a visitor (person data 32 not 0); the push
+// fails with result 2, the queued entry is skipped.
+static void testPushTestsTheEntry() {
+    Fixture fx;
+    constexpr uint32_t kBoxGroup = 0x7F000060;
+    fx.code.add(kBoxGroup, 0x80, definition(4, 3, 0x0B1E0005));
+    InteractionTable t;
+    t.version = 0x54;
+    auto debug = entry(0x1001, 0, 0), resident = entry(0x1001, 0, 1), visitors = entry(0x1001, 0, 2);
+    debug.flags = 0x80;
+    visitors.flags = 0x01;
+    t.interactions = {debug, resident, visitors};
+    fx.code.add(kBoxGroup, 3, std::move(t));
+    fx.code.addInteractionStrings(kBoxGroup, 3, ttas({"*Debug", "Residents", "Everyone"}, {"*Debug", "Moradores", "Todos"}));
+    fx.code.add(kBoxGroup, 0x1001, tree({expr(SAttr, 0, Add, Lit, 1, T, E)}));
+    for (uint8_t i : {0, 1, 2})
+        fx.code.add(kBoxGroup, uint16_t(0x1030 + i), tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E),
+                                                            push(i, 0, 3, 0x00, T, F)},
+                                                           1, 1));
+    const ObjectId box = fx.vm.instantiate(kBoxGroup, 0x80).id;
+    auto pushed = [&](uint16_t tree) {
+        const int16_t args[] = {int16_t(box)};
+        Thread th = fx.vm.start(box, tree, args);
+        fx.vm.run(th);
+        return th.status == Thread::Status::Finished && th.result;
+    };
+    Object& s = fx.s();
+    check(!pushed(0x1030) && fx.vm.object(box)->data[kObjdataPrimitiveResult] == 2 && s.queue.empty(),
+          "a debug entry is never pushed (result 2)");
+    check(pushed(0x1031) && s.queue.size() == 1, "a resident takes an entry without \"allow visitors\"");
+    s.queue.clear();
+    syncQueueData(s);
+    s.person->data[kPersondataPersonType] = 1; // a visitor
+    check(!pushed(0x1032 - 1) && fx.vm.object(box)->data[kObjdataPrimitiveResult] == 2 && s.queue.empty(),
+          "a visitor does not (result 2)");
+    check(pushed(0x1032) && s.queue.size() == 1, "an entry with \"allow visitors\" goes onto a visitor's queue");
+    s.queue.clear();
+    syncQueueData(s);
+    enqueue(fx.vm, s, *makeInteraction(fx.vm, box, 1)); // put there by other means
+    fx.vm.tick();
+    check(s.queue.empty() && s.activeInteraction == -1 &&
+              (fx.vm.object(box)->attributes.empty() || fx.vm.object(box)->attributes[0] == 0),
+          "Idle for Input skips a queued entry the visitor may not run");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -813,6 +861,7 @@ int main() {
     testStarEntryStringsFromNamedTree();
     testAutonomousBits();
     testSkippedEntryUnlinks();
+    testPushTestsTheEntry();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

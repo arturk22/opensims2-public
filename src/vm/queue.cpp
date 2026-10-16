@@ -88,6 +88,38 @@ uint16_t enqueueSub(VM& vm, Object& sim, QueuedInteraction q) {
     return uid;
 }
 
+// What cEdithObjectTestSim::TestInteraction (Mac BV 0x4c6214) tests before
+// the check tree, for the Sim the entry is for: its object exists, the
+// entry is not a debug one (TTAB flag 0x80, cTSTreeTableEntry vtable 0x9c:
+// refused out of the game's debug mode, always in a push), and it is for
+// the Sim's age and, for a visitor, has "allow visitors" (availableToAge:
+// the person's age bits, vtable 0xd0, against the entry's, 0x48; IsVisitor
+// and TestFlags(1)). Not read, not done: the object's vtable 0x214 and
+// 0x2e8(autonomous) and the sim system flag 0x23 with the entry's 0x20000.
+bool entryAvailable(VM& vm, const Object& sim, const QueuedInteraction& q) {
+    const Object* o = vm.object(q.object);
+    if (!o)
+        return false;
+    if (q.ttabFlags & 0x80)
+        return false;
+    if (const auto ref = interactionTable(vm, *o))
+        for (const auto& e : ref->table->interactions)
+            if (e.stringIndex == q.interaction)
+                return availableToAge(sim, *ref->table, e);
+    return true;
+}
+
+// TestInteraction with the check tree forced, as Idle for Input, its
+// sub-queue mode and AddAction run it: the tests above, then the check tree
+// with parameter 0 = `autonomous`.
+bool testInteraction(VM& vm, ObjectId simId, const QueuedInteraction& q, bool autonomous) {
+    const Object* sim = vm.object(simId);
+    if (!sim || !entryAvailable(vm, *sim, q))
+        return false;
+    const CheckResult r = checkInteraction(vm, simId, q, nullptr, autonomous);
+    return r == CheckResult::NoGuard || r == CheckResult::True;
+}
+
 // A "Run Immediately" interaction (TTAB flag 0x04: "*Push Look At" of
 // "Controller - Look At", pushed onto every Sim near a social each few
 // seconds) as cTSPerson::AddAction (Mac BV 0xadbbdc) adds it: it never goes
@@ -109,8 +141,7 @@ bool runImmediately(VM& vm, Object& sim, const QueuedInteraction& q) {
     static bool running = false;
     if (running || !sim.person || !vm.object(q.object))
         return false;
-    const CheckResult r = checkInteraction(vm, sim.id, q);
-    if (r != CheckResult::NoGuard && r != CheckResult::True)
+    if (!testInteraction(vm, sim.id, q, false))
         return false;
     if (!q.action)
         return true;
@@ -260,15 +291,6 @@ Exit pushInteraction(Context& c) {
         if (m->activeInteraction >= 0 && size_t(m->activeInteraction) < m->queue.size())
             q->autonomous = m->queue[size_t(m->activeInteraction)].autonomous;
     }
-    if (flags & 0x20) {
-        // TryPushAction's own test: "autonomous" is byte 14 bit 0x02.
-        const CheckResult r = checkInteraction(c.vm, targetId, *q, nullptr, flags2 & 0x02);
-        if (r != CheckResult::NoGuard && r != CheckResult::True)
-            return failed(2);
-    }
-    Object* target = c.vm.object(targetId);
-    if (!target)
-        throw gameError(err::NoStackObject, "Push Interaction");
     // A nested interaction (TTAB flag 0x8000) needs the target's current
     // interaction to allow nesting (TTAB flag 0x4000), else error 0x6F, and
     // goes to the sub-queue, which takes 4 (more: result 4)
@@ -285,12 +307,28 @@ Exit pushInteraction(Context& c) {
     const bool continuation = flags & 0x04;
     const bool nested = q->ttabFlags & 0x8000;
     if (nested) {
-        const bool running = target->activeInteraction >= 0 && size_t(target->activeInteraction) < target->queue.size();
-        if (!running || !(target->queue[size_t(target->activeInteraction)].ttabFlags & 0x4000))
+        const Object* t = c.vm.object(targetId);
+        const bool running = t->activeInteraction >= 0 && size_t(t->activeInteraction) < t->queue.size();
+        if (!running || !(t->queue[size_t(t->activeInteraction)].ttabFlags & 0x4000))
             throw gameError(err::NestedPush, "Push Interaction");
-        if (!continuation && target->subQueue.size() > kMaxSubQueue)
-            return failed(4);
     }
+    // Then TryPushAction always tests the interaction for the target
+    // (cEdithObjectTestSim::TestInteraction, BV 0x4c6214, "autonomous" =
+    // byte 14 bit 0x02): the entry's age and visitor flags and the debug
+    // flag (entryAvailable), and the check tree only with "force run check
+    // tree" (byte 3 0x20). Refused: result 2.
+    if (const Object* t = c.vm.object(targetId); !t || !entryAvailable(c.vm, *t, *q))
+        return failed(2);
+    if (flags & 0x20) {
+        const CheckResult r = checkInteraction(c.vm, targetId, *q, nullptr, flags2 & 0x02);
+        if (r != CheckResult::NoGuard && r != CheckResult::True)
+            return failed(2);
+    }
+    Object* target = c.vm.object(targetId);
+    if (!target)
+        throw gameError(err::NoStackObject, "Push Interaction");
+    if (nested && !continuation && target->subQueue.size() > kMaxSubQueue)
+        return failed(4);
     constexpr size_t kMaxQueue = 6;
     if (!continuation && !nested && target->queue.size() > kMaxQueue)
         return failed(3);
@@ -355,10 +393,8 @@ Exit handleSubQueue(Context& c) {
     me.subQueue.erase(me.subQueue.begin());
     const bool exists = c.vm.object(item.object) != nullptr;
     bool ok = exists && item.action != 0;
-    if (ok) {
-        const CheckResult r = checkInteraction(c.vm, c.thread.me, item);
-        ok = r == CheckResult::NoGuard || r == CheckResult::True;
-    }
+    if (ok)
+        ok = testInteraction(c.vm, c.thread.me, item, false);
     Object* sim = c.vm.object(c.thread.me);
     if (!sim)
         return Exit::True;
@@ -863,8 +899,7 @@ PushOutcome attemptPush(VM& vm, Thread& t, bool nested) {
             // bit (TryIdleForInput BV 0xadeb6c: cEdithObjectTestSim::Init
             // with the interaction's vtable 0xc4), 1 for the entry the Find
             // Best Interaction found and Main pushed.
-            const CheckResult r = checkInteraction(vm, t.me, item, nullptr, item.testAutonomous);
-            ok = r == CheckResult::NoGuard || r == CheckResult::True;
+            ok = testInteraction(vm, t.me, item, item.testAutonomous);
             sim = vm.object(t.me); // the check tree may have removed the Sim
             if (!sim)
                 return PushOutcome::None;
