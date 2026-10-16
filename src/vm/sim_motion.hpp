@@ -45,6 +45,10 @@ public:
         float animWeight = 1;   // its request weight
         int16_t animIkObject = 0; // its IK object (Animate Sim's owner byte 9, u16 10)
         float animHeading = 0;    // its request heading offset (radians)
+        // Its request's blend in and out (seconds; AnimationState::fadeInMs,
+        // fadeOutMs: it blends out to its end, after its action ended) and
+        // its speed.
+        float animFadeIn = 0, animFadeOut = 0, animSpeed = 1;
         std::string walk;       // the locomotion walk animation while walking
         // On a stair (Object::Route::climb): the phase's animation, bumped
         // serial per phase, and the height of the walker's anchor.

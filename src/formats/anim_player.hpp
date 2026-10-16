@@ -116,6 +116,20 @@ public:
         // layers it replaces: the locomotion's clips of one request
         // (cLocoCycle::AnimUpdate, docs/anim-mac.md §8.4).
         bool ease = false;
+        // The request's own blend out, seconds (its weight function,
+        // docs/anim-mac.md §13.2): it plays to its end fading out over its
+        // last `fadeOut` seconds (linearly; 0: none) while what comes next
+        // fades in, and leaves at its end, its bones keeping the values it
+        // left where nothing else writes them. A layer of its priority
+        // played after its blend out began does not cut it. -1: none (a
+        // layer played once that is not stopped stays under every other at
+        // its end; kExpiredLevel, inferred).
+        float fadeOut = -1;
+        // Mixed over what each bone holds (the bone's last value, held_)
+        // instead of taking the bone whole while it fades in alone: our
+        // standing idle, which stands in for the idle trees (inferred), so
+        // that it does not jump from the pose the last request left.
+        bool overHeld = false;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -195,7 +209,11 @@ private:
         bool delta = false; // has delta (additive) channels
         IkObjectBone ikObjectBone; // Options::ikObjectBone
         bool expires = true;       // Options::expires
+        bool ownFade = false;      // Options::fadeOut: fadeOutStart is its own blend out (not a cut)
+        bool overHeld = false;     // Options::overHeld
     };
+    // When the layer was cut (replaced, stopped; its events stop there), -1 never.
+    static double cutAt(const Layer& l) { return l.ownFade ? -1 : l.fadeOutStart; }
     // Every layer finished and constant at `now` (the hold pose settles).
     bool allFinished(double now) const;
     // Whether a layer is still playing at `now` (looping, or before its end, not fading out).

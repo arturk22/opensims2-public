@@ -35,6 +35,9 @@ void SimMotion::sample(VM& vm, const Object& o) {
         s.animIkObject = o.animation.eventObject;
         s.animHeading = o.animation.headingOffset;
         s.animPlayed = o.animation.requestId ? o.animation.playedTicks : 0.0f;
+        s.animFadeIn = o.animation.fadeInMs / 1000.0f;
+        s.animFadeOut = o.animation.fadeOutMs / 1000.0f;
+        s.animSpeed = o.animation.speed;
     }
     s.serial = o.animation.serial;
     s.handOff = count_ && o.locoHandOff != handOffs_;

@@ -190,7 +190,7 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     if (skeleton_ && simSkeleton(skeleton_->name) && l.target && !simSkeleton(l.target->tag))
         l.target = nullptr;
     l.rate = o.rate > 0 ? o.rate : 1.0f;
-    l.start = now - std::max(o.phase, 0.0) / l.rate;
+    l.start = now - o.phase / l.rate; // (a negative phase: it starts later)
     l.fadeIn = std::max(o.fade, 0.0f);
     l.ease = o.ease;
     l.fadeStart = o.ease ? now : l.start;
@@ -208,6 +208,13 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.scale = std::clamp(o.weight, 0.0f, 1.0f);
     l.ikObjectBone = o.ikObjectBone;
     l.expires = o.expires;
+    l.overHeld = o.overHeld;
+    // The request's own blend out, ending at its end.
+    if (o.fadeOut >= 0 && !o.loop && anim.duration > 0) {
+        l.ownFade = true;
+        l.fadeOut = o.fadeOut;
+        l.fadeOutStart = l.start + anim.duration / 1000.0 / l.rate - o.fadeOut;
+    }
     if (l.mirror)
         prepareMirror();
     if (skeleton_ && l.target) {
@@ -220,12 +227,15 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
             l.keyed = keyedBones(*l.target, *skeleton_);
         l.delta = l.target->hasDeltaChannels();
     }
+    // (A request blending out on its own goes on: the game's next request
+    // fades in while the last one fades out.)
     for (auto& other : layers_)
-        if (other.priority == l.priority && other.fadeOutStart < 0) {
+        if (other.priority == l.priority && (other.fadeOutStart < 0 || (other.ownFade && other.fadeOutStart > now))) {
             other.fadeOutStart = now;
             other.fadeOut = l.fadeIn;
             other.easeOut = l.ease;
             other.replaced = true;
+            other.ownFade = false;
         }
     // The first base layer has nothing to fade from (fading in from the
     // rest pose would show a T-pose).
@@ -247,14 +257,15 @@ void AnimPlayer::stop(double now, float fade, int priority) {
         return;
     }
     for (auto& l : layers_)
-        if ((priority < 0 || l.priority == priority) && l.fadeOutStart < 0) {
+        if ((priority < 0 || l.priority == priority) && (l.fadeOutStart < 0 || (l.ownFade && l.fadeOutStart > now))) {
             l.fadeOutStart = now;
             l.fadeOut = fade;
+            l.ownFade = false;
         }
 }
 
 bool AnimPlayer::playsOn(const Layer& l, double now) const {
-    if (l.fadeOutStart >= 0)
+    if (l.fadeOutStart >= 0 && l.fadeOutStart <= now)
         return false;
     if (l.loop)
         return true;
@@ -342,7 +353,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     std::vector<Xform> out = held_.size() == skeleton_->bones.size()   ? held_
                              : base_.size() == skeleton_->bones.size() ? base_
                                                                        : skeleton_->restPose();
-    std::erase_if(layers_, [&](const Layer& l) { return l.fadeOutStart >= 0 && weight(l, now) <= 0; });
+    std::erase_if(layers_, [&](const Layer& l) { return l.fadeOutStart >= 0 && now >= l.fadeOutStart && weight(l, now) <= 0; });
     // A layer that played once and ended gives way to every other: the
     // game's request expires at its end and its bones keep the values it
     // left only where no other channel writes them (cChannelUberOutlet
@@ -370,6 +381,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         int level = 0;
         DeltaPose deltas;        // the layer's delta channels (empty: none)
         std::vector<float> dw;   // their weight per bone (fade x request weight x mask)
+        bool overHeld = false;   // Layer::overHeld
     };
     std::vector<Posed> posed;
     posed.reserve(layers_.size());
@@ -416,7 +428,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         if (p.size() < n)
             continue;
         posedOf[li] = int(posed.size());
-        posed.push_back({std::move(p), std::move(mask), l.level, std::move(deltas), std::move(dw)});
+        posed.push_back({std::move(p), std::move(mask), l.level, std::move(deltas), std::move(dw), l.overHeld});
     }
     bool anyDelta = false;
     for (const auto& x : posed)
@@ -468,8 +480,15 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         float cum = 0;
         Xform acc = out[b];
         float total = 0;
-        for (size_t k = 0; k < posed.size(); ++k)
+        bool overHeld = false;
+        for (size_t k = 0; k < posed.size(); ++k) {
             total += share[k];
+            overHeld = overHeld || (share[k] > 0 && posed[k].overHeld);
+        }
+        // What the levels leave stays with the bone's held value when an
+        // overHeld layer writes it (instead of the normalization).
+        if (overHeld && remaining > 0)
+            cum = remaining;
         for (size_t k = 0; k < posed.size() && total > 0; ++k)
             owns[k][b] = share[k] / total;
         for (size_t k = posed.size(); k-- > 0;) {
@@ -696,14 +715,15 @@ std::vector<AnimPlayer::FiredEvent> AnimPlayer::eventsBetween(double from, doubl
     if (to <= from)
         return out;
     for (const auto& l : layers_) {
-        if (!l.anim || (l.fadeOutStart >= 0 && l.fadeOutStart <= from))
+        const double cut = cutAt(l);
+        if (!l.anim || (cut >= 0 && cut <= from))
             continue;
         const double duration = l.anim->duration / 1000.0 / l.rate; // 1 tick = 1 ms
         for (const auto& e : l.anim->events) {
             const double t = e.ticks / 1000.0 / l.rate;
             if (!l.loop || duration <= 0) {
                 const double at = l.start + t;
-                if (at > from && at <= to && (l.fadeOutStart < 0 || at < l.fadeOutStart))
+                if (at > from && at <= to && (cut < 0 || at < cut))
                     out.push_back({at, l.anim, &e});
                 continue;
             }
@@ -711,7 +731,7 @@ std::vector<AnimPlayer::FiredEvent> AnimPlayer::eventsBetween(double from, doubl
             const double first = std::ceil((from - l.start - t) / duration + 1e-9);
             for (double k = std::max(0.0, first);; ++k) {
                 const double at = l.start + t + k * duration;
-                if (at > to || (l.fadeOutStart >= 0 && at >= l.fadeOutStart))
+                if (at > to || (cut >= 0 && at >= cut))
                     break;
                 if (at > from)
                     out.push_back({at, l.anim, &e});

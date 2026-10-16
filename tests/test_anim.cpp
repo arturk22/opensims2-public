@@ -628,6 +628,36 @@ static void testHeldBones() {
     check(near(last, 10, 0.1f), "held bones: a delta over no base channel does not pile up");
 }
 
+// A request's own blend out (docs/anim-mac.md §13): it plays to its end
+// fading out while the next request fades in (the next one does not cut
+// it), its events go on to its end, and it leaves at its end; our standing
+// idle mixes in over the pose a request left.
+static void testRequestTransition() {
+    Skeleton s;
+    s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
+    s.bones.push_back({"pelvis", 0, Xform{}, 1, 1});
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    Animation a = constantAnim("pelvis", 0, 0, 0), b = constantAnim("pelvis", 60, 0, 0);
+    a.events.push_back({900, 1014, "sound_name=x\n"});
+    AnimPlayer p(&s);
+    const float out = 0.25f;
+    p.play(a, 0, {.fade = 0, .loop = false, .fadeOut = out});
+    check(near(angle(p.pose(0.5)[1].q), 0, 1e-3f), "own blend out: full before it");
+    p.play(b, 0.75, {.fade = out, .loop = false, .fadeOut = out});
+    check(near(angle(p.pose(0.875)[1].q), 30, 0.5f), "own blend out: the next one fades in as it fades out");
+    check(p.eventsBetween(0.85, 0.95).size() == 1, "own blend out: its events go on");
+    p.pose(1.0);
+    check(p.layerCount() == 1 && near(angle(p.pose(1.1)[1].q), 60, 1e-3f), "own blend out: it leaves at its end");
+    // Ended with no blend out, then our idle over the pose it left.
+    Animation c = constantAnim("pelvis", 30, 0, 0), idle = constantAnim("pelvis", 0, 0, 0);
+    AnimPlayer q(&s);
+    q.play(c, 0, {.fade = 0, .loop = false, .fadeOut = 0});
+    q.pose(0.9);
+    q.play(idle, 1.0, {.fade = 0.4f, .overHeld = true});
+    check(near(angle(q.pose(1.2)[1].q), 15, 0.5f) && q.layerCount() == 1,
+          "over held: the idle mixes in over the pose the last request left");
+}
+
 static void testPlayer() {
     Skeleton s;
     s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
@@ -1336,6 +1366,7 @@ int main() {
     testBodyShape();
     testPlayer();
     testHeldBones();
+    testRequestTransition();
     testChannelLevels();
     testDeltaChannels();
     testDeltaIk();

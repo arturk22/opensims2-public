@@ -248,7 +248,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
         if (x != o.animation.overlays.end()) {
             if (x->blendOutSent && !it->second.blendingOut) {
                 it->second.blendingOut = true;
-                b.actor->cueStop(at, it->second.priority, kFade);
+                b.actor->cueStop(at, it->second.priority, x->fadeOutMs / 1000.0f);
             }
             ++it;
             continue;
@@ -288,8 +288,11 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
             p.start = at - phase;
             // Turned by the resource's and the request's heading offsets, as
             // SetupChannel does for every request.
-            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .turn = anim.headingOffset + x.headingOffset,
-                                    .phase = phase, .level = x.level, .ikObjectBone = ikObjectBones(*b.actor, x.ikObject)});
+            // At its request's speed, blended in as its weight function says.
+            const float msPerTick = float(1000.0 / vm_->clock.ticksPerSecond);
+            b.actor->cue(at, anim, {.fade = x.fadeInMs / 1000.0f, .loop = loop, .priority = p.priority, .turn = anim.headingOffset + x.headingOffset,
+                                    .phase = phase, .level = x.level, .rate = x.perTick > 0 ? x.perTick / msPerTick : 1.0f,
+                                    .ikObjectBone = ikObjectBones(*b.actor, x.ikObject)});
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, level %d, loops %d)\n",
                              (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.level, x.loops);
@@ -360,6 +363,10 @@ void LotSimulation::sampleAll(double at) {
         bool loop = true;
         float fade = vm::kBlendTicks / 1000.0f;
         bool ease = false;
+        // An Animate Sim's request: its own blend out to its end (it goes on
+        // after its action ended, while what comes next blends in) and its
+        // speed (docs/anim-mac.md §13).
+        float fadeOut = -1, rate = 1;
         // The base layer's channel level: the standing idle under
         // everything, a walk or a stair phase at the locomotion's 0
         // (CreateLocoRequest's priority), Animate Sim's its own.
@@ -380,6 +387,7 @@ void LotSimulation::sampleAll(double at) {
         }
         else if (!s.animation.empty()) {
             want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;
+            fade = s.animFadeIn, fadeOut = s.animFadeOut, rate = s.animSpeed;
             // (Snapped as it starts, a chair's get-out from the corner the
             // trees snap the Sim to: what played before stays where it was in
             // the world, SeatModule's rule 3, so the blend starts from the
@@ -443,13 +451,19 @@ void LotSimulation::sampleAll(double at) {
                     extras = int(i);
                 }
             } else {
+                // Our standing idle (the stand-in for the idle trees) mixes
+                // over the pose the last request left.
+                const bool standIn = !animated && !walkClip && s.climb.empty();
                 b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
                                         .mirror = mirror, .turn = animated ? anim.headingOffset + s.animHeading : 0.0f,
                                         .phase = walkClip ? double(s.walkPhase) : animated ? double(s.animPlayed) / 1000.0 : 0.0,
                                         .level = level,
                                         .weight = weight,
+                                        .rate = animated ? rate : 1.0f,
                                         .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{},
-                                        .expires = animated});
+                                        .expires = animated,
+                                        .fadeOut = animated ? fadeOut : -1.0f,
+                                        .overHeld = standIn});
             }
             for (int j = extras + 1; j <= b.walkExtras; ++j)
                 b.actor->cueStop(at, kWalkBlend + j, fade);
