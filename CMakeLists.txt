@@ -271,7 +271,7 @@ if(APPLE)
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
     MACOSX_BUNDLE_GUI_IDENTIFIER org.opensims2.opensims2
-    MACOSX_BUNDLE_SHORT_VERSION_STRING 0.3.0
+    MACOSX_BUNDLE_SHORT_VERSION_STRING 0.4.0
     MACOSX_BUNDLE_BUNDLE_VERSION 1
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/cmake/Info.plist.in)
   # Minimum macOS for the Info.plist (the SDK's deployment target when set).
