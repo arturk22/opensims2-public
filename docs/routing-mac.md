@@ -2293,12 +2293,84 @@ toda rota para a casa falha com 2 (264 vezes) até ela morrer. O cercado (x
   quando x ou y é igual (o binário só com os dois diferentes); não muda este
   caso.
 
+### O que mudou no código (rodada n31b) e as medidas
+
+Um commit por parte, `ctest -j2` verde em cada um (58 testes; novo:
+`deck_stairs`):
+
+1. **O piso debaixo dos degraus** (`world.cpp` `World::stairOver`,
+   `path_planner.cpp`): o `addStair` anota os tiles debaixo dos degraus em vez
+   de tirar o piso deles; o planejador só os fecha quando a escada não é de
+   objetos (os mundos sem objetos dos testes) ou com
+   `OS2_STAIRS_OUT_OF_PLANNER=1`. `walkable()`/`hasFloor()` continuam a
+   deixá-los de fora (Ir Aqui, colocação: inferido, não mexido). Teste
+   `deck_stairs`: Juliette e Tybalt saem do deque do `N003_Lot192` em 7.000
+   ticks, com no máximo 2 "Leave" cada.
+2. **Do goal check do bloqueio direto ao contador** (`routing_walk.cpp`
+   `advance`): de volta do goal check (`r.check = 3`) o passo não é testado
+   de novo; o bloqueador guardado vai ao `DoBlockedGoalStillAvailable`
+   (sumido: falha com 1). Teste `test_routing`: um objeto posto no caminho
+   depois do plano e tirado durante o goal check ainda faz a rota falhar com
+   15 (antes ela seguia e chegava).
+3. **Um goal check por tick** (`countGoalCheck`; `Thread::turn` = a chamada
+   do `VM::run`, um turno do Sim por tick; `Object::goalCheckTurn`): passado o
+   primeiro, o andar fica parado aquele tick e o check anotado se perde; o
+   `DoBlocked` espera o tick seguinte com o mesmo bloqueador
+   (`blockCheckDone` = `kBlockPending`, no mesmo byte salvo). Teste: no
+   primeiro turno da rota de dentro de um goal check só um check rodou.
+   Inferido: que o `OnPreSimulatorTick` do agregado roda uma vez por tick
+   (o nome e quem o chama, `AggregateOnPreSimulatorTick`).
+4. Depuração: `OS2_ROUTE_FAILS_NEAR` com as pontas e andares dos portais
+   trancados, `OS2_ROUTE_FAILS_MAP` com os objetos que bloqueiam a 2 tiles.
+
+Medidas de 3 dias (`s2pkg autonomy`, `S2PKG_VISITORS=1 S2PKG_FIRES=1`; main =
+`a18ad74d`; "parte 2" = partes 1 e 2; "n31b" = tudo). Contam só os Sims da
+casa; os fogos mudam de semente quando a ordem dos eventos muda, então as
+mortes contam por corrida com ou sem fogo:
+
+| | main | parte 2 | n31b |
+|---|---|---|---|
+| `N003_Lot192` 12 h: Juliette / Tybalt | "Leave" 117 / 112 vezes, não saem | saem 23:58 / 00:10 (1 "Leave" cada) | idem |
+| sociais ≥ 10 h (`N001_Lot68` s1–6, `N001_Lot11` s1–6, `N003_Lot52` s1–12) | 5: "Estapear" 62 h+ (68 s2), "Dar Coque" 23 h+ (52 s1), "Fofocar" 19 h e "Brincar de Tapa na Mão" 19 h+ (52 s7), "Papear" 22 h (52 s10) | 0 | 0 |
+| outras ≥ 20 h | "Relaxar" 60 h+ (68 s5), "Dormir" 27 h+ (68 s2, s4), "Ler" 47 h+ (11 s4) | "Dormir" 28 h+ (68 s2), "Levando a criança" 40 h (11 s4) | "Dormir" 54 h+ (68 s6) |
+| mortes em corridas sem fogo / com fogo (corridas com fogo), 68 · 11 · 52 | 0 / 4 (1) · 0 / 0 · 6 / 20 (6) | 2 / 8 (2) · 0 / 0 (2) · 1 / 20 (6) | 1 / 12 (3) · 0 / 0 · 6 / 12 (4) |
+| mortes no cercado das urnas (52) | 4 | 3 | 4 |
+
+As 14 sementes × 12.000 ticks (`OS2_SEED` 0–13, `OS2_ROUTE_FAILS=1`,
+`OS2_DEBUG_BLOCK=1`; "resto" = as falhas sem o 13 de propósito dos sociais;
+"de quem anda" = o resto sem o "Move Out Of Way" de quem foi pedido, "Okay to
+Stand Here?", "Command - Reposition" e a árvore de falha):
+
+| | main | parte 2 | n31b |
+|---|---|---|---|
+| `N001_Lot68`: resto / de quem anda / bloqueios por passo | 51 / 40 / 11 | 62 / 47 / 6 | 201 / 87 / 88 |
+| `N001_Lot11`: resto / de quem anda / bloqueios por passo | 3.058 / 341 / 87 | 1.604 / 250 / 65 | 68 / 68 / 12 |
+| interações autônomas que acabam falsas (68 / 11) | 19 / 145 | 22 / 100 | 22 / 0 |
+| `stair_top` (sementes 1–8, falhas no alpendre) | 0, 1, 5, 0, 0, 8, 0, 0 | — | 0 em todas |
+
+O `N001_Lot11` deixa de ter o alpendre preso (o "Move Out Of Way" dos
+pedidos aos Sims parados ali somava quase todo o resto). No `N001_Lot68` o
+resto sobe por uma semente: na 7 a Mary-Sue, a 0,015 da quina da mesa 639
+(dentro da inflação), refaz por uma hora (11.529 → 13.339) "Route To Can"
+(14) e a caminhada da árvore de falha, cujo primeiro passo (o giro do
+clipe de partida) entra na pegada da mesa: 15, como no binário com essa
+ordem; antes o passo testado de novo com ela parada passava. Fica no TODO
+(o passo de partida junto de uma quina).
+
 ## 10. O que falta
 
 - Os retângulos de custo 10 junto das pontas das escadas reta e modular
-  (§9.1, §9.2: a ordem do gerente lida, a caixa do `GetFootprint` no mundo;
-  falta a árvore 0x30 de `TSObjectGetModelType` por direção) e os portais
-  dinâmicos dos dados de objeto `0x58`–`0x61` (só no BV).
+  (§9.1, §9.2, §9.4: são os pés do corrimão, modelos 2–4 da entrada 48;
+  passáveis; nenhum nos lotes medidos; falta saber se a caixa `+0xc..+0x18`
+  da vtable `0x100` é no mundo) e os portais dinâmicos dos dados de objeto
+  `0x58`–`0x61` (só no BV).
+- O cercado das urnas do `N003_Lot52` (§9.4): ler o alcance do `0x4c` do
+  gerente de partições (`0xa0(5)`) e o `0xac` da parede no teste de parede do
+  `TrySnap`, e ver no jogo se quem chuta uma urna lá à noite sai; no VM, o
+  teste de parede do Snap só quando x e y mudam, como o binário.
+- O passo de partida junto de uma quina (§9.4, `N001_Lot68` semente 7): um Sim
+  a 0,015 de uma pegada, dentro da inflação, cujo clipe de partida o leva
+  para dentro dela, falha com 15 a cada rota por uma hora.
 - O `+10` do `WorldOutsideSupport` e o estado 7 no custo do piso (§9.1).
 - O alpendre do `N001_Lot11` (rodadas n18b, n23, n30; §9.2, §9.3): os
   impasses das sementes 2 e 4 acabaram com a leitura da rodada n30 (o passo
