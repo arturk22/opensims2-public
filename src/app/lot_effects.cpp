@@ -337,6 +337,15 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
     placeModels();
     quads_.clear();
     system_->collect(quads_);
+    // The lit particles (texture -light) under the lot's environmentCube
+    // light, "LM_Environment" (TSCreateLightsFromLightingStateWithAmbient BV
+    // 0xd741dc, the lighting state's `environment`: 1 by day, 0.8 at night):
+    // StandardParticlesMaterial's colorScalar -applyTextureLightColor stage.
+    const simd_float3 env = renderer_.environmentLight();
+    for (auto& q : quads_)
+        if (q.lit)
+            for (int k = 0; k < 3; ++k)
+                q.color[size_t(k)] *= env[k];
     layer_->setQuads(quads_);
     if (std::getenv("OS2_DEBUG_FX"))
         std::fprintf(stderr, "opensims2: effects at %.2f s: %zu running, %zu particles\n", seconds,

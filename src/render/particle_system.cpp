@@ -1400,6 +1400,7 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
             q.draw = d.drawType;
             q.alignment = d.alignment;
             q.layer = d.layer;
+            q.lit = (d.flags & pflag::Light) != 0;
             if (q.color[3] > 0.001f && size > 0)
                 out.push_back(q);
         }

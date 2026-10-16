@@ -41,6 +41,10 @@ struct ParticleQuad {
     uint8_t alignment = 0;
     float layer = 0;
     V3 velocity{}; // world units per second (velocity-aligned particles)
+    // texture -light (flag bit 23): the display list gives it the lights
+    // (AddElementsToDisplayList BV 0xeba5cc), and StandardParticlesMaterial
+    // multiplies its colour by the environmentCube light's (the host's).
+    bool lit = false;
     // Drawing order (cTSParticlesRenderable::AddElementsToDisplayList): an
     // emitter's particles are one group, drawn together in their birth
     // order; the group sorts among the blended parts by its key (layer x 8

@@ -155,6 +155,7 @@ public:
     // The state's "environment" light (colour x strength): env cube
     // reflections are multiplied by it (allTextureLights), dimming them at night.
     void setEnvironmentLight(simd_float3 rgb) { environment_ = rgb; }
+    simd_float3 environmentLight() const { return environment_; }
 
     // The Reflection graphics option (Graphics Rules.sgr "Reflection $On":
     // reflectionWithExtraViewer -> mirrorReflectionsEnabled): mirrors

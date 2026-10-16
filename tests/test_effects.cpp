@@ -442,6 +442,11 @@ static void testLod() {
     // LOD 3 of a 1-5 range: halfway between the two.
     const auto mid = run(3);
     check(!mid.empty() && std::fabs(mid[0].width - 1.5f * near[0].width) < 1e-3f, "LOD 3: halfway");
+    check(!near[0].lit, "no texture -light: unlit");
+    lib.particles[0].flags = pflag::Light;
+    const auto lit = run(EffectSystem::kMaxLod);
+    check(!lit.empty() && lit[0].lit, "texture -light (bit 23): lit");
+    lib.particles[0].flags = 0;
     // A component of the near levels only (2-5) is not there from the farthest zoom.
     c.lodBegin = 2;
     check(run(1).empty() && !run(2.5f).empty(), "a 2-5 component shows from LOD 2");
