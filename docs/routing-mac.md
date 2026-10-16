@@ -2078,6 +2078,66 @@ Blocked" (um replanejamento a mais) e, esgotadas as tentativas (contador
 > 4, ou > 3 com o outro parado), o 14 "blocked by person": a interação
 acaba e a autonomia escolhe outra.
 
+
+### O que mudou no código (rodada n30) e as medidas
+
+Um commit por parte, `ctest -j2` verde em cada um (57 testes):
+
+1. **As metas em pé** (`routing.cpp`): o filtro do cone antes do
+   `EvalTileForGoal` (as pontas da fileira, que passam de f·tan 22,5°, saem)
+   e a pessoa no ponto (código 6) a 0,283 do centro (o teste de
+   `TSObjectCanSetPositionAndOrientation` entre pessoas; era meio tile,
+   inferido), com as exceções do teste por passo (`peopleMayOverlap`).
+   `test_routing`: os dois Sims que se cruzam começam um tile antes do
+   objetivo do outro.
+2. **O sair do caminho** (`routing_loco.cpp` `moveOutOfWaySlot`,
+   `askBlockerToMove`; `routing_walk.cpp` `selfOutOfWay`): o slot sintético
+   dos tipos 0/1/2 e as metas pela varredura (`routingGoals`), em vez da
+   fileira de até 6 tiles com o primeiro ponto livre longe do caminho de
+   quem pede (nossa); o pedido aceito sem lugar, a rota guarda quem foi
+   pedido e a interação (`Route::asked`/`askedUid`), e quem pediu replaneja
+   assim que a rota do outro nessa interação acaba (`moveOutOfWayRouteEnded`);
+   com um pedido pendente, nem outro pedido nem sair do caminho; o
+   `TryGetSelfOutOfWay` replaneja mesmo sem lugar. Estado salvo versão 6.
+   `test_routing`: o slot e as suas metas; o bloqueador do corredor dá o
+   passo de 0,3 e quem anda passa.
+3. **O contador** (`Route::places`, `notePlace`): cada planejamento anota o
+   lugar de todos os roteadores; o contador volta a 1 com o bloqueador
+   novo ou quando **quem anda** saiu 0,25 do lugar anotado; "ele saiu do
+   lugar" é o bloqueador fora do lugar anotado no último planejamento.
+   Estado salvo versão 7.
+4. **O teste por passo** (`stepBlocker`): o lugar atual inválido por
+   qualquer motivo deixa o passo ir.
+5. **A pilha de rotas** (`routeStackDepth`): a rota de dentro de uma árvore
+   de callback (inclusive a da falha, cuja rota fica na pilha até o
+   `DoPostFailedOrSucceeded`) não é a de base; pilha > 2 → 14; a árvore de
+   falha só para a rota sozinha.
+6. **"CT - Route Blocked"** (`routeBlocked`): uma vez por rota, o
+   bloqueador como stack object e os parâmetros do binário; verdadeiro
+   replaneja. Estado salvo versão 8. Ajudas de teste: `OS2_ROUTE_FAILS_TREE`,
+   `OS2_DEBUG_GOALCHECK`, o "step into" diz se o bloqueador é pessoa.
+7. **`stair_top` estrito de novo** e **`glides` em 0** (o deslize do
+   turnAndGo de 180° era o relógio da cena andando debaixo de um diálogo que
+   pausava o jogo: `LotSimulation::speedScale`, `docs/anim-mac.md`).
+
+Medidas (`s2pkg autonomy`, `OS2_ROUTE_FAILS=1`; main = `21384f9e`):
+
+| | main | rodada n30 |
+|---|---|---|
+| Alpendre, 28 sementes × 3.000 ticks: sementes com o alpendre preso (> 10 falhas fora as de propósito) | 6 (2, 4, 10, 12, 15, 18) | 3 (6, 10, 21) |
+| `stair_top` (sementes 2/4: falhas no alpendre fora as de propósito) | 8 / 13 | 1 / 0 |
+| 14 sementes × 12.000 ticks, falhas das rotas dos que andam (sem o 13 dos sociais, o "Move Out Of Way" de quem foi pedido, "Okay to Stand Here?", "Command - Reposition" e a caminhada da árvore de falha), Lot68 / Lot11 | 28 / 316 | 40 / 341 |
+| as mesmas, todas menos o 13 dos sociais ("resto"), Lot68 / Lot11 | 39 / 954 | 51 / 3.058 |
+| "Interaction - Move Out Of Way" que falha (Lot11) | 103 | 1.956 |
+
+O "resto" do Lot11 sobe porque o pedido para sair agora é aceito sem
+lugar, como no binário: cada pedido a um Sim parado no alpendre dá as três
+tentativas do "Interaction - Move Out Of Way" (o slot 0 e os globais 8 e
+6), todas sem ponto; os pedidos se repetem nos alpendres presos que
+sobram (sementes 3, 6 e 10 em 12.000 ticks). As falhas das rotas de quem
+anda ficam no mesmo nível (as sementes presas mudam: 2, 4, 10, 12 → 3, 6,
+10).
+
 ## 10. O que falta
 
 - Os retângulos de custo 10 junto das pontas das escadas reta e modular
@@ -2085,24 +2145,19 @@ acaba e a autonomia escolhe outra.
   falta a árvore 0x30 de `TSObjectGetModelType` por direção) e os portais
   dinâmicos dos dados de objeto `0x58`–`0x61` (só no BV).
 - O `+10` do `WorldOutsideSupport` e o estado 7 no custo do piso (§9.1).
-- O impasse do alpendre do `N001_Lot11` (rodada n18b, §9.2): o de dois Sims
-  a 0,28 (semente 2) acabou com a previsão pela curva; fica o da semente 4:
-  o alpendre é um tile só (8, 12, 2) entre o topo da escada do deck ("Stair
-  Modular - Deck - Hi Stub") e a abertura da porta em x = 9. A Cassandra
-  sobe e o Alexander sai pela porta; ele sai do caminho dela (o
-  `TryGetSelfOutOfWay`) e para junto da ponta do portal da porta, por onde
-  ela precisa passar; todo lugar de "sair do caminho" no tile é recusado
-  (`EvalTileForGoal` 9/10) e os dois falham rotas o resto do jogo (117 em
-  12.000 ticks). As pontas do portal da porta estão certas: a porta ("Door -
-  1 Tile - Beveled Glass", no mesmo tile) tem os ossos `route_door_0_N` em
-  (0, 0) e `route_door_0_S` em (0, −1) do modelo, os meios dos dois tiles,
-  como o VM. O ponto 0,35 à frente dele, rumo à ponta (0,12 adiante), cai
-  sobre ela, e a distância entre os centros diminui (`EstimateDistanceToBlocker`,
-  BV `0x6ae72c`: os centros): pela leitura, o binário também o bloquearia.
-  Suspeitos que faltam: a escolha na fileira do
-  `CreateMoveOutOfWayDestination` tipo 0 (aqui o primeiro ponto livre), o
-  "lugar atual também inválido" por qualquer motivo do teste por passo
-  (§9.2) e o tempo das pausas.
+- O alpendre do `N001_Lot11` (rodadas n18b, n23, n30; §9.2, §9.3): os
+  impasses das sementes 2 e 4 acabaram com a leitura da rodada n30 (o passo
+  de 0,3 para sair do caminho, o contador, o "CT - Route Blocked" que
+  replaneja, o aviso a quem pediu). Fica o que o binário também não desfaz,
+  pela leitura: um Sim que para no alpendre (um social com outro que está
+  ali, um passo para fora do caminho de outro) o segura enquanto as suas
+  interações falham, ninguém tendo para onde sair (o alpendre fica na sala
+  0, o lado de fora de um andar cujo único piso ali é ele; os slots de
+  "Okay to Stand Here?", "Command - Reposition" e os globais 8 e 6 do "Move
+  Out Of Way" não acham ponto). Em 3.000 ticks: 3 das sementes 0–27 (6, 10 e
+  21; antes 6: 2, 4, 10, 12, 15, 18). Não lido: se o relógio do jogo traz
+  outra saída (a autonomia que muda de escolha por outra razão), só no jogo
+  rodando (TESTAR).
 - A escala de x,y por 1/16 do `cTSSlotDescriptor::Read` até a "versão"
   `0x46` (os SLOT `0x43`–`0x46` do jogo base já estão em tiles: qual versão
   ele compara?).

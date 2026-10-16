@@ -285,6 +285,17 @@ tem como função (o `PushLocoCycle`, BV `0xd3144c`) foram lidas na listagem
   `0x38`); `+0x1ac` do locomotor é o **início** da fase (o `Begin*Path(t)`
   e o `ComputeLocoStartTicks` o escrevem; o `DistanceCompletedEstimate`
   mede a distância desde ele).
+- (Rodada n30.) O timer é o `nTSSG::cCustomAnimTimer2` (`DesiredElapsedTicksPerFrame`,
+  `MaxElapsedTicksPerFrame`: ticks por quadro), e quando ele salta o
+  `cLocomotable::AnimationTimerAdjustment` (BV `0x6ad1c4`) desloca os
+  instantes guardados da fase (`+0x1ac`, `+0x1b0`, `+0x280`, `+0x284`) e o
+  `cAnimatable` os dos pedidos (BV `0x689b7c`): a locomoção e as animações
+  andam no mesmo relógio, o do simulador. No app o relógio da cena parava
+  só com a pausa do jogador; um diálogo que bloqueia o jogo parava a VM e
+  não as animações (o clipe de partida acabava debaixo do diálogo e, depois,
+  a VM levava o Sim pelo resto do caminho com as pernas paradas:
+  `tests/glides.sh`). Agora para com os dois (`LotSimulation::speedScale`;
+  que o diálogo pare o timer como a pausa: inferido).
 
 ### 8.2 O começo da primeira fase (`ComputeLocoStartTicks`, BV `0x6ad69c`)
 
