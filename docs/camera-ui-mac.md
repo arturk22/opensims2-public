@@ -531,7 +531,161 @@ eixo de profundidade do viewer é o `y` local (o código usa o segundo
 componente do ponto no espaço do viewer; o viewer olha para +Y como o resto do
 jogo), e o `ParentFadeAlpha` (objetos dentro de objetos) não foi feito.
 
----
+### 1.11 Teclado, borda da janela, giro e órbita (binário, rodada n39)
+
+Ghidra MCP (`sims2_bv.ppc`, só leitura); as constantes em `.bss` saíram do
+inicializador estático `0x2170d0c..0x2170d7c` (lido com um desmontador próprio,
+o Ghidra não tinha instruções ali).
+
+**Os campos do controlador** (`cTSCameraSmoothSims1Controller`; cada valor
+suavizado é a estrutura do `FUN_008c77d4`: `+4` passos, `+8` mínimo², `+0xc`
+mínimo, `+0x10` **atual**, `+0x14` **alvo**, `+0x18` iniciado; a vetorial do
+`FUN_008c7c64` tem atual `+0x10..0x18`, alvo `+0x1c..0x24`):
+
+| campo | o que é | passos / mínimo |
+|---|---|---|
+| `+0xbc` (atual `+0xcc`, alvo `+0xd0`) | rumo | `smoothing` (2º número, `SetSpinDuration` `+0xc0`) / `defaultminchange` |
+| `+0xd8` (atual `+0xe8`) | distância 3D | `smoothing` (1º, `SetZoomDuration` BV `0x86af20`, que põe o mesmo N em `+0xdc`, `+0xf8`, `+0x114` e `+0x1bc`) |
+| `+0x148` (atual `+0x158`) | fração do pitch | 7 (`Reset`) |
+| `+0x164` (atual `+0x174`, alvo `+0x180`) | pivô (ponto do piso) | **7 sempre** (`Reset` BV `0x86d688`; nada mais o muda) / `defaultminchange` |
+| `+0x1b0..0x1b8` | velocidade do pivô (mundo) | — |
+| `+0x1c0` | contador de repetição dos passos do teclado/borda | 1 no `Reset` |
+| `+0x200` (atual `+0x210`) | velocidade do giro pelo teclado (px) | `keyboardrotationlerpsteps` / `...minchange` (`Reset`: 20 / 0,05) |
+| `+0x21c` (atual `+0x22c`) | velocidade do zoom pelo teclado | `keyboardzoomlerpsteps` / `...minchange` |
+| `+0x238` (atual `+0x248..`) | velocidade da translação pelo teclado (px) | `keyboardtranslationlerpsteps` / `...minchange` |
+| `+0x264`, `+0x268`, `+0x26c`, `+0x270` | `keyboardrotationspeed`, `keyboardzoomspeed`, `keyboardzoomscale`, `keyboardtranslationspeed` (`SetCameraSpec` BV `0x86f310`) | |
+
+**Teclado: as teclas dos aceleradores** (`ui.package` `0x6A9362F2`/`F5`:
+setas e `a d w s` "Start/Stop Move ...", argumento 1, Shift + seta 2).
+`cTSCameraSmoothSims1Controller::DoMessage` (`FUN_00871c0c`) só mexe no
+**alvo da velocidade em pixels** (`+0x238`): esquerda `x = −speed·arg`, direita
+`x = +speed·arg`, frente `y = −speed·arg`, trás `y = +speed·arg`, o "Stop" do
+eixo zera-o (`speed` = `keyboardtranslationspeed`, 50). O `Update` (BV
+`0x86ffb8`), a cada atualização: guarda o valor atual, suaviza (`dt`), e **se o
+valor de antes não era zero** manda o pedido de mover `0x9b66110a` com o valor
+novo (o mesmo do arrasto com o botão direito). Depois chama
+`UpdateSubjectMotion` (vtable `0x100`, BV `0x86b9d4`).
+
+**O pedido de mover `0x9b66110a`** (`HandleRequest`, BV `0x870cb0`): projeta o
+pivô **atual** (`+0x174`) na tela (viewer `0x238`), soma `(dx, dy)` pixels na
+mesma profundidade, desprojeta os dois (viewer `0x240`), leva a diferença ao
+espaço do viewer (a rotação do viewer, `0x230`; x direita, y fundo, z para
+cima) e põe no chão pelo rumo atual `h` (+ o deslocamento `+0x1f0`, 0):
+
+```
+vel = −lz · (cos h, sin h) + lx · (−sin h, cos h),   vel.z = 0     (+0x1b0..0x1b8)
+```
+
+Ou seja, a parte "para cima na tela" vira "para a frente" sem esticar pelo
+pitch (não é um raio contra o piso). O pedido **guarda uma velocidade**, não
+desloca nada; chama `SetTracking(false)`.
+
+**`UpdateSubjectMotion`** (BV `0x86b9d4`): com `|vel| > 0,001` o alvo do pivô
+vira `pivô atual + vel · N` (`N` = `+0x1bc`, o `smoothing` do zoom: 5 no Live e
+no Build), passando pela restrição do lote (`SetSubjectTarget`, vtable `0xfc`,
+`FUN_006a456c`); senão reaplica o alvo. Com o pivô suavizado em 7 passos de
+50 ms, a velocidade de regime é `vel · N / (7 · 50 ms)`: com `vel` = 50 px na
+profundidade do pivô, FOV 45° numa tela de 800, a 40 de distância, ~29 tiles/s.
+
+**Borda da janela** (`cTSWinSceneGraph::DoWindowEdgeScrolling`, BV `0x1fbe2c`,
+chamada pelo `GZPaint`, **uma vez por quadro**): margem de 4 px, ou de 16 px
+quando já rolava num dos eixos (histerese); à esquerda `h = +rate`, à direita
+`−rate`, em cima `v = +rate`, embaixo `−rate`, `rate` = `horzedgescrollrate` /
+`vertedgescrollrate` (padrão **1,25**, registrados em `0x1ff3a0`; o binário de
+Mac tem as duas strings). Enquanto um eixo é não nulo, ou era no quadro antes,
+manda o pedido do eixo com o valor (0 uma vez ao sair da borda): `0xbb6c7808`
+(lado) e `0x3b6c780f` (frente).
+
+**Os pedidos de passo `0x3b6c780f` / `0xbb6c7808`** (`HandleRequest`):
+`SetTracking(false)`; `+0x1c0 += 1`, e com o eixo 0 volta a 1; então
+
+```
+passo = sqrt(fov · 30) · (−eixo · distância · k) · contador     fov em radianos (viewer, volume 0, +0x3c)
+frente (0x3b6c780f, k = 0,0032):  alvo do pivô = pivô atual + (cos h, sin h) · passo
+lado   (0xbb6c7808, k = 0,002):   alvo do pivô = pivô atual + (−sin h, cos h) · passo
+```
+
+(`k` = `DAT_02c426dc` / `DAT_02c426d8`). Como o contador só sobe enquanto os
+pedidos chegam, a borda **acelera**: um passo maior a cada quadro (depende da
+taxa de quadros, como no jogo). Com o eixo 0 o alvo vira o pivô atual: a câmera
+pára onde está.
+
+**O mapa de dispositivo** (`FillDeviceMap` do controlador, BV `0x872450`;
+`cTSCameraControllerManager::CreateDeviceMap` `0x8656cc`, usado pelo
+`DoMessage(cGZMessage&)` do gerente `0x8655f0`, que recebe as mensagens cruas
+do `cTSWinSceneGraph::DoMessage` `0x1f67d0`): teclas virtuais do Windows —
+`VK_LEFT`/`VK_RIGHT` → `0xbb6c7808` com +1/−1 (Shift ±2), `VK_UP`/`VK_DOWN` →
+`0x3b6c780f` com +1/−1 (±2), nos tipos 1 e 2 (descer/repetir), 0 no tipo 4
+(subir); `=`/`-`/NumPad± → zoom de um nível; `,`/`.` → orientação anterior/
+seguinte; 4..9 com Ctrl/nada/Shift → posições de câmera. **Inferido:** as setas
+nunca chegam aqui no lote, porque o acelerador (`cRZWinKeyAccelerator::
+ProcessAccelerator` `0x93116c`, procura exata por tecla + modificadores em
+`0x9313c0`) as consome antes; o app não faz este caminho.
+
+**Giro pelo teclado.** `,` / `.` mandam "Start Rotate Left/Right"
+(`0x0CA29915` / `0x4CA2991E`) e os "Stop" ao soltar. `cCameraLive::DoMessage`
+(BV `0x6a3df0`) **troca os dois** quando a opção `rotateCameraSims1Mode` (barra
+principal `+0xad`, interface vtable `0x88`; padrão **0**, registrada em
+`0x1af87c`) está desligada. Na base: Left → alvo da velocidade `+0x200` =
+`−keyboardrotationspeed`, Right → `+`. O `Update` manda a cada atualização o
+pedido de girar `0xbc17e41c` com `dx = int(velocidade atual)`, `dy = 0`.
+
+**O pedido de girar `0xbc17e41c`**: se `dx` e `dy` são não nulos, com
+`|dx/dy| < 1` só `dy` conta, com `> 1` só `dx`, e com `= 1` os dois; o alvo do
+rumo = **rumo atual** − clamp(dx · 0,003, ±3) (não o alvo anterior), e o da
+fração do pitch = clamp(**atual** − dy · 0,005, 0, 1). Com 200 px, o alvo fica
+0,6 rad à frente do rumo atual e o rumo anda `0,6 · dt / (50 · 8)` por
+atualização: **1,5 rad/s** (86°/s), sem depender da taxa de quadros. Padrão
+(opção desligada): `.` aumenta o rumo, `,` diminui.
+
+**Giro pelo mouse** (`cTSUserToolCameraMiddleClick::MouseEvent`, BV
+`0x34cf1c`): `dx` desde o clique é **negado** com `rotateCameraSims1Mode`
+desligado (o padrão), então arrastar para a direita aumenta o rumo.
+
+**Zoom pelo teclado** (`=`/`-` "Start/Stop Zoom in/Out", `0x6D41F7AB`/
+`0xAD41F8D8`): alvo da velocidade `+0x21c` = ±`keyboardzoomspeed` (1). O
+`Update` guarda o valor antes, suaviza e, se o de antes não era zero, manda o
+pedido da roda `0x9c17e415` com a posição `int(roda + valor)` e a
+sensibilidade trocada por `keyboardzoomscale` (2): **por atualização**,
+`d += Δ · 2 · (d + 10) / −50`, com `Δ` = ±1 (`keyboardzoomlerpminchange` 1 faz o
+valor saltar para ±1).
+
+**A câmera "Build"**: `cCameraLive::Reset` (BV `0x6a3c70`) põe
+`pivotheightabovefloor` (`+0x490`) = **1,2** antes de ler a especificação; o
+`BuildCamera.txt` não tem o parâmetro, então o Build usa 1,2 (era inferido 1).
+O mesmo `Reset` põe `+0x440..0x44c` = 0,5, 0,5, 6, 2 (os padrões da amostra de
+altura do piso).
+
+**A órbita da câmera livre** (Shift + `a d w s`, "Start orbit left/right/up/
+down" `0x2CEBECBD/C1/C5/C8` do mapa `0x6A9362F7`). `cCameraCameraManController::
+DoMessage` (BV `0x7a6878`): cada um desses eventos (também os repetidos da
+tecla segurada) chama `PickOrbitCenter` (BV `0x7a6590`: um raio do olho ao
+longo da frente do viewer, `(0, 1, 0)` girado pela orientação, contra a cena,
+`+0x16c` do grafo; o ponto mais perto atingido) e liga `+0x2f0` se atingiu; os
+"Stop Move ..." (`a d w s` soltos, com qualquer modificador) e os de subir/
+descer o desligam. Os eventos de órbita **não** mexem na direção (`+0x2ac/+0x2b0/
++0x2b4`): só as teclas sem Shift ("Start Move ...", `q`/`e`) a põem. Com `+0x2f0`
+ligado, o `Update` (BV `0x7a7ac4`) chama a conta da órbita (BV `0x7a7784`) em vez
+da translação:
+
+```
+escala  = s + (1 − s) · h                                   (como a translação)
+alvo da velocidade (+0x204) = maxvelocity · escala · direção
+M       = FUN_000ea0dc(k · vel.z, 0, k · vel.x)             k = π/180 (DAT_02c2ea4c): graus por atualização
+r       = M · (centro − posição atual)
+alvo da posição = centro + r ;  frente = r (FUN_000ea3a0 com (0, 0, 1) para cima), rumo e pitch tirados dela (FUN_000eaac4)
+```
+
+(`FUN_000ea0dc(a, b, c)` monta `[cb·cc, sa·sb·cc − ca·sc, ca·sb·cc + sa·sc;
+cb·sc, sa·sb·sc + ca·cc, ca·sb·sc − sa·cc; −sb, sa·cb, ca·cb]`, ou seja
+`Rz(c)·Ry(b)·Rx(a)` para um vetor coluna; se o `operator*` do vetor pela
+matriz a aplica como linha, é a inversa: o sentido do giro fica inferido.) Lido ao pé da letra: `vel.x` (a/d) gira em torno de Z e
+`vel.z` (q/e) em torno de X; `vel.y` (w/s) não entra; e o alvo fica do outro
+lado do centro (`centro + M·(centro − posição)`, não `centro + M·(posição −
+centro)`), olhando para longe dele. Com a posição suavizada (7 passos) isso
+leva a câmera para dentro do centro escolhido, e cada repetição da tecla
+escolhe um centro novo à frente.
+
 
 ## 2. Menu de pie (`cTSWinPieMenu`)
 
