@@ -40,12 +40,17 @@ void followSelectedSim() {
 }
 
 // Fence rails and posts (os2::lotFencePieces): one model per CRES, an
-// instance per piece; called again after Build mode changed the fences
-// (instances are reused, extra ones hidden). Returns the pieces placed.
-// Pieces above `level` (the lot's numbering) are left out (see WallView::visible).
+// instance per piece; called again after Build mode changed the fences or
+// the view's level or wall mode changed (instances are reused, extra ones
+// hidden). Returns the pieces placed. Pieces above the view's level (the
+// lot's numbering) are left out (see WallView::visible), and with the walls
+// down the half walls' rails and posts of the levels the mode reaches
+// (cFenceManager::SetLevelUpDownState, Mac BV 0x6cf32c, takes nodes 7-12
+// away; docs/roof-fence-water-mac.md §2.1).
 size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
                         const os2::PatternCatalog& patterns, std::vector<std::string>* warnings,
-                        int level) {
+                        const os2::LotViewOptions& view) {
+    const int level = view.level;
     auto& models = gFenceModels;
     auto& instances = gFenceInstances;
     const auto pieces = os2::lotFencePieces(lot, patterns, warnings);
@@ -54,6 +59,8 @@ size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, cons
         // (Not the next-story rule of a level shown with the one below:
         // railings stand on decks over any ground, buildLotModel keeps them.)
         if (!os2::WallView::visible(lot, level, piece.transform[12], piece.transform[13], piece.transform[14]))
+            continue;
+        if (piece.halfWall && view.walls == os2::LotViewOptions::Walls::Down && os2::lotWallModeLevel(view, piece.level))
             continue;
         auto it = models.find(piece.model);
         if (it == models.end()) {
@@ -352,8 +359,8 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
         const os2::ObjectModel model = os2::buildLotModel(*gLotShape, *gIndex, *gLotPatterns, want, &layout, &gLotCache);
         const CFTimeInterval built = CACurrentMediaTime();
         renderer.replaceObject(gLotModel, model, *gIndex);
-        if (want.level != gLotView.level)
-            placeFencePieces(renderer, *gIndex, *gLotShape, *gLotPatterns, nullptr, want.level);
+        if (want.level != gLotView.level || want.walls != gLotView.walls)
+            placeFencePieces(renderer, *gIndex, *gLotShape, *gLotPatterns, nullptr, want);
         // The atlas does not depend on the view; if it did change (it should
         // not), the light maps follow it.
         if (gLightMapLayout && (layout.walls.size() != gLightMapLayout->walls.size() || layout.height != gLightMapLayout->height)) {
@@ -504,7 +511,7 @@ void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
     renderer.replaceObject(gLotModel, model, index);
     renderer.setGroundClip(os2::lotSkirtBottom(*gLotShape)); // the terrain may have been lowered
     gLotView = view;
-    placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr, view.level);
+    placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr, view);
     if (gLighting) {
         gLighting->setLightMapLayout(*gLightMapLayout);
     } else {

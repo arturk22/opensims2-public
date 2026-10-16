@@ -1619,16 +1619,36 @@ static void testWallGeometry() {
         check(k.cut.size() == 1 && k.cut[0][0] == 1 && k.cut[0][2] == 1, "only walls down at both ends hide what hangs on them");
     }
     {
-        // A half wall (a fence with a covering): 1.025 over its floor.
+        // A half wall (a catalog fence with ishalfwall: PartitionType 3):
+        // 1.025 over its floor. The same covered fence of a plain fence style
+        // is no wall (AddWallImpl takes walls and half walls only).
         Lot f = lot;
         f.walls.clear();
         add(f, 0, 0, 1, 0, 0x1234ABCD);
-        const ObjectModel m = buildLotModel(f, index, patterns);
+        check(!part(buildLotModel(f, index, patterns), "wall:paper"),
+              "half walls: a covered fence that is not a half wall style draws no wall");
+        PatternCatalog halfWalls = patterns;
+        halfWalls.setFence(0x1234ABCD, {"rail", "", "post", true});
+        const ObjectModel m = buildLotModel(f, index, halfWalls);
         const auto* wall = part(m, "wall:paper");
         float top = -9;
         for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i)
             top = std::max(top, wall->mesh.positions[i][2]);
         check(near(top, 1.025f - 0.01f), "half walls: 1.025 over the floor");
+    }
+    {
+        // A wall with neither tile beside it on the lot: no geometry
+        // (AddWallImpl, cWorldDB slot 0xf8).
+        Lot f = lot;
+        f.walls.clear();
+        add(f, 3, 0, 3, 1); // the lot's east edge: the west tile is on the lot
+        add(f, 4, 0, 4, 1); // a tile past it: neither
+        const ObjectModel m = buildLotModel(f, index, patterns);
+        const auto* wall = part(m, "wall:paper");
+        float maxX = -9;
+        for (size_t i = 0; wall && i < wall->mesh.positions.size(); ++i)
+            maxX = std::max(maxX, wall->mesh.positions[i][0]);
+        check(wall && maxX < 3.2f, "walls: one with no tile beside it on the lot is not drawn");
     }
 }
 
@@ -1733,19 +1753,42 @@ static void testFencePieces() {
     });
     check(!straightOnDiagonal, "fences: no straight rail on a diagonal edge without a diagonal model");
 
-    // A half wall (a covered fence) on the raising style: wall node 5,
-    // raised 0.75 (inferred half walls: the base catalog has none).
+    // A half wall (a catalog fence with ishalfwall, PartitionType 3) on the
+    // raising style: wall node 5, raised 0.75 (the base catalog has none).
+    // Its rails and posts are flagged for the walls-down mode, and its post
+    // is raised only where a half wall of the style ends (FUN_00a7098c).
+    PatternCatalog halfWalls = patterns;
+    halfWalls.setFence(kStyle, {"hrail", "", "hpost", true});
     lot.wallPatterns[1] = "paper";
     Lot half;
     half = lot;
     half.walls.clear();
-    half.fencePosts.clear();
+    half.fencePosts = {{0, 3, 3, kStyle}};
+    {
+        // No half wall ends at (3, 3) yet: its post stays down.
+        const auto pieces = lotFencePieces(half, halfWalls);
+        auto lone = std::find_if(pieces.begin(), pieces.end(), [](const LotFencePiece& p) { return p.model == "hpost"; });
+        check(lone != pieces.end() && lone->halfWall && near(lone->transform[14], 0),
+              "half walls: a post on style 4 with no half wall of its style there is not raised");
+    }
     Lot::Wall hw;
     hw.a = {2, 3, 0}, hw.b = {3, 3, 0};
     hw.type = kStyle;
     hw.patterns = {1, 1};
     half.walls.push_back(hw);
-    const ObjectModel m = buildLotModel(half, index, patterns);
+    {
+        const auto hp = lotFencePieces(half, halfWalls);
+        auto at = [&](const std::string& model, float x) -> const LotFencePiece* {
+            for (const auto& p : hp)
+                if (p.model == model && std::abs(p.transform[12] - x) < 1e-4f)
+                    return &p;
+            return nullptr;
+        };
+        const auto *rail = at("hrail", 2), *post = at("hpost", 3);
+        check(rail && rail->halfWall && post && post->halfWall && near(post->transform[14], 0.75f),
+              "half walls: rails and posts flagged for the walls-down mode; the post raised where a half wall ends");
+    }
+    const ObjectModel m = buildLotModel(half, index, halfWalls);
     float bottom = 1e9f, top = -1e9f;
     for (const auto& part : m.parts)
         if (part.node == "wall:paper")

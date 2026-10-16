@@ -41,11 +41,24 @@ public:
     const Roof* roof(uint32_t guid) const;
 
     // Fences (catalog type 0x2CB230B8): CRES names (without "_cres") of the
-    // rail (one per tile), the diagonal rail and the post.
+    // rail (one per tile), the diagonal rail and the post, and whether the
+    // style is a half wall ("ishalfwall", cTSPatternFence::ReadProperties,
+    // Mac BV 0x84f518; docs/walls-floors-mac.md §6.4).
     struct Fence {
         std::string rail, diagonalRail, post;
+        bool halfWall = false;
     };
     const Fence* fence(uint32_t guid) const;
+    // A catalog fence (tests; the catalog's own come from its property sets).
+    void setFence(uint32_t guid, Fence fence) { fences_[guid] = std::move(fence); }
+    // nTSWorld::PartitionStyleIsHalfWall (Mac BV 0x8b572c): the style's
+    // PartitionType is 3 (the product's +0xc0). Taken as the catalog fence's
+    // ishalfwall (inferred: who sets the type from it was not found). The
+    // base game's catalog has none.
+    bool isHalfWall(uint32_t style) const {
+        const Fence* f = fence(style);
+        return f && f->halfWall;
+    }
     // The fence the game draws for a style: its own, else the catalog's
     // default fence product (fences.txt's `default` entry, the picket fence
     // 2), as cFenceGeometryNode::FenceGeometryResource does (Mac BV 0x754000,
@@ -135,6 +148,9 @@ struct LotViewOptions {
     std::vector<std::array<float, 3>> exposeOutside;
     std::vector<uint16_t> exposeRooms;
 };
+// The levels whose walls take the view's wall mode: the view's level (all
+// with kAllLevels) and those from lowestCut up to it.
+bool lotWallModeLevel(const LotViewOptions& view, int level);
 // Which of lot.walls the view's cutaway cuts down
 // (cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls and the walls
 // blocking the selected Sim, docs/ui-live-mac.md 8c-8d): the walls of the
@@ -216,6 +232,10 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
 struct LotFencePiece {
     std::string model;
     std::array<float, 16> transform;
+    int level = 0;
+    // A half wall's rail or post (cFenceManager nodes 7-12): the walls-down
+    // mode takes them away (SetLevelUpDownState, Mac BV 0x6cf32c).
+    bool halfWall = false;
 };
 std::vector<LotFencePiece> lotFencePieces(const Lot& lot, const PatternCatalog& patterns,
                                           std::vector<std::string>* warnings = nullptr);

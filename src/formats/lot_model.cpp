@@ -90,13 +90,21 @@ bool bothEndsRaised(const Lot& lot, const Lot::Wall& w) {
            touchesRaisingStyle(lot, w.b.level, int(std::lround(w.b.x)), int(std::lround(w.b.y)));
 }
 
-WallNode wallNode(const Lot& lot, const Lot::Wall& w) {
-    // A fence with a covering is a half wall (inferred: the game asks the
-    // style's PartitionType, 3; the base catalog has no such fence): node 3
+// nTSWorld::PartitionStyleIsWall (Mac BV 0x8b566c): PartitionType 0 (the
+// walls.txt walls) or 3 (half walls). AddWallImpl (0x6c64c8) builds nothing
+// for any other partition: a fence, covered or not, is only its rails and
+// posts (lotFencePieces). docs/walls-floors-mac.md §6.4.
+bool partitionIsWall(const Lot::Wall& w, const PatternCatalog& patterns) {
+    return !Lot::isFence(w.type) || patterns.isHalfWall(w.type);
+}
+
+// Called for walls only (partitionIsWall).
+WallNode wallNode(const Lot& lot, const Lot::Wall& w, const PatternCatalog& patterns) {
+    // A half wall (PartitionStyleIsHalfWall: PartitionType 3): node 3
     // (fixedHeight, not flat-topped), or node 5, 0.1 thick and raised 0.75,
     // when both ends touch the raising deck/foundation style (AddWallImpl
     // with FUN_00166414, docs/walls-floors-mac.md §1).
-    if (Lot::isFence(w.type))
+    if (patterns.isHalfWall(w.type))
         return bothEndsRaised(lot, w) ? WallNode{5, 0.1f, kRaisedByStyle, kSpanFixedHeight, false, true}
                                       : WallNode{3, 0.15f, -0.01f, kSpanFixedHeight, false, true};
     if (w.type == Lot::Attic)
@@ -459,12 +467,7 @@ std::optional<ObjectModel::AlphaMask> wallMaskValues(ResourceIndex& index, const
     return out;
 }
 
-// The levels whose walls take the view's wall mode: the view's level
-// (all with kAllLevels) and those from lowestCut up to it.
-bool wallModeLevel(const LotViewOptions& view, int level) {
-    return view.level == LotViewOptions::kAllLevels || level == view.level ||
-           (level >= view.lowestCut && level < view.level);
-}
+bool wallModeLevel(const LotViewOptions& view, int level) { return lotWallModeLevel(view, level); }
 
 
 // Walls as the game's cWallGeometryNode builds them (docs/walls-floors-mac.md
@@ -511,14 +514,25 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         // The column deck's skirt (walls.txt "wall 4": notRendered) is not drawn.
         if (w.type == Lot::DeckSkirt)
             continue;
-        if (Lot::isFence(w.type)) {
-            if (!patterns.fence(w.type))
-                ++unknownFences;
-            if (w.patterns == std::array<uint16_t, 2>{0xFFFF, 0xFFFF})
-                continue; // rails only: see lotFencePieces
-        }
+        if (Lot::isFence(w.type) && !patterns.fence(w.type))
+            ++unknownFences;
+        if (!partitionIsWall(w, patterns))
+            continue; // rails and posts only: see lotFencePieces
         if (w.a.x == w.b.x && w.a.y == w.b.y)
             continue;
+        // AddWallImpl: nothing either when neither tile beside the wall is on
+        // the lot (cWorldDB slot 0xf8 on the locator's two tiles).
+        {
+            const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+            const float len = std::hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+            const float nx = (w.b.y - w.a.y) / len, ny = -(w.b.x - w.a.x) / len;
+            auto onLot = [&](float s) {
+                const float x = std::floor(mx + s * nx * 0.5f), y = std::floor(my + s * ny * 0.5f);
+                return x >= 0 && y >= 0 && x < float(lot.width) && y < float(lot.height);
+            };
+            if (!onLot(1) && !onLot(-1))
+                continue;
+        }
         // A partition with no covering on either side has nothing to draw
         // (its top alone floated as dark strips over the lawn; on N002_Lot10
         // those were walls read from the wrong wall graph, fixed in Lot::load).
@@ -530,7 +544,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             continue;
         W r;
         r.wall = &w;
-        r.node = wallNode(lot, w);
+        r.node = wallNode(lot, w, patterns);
         ws.push_back(r);
     }
 
@@ -1302,8 +1316,11 @@ PatternCatalog::PatternCatalog(ResourceIndex& index, const std::filesystem::path
     }
     for (const auto& loc : index.ofType(kTypeCatalogFence)) {
         const auto props = text(loc);
-        if (auto guid = guidOf(props))
-            fences_[*guid] = {get(props, "rail"), get(props, "diagrail"), get(props, "post")};
+        if (auto guid = guidOf(props)) {
+            const std::string half = lowerAscii(get(props, "ishalfwall"));
+            fences_[*guid] = {get(props, "rail"), get(props, "diagrail"), get(props, "post"),
+                              half == "true" || half == "1"};
+        }
     }
     for (const auto& loc : index.ofType(kTypeCatalogPattern)) {
         const auto bytes = index.read(loc);
@@ -1346,6 +1363,11 @@ std::string PatternCatalog::material(const std::map<std::string, std::string>& s
         if (auto it = byGuid_.find(*guid); it != byGuid_.end())
             return it->second;
     return pattern;
+}
+
+bool lotWallModeLevel(const LotViewOptions& view, int level) {
+    return view.level == LotViewOptions::kAllLevels || level == view.level ||
+           (level >= view.lowestCut && level < view.level);
 }
 
 bool storyOverGround(const Lot& lot, int level, int x, int y) {
@@ -1606,7 +1628,7 @@ int lotTopLevel(const Lot& lot) {
 // over the floor, below it the next level's floor, attic walls the roof
 // less 0.25, half walls 1.025 over their floor; that FillFromWalls takes the
 // same is inferred; rails cast none, FenceStyleHasNoShadow).
-void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& lm) {
+void fillSunOccluders(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, LotLightMapLayout& lm) {
     constexpr int k = LotLightMapLayout::kTexelsPerTile;
     const long w = long(lot.width) * k, h = long(lot.height) * k;
     lm.occluders.assign(size_t(w * h), -1e9f);
@@ -1618,14 +1640,13 @@ void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& 
     for (const auto& wl : lot.walls) {
         if (wl.type == Lot::DeckSkirt)
             continue;
-        const bool fence = Lot::isFence(wl.type);
-        if (fence && wl.patterns == std::array<uint16_t, 2>{0xFFFF, 0xFFFF})
+        if (!partitionIsWall(wl, patterns))
             continue; // rails
         const int level = wl.a.level;
         if (wl.a.x == wl.b.x && wl.a.y == wl.b.y)
             continue;
         // The wall's top as drawn (WallTopElevation, the node's span).
-        const int span = wallNode(lot, wl).span;
+        const int span = wallNode(lot, wl, patterns).span;
         auto topAt = [&](float x, float y) { return wallTopElevation(lot, roofs, level, x, y, span); };
         LotLightMapLayout::SunWall sw;
         sw.a = {wl.a.x, wl.a.y};
@@ -1960,7 +1981,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         for (auto& uv : part.mesh.uvs2)
             uv = {uv[0] / float(lm.width), uv[1] / float(std::max<uint32_t>(lm.height, 1))};
     if (lightMap) {
-        fillSunOccluders(lot, roofs, lm);
+        fillSunOccluders(lot, patterns, roofs, lm);
         *lightMap = std::move(lm);
     }
     return model;
@@ -2000,13 +2021,14 @@ std::vector<LotFencePiece> lotFencePieces(const Lot& lot, const PatternCatalog& 
         const float z0 = ground(w.a.level, w.a.x, w.a.y), z1 = ground(w.b.level, w.b.x, w.b.y);
         const float c = dx / len, s = dy / len, shear = (z1 - z0) / len;
         const float lift = bothEndsRaised(lot, w) ? kRaisedByStyle : 0.0f;
-        out.push_back({model, {c, s, shear, 0, -s, c, 0, 0, 0, 0, 1, 0, w.a.x, w.a.y, z0 + lift, 1}});
+        out.push_back({model, {c, s, shear, 0, -s, c, 0, 0, 0, 0, 1, 0, w.a.x, w.a.y, z0 + lift, 1}, w.a.level,
+                       patterns.isHalfWall(w.type)});
     }
     // Posts (AddPostImpl, 0x75a4c0), from the lot's post layer: the style's
     // post at the grid point, not turned, scale 1, 0.75 higher when that one
-    // point touches the raising style (for a half wall the game also wants a
-    // half wall of the style at the point, graph 0xb: not told apart here,
-    // the base game has none). An arch's posts are drawn with the arch below.
+    // point touches the raising style and, for a half wall's post, a half
+    // wall of the same style ends there (FUN_00a7098c: graph 0xb, the half
+    // walls). An arch's posts are drawn with the arch below.
     size_t unknown = 0;
     for (const auto& p : lot.fencePosts) {
         if (patterns.isFenceArchStyle(p.fence))
@@ -2016,8 +2038,16 @@ std::vector<LotFencePiece> lotFencePieces(const Lot& lot, const PatternCatalog& 
         const auto* fence = patterns.fenceOrDefault(p.fence);
         if (!fence || fence->post.empty())
             continue; // (the rock walls have no post)
-        const float lift = raised(p.level, p.x, p.y) ? kRaisedByStyle : 0.0f;
-        out.push_back({fence->post, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, ground(p.level, p.x, p.y) + lift, 1}});
+        const bool half = patterns.isHalfWall(p.fence);
+        auto halfWallThere = [&] {
+            return std::any_of(lot.walls.begin(), lot.walls.end(), [&](const Lot::Wall& w) {
+                return w.type == p.fence && w.a.level == p.level &&
+                       ((w.a.x == p.x && w.a.y == p.y) || (w.b.x == p.x && w.b.y == p.y));
+            });
+        };
+        const float lift = raised(p.level, p.x, p.y) && (!half || halfWallThere()) ? kRaisedByStyle : 0.0f;
+        out.push_back({fence->post, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, ground(p.level, p.x, p.y) + lift, 1},
+                       p.level, half});
     }
     if (unknown && warnings)
         warnings->push_back(std::to_string(unknown) + " fence posts of unknown fences (drawn as the default fence)");
@@ -2045,8 +2075,10 @@ std::vector<LotFencePiece> lotFencePieces(const Lot& lot, const PatternCatalog& 
             const float c = dx / len, s = dy / len, za = ground(f.level, ax, ay), zb = ground(f.level, bx, by);
             auto put = [&](const std::string& model, float x, float y, float z, bool turned = true) {
                 if (!model.empty())
-                    out.push_back({model, turned ? std::array<float, 16>{c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x, y, z, 1}
-                                                 : std::array<float, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1}});
+                    out.push_back({model,
+                                   turned ? std::array<float, 16>{c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x, y, z, 1}
+                                          : std::array<float, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1},
+                                   f.level});
             };
             const int ddx = f.bx - f.ax, ddy = f.by - f.ay;
             put(arch->center, ax, ay, za);

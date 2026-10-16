@@ -228,7 +228,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     }
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
-    const size_t fences = placeFencePieces(renderer, index, lot, patterns, &fenceWarnings, view.level);
+    const size_t fences = placeFencePieces(renderer, index, lot, patterns, &fenceWarnings, view);
     for (const auto& w : fenceWarnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     perfLap("fences");

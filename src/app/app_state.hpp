@@ -491,7 +491,7 @@ void changeFloor(int delta);
 void followSelectedSim();
 size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
                         const os2::PatternCatalog& patterns, std::vector<std::string>* warnings,
-                        int level = os2::LotViewOptions::kAllLevels);
+                        const os2::LotViewOptions& view = {});
 int viewLevel();
 std::optional<std::pair<simd_float2, int>> groundUnderRay(simd_float3 eye, simd_float3 dir);
 std::optional<float> floorUnderRay(simd_float3 eye, simd_float3 dir);
