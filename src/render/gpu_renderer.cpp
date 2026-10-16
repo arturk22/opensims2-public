@@ -2004,10 +2004,10 @@ void GpuRenderer::setClearColor(simd_float4 color) { gpu_->clearColor = {color.x
 SDL_Window* GpuRenderer::window() const { return gpu_->window; }
 
 bool GpuRenderer::draw(const simd_float4x4& viewProj) {
-    SDL_Event event;
-    while (SDL_PollEvent(&event))
-        if (event.type == SDL_EVENT_QUIT)
-            return false;
+    // No SDL_PollEvent here: polling in the draw (before the scene's own poll next frame)
+    // dispatches the Windows messages queued during the frame's CPU time and discards the
+    // SDL events they produce, so clicks and moves arrive late or not at all. The scenes
+    // poll the events; this only draws.
     gpu_->flushDynamic();
     gpu_->buildParticles(gpu_->view, viewProj);
     int pixelW = 0, pixelH = 0;
