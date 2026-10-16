@@ -1055,8 +1055,9 @@ headless).**
 *`SetParams`* (BV `0x1d2b20`): `+0x58` tipo (byte 5); `+0x70` = byte 7 bit 0
 ("return"); `+0x71` = **não** byte 7 bit 7; `+0x72` o stack object; `+0x74`
 e `+0x75` zerados (o tutorial os liga: sem tempo e sem título). As strings
-vêm do grupo da árvore (`frame→0x50→0x28`), do semi-global com o byte 8
-bit 0, do global `0x7FD46CD0` com o bit `0x40`; mensagem u16 13 (temp 0 com
+vêm do grupo privado do dono do código (`frame→0x50→0x28`: o
+`cTSBehavior` do quadro, rodada n45 abaixo), do semi-global da definição
+dele com o byte 8 bit 0, do global `0x7FD46CD0` com o bit `0x40`; mensagem u16 13 (temp 0 com
 `0x02`), título byte 6 (temp 3 com `0x10`), botão 1 byte 3 (temp 1 com
 `0x04`), botão 2 byte 4 (temp 2 com `0x08`), botão 3 byte 0 (temp 4 com
 `0x20`). O índice de um temp vai como está (base 1, como o do operando):
@@ -1146,8 +1147,8 @@ Os 35 tokens do **jogo base**, na ordem em que são trocados:
 | 35 | `$TokenNameLocal:a` | ficha no índice local a do inventário pessoal de quem roda a árvore (erro 0x1C se não é pessoa) |
 
 Os números passam pelo formatador do idioma (`FUN_0006e164`→`0x98(0)`→
-`0x48`), com `%d` de reserva; como o português do jogo agrupa os milhares
-não foi lido (o app segue com `%d`). O BV acrescenta `$LotNameLocalByLotId`,
+`0x48`), com `%d` de reserva: grupos de três com "." em português e ","
+em inglês (rodada n45 abaixo). O BV acrescenta `$LotNameLocalByLotId`,
 `$SkillName`, `$WordPoints`, `$NeighborhoodLocal`, `$PrimaryNeighborhood`,
 `$Want/FearDescriptionLocal`, `$Want/FearHelpTextLocal`, `$GroupName`,
 `$Property{Private,SemiGlobal,Global}String` e `$GUIDCatalogNameLocal`;
@@ -1395,6 +1396,128 @@ grava −1 nos itens não escolhidos.
 a notificação apareceu; `cTSWinNotification::IsDone`: some quando tempo ≠ 0
 e decorrido ≥ tempo. 0 = fica até ser fechada (ou até o tipo 9 "Stop Text
 Notification").
+
+**Rodada n45: o formatador do idioma, as strings, a caixa de fechar e as
+listas dos telefones (binário, Ghidra MCP; BV, com o base 1.0 onde dito).**
+
+*O formatador de números e de hora.* O `FUN_0006e164` do base 1.0 é o
+`RZ::FS()`; o `0x98(0)` dele é o `cRZLanguageManager::GetLanguageUtility`
+(BV `0x12b5a8`): o `cRZLanguageUtility` embutido em `+0x44`, o do idioma
+corrente (`+0x3c`). A vtable do utilitário (BV `0x27a5da0`): `0x24`
+`MakeTimeString` (`0x137700`), `0x38` `GetThousandSeparator` (`0x136dd4`),
+`0x48` `MakeNumberString` (`0x138448`, não é função no Ghidra: lido pela
+listagem), `0x58` `CompareStrings` (`0x1352b4`), `0x6c`
+`AreFirstAndLastNamesReversed` (`0x12cffc`), `0x70` `MakeFullName`
+(`0x137c04`). O idioma (`+8`) usa os números dos STR# (0x23 = 35 é "pt",
+`GetISO639LanguageCodeFromLanguageID` BV `0x12b708`).
+- `MakeNumberString(long long v)`: `"%lld"` de |v|; com mais de 3 dígitos,
+  grupos de 3 contados da direita, separados pelo de milhar; `"-"` na
+  frente se v < 0. Separador: `","` nos idiomas 1, 2, 0xC, 0xF, 0x11–0x14,
+  0x1C e nos não listados; `"."` em 4–8, 0xE e **0x23 (português do
+  Brasil)**; o espaço sem quebra `"\xC2\xA0"` (o `+0x18` do utilitário, BV
+  `0x135af4`) em 3, 9, 10, 0xB, 0xD, 0x10, 0x1A. O base 1.0 tem o mesmo
+  laço (`0xa3e80`…, `"%lld"`, vtable `0x38`). O `ParseUIString` cai em
+  `"%d"` só sem o utilitário. Ex.: `$$Money` de 12 × 100 dá "$1.200" em
+  português e "$1,200" em inglês.
+- `MakeTimeString(h, m, s, texto)`: h mod 24, m e s mod 60; em inglês dos
+  EUA (1), no idioma 0x2A ou com a propriedade `force12HrTime` (só no BV),
+  `"%u:%.2u %s"` com "am"/"pm" (0 → 12, 13–23 → 1–11; sem minuto
+  `"%u %s"`); senão, com minuto e sem segundo: 2–5, 0x10, 0x1D
+  `"%.2u:%.2u"`; 8, 0x24, 0x27, 0x28 `"%.2u.%.2u"`; 0xB, 0x1C, 0x1A
+  `"%u.%.2u"`; os outros, **português do Brasil inclusive**, `"%u:%.2u"`.
+  O `$TimeLocal` pede (hora, 0, −1): "17:00" em português, "5:00 pm" em
+  inglês.
+
+*De qual arquivo saem as strings.* O `+0x20` do quadro (vtable `0x50`, BV
+`0xe17660`) é o `cTSBehavior` do quadro, o do objeto cujo código roda (o
+dono do código: uma árvore semi-global que o objeto chama roda com o
+`cTSBehavior` dele). A vtable do `cTSBehavior` (BV `0x27c0d70`): `0x20`
+`GetGlobalGroupId` (`+0xc`), `0x24` `GetSemiGlobalGroupId` (`+0x14`),
+`0x28` `GetPrivateGroupId` (`+0x1c`), `0x94` `GetOwningSelectorGUID`
+(`+0x20`). O `cTSObjectDialog::SetParams` (BV `0x1d2b20`) lê as strings do
+**grupo privado do dono do código** (`0x28`); com o byte 8 bit 0 do
+semi-global da definição do dono (`0x38(GUID)` → `0x118`; sem ele, nenhuma
+string); senão com o bit `0x40` do global. O bit 0 vence o `0x40`. O
+`TryDialog` (BV `0xe2bb64`; notificações e painel do tutorial) faz o mesmo
+com o arquivo da definição (`0x48` → `0x3c`) no lugar do `0x28`. **O grupo
+da árvore não entra.** Conferido nos dados: a carta de chance ("Sub - Chance
+Card - Dialog", árvore `0x203B` do `JobDataGlobals` `0x7F8F4EB6`, tipo 2,
+byte 8 `0x0E`) roda no objeto de emprego e lê o STR# 0x12D **dele** (ex.:
+grupo `0x7FBDC3E8`, 711 kB de cartas), não o do semi-global, que tem as
+ofertas, as promoções e a carona; as árvores do semi-global que querem as
+próprias strings marcam o bit 0 (`0x2004`, `0x2006` a oferta, `0x2021`,
+`0x2027`, `0x2032`). O "Age Transition" do Controller - Age (privada, rodada
+no Sim pelo Run Tree by Name) roda com o dono do código = o controlador,
+então lê as do controlador.
+
+*A caixa de fechar.* O `AddCloseBox` (BV `0x25d444`) só cria o botão se acha
+a imagem (`FUN_000c8944` → vtable `0x1c`): `0x11110002` não está no
+`ui.package` do jogo base, então não há botão nenhum. E o
+`cGZWinBtn::SetBuffer` (BV `0x8c87d0`) chama o `SetStyle` (`0x8cb3bc`),
+que mede o quadro da tira (largura ÷ 4, altura) e chama o `on_layout`
+(`0x8c9c78`) com a largura e a altura que a janela já tem: **não dá tamanho
+à janela** (fica 0 × 0 no canto de cima à esquerda, sem desenho nem
+clique). O diálogo "continuar" fecha pelo Return, pelo Esc ou pelo tempo.
+
+*A ordem dos telefones.* `SortNeighborCallListByName` (BV `0xa7c664`,
+vtable `0xb8` do `cTSWinProcPhoneBookDialog`) ordena o vetor `+0x78` das
+entradas com `CompareStrings(a.0x1c, b.0x1c, false)` do utilitário: o
+**nome completo** (`GetFullName`, `+0x24`, que o `CreateNeighborCallList`
+BV `0xa7bbb0` faz com o `MakeFullName` do utilitário: "nome sobrenome", só
+um quando o outro falta; invertido em japonês, chinês e coreano), sem caixa.
+`_CompareStringA` (BV `0x3b410`) → `FUN_0003d7dc`: `tolower` de cada byte
+**com sinal** (`extsb`): os bytes ≥ 0x80 (letras acentuadas em UTF-8; a
+conversão de codificação é UTF-8 → UTF-8, `FUN_000a2340` = 8) vêm antes de
+qualquer letra ASCII, e "Ana" vem depois de "Anaí". A festa ordena as duas
+listas com os predicados de lista (`ListBoxSortPredicate_Name` BV
+`0x34089c` → `CompareByName` `0xa7a118`: sobrenome, depois nome, o mesmo
+`FUN_0003d7dc`; `_Relationship` `0x340940` → `CompareByRelationship`
+`0xa7a204`: amor ou paixão primeiro, a maior diária + vitalícia, depois
+`CompareByName`); o `cTSWinListBox` (`FUN_0158d2a4`) usa o resultado como
+comparação (< 0 antes).
+
+*As linhas das listas* (`cTSWinListBox`, `cWinListBoxRow`). A festa
+(`onAttach` BV `0x34264c`) cria quatro colunas: 3, largura − 33, 15 e 15
+(`AddColumn` BV `0x194f08`, alinhadas à esquerda); `AddEntry` (BV
+`0x340b48`): coluna 1 o nome completo, coluna 2 o ícone de amor
+(`kListBoxIconLove`) ou, sem ele, o de paixão (`Crush`), coluna 3 o de
+amigo (`Friend`; `PetFriend` num bicho, expansão) ou, sem amizade, o de
+inimigo (`Enemy`). Os ícones são tiras de quatro e o
+`cWinListBoxRow::GZPaint` (BV `0x194830`) desenha o quadro 1 na linha
+escolhida, 2 na realçada, 3 na desligada e 0 nas outras, com a cor de texto
+do mesmo índice (`kListBoxTextColorNormal`, `Selected`, `Highlited`,
+`Disabled`); texto e ícone à esquerda da coluna e centrados na altura
+((linha − altura) >> 1). O texto que não cabe na coluna é cortado com "..."
+ao entrar (`FUN_001976a8` → `FUN_0019450c`: a fonte, vtable `0xcc`; a
+string `0x5377be31` do gerenciador de janelas no lugar dos três pontos, se
+houver). **Inferido:** os livros de vizinhos e de serviços com as colunas
+da festa (o código deles não foi achado; os serviços sem ícones).
+
+*O painel sem imagem.* `cGZWinBMP::GZPaint` (BV `0x8c7320`): sem a flag 2
+de `+0x114` (`transparentbkg`; `InterpretPropertiesGZWinBMP` BV `0x95f068`,
+atributo `0xb01`; o construtor começa com `0x12`, transparente) pinta a
+área da janela com a `fillcolor` opaca (`GetFillColorARGB` | `0xff000000`)
+e depois a imagem. O painel (21, 38)–(470, 430) dos telefones é um
+`GZWinBMP` sem imagem com `transparentbkg=no` e `fillcolor` (109, 165, 182):
+pintado (confirmado). **Falta:** o fundo das janelas com imagem e
+`transparentbkg=no` não é pintado no app (no retrato do telefone a moldura
+"overlay" tem `fillcolor` preta e cobriria a cabeça; não foi visto se o
+diálogo muda essas janelas).
+
+*A pausa no começo de um episódio do tutorial.* `cTSTutorialManager::
+PlayEpisode` (BV `0x217740`) manda a mensagem `0x2bea2063` com
+"vizinhança;lote", a mesma de entrar num lote pelo bairro
+(`ConfirmAndMoveInFamily`, `SwapLot`, o clique no lote): o lote carrega
+pelo caminho de sempre e o `ApplySavedUIState` (estados `0x0BEA28C2` /
+`0x2C1805B0`, o do `EnterLotBegin`) aplica a pausa salva, sem ramo de
+tutorial: **os lotes 1 e 4 do Tutorial abrem pausados**. Com o jogo
+pausado o `cTSSimulator::TickAllObjects` (BV `0x498544`; `IsPaused`, vtable
+`0x5c` BV `0x498a0c` = `+0x46`) só roda os objetos com o `SimFlag` 2 do
+módulo de objetos (bit `0x20000` da palavra de cada ID;
+`cEdithObjectModule::GetSimFlag`/`SetSimFlag` BV `0x524fb0`/`0x525008`,
+vtable `0x12c`/`0x128`); o `AddObject` zera as flags e o
+`MakeNewOutOfWorldObject` liga a 1 (roda); **quem liga a 2 não foi achado**
+(no app: só os controladores do tutorial rodam pausados, inferido).
 
 ### 0x2E Snap (`TrySnap`)
 

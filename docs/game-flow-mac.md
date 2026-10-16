@@ -458,11 +458,13 @@ do primeiro Sim, com as paredes cortadas e a pausa do global 17 do SIMI.
 
 O pausado salvo bate com o global 17 em 65 dos 68 lotes; os três que não
 batem são os lotes 14, 18 e 19 do Tutorial (global 17 = 1, barra = 0): o
-"o tutorial começa rodando" que o app já fazia (inferido) é o estado salvo
-do jogo nesses três. Os lotes 1 e 4 do Tutorial têm a barra pausada; o app
-os mantém rodando (inferido: sem isso a primeira janela do episódio só
-viria depois de o jogador soltar a pausa; o começo de um episódio no jogo
-não foi lido). O `ApplySavedUIState` é chamado na mensagem `0xCC` (o
+"o tutorial começa rodando" é o estado salvo do jogo nesses três. Os lotes 1
+e 4 do Tutorial têm a barra pausada e **abrem pausados** (rodada n45): o
+`PlayEpisode` (BV `0x217740`) entra no lote pela mesma mensagem `0x2bea2063`
+do bairro e o `ApplySavedUIState` não tem ramo de tutorial
+(`docs/primitives-mac.md` "Dialog", rodada n45); pausado, o jogo só roda os
+objetos com o `SimFlag` 2 (no app, os controladores do tutorial, inferido).
+O `ApplySavedUIState` é chamado na mensagem `0xCC` (o
 tratador de mensagens do `cTSMainToolbar`, BV `0x1af104`), que nenhum passo
 do `LoadLot` manda (inferido: vem com a UI do lote, depois da carga e do
 `Resume` do primeiro dia): uma família que se muda para um lote salvo
