@@ -3992,6 +3992,78 @@ Notify" lê; quem o liga é o `cTSInteraction::UnLinkInteractions`, BV
 `0x4c6a54`, no outro Sim de uma interação ligada: `vm/links.cpp`); `ClearSubActions`; `SetInteractionData`. No opensims2,
 `vm::setCurrentAction` (`queue.cpp`), menos o 164.
 
+## 4j. Rodada n41 (VM, resto): o que foi lido
+
+Ghidra MCP (só leitura), programas `sims2_base_1.0.ppc` (o alvo; sem
+símbolos: as funções foram achadas pelas do BV, que têm nome) e
+`sims2_bv.ppc`.
+
+### Dado de pessoa 39 "route status" no jogo base
+
+O roteador do base 1.0 (`cTSRoutingObjectAggregate`) mantém o 39 em três
+lugares; nenhum outro código o grava, fora o `SetCurrentAction` e o
+`SetCurrentSubAction` (abaixo). Varredura do executável base por `li r4,
+0x27` antes de um `SetPersonData`: só esses cinco.
+
+- **`ProcessGoto`** (base `0xc59afc`; BV `0x57b500`), quando a primitiva de
+  rota começa (a flag "começada" do elemento da pilha de árvores, vtable
+  `0x48`, desligada; ela é ligada aqui): depois dos testes do alvo (sem ele,
+  erro `0x17`), da rota corrente (dentro da pré-rota: erro `0x80`; dentro da
+  "along route": `0x81`) e do `ShouldInterrupt` (`FUN_00c54b60`: dado 62 := 3
+  e falso), cria a rota nova e, **com a pilha de rotas vazia** (`+0x20` = 0),
+  grava **39 := 1** (`0xc5a778`) antes do `PushRoute` (vtable `0x68`). Uma
+  rota começada dentro de outra (o goal check, o feedback de falha) não grava.
+- **`InitRoute`** (base `0xc574d4`; BV `0x5737cc`), chamado só pelo
+  `DoInitial` (vtable `0xc8`), isto é, a cada planejamento: o primeiro, o de
+  depois da pré-rota e todos os re-planejamentos (bloqueio, pausa, "CT -
+  Route Blocked", quem saiu da frente). Sem rota, sem alvo (`GRS_State +8`)
+  ou sem pessoa sai com o código 1 **sem gravar**. Achado o caminho
+  (`route->0x20(alvo)`, o `FindPath`, que gera os objetivos):
+  `UpdatePersonDataFields(1, true)` → **39 := 1** (`0xc57cb4`), mesmo quando
+  o Sim já está no objetivo (resultado 1, sem andar). Sem caminho (códigos 2,
+  6 ou o do último candidato, 15 com bloqueador): `UpdatePersonDataFields(0,
+  true)` → **39 := 0** (`0xc58130`).
+- **`PopRoute`** (base `0xc55310`; BV `0x570a00`): sobra rota embaixo →
+  `UpdatePersonDataFields(0, false)` (`0xc554fc`: o 39 fica); era a última →
+  `UpdatePersonDataFields(0, true)` → **39 := 0** (`0xc55514`). Chamam: o
+  `DoPostFailedOrSucceeded` (o fim da instrução de rota, sucesso ou falha,
+  depois do feedback de falha e da pós-rota) e o `ClearRouteStack` (BV
+  `0x56ef74`: `PopRoute` até esvaziar; com a pilha vazia não grava nada), que
+  o `cTSRoutingObjectAggregate::OnCleanup` (BV `0x5727c8`) chama no reset da
+  pessoa (`Cleanup(nada)`, o reset de depois de um erro) e quando o objeto
+  apagado é o alvo de uma rota da pilha.
+- Na pessoa, `SetCurrentAction` (base `0xb83f54`, a gravação em `0xb841d8`)
+  e `SetCurrentSubAction` (base `0xb849ec`, em `0xb84ac0`): com ação,
+  **39 := 0** (vtable `0x640` da pessoa). O VM já fazia o do
+  `SetCurrentAction`; o da sub-ação não.
+
+Então, no jogo base, o 39 é 1 do começo da rota (antes mesmo da pré-rota)
+até o fim dela, inclusive na pré-rota, na pós-rota e no feedback de falha
+de uma rota que falhou andando; é 0 quando o planejamento falha (o feedback
+de falha de uma rota sem caminho roda com 0) e fora das rotas. No BV o 1 sai
+do `UpdatePersonDataFields` (BV `0x570674`, que grava `0xb3` no lugar) e o
+`PopRoute` grava o 0 ele mesmo; a rodada n33b leu só esse lado ("sumiu").
+
+`UpdatePersonDataFields(valor, grava39)` (base `FUN_00c64a70`) grava ainda,
+da rota corrente (vtable `0xb0`; o `PopRoute` o chama antes de tirar a rota
+da pilha, então na última os campos ficam os dela): 40 "route goal" (o ID
+do objeto do objetivo, ou 0), 37 "route slot" (`WorkOutSlotIndex`,
+`FUN_00c54cc0`), 55 "route start slot" (rota `0x5c`) e 38 "route multi slot
+index" (o `+0x14` do objetivo atual, ou −1 sem objetivo); sem rota
+corrente, 40 = 0 e 37, 55, 38 = −1. O VM grava 37/38/40 pelo `noteRouteSlot`
+só no Go To Routing Slot, no começo (inferido; fica, a rodada é só do 39) e
+não grava o 55.
+
+Nenhuma árvore do jogo grava o 39 (varredura das BHAV de `TSData/Res`: 31
+leituras, `==`, `>`, `!=` e teste de bit). Leem: os "Shoo" (global `0x2FA`
+"Shoo - Specific Sim", `0x2FC` "Shoo - Sims from tile Object X is on",
+"Dartboard - Shoo Sims": só enxotam quem tem 0), "Look At - Check Out",
+"Function - Awareness - Private", "CT - Visible People List Changed",
+"Interaction - Talk At", "Interaction - Work The Room", "Test - Sim
+Routing?", "Fire - Another Fighter Routing to Fire?", "Sub - Wait for Cop &
+Burglar done route", "Stand - Try Scoot", "TV - Clear View of Screen?",
+"Sub - Reaction Sim is Routing?" e mais alguns.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
