@@ -295,7 +295,7 @@ Código: `src/app/cas_*.{hpp,cpp}`, `src/formats/cas_*.{hpp,cpp}`,
 | Genética: `nTSGenetics`, `cTSSimDNA` | `vm/genetics.*` | fiel | |
 | Personalidade, signo, aspiração | `formats/cas_personality.*` | fiel | Tabelas não conferidas no base 1.0. |
 | Gravar o personagem | `formats/character_write.*` | fiel | |
-| Câmera do CAS: `cCameraCreateASimController` | `render/cas_camera.*` | inferido | Rodada n21: pares spec ↔ localizador (efeitos de câmera do SimAntics do "CAS - Backdrop"), roda, botões segurados e o passo do zoom segurado (× 50 / Δt) lidos. Inferido: a direção do zoom (a ordem Q·Rx·Rz foi lida; a convenção do quaternion da GZ não). |
+| Câmera do CAS: `cCameraCreateASimController` | `render/cas_camera.*` | inferido | Rodada n21: pares spec ↔ localizador (efeitos de câmera do SimAntics do "CAS - Backdrop"), roda, botões segurados e o passo do zoom segurado (× 50 / Δt) lidos. Inferido: a direção do zoom (rodada n39: convenções da GZ e ordem lidas, o binário gira nos eixos da câmera; com o localizador como lido isso sobe acima da cabeça, a rotação do `SetActive` não foi achada; o app segue nos eixos do mundo). |
 
 ### 3.12 Desenho
 
