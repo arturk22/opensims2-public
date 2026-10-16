@@ -184,6 +184,81 @@ od 108–111** (varredura das 22 396 BHAVs: zero escritas de dados de objeto ≥
 issue não muda nada. O `stayInWorld` continua a nossa leitura do `PostSnap`
 (inferido; o componente de coreografia é da rodada 2).
 
+**Rodada n44 (Ghidra MCP, só leitura; BV): o que o `PostSnap` faz.**
+
+- **Cada pedido tem o seu quadro.** `AddChoreoAnimRequest` (BV `0x696644`)
+  dá ao pedido o `ObjectTransform` = a transformação **local** do nó do
+  objeto (vtable `0xd4`) e o nó pai dele (vtable `0x80`)
+  (`cChoreoRequest::SetObjectTransform`, `0xd937b8`: `+0x50..+0x68` e o pai
+  em `+0x6c`). O `cChoreoQueue::AddChoreoRequest` (`0xd1d194`) põe nos deltas
+  da raiz do pedido `RootTransDelta = O·P·N⁻¹` e `RootRotDelta = R·(O·P·N⁻¹)·R⁻¹`
+  (`SetRootTransDeltaTransform`/`SetRootRotDeltaTransform`, vtable
+  `0x64`/`0x68`; `O` o quadro do pedido, `P` o global do pai, `N` o global do
+  nó, `R` o local do `root_trans`; o produto `FUN_000895f4` é "a e depois
+  b", a inversa `FUN_0008a8d4`): a identidade quando o pedido nasce. A cada
+  quadro os canais de `root_trans`/`root_rot` de um pedido são multiplicados
+  pelo delta dele (BV `0xd25e5c`: com a flag `+0xac` do canal, `+0xad`
+  escolhe o de translação ou o de rotação). É a "mistura em vários quadros"
+  (`ResetMultiCoordinateBlending`).
+- **Quem recalcula os deltas**: só o `cChoreoQueue::UpdateObjectTransform`
+  (BV `0xd1d8a8`; vtable `0x104`, `0xec` pela interface `0xfb87c2b9`), para
+  **todos** os pedidos com pai (laços também): o quadro de cada pedido volta
+  a ser o do seu nascimento, relativo ao nó como está agora; os ossos
+  `root_trans` (translação) e `root_rot`/`0xedb8021a` (rotação) ganham o
+  delta velho→novo (`G0·N⁻¹`), e a fila guarda o local e o global novos do
+  nó (`+0x70`, `+0x8c`). Quem chama: o `PostSnap` (`0x68f204`; o `PreSnap`,
+  `0x69780c`, guarda em `+0x160` o `GlobalTransform` do nó antes, e com o
+  `bool` ligado roda a fila até agora e marca os expirados). Os pares
+  `PreSnap`/`PostSnap` estão em `snap_to_current_location` (`Reset` do
+  `cTSObject`/`cEdithMTObject`, `PostLoad`, `ForceToEdithLocation`), no
+  **`cLocomotable::LocoPlaceFromSceneGraph`** (BV `0x6b2ee0`, vtable `0x41c`:
+  `PreSnap`, `SetPosition` + `Orient`, `PostSnap`), que o `FollowOneStep`
+  chama a cada tick (`0x6b8704`, `0x6b8724`) e **na entrega do fim do
+  caminho** (`0x6b8ae0`, o Sim no fim com a direção final), e no
+  `KillLocomotion` (`0x6af720`).
+- **O Snap da VM não recalcula.** `cTSObject::TrySnap` (`0xe43084`) faz
+  `BeginEditing`, `SetPosition`/`PlaceInSlot` com o `bool` **falso**,
+  `Orient`, `FinishEditing`; o `cAnimatable::OnSetPosition`/`OnOrient`/
+  `OnPlaceInSlot` (`0x689d2c`/`0x689c94`/`0x689ddc`, iguais nas seis classes)
+  só move o nó (`cObject::OnSetPosition` `0x65a7d0`: translação e
+  `ApplyAnimationOffsets`; `OnPlaceInSlot` `0x668114`: filho do osso do slot)
+  e só com o `bool` chama o `ResetMultiCoordinateBlending` (`0x68b958` →
+  `InitObjectTransformFromSkeleton`, que só guarda o quadro do nó). Ou seja,
+  como lido, depois de um Snap, Snap Into ou contenção os pedidos e os
+  ossos segurados **seguem o nó**.
+- **Snap Into 0x04** ("reset root bones") é o `ResetRootBones` (vtable
+  `0x154`; `cObject` `0x6550d0`: translação do `root_trans` = 0, rotação do
+  `root_rot` = identidade; `cAnimatable` `0x69a678`: e um pedido
+  `o-generic-resettozero-pose`, que segura os dois em zero). No jogo base:
+  comida e louça postas em slots ("CT - Put", "Sub - Presto - Dish") e Sims
+  no carro ("Sub - Sit in Car"); as cadeiras não usam.
+- **`GlobalRootTransPosition`** (`0x68c1d0`, vtable `0x3bc`): a posição no
+  mundo do nó `root_trans` da fila (`0x188`), ou a do objeto. Quem usa: o
+  `KillLocomotion`, que põe o Sim de uma rota interrompida onde a raiz da
+  animação está (no ponto seguinte do caminho se a menos de 0,035) com a
+  direção do `GlobalRootRotHeading` (`0x68c320`), entre `PreSnap` e
+  `PostSnap`.
+- As árvores fazem o Snap **antes** da animação que começa no lugar velho:
+  "Chair - Animate - Get In" (`0x7F0B61F3 0x202E`) faz o Snap Into e depois
+  toca o get-in feito no quadro do assento; o "Get Out" (`0x2045`) faz o Snap
+  ao canto e o "Snap - Away" e depois toca o get-out que começa sentado; a
+  escada reta ("Function - Portal", `0x7F429113 0x1001`) faz Snap ao pé,
+  sobe (`c2o-stairsStraight-up`, raiz a 4,4 adiante e 3,6 acima) e faz o
+  "Snap - Away" quando o Animate Sim volta (no começo do blend de saída).
+
+**O que mudou**: na entrega do fim do caminho (o `handOff`) o
+`stayInWorld` agora vale para **todas** as camadas, laços também (o
+`UpdateObjectTransform`; antes os laços seguiam a raiz, inferido).
+**Continua inferido** o `stayInWorld` nos pulos da VM (Snap, contenção,
+fim de escada): como lido, o jogo deixa o pedido que ainda está saindo
+seguir o nó; aqui ele fica no mundo. Seguir o nó deixa o fim da subida da
+escada reta 5,8 tiles adiante do topo por dois quadros (bateria de assento,
+caso `bed`, `OS2_NO_STAY_IN_WORLD=1`), o que o jogo não mostra: falta achar
+o que no jogo impede isso (candidatos: o `FinishEditing` de uma subclasse
+de pessoa, o `ForceToEdithLocation`, vtable `0x150`, chamado de algum lugar
+não achado). O Snap Into 0x04 não é feito (os objetos em slot são postos
+no osso pelo app).
+
 ## E. Sentado e parado
 
 Lido na rodada n02 (`docs/anim-mac.md` §2 e §6): o motor não tem idle
@@ -212,6 +287,41 @@ aplica a qualquer osso que nenhuma camada escreve).
 (inferido); agora só a superfície, como o binário. **Continua inferido**: a
 faixa pela classe de altura do SLOT (e não a altura em metros no quadro da
 raiz) e a distância até o centro da superfície (e não até o ponto).
+
+**Rodada n44 (Ghidra MCP; BV `0x69111c`, `0x68ba50`), lido inteiro:**
+
+- O operando é o `NewReachParam` com os bytes do operando a partir de
+  `+4`: flags no byte 9 (`+0xd`), modo no 10, slot no 6. **Com a flag 0x08
+  o índice é o byte 15** (`0x692698`: `lbz 0xf` do operando); sem ela,
+  `ComputeReachAnimIndex(altura, distância, pegar)` (`pegar` = modo 0).
+  O índice é 0-based (a busca `FUN_000da590` recebe índice + 1).
+- **O ponto do alcance**: modo 0 com contêiner, o slot do objeto no
+  contêiner (o osso do slot se o descritor tem `0x20000`, senão o
+  deslocamento do slot pelo global do contêiner); modo 0 sem contêiner, a
+  posição do objeto; modo 1, o slot do alvo; modo 2 (chão), 0,7 à frente
+  do Sim no andar dele. Esse ponto vai para o quadro do Sim (o inverso do
+  `GlobalTransform` do nó dele, `FUN_0008a8d4`): **altura = z nesse
+  quadro, distância = |(x, y)|**. Um Sim sentado tem o nó no osso do
+  assento: a altura conta dali.
+- **A superfície** é o contêiner do objeto (modo 0) ou o alvo (modo 1),
+  pessoa ou não; a entrada vem da STR# 0x92 dela, senão do semi-global,
+  senão da global (`0x7FD46CD0`); uma entrada **vazia** passa à lista
+  seguinte (comprimento 0). Não há "longe vazio cai no perto" nem "." como
+  vazio: o nome vai ao `DetermineAnimNameAndOEType` (`0x68d934`) e ao
+  recurso pela idade (`AnimPrefix`), e sem recurso é o erro 0x71.
+- **A bandeja e o copo do bar** (`a2o-barstool-seated-get/put`, as listas de
+  2 entradas dos grupos `0x7F711E0D`, `0x7F67FE05`, `0x7F83CAAE`): pelo
+  índice explícito: "Have a Drink - Grab Drink from Bar" (`0x7F711E0D
+  0x100F`) pega com 0x08 e índice 0. A entrada 1 (pôr) não é usada por
+  nenhuma árvore do jogo base (um índice calculado de pôr é ≥ 8, além da
+  lista, e cai na global). Também pelo índice explícito: o xadrez ("Chess -
+  Reach for Piece", índices 2, 3, 8, 9 para pegar e 8–11 para pôr: os
+  cantos), os telefones (as entradas "." nunca são alcançadas; 18/19
+  `c2o-Counter-get/put`), o livro do chão (17), a urna quebrada (16).
+
+**Mudado**: o índice explícito, a altura e a distância do ponto do alcance
+no quadro do Sim (o andar como 3 de altura e o terreno plano: inferido), a
+superfície pessoa, sem o "longe vazio → perto" e sem o "." como vazio.
 
 ## G. IK
 
@@ -249,6 +359,18 @@ com a flag 0x1000.
 Lido na rodada n02 (`docs/anim-mac.md` §6): o Animate Sim não olha o slot e a
 escolha do nome só olha espécie, idade e sexo; o jogo toca o que a árvore
 pede, a partir da raiz no slot. Nada a mudar no motor.
+
+**Rodada n44: quem tira o Sim do slot.** Nenhuma primitiva nem o motor de
+animação: as árvores. O "Function - Pre Route" da pessoa (`0x7F01EC29
+0x2047`) faz o Sim contido se levantar antes de andar (o "Force - Stand - In
+Place" `0x2D9` ou a função "stand" do contêiner pelo Run Functional Tree);
+uma interação que não anda não passa por ali. O "Interaction - Be Scared"
+das urnas (`0x7F38B8A7 0x201F`, empurrado pelo "Sub - Haunt Loop - Scare
+Sim - Push Be Scared", `0x2060`) não anda nem chama o "stand": toca o susto
+(Animate Sim) onde o Sim está. Não há flag do TTAB para "não sentado" (as
+strings do editor, `0x7FE59FD0`, só têm "Sitting?" na pessoa). Então o jogo
+também toca o susto em pé com o Sim contido na cadeira; a VM roda as mesmas
+árvores. **Confirmado, sem mudança.**
 
 ## O que esta rodada mudou e o que sobrou
 

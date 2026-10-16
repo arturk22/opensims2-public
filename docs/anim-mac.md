@@ -1171,3 +1171,63 @@ falsas 53 → 62; bloqueios por semente média 11,1 → 14,4 (mediana 7 → 6);
 falhas de rota sem o 13 dos sociais média 4,9 → 6,0 (mediana 2 → 3). Os
 episódios de bloqueio variam muito de semente para semente (o main tinha 54
 numa das 14).
+
+## 14. As sobras do IK e o quadro de cada pedido (rodada n44)
+
+Leitura de 2026-10-16 (`docs/inventario-binario.md` §8, linha 44). Modo:
+**Ghidra MCP** (só leitura, nada renomeado nem salvo); endereços BV. O
+quadro de cada pedido (`PostSnap`, `UpdateObjectTransform`) está no
+`docs/seat-mac.md` §D.
+
+### 14.1 Os ângulos de Euler da partilha de torção
+
+`ConvertToEulerAngles<Matrix>` (`0x01003ee0` → `FUN_00edd840`; a ordem é um
+`u32`: `i` = byte 0, `j` = byte 1, `k` = bits 16–17, o sinal = o byte alto
+como `char`; `FUN_01bcb0c8` testa `i == k`, a ordem repetida). Na ordem não
+repetida, com `M[r][c]` a matriz por linhas: `e1 = atan2(−M[k][i],
+√(M[i][i]² + M[j][i]²))`, `e0 = atan2(M[k][j], M[k][k])`, `e2 =
+atan2(M[j][i], M[i][i])`, cada um vezes o sinal. **A ordem `0x01020100`**
+(X, Y, Z, +1) é a inversa de `Rz(e2)·Ry(e1)·Rx(e0)` (a mesma Euler XYZ dos
+canais do ANIM, §9.3): **`e1` é o ângulo em Y dessa decomposição**.
+
+- **O braço** (`ComputeIKTranslationSolution`, `0xd37848`, lido de
+  `0xd38040` a `0xd381e0`): `M = Ry(θ)·S` (`FUN_01b9427c`/`FUN_00edd790`:
+  `Ry` por linhas; θ o giro pelo polo da §4; `Math::operator*`, `0x01003eb0`),
+  `e = Euler(M, 0x01020100)`; o bíceps (tipo 3) recebe `(0, 0,65·e1, 0)`
+  (`FLOAT_0274b6cc`) e o braço `Euler(Ry(−0,65·e1)·M, 0x01020100)`
+  (`FUN_01b94238`, também `Ry`). Na coxa (tipo 1) o mesmo `Ry(θ)·S` sem
+  partilha.
+- **A mão** (`ComputeIKRotationSolution`, `FUN_00d36ecc`): `E` = a rotação do
+  alvo no quadro do pai do primeiro osso de baixo; o pé (tipo 6) leva
+  `Euler(E, 0x01020100)` inteiro; no braço `e = Euler(E, 0xff010200)` (X, Z,
+  Y, sinal −1), o pulso (tipo 7) recebe `(0, 0,75·e1, 0)` e a mão (tipo 8)
+  `Euler(Ry(−0,75·e1)·E, 0x01020100)`. **Pelas fórmulas acima, o `e1` da
+  ordem `0xff010200` é o ângulo em Z** (uma torção pura `Ry(α)` dá `e1 = 0`;
+  `Rz(β)` dá `e1 = β`), enquanto o `r_wrist` é um osso de torção do
+  antebraço (no meio dele, rotação de repouso identidade): não fecha com a
+  intenção aparente; o produto do quaternion (`FUN_00dc6f60`) e a matriz do
+  quaternion (`ConvertToMatrix<Quaternion>`) não foram conferidos.
+
+**Feito**: a torção do braço é o `e1` da Euler XYZ do braço
+(`twistY` → a decomposição `Rz·Ry·Rx`, `eulerY`); antes era a torção em
+volta do Y (giro-torção), inferida. **Continua inferido** o pulso e a mão
+(a torção em volta do Y, como antes), pela dúvida acima.
+
+### 14.2 Os contatos em 0
+
+`cActiveAnimIK::ComputeIKTranslationSolution` (`0xd1e698`) só resolve com
+peso > 0 nos outlets do alvo e do polo; sem solução, os canais de IK do
+pedido ficam com o último valor (o `cActiveAnimIK` vive enquanto o pedido
+vive). **Feito**: cada camada guarda a última solução de cada cadeia
+(`AnimPlayer::Layer::ikMemory`) e, com todos os contatos em 0, a cadeia
+toma essa solução (pelo peso de IK, como os canais); sem nenhuma ainda, a
+pose da animação (inferido: o valor inicial dos canais de IK não foi
+lido). Antes: o primeiro alvo.
+
+### 14.3 O alvo do outlet do nó
+
+O `cActiveAnimIK` lê o alvo e o polo pelos outlets dos nós (§5), a mistura
+de todos os pedidos que chaveiam o nó. **Feito**: o `AnimPlayer` resolve
+cada cadeia com os nós de alvo e de polo do esqueleto como a mistura os
+deixou (todas as camadas, com os deltas); os nós que o esqueleto não tem
+(o filho sem `*_handcontrol0`) seguem os canais da própria camada.
