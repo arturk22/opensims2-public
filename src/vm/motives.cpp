@@ -329,6 +329,18 @@ void tickMotives(VM& vm) {
                     if (!rooms)
                         rooms = environmentRooms(vm);
                     environment = environmentScore(vm, sim, *rooms);
+                    // OS2_DEBUG_ENV=1: each step's environment and the light under the Sim.
+                    static const bool debug = std::getenv("OS2_DEBUG_ENV") != nullptr;
+                    if (debug) {
+                        std::optional<float> light;
+                        if (vm.floorIllumination)
+                            light = vm.floorIllumination(sim.position.level, sim.position.x, sim.position.y);
+                        std::fprintf(stderr, "environment: tick %llu %02d:%02d Sim %d room %d at (%.1f, %.1f, %d): %.3f, light %s\n",
+                                     static_cast<unsigned long long>(vm.simulatorTicks), vm.clock.hour, vm.clock.minute,
+                                     sim.id, sim.data[objdata::Room], double(sim.position.x), double(sim.position.y),
+                                     sim.position.level, double(*environment),
+                                     light ? std::to_string(*light).c_str() : "unknown");
+                    }
                 }
                 updateMotives(sim, environment);
                 // UpdateMood; Mood+Mem is the mood (the memories do not

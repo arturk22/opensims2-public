@@ -95,6 +95,14 @@ public:
     // frame after the objects are placed.
     void update(double seconds);
 
+    // The light under a point as the environment score reads it
+    // (cLightingManager::LocationIlluminationStrength, docs/motives-mac.md
+    // §8.4): the floor light map's texel there (the shown maps, as they
+    // crossfade) x 2 (cLightMapManager +0x70, undoing the pages' 0.5) as an
+    // illuminance, 0.3 r + 0.59 g + 0.11 b. `vmLevel` as the VM numbers
+    // levels (1 = the ground). Nothing before the light maps are made.
+    std::optional<float> floorIllumination(int vmLevel, float x, float y) const;
+
     // What update() found (for the log and tests).
     struct Lamp {
         int16_t id = 0;

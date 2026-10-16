@@ -373,6 +373,35 @@ void LotLighting::updateLightMaps(double seconds) {
     renderer_.setLightMapMix(lightMapMix_);
 }
 
+std::optional<float> LotLighting::floorIllumination(int vmLevel, float x, float y) const {
+    if (!layout_ || !shownTo_)
+        return std::nullopt;
+    const int level = vmLevel - 1; // the lot's levels
+    // LookupFloorLightMap (Mac BV 0x6f6a24): the texel (frac(x) 8, frac(y) 8)
+    // of the tile's page; off the pages, black.
+    if (level < layout_->minLevel || level >= layout_->minLevel + layout_->levels || x < 0 || y < 0 ||
+        x >= float(layout_->lotWidth) || y >= float(layout_->lotHeight))
+        return 0.0f;
+    const auto uv = layout_->floorTexel(level, x, y);
+    const auto texel = [&](const LotLightMap* map, int c) -> float {
+        if (!map)
+            return 0.0f;
+        const RgbaImage& im = map->image;
+        const auto u = uint32_t(std::floor(uv[0])), v = uint32_t(std::floor(uv[1]));
+        if (u >= im.width || v >= im.height)
+            return 0.0f;
+        return float(im.pixels[(size_t(v) * im.width + u) * 4 + size_t(c)]) / 255.0f;
+    };
+    std::array<float, 3> rgb{};
+    const LotLightMap* from = shownFrom_ ? shownFrom_.get() : shownTo_.get();
+    for (int c = 0; c < 3; ++c) {
+        const float a = texel(from, c), b = texel(shownTo_.get(), c);
+        rgb[size_t(c)] = (a + (b - a) * lightMapMix_) * 2.0f; // cLightMapManager +0x70
+    }
+    // ColourToIlluminance (Mac BV 0x1808dd4).
+    return std::fmaf(rgb[2], 0.11f, std::fmaf(rgb[0], 0.3f, rgb[1] * 0.59f));
+}
+
 void LotLighting::update(double seconds) {
     last_ = seconds;
     vm::VM& m = sim_.machine();
