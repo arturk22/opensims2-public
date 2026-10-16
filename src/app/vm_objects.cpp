@@ -750,8 +750,8 @@ void VmObjectView::updateGuobs(int16_t id, Drawn& d, const std::optional<Xform>&
         for (int i = 0; i < kGuobCount; ++i)
             if ((info->present >> i) & 1)
                 planes += std::string(" ") + guobSubsetName(i) + ((on >> i) & 1 ? "+" : "-");
-        std::fprintf(stderr, "opensims2: guob: object %d (%s) level %d dir %d mode %d%s\n", id, d.cres.c_str(), level,
-                     direction, world.wallMode, planes.c_str());
+        std::fprintf(stderr, "opensims2: guob: object %d (%s) level %d dir %d mode %d%s at (%.2f, %.2f)\n", id,
+                     d.cres.c_str(), level, direction, world.wallMode, planes.c_str(), at->t[0], at->t[1]);
     }
 }
 

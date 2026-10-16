@@ -1441,3 +1441,45 @@ cor de sombra de fora do §9) e as passa às sobreposições `+0x48`/`+0x4c`
 ficam confirmados. O estado vem do `FUN_01807a48` (o elemento `+0xcc` da
 lista de estados do gerente, ou o `+0x298`); qual dos dois numa transição
 dia/noite não foi lido.
+
+### 12.5 No código (rodada n40)
+
+- `formats/object_shadow`: as regras do base 1.0 (`guobIndex`, a caixa do
+  modelo `guobModelInfo`, `guobTileRect`, `guobWallSides`, `guobsOn`) e as
+  arestas de parede do lote (`LotWallEdges`: paredes, cercas, paredes de
+  piscina e fundação, saias de deck; as diagonais em nenhuma aresta). A
+  caixa do modelo é a dos **bounding meshes** dos GMDC
+  (`ObjectModel::bounds`; o `cGeometryDataContainer::SetRigidBound` é esse
+  mesh), que é o corpo sem os planos de sombra; um GMDC sem bounding mesh
+  entra com os vértices (inferido: o balcão colonial e a cama, cujos planos
+  passam 0,0001 da borda do tile, ganham um tile a mais no retângulo); o
+  volume do espelho (`mirrorboundingboxmaterial`) não entra (inferido: o
+  teste `0x114` do `GrowGlobalBBox`, nó escondido).
+- `Renderer`: uma máscara por instância (`setInstanceGuobs`) e os fatos de
+  GUOB de cada modelo (`guobInfo`); os planos sem a máscara ligados (como o
+  lote salvou) em tudo que ninguém calcula (bairro, CAS, lote sem a VM).
+- `VmObjectView`: recalcula como o jogo (§12.3): o objeto mexeu (a VM, a
+  mão do modo Comprar, inclusive enquanto segura), voltou a aparecer, uma
+  aresta de parede ao lado mudou (`setWalls` pelo `rebuildLotModel`), o modo
+  de parede ou o andar mostrado mudou (os objetos ao lado das paredes desse
+  andar). O andar visível é o do objeto até o andar mostrado (inferido, a
+  vtable `0x50` do `cSceneManager`). Não feitos: a mensagem das salas de luz
+  (`0x2B4D18FB`: o `OnMove` dos objetos da sala; aqui só os vizinhos da
+  parede mudada) e o teste da vtable `0x1f4` do base.
+- Depuração: `OS2_DEBUG_GUOB=1` (os planos de cada objeto quando calculados,
+  com a posição), `OS2_GUOB_AS_SAVED=1` (o estado salvo, para comparar);
+  `s2pkg guob <jogo> <lote> [modo]` (os planos salvos e os calculados por
+  objeto; `OS2_GUOB_PARTS=<id>`: as partes e os bounds). No modo 2 o
+  `N001_Lot11` liga um plano de parede em 93 dos 310 objetos com GUOB, o
+  `N002_Lot31` em 80 de 477, o `N003_Lot52` em 77 de 382; no modo 1 nenhum.
+- O que muda à vista: com as paredes cortadas (o modo de sempre) os planos
+  de parede dos móveis encostados somem (`docs/screenshots/n40-guob-cortadas.jpg`,
+  os três lotes, antes/depois/diferença); com as paredes erguidas ficam
+  onde há parede, e um móvel afastado da parede não leva mais o plano
+  flutuando atrás dele (`n40-guob-movido.jpg`: o piano do `N001_Lot11` na
+  parede, os planos dos lados desligam; arrastado no modo Comprar, o de
+  trás some). A sombra do sol e a dos Sims ficam como estavam (só
+  conferidas, §12.4): `n40-sombras-sol.jpg` (dia e noite nos três lotes).
+- Teste `guob_walls` (o piano do `N001_Lot11` com paredes erguidas,
+  cortadas, arrastado, com a parede de trás apagada; a janela com paredes
+  baixadas) e `test_formats` (as regras).
