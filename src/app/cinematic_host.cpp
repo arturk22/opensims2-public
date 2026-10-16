@@ -26,7 +26,6 @@ double& gSceneNow = gScene.sceneNow;              // the scene clock of the last
 std::optional<os2::FrameView>& gLastFrameView = gScene.lastFrameView; // what was drawn last (snapshots)
 uint32_t gLastFrameW = 1280, gLastFrameH = 720;
 constexpr double kCrossfadeSeconds = 2.0; // crossfadeshort/standard: screen mode 4, length 2, strength 1 -> 0
-constexpr double kCinematicWait = 1.0;    // without "Start Animations Now": the longest wait for an actor
 
 CinematicForced& gCinematicForced = gScene.cinematicForced;
 
@@ -83,8 +82,11 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
     }
     // Held for the whole scene, the speed buttons waiting (ours: Start and
     // Stop, BV 0x7c3898/0x7c56b4, do not touch the simulator's speed; they
-    // save and set the object at +0xB4's vtable 0x74/0x5C, which would be
-    // the animation timer's MaxElapsedTicksPerFrame, to 1).
+    // save the scene graph's animation timer's (cTSSGSystem +0xB4, a
+    // nTSSG::cCustomAnimTimer2) real-time clamp per frame, +0x24, and set
+    // it to 1 ms, the Stop turning the clamp off and putting it back;
+    // what that does to the scene's speed was not followed:
+    // docs/cinematics-mac.md §9).
     if (gSimulation) {
         auto& g = gSimulation->machine().globals;
         g[os2::vm::global::Speed] = 2;
@@ -191,8 +193,14 @@ os2::LotViewOptions cinematicLotView() {
 }
 
 // Prepares a scene at `preparedAt` (scene clock: when the VM asked for it,
-// which can be before this frame); with `now` it starts then, else when
-// one of its actors starts an animation from then on, or a second later.
+// which can be before this frame); with `now` ("Start Animations Now",
+// 0x04: the Prep calls the Start, BV 0x7c9064) it starts then, else when
+// one of its actors starts an animation from then on: try_animate_sim (BV
+// 0x69e6d8) starts the scene that is ready when a Sim in it plays its
+// Animate Sim (docs/cinematics-mac.md §9). There is no other wait (the 1 s
+// the app gave was ours); a scene that waits keeps the next ones out, as
+// the Prep refuses one while a scene is loaded. Taking an actor's start in
+// the same tick as the primitive's is ours (inferred).
 void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vector<int16_t> actors, int16_t origin,
                     bool mirror, bool now, double preparedAt, bool guessSims, bool wholeHouse) {
     if (gCinematic) {
@@ -278,8 +286,6 @@ void updateCinematic(os2::Renderer& renderer, double now) {
             return out;
         };
     if (gCinematic && !gCinematic->started()) {
-        if (!gCinematicStartAt && now - gCinematicPrepared >= kCinematicWait)
-            gCinematicStartAt = gCinematicPrepared + kCinematicWait;
         if (gCinematicStartAt) {
             const double at = std::min(*gCinematicStartAt, now);
             gCinematicLast = at - 1e-3;

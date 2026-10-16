@@ -237,7 +237,8 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   todos os atores (`LotEffects::animationEffects`: `firstKissSpiralFx`,
   `kissMomentTeen`, os feixes dos OVNIs). Tudo no relógio da cena. Sem
   "Start Animations Now" (0x04) a cena espera até um ator começar uma
-  animação (onSimAnimation) ou 1 s (inferido). `--cinematic
+  animação (onSimAnimation); a espera de 1 s que havia aqui era nossa e saiu
+  na rodada n34 (§9: quem começa a cena é o `try_animate_sim`). `--cinematic
   <cena>[@id,id...][:mirror]` (atores na ordem do CINE; sem ids, os Sims do
   lote nos atores Sim e um objeto do lote com o modelo do ator, p. ex. a
   caixa de correio; como ajuda de teste os Sims tocam a parte deles,
@@ -452,9 +453,11 @@ como funções no projeto). Endereços BV.
   byte 15. Era inferido.
 - **Sem "Start Animations Now"** (0x04): o Prep só marca a cena pronta
   (`+0x166`); quem chama o Start depois não foi achado (a espera por um
-  ator que anime, ou 1 s, segue inferida).
+  ator que anime, ou 1 s, segue inferida). **Rodada n34 (§9):** é o
+  `try_animate_sim`; a espera de 1 s saiu.
 - **Spots do rig.** A direção do cone não foi lida (o rig continua com os
-  spots como pontos; a luz das cenas é frente de render).
+  spots como pontos; a luz das cenas é frente de render). **Rodada n34
+  (§9):** o −Z do nó, pela luz do `cSpotLight` num ponto.
 - **A câmera e o rig agora pelas regras do ANIM** (`anim-mac.md` §9): as
   rotações da `cinecam` e dos ossos do rig amostradas por quadro e com
   slerp, as tangentes por tick e as chaves assadas a cada 33,3 ticks — o
