@@ -308,9 +308,182 @@ int cmdEffectSim(const std::string& path, const std::string& spec, float seconds
     return 0;
 }
 
+// The effects that use each particle / meta block, directly or through
+// nested effects, sequences and meta particles' carried effects: the
+// names in the library's name table (the ones objects can start).
+struct Users {
+    std::map<int, std::vector<std::string>> particles, metas, sequences;
+};
+Users usersOf(const fx::EffectsLibrary& lib) {
+    Users u;
+    std::vector<std::pair<uint32_t, std::string>> named;
+    for (const auto& [n, i] : lib.names)
+        named.emplace_back(i, n);
+    std::sort(named.begin(), named.end());
+    for (const auto& [top, name] : named) {
+        std::vector<uint32_t> stack{top};
+        std::vector<bool> seen(lib.visuals.size());
+        while (!stack.empty()) {
+            const uint32_t v = stack.back();
+            stack.pop_back();
+            if (v >= lib.visuals.size() || seen[v])
+                continue;
+            seen[v] = true;
+            for (const auto& c : lib.visuals[v].components) {
+                if (c.type == fx::Block::Visual)
+                    stack.push_back(uint32_t(c.index));
+                else if (c.type == fx::Block::Particles)
+                    u.particles[c.index].push_back(name);
+                else if (c.type == fx::Block::MetaParticles && size_t(c.index) < lib.metaParticles.size()) {
+                    u.metas[c.index].push_back(name);
+                    if (auto b = lib.indexOf(lib.metaParticles[size_t(c.index)].baseEffect))
+                        stack.push_back(*b);
+                } else if (c.type == fx::Block::Sequence && size_t(c.index) < lib.sequences.size()) {
+                    u.sequences[c.index].push_back(name);
+                    for (const auto& it : lib.sequences[size_t(c.index)].items)
+                        if (auto b = lib.indexOf(it.effect))
+                            stack.push_back(*b);
+                }
+            }
+        }
+    }
+    for (auto* m : {&u.particles, &u.metas, &u.sequences})
+        for (auto& [k, v] : *m) {
+            std::sort(v.begin(), v.end());
+            v.erase(std::unique(v.begin(), v.end()), v.end());
+        }
+    return u;
+}
+
+std::string some(const std::vector<std::string>& v, size_t n = 6) {
+    std::string s;
+    for (size_t i = 0; i < v.size() && i < n; ++i)
+        s += (i ? " " : "") + v[i];
+    if (v.size() > n)
+        s += " (+" + std::to_string(v.size() - n) + ")";
+    return s;
+}
+
+// Which blocks use a feature of the runtime, and which effects use them:
+// colliders, terrain, wiggle, screw, stretch, unlit (no -light), tractor,
+// lod (components with a LOD range or LOD scales), sequences.
+int cmdEffectUsage(const std::string& path, const std::string& feature) {
+    const auto lib = load(path);
+    const Users u = usersOf(lib);
+    auto users = [&](const std::map<int, std::vector<std::string>>& m, int i) {
+        auto it = m.find(i);
+        return it == m.end() ? std::string("(none)") : some(it->second);
+    };
+    int n = 0;
+    if (feature == "lod") {
+        for (size_t v = 0; v < lib.visuals.size(); ++v)
+            for (const auto& c : lib.visuals[v].components)
+                if (c.lodBegin != 1 || c.lodEnd != 5 || c.emitScale[0] != c.emitScale[1] ||
+                    c.sizeScale[0] != c.sizeScale[1] || c.alphaScale[0] != c.alphaScale[1]) {
+                    ++n;
+                    std::string name;
+                    for (const auto& [k, i] : lib.names)
+                        if (i == v)
+                            name = k;
+                    std::printf("effect #%zu %s: %s \"%s\" lod %u-%u emit %g/%g size %g/%g alpha %g/%g\n", v,
+                                name.c_str(), blockName(c.type), c.name.c_str(), c.lodBegin, c.lodEnd, c.emitScale[0],
+                                c.emitScale[1], c.sizeScale[0], c.sizeScale[1], c.alphaScale[0], c.alphaScale[1]);
+                }
+        std::printf("%d components\n", n);
+        return 0;
+    }
+    if (feature == "sequences") {
+        for (size_t i = 0; i < lib.sequences.size(); ++i) {
+            std::printf("sequence %zu flags 0x%X:", i, lib.sequences[i].flags);
+            for (const auto& it : lib.sequences[i].items)
+                std::printf(" [%g..%g %s]", it.activateTime[0], it.activateTime[1], it.effect.c_str());
+            std::printf("\n    used by %s\n", users(u.sequences, int(i)).c_str());
+        }
+        return 0;
+    }
+    for (size_t i = 0; i < lib.particles.size(); ++i) {
+        const auto& p = lib.particles[i];
+        std::string what;
+        char b[256];
+        if (feature == "colliders" && !p.colliders.empty())
+            for (const auto& c : p.colliders) {
+                std::snprintf(b, sizeof b, " {%x %s [%g %g %g] [%g %g %g] [%g %g %g] %g %g %g %g \"%s\" \"%s\"}", c.flags,
+                              c.name.c_str(), c.v[0][0], c.v[0][1], c.v[0][2], c.v[1][0], c.v[1][1], c.v[1][2], c.v[2][0],
+                              c.v[2][1], c.v[2][2], c.f[0], c.f[1], c.f[2], c.f[3], c.effect1.c_str(), c.effect2.c_str());
+                what += b;
+            }
+        if (feature == "colliders" && (p.flags & 0x18) && p.colliders.empty())
+            what += " (bits 3/4 without colliders)";
+        if (feature == "terrain" && (p.flags & ((1ull << 15) | (1ull << 16) | (1ull << 17) | (1ull << 18)))) {
+            std::snprintf(b, sizeof b, " bits %llx bounce %g kill %g", (unsigned long long)(p.flags >> 15 & 15),
+                          p.terrainBounce, p.killHeight);
+            what += b;
+        }
+        if (feature == "wiggle" && !p.wiggles.empty())
+            for (const auto& w : p.wiggles) {
+                std::snprintf(b, sizeof b, " (%g [%g %g %g] [%g %g %g])", w.timeRate, w.rateDirection[0],
+                              w.rateDirection[1], w.rateDirection[2], w.wiggleDirection[0], w.wiggleDirection[1],
+                              w.wiggleDirection[2]);
+                what += b;
+            }
+        if (feature == "screw" && p.screw != 0) {
+            std::snprintf(b, sizeof b, " screw %g", p.screw);
+            what += b;
+        }
+        if (feature == "stretch" && p.stretch != 0) {
+            std::snprintf(b, sizeof b, " stretch %g", p.stretch);
+            what += b;
+        }
+        if (feature == "unlit" && !(p.flags & fx::pflag::Light))
+            what += " " + p.material;
+        if (!what.empty()) {
+            ++n;
+            std::printf("particles %zu flags %llx%s\n    used by %s\n", i, (unsigned long long)p.flags, what.c_str(),
+                        users(u.particles, int(i)).c_str());
+        }
+    }
+    for (size_t i = 0; i < lib.metaParticles.size(); ++i) {
+        const auto& m = lib.metaParticles[i];
+        std::string what;
+        char b[256];
+        if (feature == "colliders" && !m.colliders.empty())
+            for (const auto& c : m.colliders) {
+                std::snprintf(b, sizeof b, " {%x %s %g %g %g %g \"%s\" \"%s\"}", c.flags, c.name.c_str(), c.f[0], c.f[1],
+                              c.f[2], c.f[3], c.effect1.c_str(), c.effect2.c_str());
+                what += b;
+            }
+        if (feature == "terrain" && (m.flags & (0x3full << 5))) {
+            std::snprintf(b, sizeof b, " bits 5-10 %llx", (unsigned long long)(m.flags >> 5 & 0x3f));
+            what += b;
+        }
+        if (feature == "wiggle" && !m.wiggles.empty()) {
+            std::snprintf(b, sizeof b, " %zu wiggles", m.wiggles.size());
+            what += b;
+        }
+        if (feature == "screw" && m.screw != 0) {
+            std::snprintf(b, sizeof b, " screw %g", m.screw);
+            what += b;
+        }
+        if (feature == "tractor" && (m.flags & fx::mflag::Tractor)) {
+            std::snprintf(b, sizeof b, " %zu points, path %d, attractor %zu", m.path.size(),
+                          int((m.flags & fx::mflag::Path) != 0), m.attractorStrength.size());
+            what += b;
+        }
+        if (!what.empty()) {
+            ++n;
+            std::printf("meta %zu flags %llx base %s%s\n    used by %s\n", i, (unsigned long long)m.flags,
+                        m.baseEffect.c_str(), what.c_str(), users(u.metas, int(i)).c_str());
+        }
+    }
+    std::printf("%d blocks\n", n);
+    return 0;
+}
+
 } // namespace
 
 int effectsCommand(const std::string& cmd, int argc, char** argv) {
+    if (cmd == "effect-usage" && argc == 4)
+        return cmdEffectUsage(argv[2], argv[3]);
     if (cmd == "effects" && argc >= 3)
         return cmdEffects(argv[2], {argv + 3, argv + argc});
     if (cmd == "effect-sim" && (argc == 4 || argc == 5))
@@ -328,6 +501,7 @@ int effectsCommand(const std::string& cmd, int argc, char** argv) {
 const char* effectsUsage() {
     return "       s2pkg effects <effects.package> [effect-name...]\n"
            "       s2pkg effect-sim <effects.package> <effect-name> [seconds]\n"
+           "       s2pkg effect-usage <effects.package> colliders|terrain|wiggle|screw|stretch|unlit|tractor|lod|sequences\n"
            "       s2pkg effect-tables <Res-dir> <effects.package> [group-hex[:STR#-hex]: list that table, 0x8F by default]\n";
 }
 

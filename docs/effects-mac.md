@@ -542,9 +542,197 @@ meta-partícula e a fonte da meta (`UpdateActiveParticles` `0xf5f5b0`).
   ficam menos numerosas (taxa por ciclo em fatias de 1/15 s, rajadas de
   `ceil(taxa)`), o vapor e a fumaça sobem como uma nuvem só (um passeio
   aleatório por efeito), os peixes nadam dentro das paredes do tanque.
-- Ferramentas: `s2pkg effects` conta os bits e lista os pontos de caminho;
+- Ferramentas: `s2pkg effects` conta os bits e lista os pontos de caminho; `s2pkg effect-usage` (rodada n38) diz quem usa cada coisa;
   `s2pkg effect-sim <pacote> <nome>~soft` roda com começo suave (sem
   `~soft`, forte, com o pre-roll).
+
+## 4f. Rodada n38: o resto das partículas lido no binário **[bin]**
+
+Ghidra MCP (`sims2_bv.ppc`, só leitura) e Ghidra headless num projeto
+descartável importado sem análise (as funções que o projeto do MCP não
+criou: `cDisplayList`, os colisores do mundo, o `cTSSequenceEffect`, o
+leitor das propriedades). Endereços do BV. `s2pkg effect-usage <pacote>
+colliders|terrain|wiggle|screw|stretch|unlit|tractor|lod|sequences` lista
+os blocos que usam cada coisa e os efeitos que os levam (conta abaixo).
+
+### 4f.1 Iluminação (bit 23, `texture -light`)
+
+- O parser do comando `texture` (`FUN_01c1cad4`) liga o bit 23 com a
+  opção `-light`: **1.441 das 1.852 partículas são iluminadas**; as 411
+  sem ela são as da interface (balões, ícones, cursores).
+- `AddElementsToDisplayList` (`0xeba5cc`) passa à display list a flag
+  `bit 23 | 0x40`: 1 = a geometria recebe as luzes; sem ela, o
+  `kGeomSkipIllumination` que o `particles.matShad` cita ("the particle
+  system takes care of whether lighting is applied"). As partículas de
+  malha (o renderable `+0xac`) vão sempre com 1.
+- O que a luz faz no `StandardParticlesMaterial`: só
+  `numLightsOfType(environmentCube)`: com uma luz dessas,
+  `colorScalar (1,1,1,1) -applyTextureLightColor 0 0` e um estágio que
+  multiplica a cor e o alfa da textura pelo `colorScalar` ("multiply in
+  environment tint"); as luzes comuns ficam de fora
+  (`LightingStatesNoStdLights`). Com textura composta, nada.
+- A luz `environmentCube` do lote é a "LM_Environment" que o
+  `TSCreateLightsFromLightingStateWithAmbient` (`0xd741dc`) cria do campo
+  `environment` do estado de luz (bit 9; o `particles`, bit 10, faria uma
+  "LM_Particles", mas nenhum estado do `Lighting.txt` o tem). No
+  `Lighting.txt`: dia `(1,1,1) 1`, noite `(1,1,1) .8` (o comentário da
+  Maxis diz "does not work"; o binário a cria igual), manhã/tarde
+  `(0.45, 0.25, 0.35) 2` (só com `morningEvening`, desligado). Então à
+  noite as partículas iluminadas ficam 20% mais escuras; de dia nada muda.
+
+### 4f.2 LOD pela distância da câmera
+
+- `cTSCameraSmoothSims1Controller::Update` (`0x86ffb8`), no fim: com o
+  gerente de efeitos (`+0x434`), acha o nível da zoom table da distância
+  atual (`vtable 0x118` = `FUN_0086b56c`: o último nível cuja distância
+  passa a atual e a fração até o seguinte, presa em [0, 1]) e chama o
+  `SetLOD(float)` do gerente (`vtable 0x44` = `0xc061b0`) com **nível +
+  fração + 1**. Com `70 40 25 15 8 3` do `LiveCamera.txt`: 70 → 1, 40 → 2,
+  25 → 3, 15 → 4, 8 e mais perto → 4,9999 (o máximo). O mesmo número que o
+  `LotCamera::zoom()` do app + 1.
+- `SetLOD(float)`: LOD = valor − `particleLODOffset` (`+0xac0`; 0 em
+  todas as qualidades do `Graphics Rules.sgr`), preso em [1; 4,9999]; o
+  inteiro (`+0xaac`) e a fração (`+0xb30`). Mudou o inteiro:
+  `FUN_00c05240` refaz todos os efeitos (`UpdateVisualEffect`, `0xc04544`).
+  (`SetLOD(int)`, `0xc06378`, é o caminho sem suavização; ninguém do lote
+  o usa.)
+- `UpdateVisualEffect`: um componente existe só com `lodBegin ≤ LOD <
+  lodEnd` (o parser do `effect`, `FUN_00bff648`, dá 1 e 5 sem `-lod`); os
+  que saem são parados (forte, se `effectLODSoftChange` for falso; o valor
+  padrão dessa propriedade não foi achado) e os que entram são criados.
+- `SetCurveCoefficients` (`0xc021c8`): com `lodBegin < lodEnd − 1`, as
+  escalas (emissão, tamanho, alfa) em `(LOD − begin)/(end − begin)` e em
+  `(LOD − begin + 1)/(end − begin)` entre as do começo e as do fim do
+  componente; com a faixa de um nível, as do começo e as do fim mesmo. O
+  efeito recebe os dois trios (`SetFloatParams 0x101`, `0xeb62f0`: `+0x13c`
+  … `+0x150`) e o `ApplyEffect` (`0xebb7c8`) mistura pela fração: no fim,
+  **escala = lerp(começo, fim, (LOD − begin)/(end − begin))**. 1.935
+  componentes do jogo base têm escalas de LOD (o mais comum: emissão 0,25,
+  tamanho 2 e alfa 2 no LOD 1: de longe menos partículas, maiores e mais
+  opacas), alguns só existem do LOD 2 ou 3 para cima.
+- Densidade e escala do gerente: o contexto que o `ApplyEffect` lê
+  (`+0xb24` do gerente) é `particleDensity` (1), `particleScale` (1), uma
+  constante, a fração do LOD e o vento do mundo. O `ApplyEffect`
+  multiplica a emissão pela densidade e o tamanho pela escala **nos
+  emissores de curva de taxa** (nem bit 0 nem bit 1); no `inject` só com
+  curva[0] > 20 (senão a escala de emissão vira 1); no `maintain` nada.
+  Com os dois em 1 no jogo, nada muda. Corrige a §4e.3.
+- O vento do mundo (`+0xb34`) não tem quem escreva no jogo base (nenhum
+  `stfs`/`stw` em `+0xb34`): zero, como o app já fazia.
+
+### 4f.3 Colisores das partículas e efeitos de colisão/morte
+
+- `ApplyForces` (`0xeb6604`), a cada passo de 1/15 s: atrator, arrasto,
+  depois, com os bits 3/4, `ApplyColliderForces` (`0xeb3064`): o raio da
+  partícula = tamanho dela × curva de tamanho × max(1, aspecto) × (1 +
+  |variação do aspecto|) × as escalas do efeito; então a resposta comum
+  `FUN_00ebdb5c` para cada colisor; fora do lote com o bit 18 morre; com os
+  bits 15/17, `ApplyTerrainForces`.
+- O registro do colisor (`cTSColliderInfo`, leitor `FUN_00ebd270`, cópia
+  `FUN_01c12158`): flags, nome, 3 vetores, e os floats `+0x2c` quique,
+  `+0x30` deslize, `+0x34` "gruda" (lido só com o bit 1 das flags e um
+  byte; nenhum no jogo base: 0), `+0x38` escala do raio, `+0x3c` chance de
+  morte, `+0x40` efeito de colisão, `+0x44` efeito de morte. Os quatro
+  floats do arquivo são os de `+0x2c`, `+0x30`, `+0x38`, `+0x3c`.
+- A resposta (`FUN_00ebdb5c`): o teste do colisor (`vtable 0x14`) acerta →
+  chance de morte 1, ou sorteio ≤ chance: o efeito de morte (se houver)
+  nasce ali e a partícula morre; senão o efeito de colisão nasce ali e,
+  movendo-se contra a normal, v' = v − (1 + quique)·vₙ − (1 − deslize)·vₜ
+  (com "gruda" > 0: parada abaixo de √gruda, senão encolhida). O efeito
+  novo (`FUN_00ebd9ac`): `CreateEffect(nome)`, só a translação no ponto,
+  a fonte do efeito, **começo suave**, e fica por conta do gerente até
+  acabar.
+- Colisores do jogo base (321 blocos de partículas): `plane` 426
+  registros, `floors` 142, `walls` 54, `wallsAndFloors` 53. Efeitos de
+  morte: `throwupPuddleAdult` (vômito), `wateringCanSplash`,
+  `sinkLeakyFaucetSplash`, `bathtubLeakyFaucetSplash`,
+  `sloppyShowerSplash`, `roachProFumes`, `aquarium_fish*_death`. Usam
+  `floors`: confetes (aniversário, contas), vômito, comida derramada, o
+  despertador quebrado, o extintor, moscas, abelhas, baratas, a fumaça da
+  morte; `plane`: o vapor do chuveiro/banheira (o teto da caixa), o vapor
+  do freezer, as bolhas do aquário, as gotas da torneira pingando.
+- `plane` (`cTSPlaneCollider`, teste `0xebce60`): plano e 4 cantos
+  montados uma vez, no primeiro `ApplyEffect` (`+0x1d0`), dos 3 vetores no
+  quadro do emissor; acerta movendo-se contra a normal (vₙ < −1e-5) com t =
+  (raio × `+0x38` + distância)/vₙ em [0, 1] e o ponto dentro do quadrilátero
+  (paridade no plano); o ponto novo é o do contato.
+- `floors` (`TSSGEffectInteraction.cpp`, `cFloorsCollider`, teste
+  `0x1bc2a58` via a base `0x1bc3248`, que leva os pontos ao mundo e usa
+  raio × `+0x38` × 0,5): o andar abaixo do ponto
+  (`nTSWorld::LevelBelow`, `0x1670cc`: do andar de cima para baixo, o
+  primeiro cujo piso em (x, y) está abaixo de z + 0,01) e o de cima; o piso
+  é o `SampledFloorElevation` do andar e vale se o tile tem piso
+  (`WorldDB` `0xb8` com o quarto do ponto, `FUN_0015d84c`). Cruzou o piso
+  de baixo descendo (ou está sob ele): fica a raio acima, normal +Z;
+  cruzou o de cima subindo: a raio abaixo, normal −Z.
+- `walls` (`0x1bc2778`): a consulta de paredes do `WorldDB` (`0xa0(3)`) com
+  um teste de esfera (`0x54`) e de segmento (`0x4c`) que dão o ponto e a
+  normal; o ponto fica a raio + `+0xc` da parede. As duas consultas do
+  `WorldDB` não foram lidas. `wallsAndFloors` = os dois.
+- Meta-partículas: a mesma resposta (`ApplyColliderForces` da meta,
+  `0xf5e804`); ao morrer sem corrente (`FUN_00f64084`) a filha é parada
+  (suave por padrão, `+0x10c`) e **continua até as partículas dela
+  acabarem** (lista `+0x1c0`), e se existe o efeito `<base>_death` (o
+  `InitFromDescription` da meta, `0xf60654`, procura `%s_death`,
+  `%s_terrain`, `%s_water`) ele nasce no ponto com começo suave:
+  `flashCamPartEffect_death` (o flash das câmeras), `roachSprayPro2_death`,
+  `boltEfx_death`.
+
+### 4f.4 `cTSSequenceEffect` (vtable `0x286d538`)
+
+- Flags do `sequence` (o `ReadDescription` do comando, `FUN_01c0f0a0`): bit 0 `-loop`, bit 1
+  `-hardStart`, bit 2 `-hardStop`/`-noOverlap`, bit 3 `-noStop`/`-overlap`.
+  No jogo base: 59 sem flags, 20 com `loop` (as pias, a banheira, as
+  abelhas/borboletas, o pinball), 5 com `hardStop`.
+- `Start` (`0xf5a330`): sem itens não corre; num começo suave (ou o
+  primeiro) zera o relógio, o item e o próximo tempo.
+- `ApplyEffect` (`0xf5ac84`): relógio += dt; o item atual acaba quando o
+  relógio passa o próximo tempo, ou, num item de tempo < 0, **quando o
+  efeito filho morre sozinho**. Então: o item seguinte (passado o último:
+  com `loop` volta ao primeiro, sem ele a sequência para); o filho
+  anterior é parado (forte com `hardStop`; suave fica até acabar) — com
+  `overlap` não é parado; o tempo do novo = `RandomRange(tempo)` somado ao
+  próximo tempo; nome vazio = uma pausa. O filho: `CreateEffect`, as
+  transformações da sequência, `Start(hardStart)`.
+- Os itens começam **suaves** (sem `hardStart`, todos no jogo base):
+  confirma a escolha antiga.
+
+### 4f.5 O resto
+
+- **Cadeias de estado** (`SelectDescriptionState` `0xeb04f4` →
+  `cTSMetaParticlesEffect::SwitchDescription` `0xf60b58`): o estado troca a
+  descrição **do efeito inteiro** (`+0x1c` e `InitFromDescription`): as
+  novas nascem e todas andam pela descrição do estado; a emissão segue em
+  qualquer estado. Um estado > 0 marca o efeito para voltar ao 0 num
+  recomeço (`cTSVisualEffect::Start` `0xeb102c`).
+- **Trator** (bit 29 da meta sem o 30): `ApplyTractorForce` (`0xf5fef0`)
+  no lugar de "posição += v·dt": o ponto do caminho seguinte (o de tempo >
+  idade; tempo 0 = o fim da vida) no quadro do emissor; com o tempo que
+  falta T = (tempo do ponto − idade) + dt, posição e velocidade andam dt
+  por uma Hermite da partícula até o ponto em T (se ela está mais longe que
+  T × `+0x1cc`, o último float da descrição, T cresce pelo trecho já
+  andado); passado o último ponto, só anda. Com o bit 30 vale o caminho
+  (`SnapParticleToPath`) e o trator não. No jogo base: o pinball
+  (`fxTableLightHolder`), o chocolate e as câmeras dos bairros; os balões
+  têm os dois bits (vale o caminho).
+- **Parafuso e tremido** (`0xeb8dbc`, o preenchimento dos vértices; não
+  mexem na física): `screw` gira a posição desenhada em volta do eixo
+  vertical do emissor por (z − z do emissor) × `screw` radianos (91
+  partículas: moscas, as trocas de idade, os corações); `wiggle`
+  (`WigglePoint`) desloca a posição pelo relógio do efeito (8 partículas:
+  o coração do primeiro beijo, os do bairro).
+- **Esticar** (`stretch`, `+0x1e4`, 540 partículas): no mesmo lugar, o
+  quadrado gira para a velocidade projetada nos eixos da câmera e, com
+  |v| > `stretch`, a altura cresce × |v|/`stretch`.
+- **Encarar a câmera** (`cTSVisualEffect::SetTransforms` `0xeb1760`): o
+  viewer olha para o +Y local, o +Z é o alto (`camera-ui-mac.md`); bit 1:
+  X = do efeito para a câmera, Y = alto da câmera × X, Z = X × Y (o que o
+  app já fazia: confirmado); só o bit 0: um giro em Z pelo rumo do **+Y da
+  câmera** (a direção da vista, para longe dela; o app virava o X para a
+  câmera, ao contrário).
+- **Atrator sem ponto próprio**: o ponto vem dos `SetFloatParams` 7/8/9 do
+  efeito (`0xeb62f0`, alvo do efeito); o `TryChangeEffect` não os passa
+  (só 0xD e 0xF), quem os passa não foi achado: segue sem puxar.
 
 ## 5. Uso
 
@@ -552,6 +740,8 @@ meta-partícula e a fonte da meta (`UpdateActiveParticles` `0xf5f5b0`).
   `s2pkg effects <pacote> <nome>...`: árvore do efeito com os parâmetros.
 - `s2pkg effect-sim <pacote> <nome> [s]`: roda o efeito na origem e lista
   partículas.
+- `s2pkg effect-usage <pacote> colliders|terrain|wiggle|screw|stretch|unlit|tractor|lod|sequences`:
+  os blocos que usam cada coisa do runtime e os efeitos (nomes) que os levam.
 - `s2pkg effect-tables <Res> <pacote> [grupo[:STR#]]`: STR# que nomeiam
   efeitos (0x8F), ou a lista de um grupo.
 - App: `--effect <nome>[~<estado>][#<guid>][@<objeto>[:<índice no STR# 0x90>] | @x,y,z]`
