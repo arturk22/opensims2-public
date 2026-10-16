@@ -420,7 +420,9 @@ EffectSystem::Particle EffectSystem::initParticle(const Instance& inst, const Em
     const Placement t1 = emitterFrame(inst, e);
     p.position = transformPoint(t1, u);
     p.velocity = rotate(t1, v);
-    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary) * e.sizeScale;
+    // The size scale (the LOD's): at birth (ApplyEffect's +0x174), or with
+    // -scaleExisting on every particle as it is drawn (+0x178).
+    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary) * ((d.flags & pflag::ScaleExisting) ? 1 : e.sizeScale);
     p.aspectScale = random(1 - d.aspectVary, 1 + d.aspectVary);
     p.alphaScale = random(1 - d.alphaVary, 1 + d.alphaVary);
     for (int k = 0; k < 3; ++k)
@@ -1372,7 +1374,8 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
             q.groupCenter = center;
             q.layerKey = key;
             q.velocity = rotate(frame, p.velocity);
-            const float size = p.sizeScale * sampleCurve(d.sizeCurve, t, 1) * frame.scale;
+            const float size = p.sizeScale * sampleCurve(d.sizeCurve, t, 1) * frame.scale *
+                               ((d.flags & pflag::ScaleExisting) ? e.sizeScale : 1);
             q.width = size;
             q.height = size * sampleCurve(d.aspectCurve, t, 1) * p.aspectScale;
             q.rotation = (sampleCurve(d.rotateCurveX, t, 0) * p.rotate[0] + d.rotateOffset[0]) * kTwoPi;

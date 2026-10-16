@@ -79,6 +79,7 @@ constexpr uint64_t Light = 1ull << 23;        // texture -light: lit by the scen
 constexpr uint64_t AcceptOverride = 1ull << 24; // the texture can be replaced (balloon icons)
 constexpr uint64_t Attractor = 1ull << 26;    // force -attractor
 constexpr uint64_t AttractorPoint = 1ull << 27; // the attractor has its own point (else the effect's target)
+constexpr uint64_t ScaleExisting = 1ull << 28; // emit -scaleExisting: the size scale applies to the particles alive
 constexpr uint64_t CycleKill = 1ull << 30;    // rate -cycleKill: each new cycle clears the old ones
 constexpr uint64_t DirectLayer = 1ull << 31;  // texture -directLayer: the layer as it is, not x 8 + 7
 // Flags that need the full time-stepped physics (the binary's mask, built
