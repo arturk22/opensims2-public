@@ -2445,11 +2445,13 @@ novo, 2 feito, 3 desfeito, 4 falhou. `CommitIt` (`0x9b4ff0`): pré-operações,
 a própria (`0x58`), pós absolutas, pós; `UndoIt` (`0x9b65bc`; se ainda 1, faz
 antes): pós, a própria (`0x5c`), pós absolutas, pré; `RedoIt` (`0x9b519c`):
 como o `CommitIt` com `0x60`. Cada um termina com a vtable `0x68(±0x30)`
-(`0x9b4a6c`: manda ao sim system, vtable `0xb0(6, valor)`; inferido: a
-estatística de gastos de construção da família). Quem cobra é
-`cTSUserToolBuyBuild::SubmitUndoable` (`0x9b3b94`): sem "não cobrar", fundos
-−= `TotalCost` antes de submeter. Nem o gerente nem `RedoIt` testam o
-dinheiro (não achado quem testa no refazer). O `0x30` é o custo do próprio
+(`0x9b4a6c`, `cTSUserToolUndoable::AdjustFunds`: manda ao simulador,
+vtable `0xb0(6, valor)` = `cTSSimulator::Spend`; rodada n37, §7.25: é ela que
+cobra, devolve no desfazer e cobra de novo no refazer). O
+`cTSUserToolBuyBuild::SubmitUndoable` (`0x9b3b94`) ainda chama, sem "não
+cobrar", a vtable `0xa0(−TotalCost)` do objeto em `+4` da ferramenta (§7.25:
+não é o simulador). Nem o gerente nem `RedoIt` testam o dinheiro: o refazer
+não é recusado por falta de fundos. O `0x30` é o custo do próprio
 undoable (o `float +0x58` arredondado; 0 sem cobrança) e o `TotalCost` (`0x34`,
 `0x9b5568`) soma o dele e o de cada pré/pós-operação.
 
@@ -2471,9 +2473,11 @@ ao voltar ao modo Vivo.
 
 **Escadas modulares: o +0,75 e a "elevation".** `UserPlaceModularStairs`
 (`0x9edcf8`) soma 0,75 à altura de cima quando `FUN_0016854c(tile de cima)`:
-algum quarto do tile, **no nível dele**, com `DeckFoundationStyle` do tipo 4,
-que é o **deck** (`nTSWorld::HasDeck` = `IsDeckFoundationOfType(.., 4)`;
-`IsPool` = 3 ou 5), não a fundação. Nos lotes (3ARY `0x14`, `u32` por quarto,
+algum quarto do tile, **no nível dele**, com `DeckFoundationStyle` do tipo 4
+(`nTSWorld::HasDeck` = `IsDeckFoundationOfType(.., 4)`; `IsPool` = 3 ou 5).
+**Correção (rodada n37, §7.25):** o tipo 4 é o **palco** do BV (deck é 1,
+fundação 2, piscina 3), apesar do nome `HasDeck`: no jogo base nenhum lance
+ganha o 0,75. Nos lotes (3ARY `0x14`, `u32` por quarto,
 −1 nenhum, níveis a partir do −1 como as alturas) os marcadores ficam no
 **nível 0**, debaixo do piso levantado (o nível 1, já a +0,75: `N001_Lot68`,
 decks 1 e fundações 0 no nível 0, piscinas 3 no −1): um lance que sai do piso
@@ -2525,6 +2529,179 @@ caixa retangular: o jogo só abre a parede pela máscara (rodada n36: feito,
 - Portas e janelas sem máscara: o app segue com a caixa retangular quando não
   acha o TXMT (`formats/lot_model.cpp`, área da rodada 19); no jogo não haveria
   buraco (TODO).
+
+### 7.25 Fundações, piscinas, marcadores, objetos no vértice, dinheiro do desfazer, salas e lareira (rodada n37, Ghidra MCP)
+
+Leitura do BV com o Ghidra MCP (só leitura). Onde o Ghidra não tem função
+(inicializadores estáticos, os handlers do parser, o gerente de desfazer) os
+bytes foram lidos do `sims2_bv.ppc` com um desmontador mínimo (rascunho). Os
+nomes entre aspas vêm do `baserom.sym` (`sims2_mac_decomp`), que dá os nomes
+das funções anônimas da ferramenta (`UserPlaceDeckFoundation`,
+`MoveFloorElevations`, `SetDeckFoundationMarkers`, `cTSUserToolUndoable::AdjustFunds`).
+
+**Os tipos dos produtos.** O parser do `deckfoundations.txt` cria o produto e
+chama `SetType` (vtable `0xc8`, `0xf21c40`: `+0xbc`) com **1 para `deck`, 2
+para `foundation`, 3 para `pool`** (handlers `0x1bf3930`, `0x1bf4158`,
+`0x1bf3ea0`; `li r4,N` antes da chamada); o `stage` do BV é o 4 (e a piscina
+curva, 5: `IsPool` = 3 ou 5). `cTSProductDeckFoundation::Type` (`0xf220b0`) e
+`StyleID` (`0xf220b8`, `+0xc0`: o número do produto, o que vai no 3ARY `0x14`).
+A ferramenta guarda o tipo em `+0x70` e três bytes no `Init` (`0x354a64`):
+`+0xbc` fundação (tipo 2), `+0xbd` piscina (3), `+0xbe` palco (4).
+**Correção da §7.24:** o `nTSWorld::HasDeck` (`0x168400`) e o `FUN_0016854c`
+perguntam o **tipo 4, o palco** (só BV), não o deck: o +0,75 das escadas
+modulares e o `0x99` são de palco; `FUN_00168140` é o "tem deck" (tipo 1) e
+`FUN_001688f8` o "tem fundação" (tipo 2). No jogo base nada é do tipo 4.
+
+**A altura da ferramenta** (`+0xa8`). `OnClick` (`0x34f214`) arredonda o
+ponto ao vértice (`FUN_0015dc5c`) e `StartOperation` (`0x34eb18`) guarda o
+começo em `+0x8c` e a altura em `+0xa8` = `UserDeckFoundation::CalculateTopElevation`
+(`0x9ad4e4`, nomeado errado `cTSUserToolAwning::OnRelease`): palco, a altura
+do piso ali; senão, no térreo, se nenhum tile em volta do vértice do começo
+tem marcador (`FUN_001633fc` = `HasDeckFoundationVertex`: algum dos quatro
+tiles no lote com `DeckFoundationStyle` ≠ −1) ou algum quarto em volta é de
+palco (`FUN_00164a7c`), **altura do vértice + 4 × `FloorElevationUnit` (0,75)**,
+e piscina **+ 0**; com marcador em volta, **a altura do piso do andar de
+cima** ali (o deck novo continua na altura do que já existe).
+
+**`MayPlaceQuadrilateral` (`0x352a30`), na ordem** (os cantos: `+0xc4` o
+mínimo, `+0xd0` o máximo, vértices; os tiles vão de `+0xc4` a `+0xd0` − 1):
+
+1. `SelectionIsDegenerate`; cada canto fora do `IsInBounds` ou travado → `0x02`;
+2. **cada vértice do retângulo** (`+0xc4` a `+0xd0`, inclusive), no andar de
+   cima para deck e fundação e no próprio andar para piscina, cuja altura
+   (`WorldDB 0xd8`) não é a da ferramenta tem de passar o teste de vértice
+   `FUN_009e9550(+0xa8, vértice, flags)` com **`0x2BB7`** (a global
+   `0x02b8a698`, posta pelo inicializador `0x1ee033c`), senão **`0x81`** "Can't
+   level terrain" (`0x2F` fora do térreo);
+3. `FUN_009dae20` em cada tile (alguma forma do tile, sem código; não lido);
+4. fundação: cada objeto do tile que não `ObjectMayBeInFoundation` (`0x34e380`:
+   um dos três testes do serviço `0x60` sobre o seletor, não identificados,
+   ou `IsSupport` — OBJD tipo 5 — com `ConformsToCeiling`) → **`0x83`**; palco
+   no tile, neste andar ou no de cima → `0x99`; deck: só o palco (`0x99`),
+   **nenhum teste de objeto** (os objetos no chão em volta pegam o `0x60` do
+   teste de vértice, abaixo); piscina: `CanPlaceTile` por tile e o tile do
+   começo com fundação, deck ou palco → `0x86` (§7.18);
+5. a lista `+0x9c` (visibilidade do piso; piscina: `0x02`/`0x86`);
+6. paredes: de piscina atravessando → `0x46`; uma parede dentro do retângulo
+   cujo estilo o nivelador de cômodo não pode apagar (`FUN_009ac8d0`) → `0x84`.
+
+**`UserPlaceDeckFoundation` (`0x9b1bc0`), na ordem:** `SetDeckFoundationMarkers`
+(`0x9ad76c`), `MoveFloorElevations` (`0x9af1c4`), piscina: `ModifyFloorVisibility`
+(`0x9adec8`), `RemoveOldWalls`, as paredes novas pela borda (`0x9b1204`,
+`AddNewWalls` `0x9ad054`), `ChangeFloorPatterns` (`0x9ae5b4`), e, fora o palco,
+os suportes (`ChangeSupportsInInterior` `0x9af9ac`, `ChangeSupportsAlongEdge`
+`0x9b0708`). Apagar (`UserRemoveDeckFoundation`, `0x9b17dc`): marcadores a −1,
+suportes, pisos, `RemoveOldWalls` (falhou → desfaz), paredes, visibilidade e
+`MoveFloorElevations` de volta.
+
+**Os marcadores (3ARY `0x14`).** `SetDeckFoundationMarkers`: cada quarto (o
+iterador `FUN_0015c3e4`, máscaras 1, 2, 4, 8) de cada tile do retângulo, **no
+andar do canto** (o térreo para deck e fundação, onde os lotes os têm) e **um
+abaixo para a piscina**, recebe o `StyleID` do produto pelo
+`cTSUserToolUndoableDeckFoundation::SetDeckFoundationStyle` (`0x41817c`): se
+o marcador do quarto muda, `WorldDB 0x6c` o grava, a troca vai para a lista do
+desfazer e o custo do undoable (`float +0x58`) soma
+**(`DeckFoundationCost(novo)` − `DeckFoundationCost(velho, devolução)`) × 0,25**.
+`DeckFoundationCost` (`0x417c30`): o preço do produto do estilo (nenhum
+produto: 0), × `RefundRate` (0,8) na devolução, arredondado. Ou seja: o preço é
+por quarto que muda, e um quarto de outro produto devolve 80% do dele.
+
+**`MoveFloorElevations` (`0x9af1c4`).** Os vértices de **`x0 − 1` a `x1 + 1`
+e `y0 − 1` a `y1 + 1`** (uma volta a mais em cada lado), no andar de cima
+(deck, fundação) ou no próprio (piscina, palco), passam a
+`TryMoveFloorElevation` (`0x9aef18`): no mundo e dentro dos limites do lote;
+apagando, a altura é a do vértice de baixo + `StandardLevelHeight`; se a altura
+muda (ou é piscina), o teste de vértice com **`0x2BB7`** (outra global,
+`0x02c769d0`, inicializador `0x222a840`) **sem o bit 9** na piscina e **com o
+bit 3** (`IsFloorable`) ao apagar fora do andar 1 (ou com `FUN_009aec5c`);
+passou → `ChangeFloorVertex` (`0x9acee0`): piscina, o vértice de baixo vai a
+altura − 3 (sempre); deck/fundação, o de baixo (o terreno) **só desce**, até a
+altura − 0,75, se estiver acima disso; depois o vértice vai à altura com os
+andares de cima juntos (`ChangeFloorAndWaterElevationCoupled`). Um vértice que
+não passa fica onde está, sem erro (os de dentro já passaram no passo 2). **A
+volta de fora sobe também:** nos lotes salvos, 3.139 dos 3.410 vértices do
+andar 1 logo fora de uma fundação ou deck estão a +0,75 do terreno (o resto, a
++3); dois tiles fora, quase todos a +3. Por isso um tile vizinho à fundação tem
+os quatro vértices a +0,75 e só o marcador diz quem é fundação.
+
+**O bit 7 do teste de vértice (`FUN_009e8e0c`; devolve 1 = recusa).** O bit 12
+das flags vai como o `bool` do `HasGroundPinningObjects` (zero em `0x2BB7` e
+`0x2BF7`). Para cada um dos quatro tiles em volta do vértice, no andar dele e
+no lote (`0xf8`):
+
+- `HasGroundPinningObjects` (`0x16c5b4`): algum objeto do tile que é pessoa
+  (OBJD tipo 2) ou **não tem o bit `0x100` do od 42** (com o `bool`, também a
+  vtable `0x22c`, `FlattensTerrainOnPlace`, `+0xea` bit 11) → **`0x61`**
+  "Can't move occupied terrain";
+- se o vértice está acima do andar mais baixo e a altura nova fica **menos de
+  `StandardLevelHeight` (− 0,001) acima do vértice de baixo**, o tile um andar
+  abaixo com `HasNonCeilingConformingObjects` (`0x16c7a8`: algum objeto que não
+  passa nos três testes do serviço `0x60` e não `ConformsToCeiling`, vtable
+  `0x1f0` → `AggregateConformsToCeiling` `0xafdd94`, uma interface
+  `0xaae90adb` das partes do modelo, não lida) → **`0x60`**;
+- cada objeto do tile com od 42 bit `0x80`: escada modular (OBJD tipo 11/12),
+  os quatro cantos da pegada pela direção (±0,5 de lado, 0,25 para a frente,
+  `FloorElevationUnit` de altura nos dois de cima); outros, a posição; se o
+  `HypotheticalFloorElevation` (o piso com o vértice na altura nova) passa da
+  altura do objeto (+ o do canto) → **`0x68`** "Can't raise terrain above stairs".
+
+**Quem devolve o dinheiro no desfazer.** A vtable `0x68` do undoable é
+**`cTSUserToolUndoable::AdjustFunds(valor)`** (`0x9b4a6c`): o simulador
+(`FUN_000c7fb0()` vtable `0xc`, a interface `cISimulator` do `cTSSimulator`:
+`0x74` `GetFunds`, `0x78` `SetFunds`) vtable `0xb0` = **`cTSSimulator::Spend(6,
+valor)`** (`0x499624`: fundos −= valor, o P&L de negócio do BV pela categoria).
+`CommitIt` e `RedoIt` gastam `+Cost()` e `UndoIt` gasta **`−Cost()`**
+(`neg r4,r3` em `0x9b66a8`): **o desfazer devolve o preço inteiro** e o refazer
+cobra de novo **sem testar o dinheiro** (os fundos podem ficar negativos;
+`RedoLastCommand` também não testa). `Cost()` (vtable `0x30`, `0x9b48f0`) =
+`round(+0x58)`, 0 com "sem custo". O pincel de terreno cobra pela mesma
+`AdjustFunds` a cada aplicação (`UpdateFundsForHeightChange`). O
+`SubmitUndoable` da ferramenta (`0x9b3b94`) ainda chama a vtable `0xa0(−TotalCost)`
+do objeto em `+4` da ferramenta (não é o simulador; não identificado: talvez o
+aviso de dinheiro da UI). O `UndoLastCommand` (`0x970910`) só manda a mensagem
+`0x98` com os campos `+0x5c/+0x60` do undoable (`0x38`/`0x3c`). Corrige a §7.24
+("inferido: a estatística de gastos").
+
+**`SetRoomsPostAttach` em detalhe** (`0xc1f1bc`, §7.3). A aresta nova `e`
+(`QuadEdge 0`): a face da esquerda é a vtable `0x18` da aresta e a da direita a
+`0x1c`. Ponte (o ciclo da esquerda passa pela `Sym`): as duas faces ficam com a
+sala que contém o localizador da aresta. Senão `CreateRoom` (o menor ID livre)
+e, se a sala velha não é 0 **ou** `FUN_00c1c480(e)` = 0, a direita fica com a
+velha e o **ciclo da esquerda** (de `e`) ganha a nova; senão a esquerda fica
+com a velha e o ciclo de `e.Sym` (a direita) ganha a nova. Cada aresta do
+ciclo: a face da esquerda vira a sala nova e semeia o lado dela
+(`AddSeedToRoomManager`); `RefreshMap` e `AttachWallsToRoom`.
+`FUN_00c1c480` é o teste de paridade: pelo lado do localizador de `e` escolhe
+um eixo (lado 1 → direção 6; 2, 9, 12 → 4; 3, 6, 8 → 0; 4 → 2) e conta as
+arestas do ciclo de `e` (sem ela) que cruzam o raio que sai do localizador
+nessa direção (mesma linha, adiante; empate pelo lado); **par = fora** (devolve
+1). Ou seja: com sala velha 0, a sala nova é do lado que o ciclo cerca.
+
+**Colocação: a piscina sob o tile.** `FUN_0016d518(tile, testarLote, alt,
+visível, porObjeto, piscina)`: no lote (se pedido), `WorldDB 0xb8` (ou `0xbc`)
+com a máscara e o `visível`, ou `TileHasFloorFromObject`; e, com `piscina`, o
+tile **um andar abaixo** sem quarto de piscina na máscara (`FUN_00164c40`:
+`IsPool` do marcador de cada quarto). Os objetos comuns pedem `piscina` = 1:
+**no térreo, um tile sobre uma piscina (marcador 3 no andar −1) não tem piso**
+(salvo p&`0x200` ou p2&`4`). A camada de visibilidade do piso é do mundo, posta
+pelo `ModifyFloorVisibility` da piscina e pelos objetos que escondem o piso
+(`HidesFloorOnPlace`); o 3ARY `0x0C` dos lotes (um byte por tile, valores 0–54)
+não é ela.
+
+**A ferramenta de lareira** (`cTSUserToolFireplace::TryPlace`, `0x27a38c`).
+Põe a cornija como objeto (`cTSUserToolObject::TryPlace`); recusa se a pegada
+não fica num cômodo só (`AreObjectBoundsInSameRoom`: erro 3, `0x29`) ou se já
+há chaminé atrás que não serve (`IsValidChimneyBehindHeldMantle`: erro 5). O
+tile da chaminé é o de trás da cornija (pela direção `0xac`: 0 → y−1, 2 → x+1,
+4 → y+1, 6 → x−1). Sobe andar por andar a partir do da cornija enquanto o tile
+de cima tem **`HasSupport`**, até o último andar do lote. Põe, de cima para
+baixo: o topo da chaminé (`ChimneyTopFP` na última peça, `ChimneyTop` nas
+outras; acima do último andar a ferramenta cria um andar novo, `0x1c`), uma
+peça de chaminé (`chimneyhearth`) por andar, e, no térreo sobre fundação
+(`HasFoundation`) ou terreno baixo (`FUN_0027741c`), o `chimneyFoundation`;
+cada peça é ligada à de baixo e à de cima (os mapas `+0x244`/`+0x258`,
+`LinkObjects`). Uma peça que não cabe desfaz tudo (`RevertChanges`). Não feito
+no app (a lareira segue objeto comum).
 
 ---
 
