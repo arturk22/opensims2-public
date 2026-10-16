@@ -500,6 +500,10 @@ private:
     };
     // UpdateWaterElevations over the grid points the water tool dug.
     void adjustWater(const std::set<std::pair<int, int>>& dug);
+    // The water of dry ground points whose height a floor change moved
+    // (UpdateWaterElevation with the floor flag): 1 under the ground, or a
+    // pond beside it less 0.1.
+    void dryWater(const std::set<std::pair<int, int>>& points);
     std::optional<Stroke> stroke_;
     // The flight a modular stair object belongs to: its objects (steps first,
     // top to bottom).

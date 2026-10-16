@@ -237,6 +237,7 @@ void BuildEditor::moveDeckFloor(int li, int ax, int ay, int bx, int by, float to
     // terrain under it) only comes down, to the height - 0.75, when higher;
     // the point goes to the height with the stories above
     // (ChangeFloorAndWaterElevationCoupled).
+    std::set<std::pair<int, int>> ground; // the dry ground points moved: their water follows
     for (int x = ax - 1; x <= bx + 2; ++x)
         for (int y = ay - 1; y <= by + 2; ++y) {
             if (x < 0 || y < 0 || x > int(lot_.width) || y > int(lot_.height))
@@ -253,13 +254,46 @@ void BuildEditor::moveDeckFloor(int li, int ax, int ay, int bx, int by, float to
                 const size_t plane = size_t(lot_.width + 1) * size_t(lot_.height + 1);
                 float& below = lot_.elevations[size_t(li - 1 - lot_.minLevel) * plane + size_t(x) * size_t(lot_.height + 1) +
                                                size_t(y)];
-                if (pool)
+                if (pool) {
                     below = h - kStandardLevelHeight;
-                else if (below > h - 4 * kFloorElevationUnit)
+                } else if (below > h - 4 * kFloorElevationUnit) {
+                    if (li - 1 == 0 && lot_.waterLevel(x, y) <= below + 1e-4f)
+                        ground.insert({x, y});
                     below = h - 4 * kFloorElevationUnit;
+                }
             }
+            if (li == 0 && std::fabs(lot_.elevation(0, x, y) - h) > 1e-6f &&
+                lot_.waterLevel(x, y) <= lot_.elevation(0, x, y) + 1e-4f)
+                ground.insert({x, y});
             moveVertexCoupled(li, x, y, h);
         }
+    dryWater(ground);
+}
+
+void BuildEditor::dryWater(const std::set<std::pair<int, int>>& points) {
+    // ChangeFloorAndWaterElevation(Coupled) (BV 0x419274, 0x419324) ends
+    // with UpdateWaterElevation (0x419000): cWorldTerrain::UpdateWater
+    // Elevations (0x8b185c) over the point with its floor flag, which does
+    // not make the point a pond (only the water tool's points are "dug") and
+    // gives each point that is no pond its water as AdjustWaterElevationsAt
+    // NonPondVertices does: 1 under the ground, or a pond beside it less 0.1.
+    // Here the points that were dry (the connected water's own update,
+    // FUN_008b02d4, is not read: water already there stays as it is).
+    if (lot_.water.empty() || points.empty())
+        return;
+    const int W = int(lot_.width), H = int(lot_.height);
+    const size_t rowW = size_t(W + 1);
+    for (const auto& [x, y] : points) {
+        float w = lot_.elevation(0, x, y) - 1.0f;
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy) {
+                const int nx = x + dx, ny = y + dy;
+                if ((dx || dy) && nx >= 0 && ny >= 0 && nx <= W && ny <= H &&
+                    lot_.waterLevel(nx, ny) > lot_.elevation(0, nx, ny) + 1e-4f && w == lot_.elevation(0, x, y) - 1.0f)
+                    w = lot_.waterLevel(nx, ny) - 0.1f;
+            }
+        lot_.water[size_t(y) * rowW + size_t(x)] = w;
+    }
 }
 
 BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, int product) {
@@ -734,8 +768,17 @@ bool BuildEditor::levelForWall(int li, const std::vector<std::array<int, 2>>& po
             }
         }
     }
-    for (const auto& m : moves)
-        moveVertexCoupled(int(m[0]), int(m[1]), int(m[2]), m[3]);
+    std::set<std::pair<int, int>> ground;
+    for (const auto& m : moves) {
+        const int x = int(m[1]), y = int(m[2]);
+        if (int(m[0]) == 0 && std::fabs(lot_.elevation(0, x, y) - m[3]) > 1e-6f &&
+            lot_.waterLevel(x, y) <= lot_.elevation(0, x, y) + 1e-4f)
+            ground.insert({x, y});
+        moveVertexCoupled(int(m[0]), x, y, m[3]);
+    }
+    // ChangeFloorAndWaterElevationCoupled: the dry ground's water follows
+    // where the height changed (the call returns at once when it does not).
+    dryWater(ground);
     return true;
 }
 
