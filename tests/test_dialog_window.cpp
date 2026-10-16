@@ -7,6 +7,7 @@
 #include "formats/ui_resources.hpp"
 
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <filesystem>
 #include <optional>
@@ -416,6 +417,38 @@ int main() {
                     order.push_back(text);
             check(order == std::vector<std::string>{"Caio alfa", "\xC3\x81gata Lima", "abel Lima", "Bruno Zeta"},
                   "party: by last name, then first name, case-blind, accented bytes first");
+        }
+        {
+            // The racks (cTSWinProcSelectItemsDialog): with the price obeyed
+            // (UpdateFunds) an item over the funds is disabled: no click, the
+            // background's frame 0 (SetEnabled false), the toggle off; the
+            // others the frame 1, the picked one's toggle pressed.
+            Fixture rf(11);
+            Dialog& rd = rf.vm.dialogs.at(rf.me->id);
+            rd.obeyPrice = true, rd.fillFunds = 100;
+            rd.entries = {{21, 0, "cheap", "", 0, 0}, {22, 0, "dear", "", 0, 0}, {23, 0, "picked", "", 0, 0}};
+            rd.entries[0].price = 50, rd.entries[1].price = 500, rd.entries[2].price = 80;
+            rd.selection = {23};
+            DialogWindow rw(rf.vm, &ui, nullptr);
+            rw.log = false;
+            const auto L = rw.layout(rd, 1280, 720);
+            int rows = 0;
+            for (const auto& r : L.regions)
+                rows += r.kind == DialogWindow::Hit::Row;
+            std::function<const UiElement*(const UiElement&, uint32_t)> find = [&](const UiElement& e, uint32_t id) -> const UiElement* {
+                if (e.attr("id") && e.id() == id)
+                    return &e;
+                for (const auto& c : e.children)
+                    if (const UiElement* f = find(c, id))
+                        return f;
+                return nullptr;
+            };
+            const UiElement* bgDear = find(L.root, 0x00D00101u), *bgCheap = find(L.root, 0x00D00001u);
+            auto state = [&](uint32_t id) { auto it = L.states.find(id); return it == L.states.end() ? -1 : it->second; };
+            check(rows == 2 && bgDear && bgCheap && bgDear->get("imagerect").rfind("(0,0,", 0) == 0 &&
+                      bgCheap->get("imagerect").rfind("(0,0,", 0) != 0 && state(0x00D00103u) == 0 &&
+                      state(0x00D00003u) == 1 && state(0x00D00203u) == 2,
+                  "racks: an item over the funds disabled (frame 0, toggle off), the picked one's toggle pressed");
         }
         Fixture g(dialogtype::ClothingTryOn);
         Dialog& t = g.vm.dialogs.at(g.me->id);

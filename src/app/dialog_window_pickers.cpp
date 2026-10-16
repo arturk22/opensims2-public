@@ -710,13 +710,24 @@ int pickedCost(const vm::Dialog& d) {
             sum += e.price;
     return sum;
 }
-constexpr float kItem = 64, kItemMargin = 5; // the grid's item (inferred size; margins from the script)
+constexpr float kItemMargin = 5; // the script's kItemMarginX/Y
+// cTSWinProcSelectItemsDialog::CreateThumbnail (BV 0x38ddd8): each item is
+// a cell of script 0x2CB242F7 (44 x 44): window 1 its background (the first
+// 44 px of 0xE9081001), 2 the 40 x 40 picture, 3 a toggle button over it
+// (0xE9081000, four states).
+constexpr uint32_t kItemCell = 0x2CB242F7;
 } // namespace
 
-// Script 0x2CB242F6 ("Fazer Seleção"): one row of the items' thumbnails in
+// Script 0x2CB242F6 ("Fazer Seleção"): one row of the items' cells in
 // 0x1006 (kRowCount=1, kItemMarginX/Y=5), previous / next (0x1004/5), OK
-// 0xA000, cancel 0xA001. An item the family cannot pay is greyed out when
-// picking several (UpdateFunds).
+// 0xA000, cancel 0xA001. cTSWinProcObjectThumbnail (BV 0x38b28c / 0x38b394
+// / 0x38c554): SetSelected presses the toggle (its frame 2, the green box);
+// UpdateFunds (BV 0x38beb4) enables every other cell unless the dialog
+// obeys the price (temp 1) and the item costs more than the funds (less
+// what is picked when several may be), and SetEnabled shows the
+// background's frame 1 (blue) on an enabled cell, frame 0 (red) and the
+// toggle off on a disabled one. (The cells' place in the grid, centred, is
+// inferred.)
 DialogWindow::Layout DialogWindow::selectItemsDialog(const vm::Dialog& d, int width, int height) {
     const UiScript* s = script(0x2CB242F6);
     if (!s)
@@ -737,6 +748,10 @@ DialogWindow::Layout DialogWindow::selectItemsDialog(const vm::Dialog& d, int wi
         const std::array<float, 4> rr{L.x0 + float(r[0]), L.y0 + float(r[1]), L.x0 + float(r[2]), L.y0 + float(r[3])};
         const uint32_t id = c.id();
         if (id == 0x1006) {
+            const UiScript* cs = script(kItemCell);
+            const bool haveCell = cs && !cs->roots.empty();
+            const auto ca = haveCell ? cs->roots.front().area() : std::array<int, 4>{0, 0, 44, 44};
+            const float kItem = float(ca[2] - ca[0]), kItemH = float(ca[3] - ca[1]);
             const float gw = float(r[2] - r[0]), gh = float(r[3] - r[1]);
             const int per = std::max(1, int((gw + kItemMargin) / (kItem + kItemMargin)));
             first = std::clamp(first, 0, std::max(0, int(d.entries.size()) - per));
@@ -744,33 +759,39 @@ DialogWindow::Layout DialogWindow::selectItemsDialog(const vm::Dialog& d, int wi
             for (int i = 0; i < per && first + i < int(d.entries.size()); ++i) {
                 const vm::DialogEntry& e = d.entries[size_t(first + i)];
                 const float x = float(r[0]) + std::round((gw - used) / 2) + float(i) * (kItem + kItemMargin);
-                const float y = float(r[1]) + std::round((gh - kItem) / 2);
+                const float y = float(r[1]) + std::round((gh - kItemH) / 2);
                 const bool picked = contains(d.selection, e.id);
-                const bool affordable = !d.multiSelect || picked ||
-                                        e.price <= (d.obeyPrice ? d.fillFunds - spent : d.fillFunds);
-                if (picked) {
-                    // A green frame (the lists' selected colour; inferred look).
-                    for (int k = 0; k < 2; ++k) {
-                        UiElement sel = element("GZWinFlatRect", "IGZWinFlatRect", x - 2 + float(k), y - 2 + float(k),
-                                                x + kItem + 2 - float(k), y + kItem + 2 - float(k));
-                        sel.set("style", "nofill");
-                        sel.set("outline", "yes");
-                        for (const char* side : {"colorleft", "colortop", "colorright", "colorbottom"})
-                            sel.set(side, "(0,255,0)");
-                        extra.push_back(sel);
-                    }
+                const bool affordable = picked || !d.obeyPrice ||
+                                        e.price <= (d.multiSelect ? d.fillFunds - spent : d.fillFunds);
+                const uint32_t base = 0x00D00000u | (uint32_t(i) << 8);
+                UiElement cell = haveCell ? cs->roots.front() : element("GZWinGen", "IGZWinGen", 0, 0, kItem, kItemH);
+                cell.set("area", uiArea(int(x), int(y), int(x + kItem), int(y + kItemH)));
+                cell.set("id", hex(base));
+                if (!haveCell) {
+                    UiElement pic = element("GZWinBMP", "IGZWinBMP", 2, 2, kItem - 2, kItemH - 2);
+                    pic.set("id", hex(2));
+                    cell.children.push_back(pic);
                 }
-                UiElement p = element("GZWinBMP", "IGZWinBMP", x, y, x + kItem, y + kItem);
-                const uint32_t pid = 0x00D00000u | uint32_t(i);
-                p.set("id", hex(pid));
-                extra.push_back(p);
-                if (thumbnail)
-                    if (const RgbaImage* t = thumbnail(e.id, 0))
-                        L.images[pid] = t;
-                if (!affordable)
-                    L.colors[pid] = {1, 1, 1, 0.35f};
+                for (auto& c : cell.children) {
+                    const uint32_t cid = c.id();
+                    c.set("id", hex(base | cid));
+                    if (cid == 2 && thumbnail)
+                        if (const RgbaImage* t = thumbnail(e.id, 0))
+                            L.images[base | 2] = t;
+                    if (cid == 1) { // SetBackgroundImage: frame 1 enabled, 0 disabled
+                        const auto ref = uiResourceRef(c.get("image"));
+                        const RgbaImage* im = ref && res_ ? res_->image(*ref) : nullptr;
+                        const int fw = im && im->width >= 4 ? int(im->width / 4) : int(kItem);
+                        const int fh = im ? int(im->height) : int(kItemH);
+                        const int n = affordable ? 1 : 0;
+                        c.set("imagerect", uiArea(fw * n, 0, fw * (n + 1), fh));
+                    }
+                    if (cid == 3)
+                        L.states[base | 3] = picked ? 2 : affordable ? 1 : 0; // the toggle: pressed, normal, off
+                }
+                extra.push_back(std::move(cell));
                 if (affordable)
-                    L.regions.push_back({{L.x0 + x, L.y0 + y, L.x0 + x + kItem, L.y0 + y + kItem}, Hit::Row, first + i});
+                    L.regions.push_back({{L.x0 + x, L.y0 + y, L.x0 + x + kItem, L.y0 + y + kItemH}, Hit::Row, first + i});
             }
         }
         if (id == 0x1004)
