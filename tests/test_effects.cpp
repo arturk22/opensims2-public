@@ -417,6 +417,36 @@ static void testMetaParticles() {
     (void)r;
 }
 
+// ApplyTractorForce (BV 0xf5fef0): a meta particle with the tractor and no
+// path is steered to its next path point, there at the point's time.
+static void testTractor() {
+    EffectsLibrary lib = metaLibrary();
+    MetaParticles& m = lib.metaParticles[3]; // the roach's first step
+    m.flags = mflag::Tractor | mflag::Maintain;
+    m.colliders.clear();
+    m.life = {5, 5};
+    m.emitVolume = {{0, 0, 0}, {0, 0, 0}};
+    m.emitSpeed = {0, 0};
+    m.path = {{{1, 0, 0}, {0, 0, 0}, 1}, {{1, 2, 0}, {0, 0, 0}, 3}};
+    lib.visuals[lib.names["roach"]].components.resize(1);
+    lib.visuals[lib.names["roach"]].components[0].flags = 0;
+    EffectSystem sys(lib, 3);
+    sys.start("roach", {});
+    auto at = [&]() {
+        std::vector<EffectModel> out;
+        sys.collectModels(out);
+        return out.empty() ? V3{-9, -9, -9} : out[0].where.position;
+    };
+    for (int i = 0; i < 30; ++i)
+        sys.update(1.0f / 30);
+    const V3 a = at();
+    check(std::fabs(a[0] - 1) < 0.02f && std::fabs(a[1]) < 0.02f, "tractor: at its first point at its time");
+    for (int i = 0; i < 60; ++i)
+        sys.update(1.0f / 30);
+    const V3 b = at();
+    check(std::fabs(b[0] - 1) < 0.02f && std::fabs(b[1] - 2) < 0.02f, "tractor: then at the second");
+}
+
 static void testCurves() {
     check(sampleCurve({}, 0.5f, 3) == 3, "empty curve falls back");
     check(sampleCurve({1, 3}, 0.5f) == 2, "linear interpolation");
@@ -681,6 +711,7 @@ static void testFacing() {
 
 int main() {
     try {
+        testTractor();
         testFacing();
         testScrew();
         testSequence();

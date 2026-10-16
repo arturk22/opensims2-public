@@ -232,7 +232,7 @@ MetaParticles readMeta(BinReader& r) {
     m.path.resize(points);
     for (auto& t : m.path)
         t = {v3(r), v3(r), r.f32()};
-    r.f32();
+    m.tractorReset = r.f32();
     return m;
 }
 

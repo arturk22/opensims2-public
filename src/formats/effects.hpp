@@ -234,6 +234,10 @@ struct MetaParticles {
         float time = 0;
     };
     std::vector<PathPoint> path;
+    // The tractor's catch-up (the description's last float, +0x1cc): a
+    // particle farther from its next point than the time left x this has
+    // that time stretched back to the point before (ApplyTractorForce).
+    float tractorReset = 0;
 };
 
 struct Decal {

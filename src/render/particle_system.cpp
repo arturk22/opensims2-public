@@ -1176,7 +1176,10 @@ bool EffectSystem::stepMetaPhysics(const Instance& inst, MetaChain& m, MetaParti
     do {
         const float step = left > kTimeStep ? kTimeStep : left;
         const V3 before = p.position;
-        p.position = add(p.position, mul(p.velocity, step));
+        if ((d.flags & mflag::Tractor) && !d.path.empty())
+            tractor(d, t1, p, step); // instead of moving by its velocity
+        else
+            p.position = add(p.position, mul(p.velocity, step));
         p.velocity = add(p.velocity, mul(d.force, step));
         if (d.flags & mflag::RandomWalk) {
             V3 pull{0, 0, 0};
@@ -1221,6 +1224,41 @@ bool EffectSystem::stepMetaPhysics(const Instance& inst, MetaChain& m, MetaParti
         left -= step;
     } while (left > 0);
     return true;
+}
+
+// cTSMetaParticlesEffect::ApplyTractorForce (BV 0xf5fef0), a meta particle
+// with the tractor (bit 29) and no path (bit 30, which snaps instead): steered
+// to the next path point (the first with a time over its age; time 0: its
+// life's end) in the emitter's frame by a cubic Hermite from where it is and
+// how it moves to the point's position and velocity over the time left; one
+// farther than that time x the catch-up has its age taken back to the point
+// before; past the last point it moves by its velocity.
+void EffectSystem::tractor(const MetaParticles& d, const Placement& t1, MetaParticle& p, float dt) {
+    size_t k = 0;
+    while (k < d.path.size() && !(p.age < d.path[k].time))
+        ++k;
+    if (k == d.path.size()) {
+        p.position = add(p.position, mul(p.velocity, dt));
+        return;
+    }
+    const float tk = d.path[k].time == 0 ? p.life : d.path[k].time;
+    const V3 P = transformPoint(t1, d.path[k].position), V = rotate(t1, d.path[k].velocity);
+    float T = (tk - p.age) + dt;
+    if (d.tractorReset != 0 && T * d.tractorReset < len(sub(p.position, P))) {
+        const float before = k > 0 ? d.path[k - 1].time : 0;
+        T += p.age - before;
+        p.age = before;
+    }
+    if (!(T > 1e-6f))
+        return;
+    const float u = dt / T, u2 = u * u, u3 = u2 * u;
+    const float h01 = -2 * u3 + 3 * u2, h00 = 1 - h01, h10 = (u3 - 2 * u2 + u) * T, h11 = (u3 - u2) * T;
+    const float d00 = (6 * u2 - 6 * u) / T, d01 = (6 * u - 6 * u2) / T, d10 = 3 * u2 - 4 * u + 1, d11 = 3 * u2 - 2 * u;
+    const V3 p0 = p.position, v0 = p.velocity;
+    for (int a = 0; a < 3; ++a) {
+        p.position[a] = h00 * p0[a] + h10 * v0[a] + h01 * P[a] + h11 * V[a];
+        p.velocity[a] = d00 * p0[a] + d10 * v0[a] + d01 * P[a] + d11 * V[a];
+    }
 }
 
 // A meta particle in the world for its carried effect (ProcessMetaParticle

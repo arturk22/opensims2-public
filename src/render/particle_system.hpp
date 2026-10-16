@@ -376,6 +376,7 @@ private:
     void enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth);
     void updateWalk(MetaParticle::Walk& w, const MetaParticles::Walk& d);
     bool stepMetaPhysics(const Instance& inst, MetaChain& m, MetaParticle& p, float dt);
+    static void tractor(const MetaParticles& d, const Placement& t1, MetaParticle& p, float dt);
     void placeMeta(const Instance& inst, const MetaChain& m, MetaParticle& p) const;
     Placement chainFrame(const Instance& inst, const MetaChain& m) const;
     static bool busy(const Instance& inst);
