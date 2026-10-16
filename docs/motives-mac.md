@@ -469,5 +469,71 @@ médias 24 a 62. Autonomia: no N001_Lot68, com 4 sementes, o depois teve
 larga a comida no fogão entre um "Cozinhar" e o seguinte (o "Continuar a
 Cozinhar" é um anúncio autônomo que perde para outros quando os motivos
 mudam). Com o ambiente desligado as mesmas sementes não pegam fogo. A
-leitura da rodada n32 (o fogo do Lot68 é do jogo) vale; a frequência mudou
-com o ambiente certo (`TODO.md`).
+leitura da rodada n32 (o fogo do Lot68 é do jogo) vale. **Medido antes do
+rebase sobre a rodada n31b; na base atual não se repete** (rodada n33b,
+§8.7: 2 incêndios em 13 sementes com o ambiente, 4 sem ele).
+
+### 8.7 O ambiente e o fogão do N001_Lot68 (rodada n33b)
+
+A rodada n33 viu o fogão do N001_Lot68 pegar fogo nas 4 sementes de 3 dias
+"depois" e em nenhuma "antes". **Não se repete na base atual**: as medidas
+da n33 foram feitas antes de ela ser rebaseada sobre a rodada n31b (rotas:
+um goal check por tique, o passo bloqueado), que mudou a linha do tempo dos
+dois lados. Com a base de agora (`s2pkg autonomy --ticks 129600`,
+`S2PKG_FIRES=1`, sementes 0–12; "incêndios" = começos de fogo):
+
+| N001_Lot68, 13 sementes | incêndios | mortes | de onde |
+|---|---|---|---|
+| main (sem a n33) | 4 (sementes 1, 3, 4, 9) | 19 | 1 cozinhando (o sorteio), 3 comida esquecida (`Sub - Set Burnt` pelo `Function - Main`) |
+| n33 | 2 (sementes 7, 9) | 12 | 2 cozinhando (o sorteio) |
+| n33 com luz de noite escura (`S2PKG_LIGHT=0.9:0.55`, sementes 1–12) | 2 (3, 7) | 11 | 1 cozinhando (a 7, igual à da n33: de dia não há termo), 1 comida esquecida (a congelada no forno, 20:45) |
+
+No N001_Lot11 (sementes 1–6) nenhum incêndio nem morte em nenhum dos três.
+Cada semente é caótica (o passo de 60 no tique do simulador já muda tudo
+depois do primeiro tique), mas o ambiente calculado não aumenta os
+incêndios; a luz que falta sem o app (até −20 nos cômodos escuros) também
+não (o teste acima põe todo Sim no escuro à noite: −20 sempre depois das
+19:00).
+
+**O que tira o cozinheiro do fogão** (árvores; conferido no trace):
+
+- **Assar** (`Cook - _Type - Bake`, semi-global dos fogões `0x7F033984`
+  `0x201E`): põe a comida no forno, `Sub - Cook Start`, `Wait For
+  Notify(0, 0)` (global `0x119`: ninguém notificou ainda: od 85 = 0, nada
+  pendente no Idle for Input de 0 ticks, dado de pessoa 110 ≠ 1 → falso na
+  hora) e então **global 30 ≠ 0** (o "Free Will", ligado por padrão) →
+  `_Reserve Tile - Remove` e falso: **o cozinheiro sai do forno por
+  desenho**, `Food Chain - Failure - Cook` sem balão, e o "Cozinhar" acaba
+  ~180 ticks depois de começar. Com o Free Will desligado ele ficaria no
+  laço `Idle` → `Get in Temp 0 - Cook Progress`. Quem o traz de volta é a
+  comida: pronta, o `Push - Get Food` (`0x7F3C9675:0x2034`) empurra "Comer"
+  nele com prioridade 50 (se ninguém interage com ela); o "Continuar a
+  Cozinhar" é só um anúncio autônomo (ganha nas buscas quando a fome manda:
+  escolhido 4–14 vezes por semente).
+- **Fritar/cozinhar nas bocas**: o cozinheiro fica no laço até acabar; sai só
+  se a interação dele é cancelada ou se `ShouldInterrupt` (BV `0xad6388`)
+  diz sim (dado de pessoa 71 "non-interruptible" = 0 e a primeira da fila
+  com prioridade maior que o dado 33; perguntado pelo Idle for Input com
+  "allow push", `TryIdleForInput` BV `0xade664`). Quem o tira é **outro Sim
+  indo ao forno do mesmo fogão**: o "Route - To Oven" (`0x2058`) chama `Sub -
+  Shoo Sims off Tile` (`0x2056`) → global `Shoo - Sims from tile Object X is
+  on` (`0x2FC`, X = o próprio Sim, od 11): Set to Next 8 acha quem está no
+  tile dele com dado de pessoa 39 "route status" = 0 e empurra a interação
+  221 do próprio Sim ("Afastar-se") com **prioridade 1 = 100**. No
+  N001_Lot68 o lugar do forno (21,5; 25,25) e o das bocas (21,5; 25,75)
+  ficam no mesmo tile, e o "Afastar-se" interrompe quem frita: a panela fica
+  no fogão, queima e pega fogo 30 min depois (`Tuning - Cook Fire Time`).
+  Foi assim nos três incêndios de comida esquecida da main (semente 3:
+  Mary-Sue busca a comida congelada às 21:18, a Lilith frita o macarrão e é
+  enxotada duas vezes, a panela queima às 21:33 e o fogo vem às 22:02;
+  semente 9: o hambúrguer da Angela às 12:11). Tudo árvore do jogo.
+- **O sorteio**: `Main - Cook - Loop` (`0x2032`), 6% por cozinhada com
+  habilidade baixa (§4f do `primitives-mac.md`): os dois da n33.
+
+**O motor** (Ghidra MCP, só leitura): o Find Best Interaction só roda da
+árvore de ócio, então uma interação em curso nunca concorre com as novas; o
+`FBA_ScoreInteraction` (BV `0xae2c4c`) multiplica a diferença dos motivos
+pela atenuação, posse, `GetAutonomyBias`, relacionamento, tempo e
+temperatura, e nada ali olha a interação atual. O ambiente (13) entra na
+conta: a `GetCurrentScore` do base (`0xb92a68`) soma os motivos fora da
+máscara `0x1C07`, do 4 e do 11, isto é 3, 5–9 e 13–15, vezes `1/(16 − 6)`.
