@@ -30,8 +30,9 @@ grep -q "^  --build-undo 1: done (funds §511632)" "$out/undone.log" || { echo "
 same "$out/base.package" "$out/undone.package" "Lot11 undone"
 same "$out/direct.package" "$out/redone.package" "Lot11 redone"
 lot="$lots/N002/Lots/N002_Lot23.package"
-"$s2pkg" lot-save "$lot" "$out/door.package" --room 19,6,23,2 --door 0x2c77520c@23,4 > "$out/door.log" 2>&1
-"$s2pkg" lot-save "$lot" "$out/door-undone.package" --room 19,6,23,2 --door 0x2c77520c@23,4 --delete-wall 23,2,23,6 \
+# (The deck's stairs by the room's corner go first: tests/door_cut_wall.sh.)
+"$s2pkg" lot-save "$lot" "$out/door.package" --delete-stairs 289 --room 19,6,23,2 --door 0x2c77520c@23,4 > "$out/door.log" 2>&1
+"$s2pkg" lot-save "$lot" "$out/door-undone.package" --delete-stairs 289 --room 19,6,23,2 --door 0x2c77520c@23,4 --delete-wall 23,2,23,6 \
     --build-undo 1 > "$out/door-undone.log" 2>&1
 grep -q "1 attached objects sold" "$out/door-undone.log" || { echo "FAIL the door is not sold with its wall"; fail=1; }
 same "$out/door.package" "$out/door-undone.package" "the wall and its door back"

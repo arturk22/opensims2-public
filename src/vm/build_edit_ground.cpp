@@ -11,6 +11,8 @@
 #include "placement.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <limits>
 #include <set>
@@ -436,7 +438,10 @@ int BuildEditor::vertexMoveError(int li, int x, int y, float height, uint32_t ma
             return false;
         }))
         return 0x5A;
-    // (Bit 7, the objects that pin the ground, 0x60/0x61/0x68: not done.)
+    // Bit 7 (FUN_009e8e0c): the objects round it.
+    if (mask & Objects)
+        if (const int e = vertexObjectsError(li, x, y, height))
+            return e;
     // Bits 4 and 5 (FUN_009e9c98 / 0x9e9a78): the point a story up (down)
     // that the new height would bring within MinLevelHeight + a quarter of
     // FloorElevationUnit must be able to follow, MinLevelHeight away.
@@ -499,6 +504,97 @@ int BuildEditor::vertexMoveError(int li, int x, int y, float height, uint32_t ma
     if ((mask & DeckFoundation) &&
         tilesRound([&](int tx, int ty) { return (li == 0 && foundationTile(tx, ty)) || (li == -1 && poolTile(tx, ty)); }))
         return kSilentRefusal;
+    return 0;
+}
+
+float BuildEditor::hypotheticalFloor(int li, int vx, int vy, float height, float px, float py) const {
+    // nTSWorld::HypotheticalFloorElevation: the floor at (px, py) with grid
+    // point (vx, vy) at `height` (the lot's bilinear sampling, as
+    // elevationAt; the game's own sampling is inferred to agree).
+    const int ix = int(std::floor(px)), iy = int(std::floor(py));
+    auto at = [&](int gx, int gy) { return gx == vx && gy == vy ? height : lot_.elevation(li, gx, gy); };
+    const float fx = px - float(ix), fy = py - float(iy);
+    const float a = at(ix, iy) * (1 - fx) + at(ix + 1, iy) * fx;
+    const float b = at(ix, iy + 1) * (1 - fx) + at(ix + 1, iy + 1) * fx;
+    return a * (1 - fy) + b * fy;
+}
+
+int BuildEditor::vertexObjectsError(int li, int x, int y, float height) const {
+    // FUN_009e8e0c (the vertex test's bit 7, docs/buy-build-mac.md §7.25), on
+    // each of the four tiles round the point on its level, on the lot:
+    const int W = int(lot_.width), H = int(lot_.height);
+    // ... the story under it would be left lower than StandardLevelHeight
+    // (the point less than 3 over the same point a level down).
+    const bool lowCeiling =
+        li > lot_.minLevel && height - lot_.elevation(li - 1, x, y) + 0.001f < kStandardLevelHeight;
+    // OS2_DEBUG_VERTEX=1: which object refused which point.
+    auto refuse = [&](int code, const Object& o) {
+        if (std::getenv("OS2_DEBUG_VERTEX"))
+            std::fprintf(stderr, "vertex (%d,%d) level %d to %.3f: %#x by object %u %s\n", x, y, li, height, unsigned(code),
+                         unsigned(o.id), o.definition ? o.definition->fileName.c_str() : "?");
+        return code;
+    };
+    const auto here = vm_.objectsAround({x - 1, y - 1, li + 1}, 1);
+    const auto below = lowCeiling ? vm_.objectsAround({x - 1, y - 1, li}, 1) : decltype(here){};
+    for (int tx = x - 1; tx <= x; ++tx)
+        for (int ty = y - 1; ty <= y; ++ty) {
+            if (tx < 0 || ty < 0 || tx >= W || ty >= H)
+                continue;
+            const size_t k = size_t(tx - (x - 2)) * 3 + size_t(ty - (y - 2));
+            // HasGroundPinningObjects (BV 0x16c5b4; the flags' bit 12 is
+            // clear in 0x2BB7 and 0x2BF7, so FlattensTerrainOnPlace is not
+            // asked): a person, or an object without placement flags (od 42)
+            // 0x100 -> 0x61 "Can't move occupied terrain".
+            for (ObjectId id : here[k])
+                if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x100)))
+                    return refuse(0x61, *o);
+            // HasNonCeilingConformingObjects (0x16c7a8) on the tile a level
+            // down: an object that is none of three kinds of the selector
+            // service and does not ConformsToCeiling (a property of its
+            // model's parts, interface 0xaae90adb, not read) -> 0x60. Here
+            // every object but a support (OBJD type 5, the deck columns)
+            // fails it (inferred).
+            if (lowCeiling)
+                for (ObjectId id : below[k])
+                    if (const Object* o = vm_.object(id);
+                        o && !(o->definition && o->definition->objectType() == kObjectTypeSupport))
+                        return refuse(0x60, *o);
+            // An object with od 42 bit 0x80 that the floor would rise over
+            // -> 0x68 "Can't raise terrain above stairs": a modular step
+            // (OBJD type 11, 12) by the four corners of its footprint for its
+            // facing (the two of its high side a FloorElevationUnit up),
+            // another object at its position.
+            for (ObjectId id : here[k]) {
+                const Object* o = vm_.object(id);
+                if (!o || !(o->data[objdata::PlacementFlags] & 0x80))
+                    continue;
+                const float ox = o->position.x, oy = o->position.y;
+                // Its elevation (vtable 0xb0: the float +0x20c, the saved
+                // state's "elevation": a modular step's height, 0 for most).
+                const float oz = o->position.elevation;
+                const uint16_t type = o->definition ? o->definition->objectType() : 0;
+                if (type == kObjectTypeModularStairs || type == kObjectTypeModularStairsPortal) {
+                    static const float kCorners[4][4][2] = {
+                        {{-0.5f, 0}, {-0.5f, -0.25f}, {0.5f, -0.25f}, {0.5f, 0}},  // facing 0
+                        {{0, -0.5f}, {0.25f, -0.5f}, {0.25f, 0.5f}, {0, 0.5f}},   // 2
+                        {{0.5f, 0}, {0.5f, 0.25f}, {-0.5f, 0.25f}, {-0.5f, 0}},   // 4
+                        {{0, 0.5f}, {-0.25f, 0.5f}, {-0.25f, -0.5f}, {0, -0.5f}}, // 6
+                    };
+                    const int dir = o->data[objdata::Direction];
+                    if (dir < 0 || dir > 6 || dir % 2)
+                        continue;
+                    for (int i = 0; i < 4; ++i) {
+                        const float px = ox + kCorners[dir / 2][i][0], py = oy + kCorners[dir / 2][i][1];
+                        const float pz = oz + (i == 1 || i == 2 ? kFloorElevationUnit : 0.0f);
+                        if (px >= float(tx) && px <= float(tx + 1) && py >= float(ty) && py <= float(ty + 1) &&
+                            hypotheticalFloor(li, x, y, height, px, py) > pz)
+                            return refuse(0x68, *o);
+                    }
+                } else if (hypotheticalFloor(li, x, y, height, ox, oy) > oz) {
+                    return refuse(0x68, *o);
+                }
+            }
+        }
     return 0;
 }
 

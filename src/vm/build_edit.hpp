@@ -376,10 +376,21 @@ public:
     // to follow within MinLevelHeight (0.75) and cannot (0x69/0x6A), a wall
     // on an edge from it that needs a flat bottom (0x5B, this level) or top
     // (0x5C, the level below), a pool, foundation or deck round it (silent)
-    // and a fence that would get steeper than 60° (0x31). Not done: the
-    // objects that pin the ground (bit 7, 0x60/0x61/0x68).
+    // and a fence that would get steeper than 60° (0x31), and the objects
+    // round it (bit 7, vertexObjectsError: 0x61, 0x60, 0x68).
     static constexpr int kSilentRefusal = -1;
     int vertexMoveError(int li, int x, int y, float height, uint32_t mask) const;
+    // The vertex test's bit 7 (FUN_009e8e0c, docs/buy-build-mac.md §7.25)
+    // on the four tiles round grid point (x, y) of lot level `li` going to
+    // `height`: a person or an object without od 42 bit 0x100 pins the
+    // ground (0x61 "Can't move occupied terrain"); with the point left less
+    // than a story over the one below, an object on the tiles a level down
+    // that does not conform to the ceiling (0x60; here any but a support,
+    // inferred); an od 42 bit 0x80 object the floor would rise over (0x68).
+    int vertexObjectsError(int li, int x, int y, float height) const;
+    // nTSWorld::HypotheticalFloorElevation: lot level `li`'s floor at (px,
+    // py) with grid point (vx, vy) at `height`.
+    float hypotheticalFloor(int li, int vx, int vy, float height, float px, float py) const;
 
     // UserMayPlacePartition's common test (BV 0x9a7384) and its partition
     // test FUN_009a6b20, for an edge on lot level `li`: 0x40 off the lot,
@@ -530,6 +541,8 @@ std::vector<std::array<int, 4>> autoRoofRects(const std::vector<uint8_t>& grid, 
 // point going to `height`: 0x65 "Can't lower terrain further" under the
 // minimum, 0x66 "Can't raise terrain further" over the maximum, else 0.
 constexpr float kFloorElevationUnit = 0.1875f;
+// cWorldDB::StandardLevelHeight (WorldDB vtable 0x15c): a story.
+constexpr float kStandardLevelHeight = 3.0f;
 constexpr float kMinTerrainElevation = -150 * kFloorElevationUnit;
 constexpr float kMaxTerrainElevation = 150 * kFloorElevationUnit;
 int terrainLimitError(float height);

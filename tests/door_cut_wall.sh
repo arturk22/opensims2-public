@@ -3,7 +3,11 @@
 # (OS2_DATA), on N002_Lot23's flat corner (a 4x4 room at 19,2-23,6, drawn
 # from its (19,6) corner: the room tool levels its rectangle to the start's
 # height, round n20, and the ground outside the x = 23 wall is at that
-# height too, so the door's tile out there stays flat: IsFlat, 0x12):
+# height too, so the door's tile out there stays flat: IsFlat, 0x12; the
+# deck's stairs by its (19,6) corner are sold first: their top step on the
+# deck's level stands where the room's walls, needing a flat top, would lift
+# that level's grid point (19,6), and the vertex test refuses the floor
+# raised over a step, 0x68, round n37):
 # - the object tool turns what needs a wall to it (TryPlace ->
 #   AutoRotateObjectToMatchWalls, docs/buy-build-mac.md §7.6.1): a door,
 #   window, arch and fence gate given without a direction are placed, and the
@@ -19,7 +23,7 @@ rm -rf "$out"; mkdir -p "$out/user"
 fail=0
 lot="$OS2_DATA/TSData/Res/UserData/Neighborhoods/N002/Lots/N002_Lot23.package"
 door=0x2c77520c; window=0xec6a6fb8; arch=0xcc0c1bfb; gate=0x2d124597
-"$s2pkg" lot-save "$lot" "$out/doors.package" --room 19,6,23,2 --door $door@23,4 --door $window@22,5 \
+"$s2pkg" lot-save "$lot" "$out/doors.package" --delete-stairs 289 --room 19,6,23,2 --door $door@23,4 --door $window@22,5 \
     --door $arch@20,5 --fence 22,10,26,10,picket --door $gate@22,9 > "$out/doors.log" 2>&1
 log="$out/doors.log"
 grep -q "@23,4: Porta Simples Produtos Lenhosos bought as object 151" "$log" || { echo "FAIL door: $(grep '@23,4' "$log")"; fail=1; }
@@ -54,7 +58,7 @@ run() { # <name> <walls> <steps...>
     name=$1; walls=$2; shift 2
     rm -rf "$out/user"; mkdir -p "$out/user"
     "$app" --data "$OS2_DATA" --user-dir "$out/user" --no-audio --hood N002 --hood-lot 23 --vm --mode build \
-        --walls "$walls" --pivot 21,4 --zoom 1 --room 19,6,23,2 --door $door "$@" -ApplePersistenceIgnoreState YES \
+        --walls "$walls" --pivot 21,4 --zoom 1 --delete-stairs 289 --room 19,6,23,2 --door $door "$@" -ApplePersistenceIgnoreState YES \
         > "$out/$name.log" 2>&1
 }
 run hold cutaway --hover 555,434 --screenshot "$out/hold.png"

@@ -978,8 +978,48 @@ static void testRedoFunds() {
     check(lot.walls.size() == 4, "the walls are back");
 }
 
+// The vertex test's bit 7 (FUN_009e8e0c, docs/buy-build-mac.md §7.25): the
+// objects on the four tiles round a grid point.
+static void testVertexObjects() {
+    Lot lot = flatLot();
+    lot.levelCount = 2;
+    lot.elevations.resize(13 * 11 * 2);
+    for (size_t i = 0; i < 13 * 11 * 2; ++i)
+        lot.elevations[i] = 3.0f * float(i / (13 * 11));
+    lot.floors.resize(12 * 10 * 2);
+    lot.rooms.resize(12 * 10 * 2);
+    for (auto& [k, l] : lot.roomLayers)
+        l.resize(12 * 10 * 2);
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    using namespace vertextest;
+    Object& chair = vm.createObject(0x7F000001);
+    chair.position = {3.5f, 3.5f, 1};
+    check(ed.vertexMoveError(0, 3, 3, 0.5f, kWalls) == 0x61, "an object pins the ground round it (0x61)");
+    check(ed.vertexMoveError(0, 5, 5, 0.5f, kWalls) == 0, "two points off it does not");
+    check(ed.vertexMoveError(0, 3, 3, 0.0f, kWalls) == 0, "a point already at the height is not tested");
+    check(ed.vertexMoveError(0, 3, 3, 0.5f, kWalls & ~Objects) == 0, "only with the flags' bit 7");
+    chair.data[objdata::PlacementFlags] = 0x100;
+    check(ed.vertexMoveError(0, 3, 3, 0.5f, kWalls) == 0, "od 42 bit 0x100 lets the ground move");
+    // The story above brought within a story of the ground: the objects
+    // under it must conform to the ceiling (0x60).
+    check(ed.vertexMoveError(1, 3, 3, 0.75f, kWalls) == 0x60, "a ceiling brought down onto an object (0x60)");
+    check(ed.vertexMoveError(1, 3, 3, 3.5f, kWalls) == 0, "raised, it does not mind");
+    // od 42 bit 0x80: the floor may not rise over it (0x68).
+    chair.data[objdata::PlacementFlags] = 0x180;
+    chair.position.elevation = 0.1f;
+    check(ed.vertexMoveError(0, 3, 3, 1.0f, kWalls) == 0x68, "the floor raised over an od 42 0x80 object (0x68)");
+    check(ed.vertexMoveError(0, 3, 3, -1.0f, kWalls) == 0, "lowered under it, fine");
+    chair.person.emplace();
+    check(ed.vertexMoveError(0, 3, 3, -1.0f, kWalls) == 0x61, "a person always pins the ground");
+    vm.removeObject(chair.id);
+}
+
 int main() {
     testRedoFunds();
+    testVertexObjects();
     testNoCharge();
     testStairs();
     testAutoRoofRects();
