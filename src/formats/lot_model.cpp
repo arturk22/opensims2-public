@@ -459,69 +459,84 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
     return cuts;
 }
 
-// The values of a wall mask (docs/buy-build-mac.md 7.6): the TXMT
-// "<cutout>_<dx>_<dy>_<level>_<dir>_wallmask" names the mask texture, whose
-// alpha is 0 in the hole; its other faces' TXMTs (the wall seen from the
-// next tile) use the same texture. nullopt if the object has none there.
-// A diagonal stretch (`diagonal`): the tile `dx` east (west) and `dy` north
-// (south) of the object's in its own frame, faces "nw"/"se"
-// (doorclub2diagonal_1e_1n_0_nw); the other sign of north is tried too.
-std::optional<ObjectModel::AlphaMask> wallMaskValues(ResourceIndex& index, const std::string& cutout, int dx, int level,
-                                                     LotModelCache* cache, bool diagonal = false, int dy = 0) {
-    auto offset = [](int d, const char* plus, const char* minus) {
-        return d == 0 ? std::string("0") : std::to_string(std::abs(d)) + (d > 0 ? plus : minus);
-    };
-    const std::string dxs = offset(dx, "e", "w");
-    const std::string key = cutout + "_" + dxs + "_" + std::to_string(level) + (diagonal ? "_d" + std::to_string(dy) : "");
-    if (cache)
-        if (auto it = cache->wallMasks.find(key); it != cache->wallMasks.end())
-            return it->second;
-    std::optional<ObjectModel::AlphaMask> out;
-    std::vector<std::string> mids; // "<dy>_<level>_<dir>"
-    if (!diagonal) {
-        for (const char* face : {"0_%d_n", "1s_%d_s", "1n_%d_n", "0_%d_s"}) {
-            char mid[32];
-            std::snprintf(mid, sizeof mid, face, level);
-            mids.push_back(mid);
-        }
+// nTSSG::cObject::WallCutoutMaterialName (Mac BV 0x658428;
+// docs/walls-floors-mac.md §6.2): the name of the wall mask of the face whose
+// locator runs from (x0, y0) to (x1, y1), in the cutout frame (X, Y) of the
+// lead object's tile centre (the E/W count from Y, the N/S count from -X):
+// "_<ew>_<ns>_<level>_<dir>_wallMask" after the object's model name. The
+// direction is the locator's (X the same: Y rising S, falling N; Y the same:
+// X rising W, falling E; X up Y down NW, X down Y up SE, both up SW, both down
+// NE), the counts the floor of the greater X and Y (the ceiling on the side
+// of S, W and E: the decompiled rounding, for the half-tile coordinates
+// used).
+std::string wallCutoutMaterialName(float x0, float y0, float x1, float y1, int level) {
+    int dir = 0;
+    long ns = 0, ew = 0;
+    const float maxX = std::max(x0, x1), maxY = std::max(y0, y1);
+    if (x0 == x1) {
+        dir = y1 < y0 ? 2 : 0; // N : S
+        ns = dir == 2 ? long(std::floor(x0)) : long(std::ceil(x0));
+        ew = long(std::floor(maxY));
+    } else if (y0 == y1) {
+        dir = x0 < x1 ? 1 : 3; // W : E
+        ns = long(std::floor(maxX));
+        ew = long(std::ceil(y0));
     } else {
-        for (const std::string& dys : {offset(dy, "n", "s"), offset(-dy, "n", "s")})
-            for (const char* dir : {"nw", "se"})
-                mids.push_back(dys + "_" + std::to_string(level) + "_" + dir);
+        dir = x0 < x1 ? (y0 > y1 ? 4 : 6) : (y0 < y1 ? 5 : 7); // NW SW SE NE
+        ns = long(std::floor(maxX));
+        ew = long(std::floor(maxY));
     }
-    for (const std::string& mid : mids) {
-        auto loc = index.findByName(cutout + "_" + dxs + "_" + mid + "_wallmask_txmt", kTypeTxmt);
-        if (!loc)
-            continue;
+    static constexpr const char* kDir[] = {"s", "w", "n", "e", "nw", "se", "sw", "ne"};
+    auto count = [](long v, const char* plus, const char* minus) {
+        return v == 0 ? std::string("0") : std::to_string(std::abs(v)) + (v > 0 ? plus : minus);
+    };
+    // ns > 0 is S (the count is of -X, toward N).
+    return "_" + count(ew, "e", "w") + "_" + count(-ns, "n", "s") + "_" + std::to_string(level) + "_" + kDir[dir] +
+           "_wallmask";
+}
+
+// A wall mask TXMT (docs/buy-build-mac.md 7.6): the alpha of its texture
+// (0 in the hole) and its tsMirrorWallMask, which CombinedWallMaterial passes
+// on as wallMaskMirrorFlag (Mac BV 0x6c1738; absent: not mirrored, inferred).
+// nullopt if the TXMT is not there.
+std::optional<LotModelCache::WallMask> wallMask(ResourceIndex& index, const std::string& txmt, LotModelCache* cache) {
+    if (cache)
+        if (auto it = cache->wallMasks.find(txmt); it != cache->wallMasks.end())
+            return it->second;
+    std::optional<LotModelCache::WallMask> out;
+    if (auto loc = index.findByName(txmt + "_txmt", kTypeTxmt)) {
         try {
             const auto bytes = index.read(*loc);
             Rcol rc(bytes);
-            const auto* block = rc.find("cMaterialDefinition");
-            if (!block)
-                continue;
-            const std::string tex = MaterialDefinition::parse(block->body).property("stdMatBaseTextureName");
-            auto tloc = tex.empty() ? std::nullopt : index.findByName(tex + "_txtr", kTypeTxtr);
-            if (!tloc)
-                continue;
-            const RgbaImage img = loadTexture(index.read(*tloc), &index);
-            if (!img.width || !img.height)
-                continue;
-            ObjectModel::AlphaMask m;
-            m.width = img.width, m.height = img.height;
-            m.values.resize(size_t(img.width) * img.height);
-            for (size_t i = 0; i < m.values.size(); ++i)
-                m.values[i] = img.pixels[i * 4 + 3];
-            out = std::move(m);
-            break;
+            if (const auto* block = rc.find("cMaterialDefinition")) {
+                const MaterialDefinition m = MaterialDefinition::parse(block->body);
+                const std::string tex = m.property("stdMatBaseTextureName");
+                auto tloc = tex.empty() ? std::nullopt : index.findByName(tex + "_txtr", kTypeTxtr);
+                if (tloc) {
+                    const RgbaImage img = loadTexture(index.read(*tloc), &index);
+                    if (img.width && img.height) {
+                        LotModelCache::WallMask w;
+                        w.values.width = img.width, w.values.height = img.height;
+                        w.values.values.resize(size_t(img.width) * img.height);
+                        for (size_t i = 0; i < w.values.values.size(); ++i)
+                            w.values.values[i] = img.pixels[i * 4 + 3];
+                        const std::string mirror = lowerAscii(m.property("tsMirrorWallMask"));
+                        w.mirror = mirror == "1" || mirror == "true";
+                        out = std::move(w);
+                    }
+                }
+            }
         } catch (const std::exception& err) {
-            os2::logOnce("wall mask", mid, err);
+            os2::logOnce("wall mask", txmt, err);
         }
     }
     if (cache)
-        cache->wallMasks[key] = out;
+        cache->wallMasks[txmt] = out;
     return out;
 }
 
+// The levels whose walls take the view's wall mode: the view's level
+// (all with kAllLevels) and those from lowestCut up to it.
 bool wallModeLevel(const LotViewOptions& view, int level) { return lotWallModeLevel(view, level); }
 
 
@@ -762,6 +777,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
     }
 
     const std::string topKey = "walltop:" + std::string(kWallTopMaterial);
+    // OS2_DEBUG_WALLMASK=1: each face's wall mask (and the door or window it is of).
+    static const bool debugMasks = std::getenv("OS2_DEBUG_WALLMASK") != nullptr;
     for (size_t i = 0; i < ws.size(); ++i) {
         const auto& r = ws[i];
         const auto& w = *r.wall;
@@ -774,62 +791,92 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         const V2 d = unit({w.b.x - w.a.x, w.b.y - w.a.y}), n = rightOf(d);
         const float h = r.node.thickness / 2;
 
-        // Doors and windows on this wall: intervals along it (from a) and
-        // heights cut out of both faces.
+        // The doors' and windows' wall masks (docs/walls-floors-mac.md §6.2):
+        // cObject::ComputeWallCutoutLocators names one per face it cuts
+        // (WallCutoutMaterialName, from the face's locator in the object's
+        // cutout frame) and SetCutoutMaterialImpl (Mac BV 0x6c5bb0) gives it
+        // to that face of the walls of nodes 0 and 2 (and to the top when
+        // the face is the top's, a -> b). Each face samples its mask with its
+        // own UV1: u from 0 at its locator's start to 1 at its end (1 - u
+        // when the mask TXMT's tsMirrorWallMask is set: wallMaskMirrorFlag),
+        // v 1 at the column's floor and 1 - H/3 at its top, H the height
+        // drawn. Exact as planes over the face (the floor along a wall is
+        // straight: walls require a flat bottom).
+        std::array<int, 2> faceMask{-1, -1};
+        std::set<size_t> masking; // holes with a mask on this wall
+        if (r.node.index == 0 || r.node.index == 2)
+            for (int side = 0; side < 2; ++side) {
+                // The face's locator: a -> b for side 0, b -> a for side 1.
+                const V2 ps = side == 0 ? V2{w.a.x, w.a.y} : V2{w.b.x, w.b.y};
+                const V2 pe = side == 0 ? V2{w.b.x, w.b.y} : V2{w.a.x, w.a.y};
+                const float zs = side == 0 ? b.floorZ[0] : b.floorZ[2], ze = side == 0 ? b.floorZ[2] : b.floorZ[0];
+                for (size_t hi = 0; hi < holes.size() && faceMask[side] < 0; ++hi) {
+                    const WallHole& hole = holes[hi];
+                    if (hole.cutout.empty())
+                        continue;
+                    // The object's frame: +x east (its model's +x), +y north;
+                    // the cutout frame is X = -y, Y = x from its tile's centre
+                    // (inferred from the names: a window's wall is its tile's
+                    // y = -0.5 side, faces n "0_0" and s "0_1s").
+                    const V2 east{hole.east[0], hole.east[1]}, north{-hole.east[1], hole.east[0]};
+                    auto frame = [&](V2 p) {
+                        const float rx = p[0] - hole.origin[0], ry = p[1] - hole.origin[1];
+                        const float x = rx * east[0] + ry * east[1], y = rx * north[0] + ry * north[1];
+                        // (snapped to the half tile the locators are on)
+                        return V2{std::round(-y * 2) / 2, std::round(x * 2) / 2};
+                    };
+                    const V2 fs = frame(ps), fe = frame(pe);
+                    if (std::max({std::abs(fs[0]), std::abs(fs[1]), std::abs(fe[0]), std::abs(fe[1])}) > 6)
+                        continue;
+                    // The name's level: the wall's level less the object's
+                    // (the part's level less the lead's), here by heights
+                    // (the lot keeps no level per object): the wall's floor
+                    // whole stories over the object's (a little off on
+                    // sloping ground; not a foundation's wall under a
+                    // window, 0.75 below).
+                    const float rise = std::min(zs, ze) - hole.origin[2];
+                    const int storey = int(std::lround(rise / kStoryHeight));
+                    if (storey < 0 || storey > 3 || std::abs(rise - kStoryHeight * float(storey)) > 0.375f)
+                        continue;
+                    const std::string txmt = hole.cutout + wallCutoutMaterialName(fs[0], fs[1], fe[0], fe[1], storey);
+                    const auto m = wallMask(index, txmt, cache);
+                    if (!m)
+                        continue;
+                    ObjectModel::AlphaMask values = m->values;
+                    const V2 fd = unit({pe[0] - ps[0], pe[1] - ps[1]});
+                    const float L = len, along0 = ps[0] * fd[0] + ps[1] * fd[1];
+                    values.planar = true;
+                    values.planeU = {fd[0] / L, fd[1] / L, 0, -along0 / L};
+                    if (m->mirror)
+                        values.planeU = {-values.planeU[0], -values.planeU[1], 0, 1 - values.planeU[3]};
+                    // v = 1 - (z - off - floor(t)) / 3, the floor straight
+                    // from the face's start to its end.
+                    const float k = (ze - zs) / (kStoryHeight * L);
+                    values.planeV = {k * fd[0], k * fd[1], -1.0f / kStoryHeight,
+                                     1 + (off + zs) / kStoryHeight - k * along0};
+                    if (debugMasks)
+                        std::fprintf(stderr, "wallmask: wall (%g, %g)-(%g, %g) level %d side %d hole (%g, %g) %s%s\n", w.a.x,
+                                     w.a.y, w.b.x, w.b.y, w.a.level, side, hole.origin[0], hole.origin[1], txmt.c_str(),
+                                     m->mirror ? " mirrored" : "");
+                    faceMask[size_t(side)] = int(masks.size());
+                    masks.push_back(std::move(values));
+                    masking.insert(hi);
+                }
+            }
+        // Doors and windows on this wall without a mask: intervals along it
+        // (from a) and heights cut out of both faces.
         std::vector<Cut> cuts;
         // Attic walls too: the sawtooth roofs of N002_Lot31 have their row
         // of windows in the attic walls between the roofs.
         if ((w.type == Lot::Normal || attic) && !fence)
             cuts = wallCuts(holes, w.a.x, w.a.y, d[0], d[1], len, std::min(b.floorZ[0], b.floorZ[2]),
                             std::max({b.top[0], b.top[1], b.top[2]}));
-        // A door or window with a wall mask for this wall cuts its own shape:
-        // the faces get the mask (alpha tested in the wall shader) instead of
-        // the box cut. The mask spans the tile the wall covers, u along the
-        // object's -x (u = 0 on the tile's edge toward the object's +x) and v
-        // from a story above the wall's floor down to it, as the game's UV1
-        // (inferred from the textures: a two-tile arch's halves "0" and "1e",
-        // the second one tile along +x, are open up to their shared edge only
-        // with u running along -x; u along +x opened them at the outer edges
-        // and left a strip of wall in the middle of N001_Lot82's front
-        // arches).
-        int maskIndex = -1;
-        const float base = std::min(b.floorZ[0], b.floorZ[2]);
-        for (auto c = cuts.begin(); c != cuts.end() && maskIndex < 0; ++c) {
-            const WallHole& hole = holes[c->hole];
-            if (hole.cutout.empty())
-                continue;
-            // Straight: the wall runs along the object's +x. Diagonal: the
-            // "...diagonal" models stand square and their wall runs along
-            // +x + local north (rotated +90°) (the lots' diagonal windows all
-            // do), its faces "nw" and "se"; the wall is sqrt 2 long and the
-            // next tile along is one east and one north of the object's
-            // (doorclub2diagonal_1e_1n_0_nw).
-            const float along = d[0] * hole.east[0] + d[1] * hole.east[1];
-            const bool diag = std::abs(std::abs(along) - 0.7071f) < 0.05f && (hole.east[0] == 0 || hole.east[1] == 0);
-            if (!diag && std::abs(along) < 0.99f)
-                continue;
-            std::array<float, 2> axis{hole.east[0], hole.east[1]};
-            if (diag) {
-                const float rr = 1.0f / std::sqrt(2.0f);
-                axis = {(hole.east[0] - hole.east[1]) * rr, (hole.east[1] + hole.east[0]) * rr};
-            }
-            const float span = diag ? std::sqrt(2.0f) : 1.0f;
-            const float mx = (w.a.x + w.b.x) / 2 - hole.origin[0], my = (w.a.y + w.b.y) / 2 - hole.origin[1];
-            const int k = int(std::lround((mx * axis[0] + my * axis[1]) / span));
-            const int storey = std::max(0, int(std::lround((base - hole.origin[2]) / kStoryHeight)));
-            auto values = diag ? wallMaskValues(index, hole.cutout, k, storey, cache, true, k)
-                               : wallMaskValues(index, hole.cutout, k, storey, cache);
-            if (!values)
-                continue;
-            values->planar = true;
-            values->planeU = {-axis[0] / span, -axis[1] / span, 0,
-                              0.5f + float(k) + (hole.origin[0] * axis[0] + hole.origin[1] * axis[1]) / span};
-            values->planeV = {0, 0, -1.0f / kStoryHeight, (base + kStoryHeight) / kStoryHeight};
-            maskIndex = int(masks.size());
-            masks.push_back(std::move(*values));
-            cuts.erase(c);
-            break;
-        }
+        std::erase_if(cuts, [&](const Cut& c) { return masking.count(c.hole) > 0; });
+        if (debugMasks)
+            for (const auto& c : cuts)
+                std::fprintf(stderr, "boxcut: wall (%g, %g)-(%g, %g) level %d hole (%g, %g, %g) %s\n", w.a.x, w.a.y, w.b.x,
+                             w.b.y, w.a.level, holes[c.hole].origin[0], holes[c.hole].origin[1], holes[c.hole].origin[2],
+                             holes[c.hole].cutout.c_str());
 
         // The two faces: side 0 is a -> b's (A, the right: patterns[0]),
         // side 1 the opposite locator's (B). Each face runs from its own
@@ -850,9 +897,9 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                     continue;
             }
             std::string key = "wall:" + it->second;
-            if (maskIndex >= 0) {
-                key += "#mask" + std::to_string(maskIndex);
-                maskedParts[key] = maskIndex;
+            if (const int mi = faceMask[size_t(side)]; mi >= 0) {
+                key += "#mask" + std::to_string(mi);
+                maskedParts[key] = mi;
             }
             MeshBuilder& mb = out[key];
             const Vec3f nrm{n[0] * s, n[1] * s, 0};
@@ -1019,7 +1066,16 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         // world; no light map (its subset has no light-map page: 2 x the
         // texture, kWallTopMaterial).
         {
-            MeshBuilder& top = out[topKey];
+            // With the mask of face A (the top's locator, a -> b), sampled
+            // with the same planes (u along a -> b, v = 1 - H/3 at the top;
+            // the top's +0.01 on side A left out): the top of a wall cut
+            // down is open over a door.
+            std::string key = topKey;
+            if (faceMask[0] >= 0) {
+                key += "#mask" + std::to_string(faceMask[0]);
+                maskedParts[key] = faceMask[0];
+            }
+            MeshBuilder& top = out[key];
             const Vec3f up{0, 0, 1};
             const std::array<size_t, 6> colOf{0, 1, 2, 2, 1, 0};
             std::array<uint32_t, 6> id{};

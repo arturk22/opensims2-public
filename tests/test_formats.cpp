@@ -1901,9 +1901,11 @@ static void testTwoTileArchMask() {
     DbpfPackage pkg(lotPath);
     const Lot lot = Lot::load(pkg);
     const ObjectModel m = buildLotModel(lot, index, patterns);
-    // The mask value at a point, from a masked wall part lying on y = 39
-    // within [x0, x1] on level 1 (z 0.75 .. 3.75).
-    auto sample = [&](float x0, float x1, float x, float z) -> int {
+    // The mask values at a point of the masked wall parts lying on y = 39
+    // within [x0, x1] on level 1 (z 0.75 .. 3.75): both faces, each with its
+    // own mask (the s face's mirrored), and the wall top.
+    auto values = [&](float x0, float x1, float x, float z) {
+        std::vector<int> out;
         for (const auto& part : m.parts) {
             if (part.mask < 0 || size_t(part.mask) >= m.masks.size() || !m.masks[size_t(part.mask)].planar)
                 continue;
@@ -1921,16 +1923,42 @@ static void testTwoTileArchMask() {
             const float v = k.planeV[0] * x + k.planeV[1] * 39.0f + k.planeV[2] * z + k.planeV[3];
             const uint32_t tx = std::min(k.width - 1, uint32_t(std::clamp(u, 0.0f, 1.0f) * float(k.width)));
             const uint32_t ty = std::min(k.height - 1, uint32_t(std::clamp(v, 0.0f, 1.0f) * float(k.height)));
-            return k.values[size_t(ty) * k.width + tx];
+            out.push_back(k.values[size_t(ty) * k.width + tx]);
         }
-        return -1;
+        return out;
     };
     const float z = 0.75f + 1.5f; // half way up the door
-    const int inner0 = sample(30, 31, 30.05f, z), outer0 = sample(30, 31, 30.95f, z);
-    const int inner1 = sample(29, 30, 29.95f, z), outer1 = sample(29, 30, 29.05f, z);
-    check(inner0 >= 0 && inner1 >= 0, "lot 82: the front arch's walls are masked");
-    check(inner0 < 128 && inner1 < 128, "lot 82: the two-tile arch is open where its tiles meet");
-    check(outer0 > 128 && outer1 > 128, "lot 82: the two-tile arch keeps the wall at its outer edges");
+    const auto inner0 = values(30, 31, 30.05f, z), outer0 = values(30, 31, 30.95f, z);
+    const auto inner1 = values(29, 30, 29.95f, z), outer1 = values(29, 30, 29.05f, z);
+    auto all = [](const std::vector<int>& v, auto test) { return !v.empty() && std::all_of(v.begin(), v.end(), test); };
+    check(inner0.size() >= 2 && inner1.size() >= 2, "lot 82: both faces of the front arch's walls are masked");
+    check(all(inner0, [](int v) { return v < 128; }) && all(inner1, [](int v) { return v < 128; }),
+          "lot 82: the two-tile arch is open where its tiles meet, on both faces");
+    check(all(outer0, [](int v) { return v > 128; }) && all(outer1, [](int v) { return v > 128; }),
+          "lot 82: the two-tile arch keeps the wall at its outer edges, on both faces");
+    // Walls down: the wall tops take face A's mask too (SetCutoutMaterialImpl
+    // gives it to the top), at v = 1 - 0.2 / 3: open over the arch.
+    LotViewOptions down;
+    down.walls = LotViewOptions::Walls::Down;
+    const ObjectModel md = buildLotModel(lot, index, patterns, down);
+    int topValue = -1;
+    for (const auto& part : md.parts) {
+        if (part.node.rfind("walltop:", 0) != 0 || part.mask < 0)
+            continue;
+        bool on = !part.mesh.positions.empty();
+        for (const auto& v : part.mesh.positions)
+            on = on && std::abs(v[1] - 39.0f) < 0.2f && v[0] > 29.8f && v[0] < 31.2f && v[2] < 1.0f;
+        if (!on)
+            continue;
+        const auto& k = md.masks[size_t(part.mask)];
+        const float x = 30.05f, zt = 0.75f + 0.2f - 0.01f;
+        const float u = k.planeU[0] * x + k.planeU[1] * 39.0f + k.planeU[2] * zt + k.planeU[3];
+        const float v = k.planeV[0] * x + k.planeV[1] * 39.0f + k.planeV[2] * zt + k.planeV[3];
+        const uint32_t tx = std::min(k.width - 1, uint32_t(std::clamp(u, 0.0f, 1.0f) * float(k.width)));
+        const uint32_t ty = std::min(k.height - 1, uint32_t(std::clamp(v, 0.0f, 1.0f) * float(k.height)));
+        topValue = k.values[size_t(ty) * k.width + tx];
+    }
+    check(topValue >= 0 && topValue < 128, "lot 82: with the walls down the wall top is open over the arch");
 }
 
 // With the game's data: N002_Lot31's sawtooth roofs (shed roofs on level 1,

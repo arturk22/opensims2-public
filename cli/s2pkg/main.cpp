@@ -379,9 +379,14 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
                 placed += !o.person && !o.model.empty() && o.model != "nullModel" && o.model != "noModel" &&
                           (o.position[0] != 0 || o.position[1] != 0);
             }
-            std::printf("  %zu objects: %zu with a model in the world, %zu Sims; %zu wall faces with a door or window mask\n",
-                        lot.objects.size(), placed, people,
-                        size_t(std::count_if(model.parts.begin(), model.parts.end(), [](const ObjectModel::Part& p) { return p.mask >= 0; })));
+            // (A masked face is a part of its own; a masked wall top too.)
+            auto masked = [&](const char* node) {
+                return size_t(std::count_if(model.parts.begin(), model.parts.end(), [&](const ObjectModel::Part& p) {
+                    return p.mask >= 0 && p.node.rfind(node, 0) == 0;
+                }));
+            };
+            std::printf("  %zu objects: %zu with a model in the world, %zu Sims; %zu wall faces and %zu wall tops with a door or window mask\n",
+                        lot.objects.size(), placed, people, masked("wall:"), masked("walltop:"));
             // OS2_LOT_OBJECTS=<part of a name>: those objects, where they stand and their heading.
             if (const char* filter = std::getenv("OS2_LOT_OBJECTS"))
                 for (const auto& o : lot.objects)

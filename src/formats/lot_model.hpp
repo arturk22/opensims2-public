@@ -207,7 +207,13 @@ struct LotModelCache {
         std::array<float, 3> origin{0, 0, 0}, east{1, 0, 0};
     };
     std::optional<std::vector<Hole>> holes; // per door or window
-    std::map<std::string, std::optional<ObjectModel::AlphaMask>> wallMasks; // by wall-mask TXMT name (values only)
+    // A wall mask TXMT: its texture's alpha (planes left unset) and its
+    // tsMirrorWallMask.
+    struct WallMask {
+        ObjectModel::AlphaMask values;
+        bool mirror = false;
+    };
+    std::map<std::string, std::optional<WallMask>> wallMasks; // by wall-mask TXMT name (without "_txmt")
     std::map<std::string, MaterialDefinition> materials;                // parsed TXMTs by name
     std::map<std::string, std::optional<std::array<float, 3>>> meanColors; // by material name
     // Out: the walls the last build cut down (x0, y0, x1, y1, level), for
