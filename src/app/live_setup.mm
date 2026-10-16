@@ -283,24 +283,27 @@ void applyCameraSelection() {
     if (!gCamera)
         return;
     using Controller = os2::CameraSelector::Controller;
-    // The free camera ("CameraMan"): starts at the view of the camera it replaces.
+    // The free camera ("CameraMan"; "CameraManNH" in the neighborhood: cCameraLive and
+    // cCameraNeighborhood::DoMessage, BV 0x6a3df0 / 0x765134): starts at the view of the
+    // camera it replaces. ConstrainTranslation (BV 0x7a6330) holds it only in a lot.
     if (gCameraSelector.controller() == Controller::CameraMan) {
         if (!gFreeCamera) {
-            gFreeCamera = std::make_unique<os2::FreeCamera>(loadLotCamera("CameraMan"));
+            gFreeCamera = std::make_unique<os2::FreeCamera>(loadLotCamera(gHood ? "CameraManNH" : "CameraMan"));
             const auto& b = gCamera->bounds();
-            if (b)
+            if (b && !gHood)
                 gFreeCamera->setBounds(b->first, b->second);
             os2::LotCamera* camera = gCamera;
             gFreeCamera->setFloorSampler([camera](float x, float y) { return camera->floorHeight(x, y); });
             gFreeCamera->start(gCamera->eye(), gCamera->forward(), gCamera->fov());
             gCamera->setFirstPerson(gFreeCamera->pose());
-            std::printf("opensims2: camera: CameraMan (free camera) at (%.1f, %.1f, %.1f)\n", gFreeCamera->position().x,
-                        gFreeCamera->position().y, gFreeCamera->position().z);
+            std::printf("opensims2: camera: %s (free camera) at (%.1f, %.1f, %.1f)\n", gHood ? "CameraManNH" : "CameraMan",
+                        gFreeCamera->position().x, gFreeCamera->position().y, gFreeCamera->position().z);
         }
         return;
     }
-    // Back from the free camera: Live or Build takes the view over (MatchThisControllerWith).
-    const char* want = gCameraSelector.controller() == Controller::Build ? "Build" : "Live";
+    // Back from the free camera: Live or Build (the Neighborhood camera in the
+    // neighborhood) takes the view over (MatchThisControllerWith).
+    const char* want = gHood ? "Neighborhood" : gCameraSelector.controller() == Controller::Build ? "Build" : "Live";
     std::optional<os2::LotCamera::FirstPerson> from;
     if (gFreeCamera) {
         from = gFreeCamera->pose();
@@ -308,7 +311,7 @@ void applyCameraSelection() {
         gCamera->setFirstPerson(std::nullopt);
     }
     bool changed = from.has_value();
-    if (gCamera->definition().name != want) {
+    if (gCamera->definition().name != want && !gHood) {
         gCamera->setDefinition(loadLotCamera(want));
         changed = true;
     }
@@ -320,10 +323,10 @@ void applyCameraSelection() {
 
 bool freeCameraActive() { return gFreeCamera && gCameraSelector.freeCamera(); }
 
-// "Cycle Camera Controller" (Tab, Y): in a lot, the free camera and back. Not in the
-// neighborhood (its "CameraManNH" is not done) nor in Create-a-Sim.
+// "Cycle Camera Controller" (Tab, Y): in a lot or the neighborhood, the free camera and
+// back. Not in Create-a-Sim.
 void cycleCameraController() {
-    if (!gCamera || !gSimulation || gHood || gCas)
+    if (!gCamera || (!gSimulation && !gHood) || gCas)
         return;
     gCameraSelector.cycleController();
     applyCameraSelection();

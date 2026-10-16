@@ -305,7 +305,7 @@ static std::optional<simd_float3> pickOrbitCentre() {
         return;
     if (freeCameraActive()) { // cCameraCameraManController's keys (the map 0x6A9362F7 over the lot's)
         const bool control = e.modifierFlags & NSEventModifierFlagControl;
-        if (e.keyCode == kTab || e.keyCode == kEscape || (e.keyCode == kY && !control)) {
+        if (e.keyCode == kTab || e.keyCode == kEscape || (e.keyCode == kY && !control && !gHood)) {
             cycleCameraController();
             return;
         }
@@ -380,9 +380,9 @@ static std::optional<simd_float3> pickOrbitCentre() {
         return;
     }
     switch (e.keyCode) {
-    case kTab: cycleCameraController(); break; // "Cycle Camera Controller": the free camera (in a lot)
-    case kY: // the same, as the keys file has it ("Y"); Control-Y is redo
-        if (!(e.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))
+    case kTab: cycleCameraController(); break; // "Cycle Camera Controller": the free camera (lot and neighborhood)
+    case kY: // the same in a lot, as its keys file has it ("Y"; not the neighborhood's); Control-Y is redo
+        if (!gHood && !(e.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))
             cycleCameraController();
         break;
     case kSpace: selectNextFamilySim(); break;

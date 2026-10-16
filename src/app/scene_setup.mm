@@ -218,6 +218,8 @@ using namespace os2app;
                 cursorAt(p);
                 perfLap("hood: click");
             }
+            if (steps[k].kind == os2::FlowStep::Kind::Key && steps[k].text == "tab") // the free camera "CameraManNH", and back
+                cycleCameraController();
             if (steps[k].kind == os2::FlowStep::Kind::Hover) {
                 perfLap("hood: before hover");
                 gHood->mouseMoved(*view.camera, p, float(w), float(h));
