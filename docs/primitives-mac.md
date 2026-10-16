@@ -894,10 +894,9 @@ escolhas: grava 0/1/2 no temp `(byte 7 >> 4) & 7` (> 7: erro). Os tipos 8–10
 e 0x1C (notificações TNS) não bloqueiam e usam o objeto do stack object
 (ausente: erro 0x17); 0x16/0x19 (painel do tutorial) **não bloqueiam**: temp 1 = 0
 esconde o painel, senão o mostra e devolve verdadeiro (`docs/tutorial-mac.md` §5).
-Textos: STR# 0x12D da tabela escolhida pelas flags do byte 8 (0x01 privada,
-0x40 global, senão semi-global), índice u16 13 (ou temp 0 com 0x02), título
-pelo byte 6 (ou temp 3 com 0x10). Binário, com os detalhes de botão
-inferidos pelo disassembler.
+Textos: STR# 0x12D do arquivo privado do dono do código (0x01 o
+semi-global dele, 0x40 o global; rodada n45 abaixo), índice u16 13 (ou temp
+0 com 0x02), título pelo byte 6 (ou temp 3 com 0x10).
 
 **Tempo esgotado (rodada 9, binário).** Os diálogos que bloqueiam não ficam
 esperando para sempre. O `TryDialog` (BV `0xe2bb64`) põe o pedido na fila do
@@ -929,14 +928,12 @@ caracteres some em 8,8 s; um sim/não de 200 caracteres responde "não" em
 desenha cada tipo pela classe do binário (tabela abaixo): o `cTSObjectDialog`
 como o `cTSWinPictureDialog::DoLayout` (medidas, moldura `0xA9500615`,
 botões sobre `0xA9500630`, fontes GenHeader/GenDialogBody/GenButton, o
-ícone composto em `0xE9000005`–`7`; a caixa de fechar usa a imagem do X dos
-telefones `0xAC76E000`, porque `0x11110002` não está no `ui.package`,
-inferido), o nome pelos painéis do `0x2D91050A` e os telefones pelos scripts
-`0x8C159243`/`44`/`42` com as listas pelas constantes `0xCCCC` (fonte
-PhoneBooksListBox, linha 20–21 px, texto escolhido verde; ícones de
-amigo/inimigo e paixão/amor do relacionamento, a coluna de cada um é
-inferida; o painel sem imagem sob a moldura pintado com a sua `fillcolor`,
-inferido). A primeira versão (rodada 13) usava o script `0x6CA51466`, uma
+ícone composto em `0xE9000005`–`7`; a caixa de fechar não existe no jogo
+base, rodada n45), o nome pelos painéis do `0x2D91050A` e os telefones pelos
+scripts `0x8C159243`/`44`/`42` com as listas pelas constantes `0xCCCC` (fonte
+PhoneBooksListBox, linha 20–21 px, texto escolhido verde; as colunas e os
+ícones de amor/paixão e amigo/inimigo da festa, o painel pintado com a sua
+`fillcolor`: rodada n45). A primeira versão (rodada 13) usava o script `0x6CA51466`, uma
 escolha inferida que o binário desmentiu. Sem cabeça: `--dialog-demo
 0|0i|0c|1|2|3|5|6|7|14|11|16|16f|17|17f|20|21|23|23g|23t|23r|24[:título[:mensagem]]`, `--dialog-type`,
 `--dialog-click`; `s2pkg pie` lista a classe, as linhas e as caixas de nome
@@ -1015,7 +1012,11 @@ imagem do ícone fica em (26, 20) (com título, altura do título + 28).
 expansão de tokens devolve, senão o stack object; 1 nenhum; 2 vizinho: o
 vizinho cujo ID está no stack object; 3 indexado: pela definição do objeto
 da árvore (inferido); 4 nomeado: a string do STR# 0x12D no byte 1, "gz
-<id>"/"gzi <id>" uma imagem de UI, "guid <n>" um objeto. A imagem
+<id>"/"gzi <id>" uma imagem de UI, "guid <n>" um objeto (rodada n45: o
+`SetParams` compara a primeira palavra com "gz", "gzi", "my", "guid", "rel"
+e "job", strings BV `0x101ac98`–`0x101acb0`, `FUN_0007391c`; o que "my",
+"rel" e "job" fazem e de onde vem a imagem não foram lidos; só três Dialog
+do jogo base pedem o ícone nomeado, dois no "CT - Offer Job"). A imagem
 (`FUN_001d206c`) é a miniatura 40×40 (objeto: a do catálogo; Sim: a
 cabeça) centrada sobre o fundo `0xE9000005`, com a moldura `0xE9000006` por
 cima e a máscara de alfa `0xE9000007` (grupo `0x499DB772`).
@@ -1387,7 +1388,17 @@ barra não passa do dinheiro da família; OK só com algo comprado e grava
 `0x2CB242F6`).** Os objetos do array 0 do stack object em uma fileira de
 miniaturas; temp 0 = 1 deixa escolher vários, temp 1 = 1 só o que a família
 pode pagar (`UpdateFunds`; temps 2/3, 100 por padrão, não seguidos); `OnOk`
-grava −1 nos itens não escolhidos.
+grava −1 nos itens não escolhidos. **Rodada n45:** cada item é uma célula do
+script `0x2CB242F7` (`CreateThumbnail` BV `0x38ddd8`, 44 × 44: fundo
+`0xE9081001` na janela 1, a miniatura 40 × 40 na 2, um botão de alternar
+`0xE9081000` por cima na 3), um `cTSWinProcObjectThumbnail`: `SetSelected`
+(`0x38b28c`) aperta o botão (o quadro 2, a moldura verde); o `UpdateFunds`
+(`0x38beb4`) habilita cada célula não escolhida a menos que o diálogo
+obedeça o preço (`+0x171`, temp 1) e o item custe mais que os fundos (menos
+o já escolhido com vários, `+0x170`); `SetEnabled` (`0x38b394`) mostra o
+quadro 1 do fundo (azul) numa habilitada e o 0 (vermelho) com o botão
+desligado numa desabilitada (`SetBackgroundImage` `0x38c554`: largura ÷ 4 ×
+n). O lugar das células na grade (centradas no app) não foi lido.
 
 **Notificações (tipos 8–10, 0x1C)**: o byte 10 é o tempo de vida
 (`cTSUINotificationService::SetNotificationTimeOut`) e o byte 9 a prioridade
@@ -1518,6 +1529,22 @@ módulo de objetos (bit `0x20000` da palavra de cada ID;
 vtable `0x12c`/`0x128`); o `AddObject` zera as flags e o
 `MakeNewOutOfWorldObject` liga a 1 (roda); **quem liga a 2 não foi achado**
 (no app: só os controladores do tutorial rodam pausados, inferido).
+
+*No app (rodada n45).* `vm::languageNumber`/`languageTime` (`$Local`,
+`$Money`, `$Cash`, `$Attrib`, `$FamilyAssets`, `$TimeLocal` pelo idioma
+preferido); `scopeGroup` (o grupo privado do dono do código, o semi-global
+dele com o bit 0, o global com o `0x40`; antes, o grupo da árvore primeiro e
+o bit 0 lido como privado); no jogo base 89 Dialog que não achavam strings
+passam a achar (as cópias privadas do "Set Result" com o bit 0 leem o
+semi-global), 108 leem outra tabela e 12 perdem as suas (diálogos especiais
+em árvores semi-globais cujo objeto não tem STR# 0x12D, como no binário);
+`s2pkg bhav <Res> 7FBDC3E8 203B` mostra a carta de chance com as strings do
+objeto de emprego. Os telefones: a ordem por nome completo (vizinhos) e por
+sobrenome (festa) com o byte com sinal, as colunas da festa e o quadro 1 do
+ícone na linha escolhida (`DialogWindow::frame`); as prateleiras com as
+células do `0x2CB242F7`. Os lotes 1 e 4 do Tutorial ficam pausados. Medido:
+`s2pkg autonomy` de N001_Lot68 e N001_Lot11, sementes 1–3, 12.000 ticks:
+saídas idênticas às do main.
 
 ### 0x2E Snap (`TrySnap`)
 
