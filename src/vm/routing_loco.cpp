@@ -984,8 +984,16 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     }
     std::optional<Gait> gait;
     if ((L.kind == Loco::None && !L.halting) || L.kind == Loco::Walk) {
-        if (rebuilt && L.kind == Loco::Walk && !L.halting)
+        // Planned again while walking: BeginFollow makes a new request,
+        // which blends in over its fade in (linear) while the last one
+        // blends out (CreateTransitionBlend's route requests, BV 0x68b4c4;
+        // docs/anim-mac.md §13.2), its cycles going on at the portion the
+        // walk is at.
+        bool newWalkRequest = false;
+        if (rebuilt && L.kind == Loco::Walk && !L.halting) {
             refitStride();
+            newWalkRequest = true;
+        }
         // (A stop covers less than a tile, a stride at most a run's 4.4 m.)
         const BlendedClip stop = final && stretch < 6 && !L.halting ? plannedStop(legHeading) : BlendedClip{};
         gait = walkGait();
@@ -996,6 +1004,13 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
             L.layers = g.layers(); // the blend's weights for the way planned again
         }
         L.speed = (g.speed > 0 ? g.speed : vm.walkTilesPerTick * tps) / tps;
+        if (newWalkRequest && L.kind == Loco::Walk) {
+            const BlendedClip stopAhead = final ? plannedStop(lastHeading()) : BlendedClip{};
+            L.fade = requestFadeIn(L.speed > 0 ? L.requestLength / (L.speed * tps) : 0, bool(stopAhead));
+            L.crossover = false;
+            L.cycleStart = L.cycle;
+            ++L.serial;
+        }
         // The stop, once what is left is a stop's distance; halting, the
         // halt's stop once the half cycle is walked.
         if (L.halting) {
