@@ -2505,7 +2505,8 @@ nas árvores). Tudo o mais é árvore:
 - **Apagar** (`Interaction - Extinguish - TEST` `0x1012`): nunca criança;
   bombeiro (dado de pessoa 155 = o tipo NPC do BCON `0x5910`) sempre;
   outros: falso para visitantes (dado de pessoa 32 ≠ `0x4200`) e **falso
-  quando param 0 = 1 (autônomo, inferido)**; com a flag 0x502 do fogo
+  quando param 0 = 1 (autônomo; confirmado no binário na rodada n32,
+  abaixo)**; com a flag 0x502 do fogo
   também falso. Ou seja, **os Sims da casa só apagam por ordem do
   jogador**; sozinhos só entram em pânico.
 - **Bombeiros**: o `Alarm - Smoke` (`0x7F97EA32`), acordado pelo fogo do
@@ -2709,6 +2710,111 @@ Fire no tile novo, Generic Sims Call 10/11, `Divide Tick Counts`, a
 contagem de paredes do `Test - Wall in Direction?` e o Set to Next 8
 (objetos do tile). Nada mais: sem limite de objetos, sem código C++ de
 propagação.
+
+### Rodada n32: quem chama os bombeiros, e o incêndio do `N001_Lot68`
+
+Pergunta (fix-noite): no `N001_Lot68` o fogão pega fogo, ninguém chama os
+bombeiros e dois Sims morrem; é o jogo? **É.** Lido nas árvores
+(`tools/datahunt`, todos os BHAVs do `objects.package` e dos globais) e no
+binário (Ghidra MCP, só leitura).
+
+**Quem agenda o bombeiro.** Só duas árvores chamam `Schedule - NPC - Once`
+(`0x2E4`) com o tipo do bombeiro (constante `0x5910` = **12**; nenhuma chama
+o `0x2E5` com ele):
+
+- **`Sub - Call Fire Fighter`** (`0x1005` do `Alarm - Smoke`, grupo
+  `0x7F97EA32`). O Main do alarme roda `Process` a cada **60 ticks** (`Idle
+  60`) e na hora em que o Fire o acorda (`Notify - Fire Alarm` do `Main -
+  Setup` do Fire: atributo 0 := 1 e Notify out of Idle nos alarmes **do mesmo
+  od 29**). `Process`: com fogo no seu cômodo (`Test - Fire in Room?`: algum
+  Fire com o mesmo od 29) toca, liga os efeitos, acorda quem está no cômodo e
+  chama o `Sub - Call Fire Fighter`: se o NPC já está agendado (`Schedule -
+  NPC - Check`) ou no lote (`NPC - Instance of on Lot?`) não faz nada; senão
+  agenda uma vez e põe o atributo 14 do `Controller - NPC` em 1 ("houve
+  fogo": o bombeiro só o lê em `Fire - Was there a fire?`/`Fire - Clear Fire
+  History`, para a bronca do trote). Alarme em outro cômodo não vê o fogo.
+- **`Emergency - Fire`** (`0x1004` do objeto de chamada `Phone Emergency -
+  Fire`, grupo `0x7F0884BA`, semi-global `PhoneCallGlobals`), pelo
+  `CT - Handle Call` da chamada. `Fire - Can Call?` é sempre verdadeiro (sem
+  fogo o bombeiro vem e dá bronca: `Fire - If Fires, Set Attrib in NPC
+  Controller` põe o atributo 14 em 0). Chega-se a ele só pelo telefone: a
+  entrada 0 "Call" do `PhoneGlobals` (`0x7FB208FA`; `Interaction - Call -
+  TEST` `0x2008` → `Call - Build Menu` `0x2025`) põe as categorias como
+  action strings (STR# `0x12E`: "Call.../Service", "Call.../Emergency",
+  "Call.../Work", "Call.../Delivery", "Call.../Transportation"; constantes
+  9601–9612, Emergência = 9602), e o `Interaction - Call` (`0x2030`) abre o
+  `Call - Display Selection Dialog` (`0x2023`, "Emergency Phonebook") onde
+  **o jogador** escolhe a chamada. Nenhuma árvore do pânico, do Fire, do
+  `Controller - NPC` ou da pessoa empurra uma chamada.
+
+Ou seja, **sem alarme no cômodo do fogo só o jogador chama os bombeiros**.
+63 dos 69 lotes não têm alarme; têm: `N001_Lot11`, `N001_Lot49`,
+`N002_Lot10`, `N002_Lot2`, `N002_Lot22`, `N002_Lot3`.
+
+**Os moradores não apagam sozinhos (confirmado no binário; era inferido).**
+`Interaction - Extinguish - TEST` (`0x1012`) devolve falso quando o
+parâmetro 0 = 1, depois de aceitar o bombeiro (dado de pessoa 155 = 12). O
+parâmetro 0 é o "autônomo" do `cEdithObjectTestSim`: `FBA_FindStaticInteractions`
+(BV `0xad4130`) e `FBA_RunCheckTree` (BV `0xae24e4`) o montam com
+`FUN_004c5cb0(teste, pessoa + 0x2e0, 1, 0)` (`+0x10` := 1, `+0x11` := 0), e
+`cEdithObjectTestSim::TestInteraction` (BV `0x4c6214`) passa ao check tree
+os parâmetros {`+0x10` ≠ 0, 1 se a vtable `0x2c` da interação devolve 1,
+o argumento `long`}; o menu de pie não chama o `FUN_004c5cb0` (o construtor
+`FUN_004c7024` deixa `+0x10` = 0): parâmetro 0 = 0. A entrada "Extinguish"
+do TTAB (autonomia 50, anúncios 0–100 em nove motivos) serve ao bombeiro.
+
+**O pânico prende a casa perto do fogo.** `Push - Panic - All Sims Not
+Interacting` (`0x102c`, no Setup e a cada 30 voltas do laço de cada Fire)
+só empurra o "Fogo!" em quem está **no cômodo do Fire** (ou fora, se o
+cômodo do Fire é externo), não é bombeiro, tem idade, está no lote, sem o
+bit 0 do od 34 e do dado de pessoa 68, e cujo objeto de interação (dados de
+pessoa 80, 79 e 103) ainda não é um Fire. Quem está em outro cômodo o vê
+pela `Function - Awareness` do Fire, que a `Reaction Awareness` da pessoa
+(`0x20dc`, semi-global `0x7F01EC29`) roda quando anda (`Function - Along
+Route`) ou está à toa (`Function - Main - Do Idle Actions`). O `Interaction
+- Panic` (`0x1013`) leva o Sim ao slot global 9 do **seu** Fire (2–5 tiles)
+e fica no laço até o dado de pessoa 28 passar de `Tuning - Panic`[0] = 15
+(`Divide Tick Counts(20)` por volta); no fim, se o `Wait For Notify` é
+interrompido, empurra outro pânico em si mesmo (`Push - Panic`: o primeiro
+Fire por ID com chama ≥ 1 e od 25 = 0). Então **a casa entra em pânico sem
+parar enquanto há fogo no cômodo**, a 2 tiles do Fire do seu pânico, não
+dos outros.
+
+**Andar pelo fogo.** O `Function - Init` do Fire liga a flag 3 do od 8
+(`0x04`, "allow object and person intersection") e o `Main - Setup` desliga
+a 5 (`0x10`) e liga a 2 (`0x02`): `CanIntersectPeople` (vtable `0x1d8`, od 8
+& `0x14`, `routing-mac.md`) fica verdadeiro, e rotas e passos atravessam os
+tiles de Fire. `Main - Set on Fire - Sims on Tile` (`0x1051`) põe fogo em
+toda pessoa no tile a cada `Idle 3`. É assim que se morre: o pânico novo
+anda até o slot 9 de um Fire e cruza o tile de outro, ou o fogo se espalha
+para o tile onde o Sim está parado em pânico (`Burn - Spread - Skip?` só
+pula Sims mais novos que a constante global `0x4801`).
+
+**Quanto tempo se vive pegando fogo.** `Panic - On Fire!` (`0x102a`): põe um
+Fire no tile do Sim se não há (Create New Object Instance), `Set Motive
+Deltas`, e **5 a 10 voltas** (`Get in Temp X - Random in Range` com `Tuning
+- On Fire!`) de `a-burn-loopWrithe` (6,93 s) ou
+`a2o-react-panicFire-loopFanButt` (5,74 s) por cara ou coroa; ainda pegando
+fogo no fim → motivos 5–9, 14 e 15 a 0 e `Kill Sim`. Se a flag 10 some (o
+Fire do tile apaga: `Sub - Extinguish` limpa a flag dos objetos do tile), o
+Sim sobrevive. São **29 a 69 minutos de jogo** (5,74–6,93 s × 5–10 voltas, a
+30 ticks por segundo de animação e 30 ticks por minuto de jogo).
+
+**O fogo do `N001_Lot68` nesta árvore** (semente padrão, 12 h do horário
+salvo; o "17:29, Angela cozinhando" do fix-noite era de outra linha do
+tempo): às 11:49 o Daniel põe uma comida congelada no forno ("Cook - _Type -
+Bake" com o Free Will ligado: põe e sai). Às 12:04 a comida fica pronta e o
+`Push - Get Food` (`0x2034`) **não chama o cozinheiro porque alguém interage
+com ela** (`Test - Anyone Interacting w/ Me?` `0x2036`: o dado de pessoa 80
+de alguém = a comida): a Mary-Sue tinha escolhido "Comer" nela e andava para
+o forno (`Route - To Oven`); a rota falhou (códigos 7 e 14: o Daniel estava
+parado no lugar do forno, "Preocupar-se") e ela desistiu às 12:05. Ninguém
+mais veio: queimou aos 10 min (`Sub - Set Burnt`, 12:14) e pegou fogo
+(`Sub - Set Fire`, 12:43). Pânico de todos, 35 Fires em 6 h do fogão até a
+sala, Lilith (pega fogo 14:54, morre 15:50: 56 min) e Daniel (pega fogo
+14:49, o Fire do tile apaga 15:18, pega de novo 15:32, morre 16:25: 53 min);
+a Angela pegou fogo 11 min e o Fire dela apagou. Tudo isso são as árvores;
+a rota que falhou no forno é das rotas (`TODO.md`).
 
 ## 4g. Rodada 12: Sims vivos e destravados (binário + árvores)
 
