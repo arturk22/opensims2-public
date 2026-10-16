@@ -2086,6 +2086,12 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
             return std::nullopt;
         };
+        // The live panel's portraits (its family bar and the selected Sim's
+        // head): the same IMG the pie menu's head uses.
+        if (liveUi && liveUi->ok())
+            for (const auto& s : sims)
+                if (auto p = simPortrait(s.id))
+                    liveUi->setPortrait(s.id, std::move(*p));
         // Whether the floor of `lotLevel` at `at` is drawn when the camera
         // shows `top`: not, in a level shown with the one below, the parts a
         // story over the ground, which the next floor up shows.
@@ -3508,6 +3514,12 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                         if (down)
                             escape();
                         break;
+                    // The speed buttons' accelerators (their tips: "Pausa - P",
+                    // "Velocidade Normal - 1", ...), as the Mac host's.
+                    case SDL_SCANCODE_P: if (down && liveUi && liveUi->ok()) liveUi->togglePause(); break;
+                    case SDL_SCANCODE_1: if (down && liveUi && liveUi->ok()) liveUi->setSpeed(2); break;
+                    case SDL_SCANCODE_2: if (down && liveUi && liveUi->ok()) liveUi->setSpeed(3); break;
+                    case SDL_SCANCODE_3: if (down && liveUi && liveUi->ok()) liveUi->setSpeed(4); break;
                     default: break;
                     }
                 }
