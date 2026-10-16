@@ -229,6 +229,19 @@ bool routeFrameLive(const Thread& t, const Object::Route& r) {
            t.stack[r.depth - 1].pc == r.node;
 }
 
+// How many routes the walker's route stack holds with the one of the
+// routing instruction at `depth` on top (cTSRoutingObjectAggregate
+// +0x14..+0x24): one more for each route callback tree under it (goal check,
+// pre- or post-route, portal, failure feedback: their route is still on the
+// stack while they run; DoNeedFailureFeedback .. DoPostFailedOrSucceeded pops
+// a failed one only after its feedback and post-route trees).
+size_t routeStackDepth(const Thread& t, size_t depth) {
+    size_t n = 1;
+    for (size_t i = 0; i < depth && i < t.stack.size(); ++i) // the instruction's own frame too (the failure feedback's Go To)
+        n += t.stack[i].routeCallback;
+    return n;
+}
+
 // A routing instruction starts a route of its own: one of an outer
 // instruction (a tree it called routes again: a goal check refreshing the
 // way, "Route - Refresh route") is kept under it, not dropped. Before, the
@@ -566,7 +579,13 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 for (const auto& p : r.points)
                     std::fprintf(stderr, "   point (%.2f,%.2f,%d)%s%s\n", p.x, p.y, p.level, p.portal ? " portal" : "", p.ticks ? " phase" : "");
             }
-            const bool base = c.thread.stack.size() == r.depth; // the route stack holds only this route
+            // The route stack holds only this route (no callback tree's route
+            // under it: a route the failure feedback walks is not alone,
+            // DoNeedFailureFeedback keeps the failed one on the stack until
+            // DoPostFailedOrSucceeded; round n30: was the instruction on top
+            // of the thread's stack, which a route in a callback tree is too).
+            const size_t stackDepth = routeStackDepth(c.thread, r.depth);
+            const bool base = stackDepth == 1;
             // "It moved" (the branches that plan again): the blocker is not
             // where the route noted it at its last plan (InitRoute notes every
             // router: FUN_01655330 compares the places exactly); not noted,
@@ -681,6 +700,12 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 if (r.aside)
                     return endAside();
                 why = RouteFail::BlockedByObject;
+                return Step::Failed;
+            }
+            // A route inside a route inside another (the route stack holds
+            // more than 2): "blocked by person" at once.
+            if (stackDepth > 2) {
+                why = RouteFail::BlockedByPerson;
                 return Step::Failed;
             }
             if (!blocker.route) { // the blocker stands (it is not routing)
@@ -896,7 +921,10 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees, b
     if (why == RouteFail::Success)
         why = RouteFail::Unknown;
     c.frame.pendingRouteResult = int16_t(why);
-    if (failureTrees) {
+    // DoNeedFailureFeedback (BV 0x5774cc) plays the failure feedback only
+    // with the route alone on the route stack (not for a route a callback
+    // tree walks: the failure feedback's own, a goal check's).
+    if (failureTrees && routeStackDepth(c.thread, c.thread.stack.size()) == 1) {
         if (const auto tree = c.vm.code().behaviorByName(kGlobalGroup, "CT - Route Failure Feedback")) {
             if (!postRoute)
                 c.frame.postRoute = 3; // no post-route tree after it
