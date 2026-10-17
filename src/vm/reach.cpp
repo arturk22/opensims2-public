@@ -12,6 +12,7 @@
 
 #include "animation.hpp"
 #include "errors.hpp"
+#include "interactions.hpp"
 #include "kill.hpp"
 #include "routing_internal.hpp"
 
@@ -71,6 +72,7 @@ bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4>
     constexpr size_t kMaxTurns = 1000; // sleeps in a check tree count down without waiting
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < kMaxTurns; ++turn)
         c.vm.run(t, c.vm.instructionsPerTurn);
+    dropThreadRecords(c.vm, t); // records.cpp
     c.thread.temps = t.temps;
     if (t.status == Thread::Status::Failed) {
         if (std::getenv("OS2_CHECK_TREE_ERRORS")) // where in the check tree, for looking into
@@ -118,7 +120,9 @@ Exit runFunctionalTree(Context& c) {
         params.assign(c.thread.temps.begin(), c.thread.temps.end());
     std::copy_n(params.begin(), std::min<size_t>(params.size(), 4), args.begin());
     const ObjectId id = target->id;
-    c.vm.call(c.thread, id, tree, args);
+    // GosubObjectTree with the "change icon" flag 0x01 (TryCallFunctionalTree
+    // BV 0xe253a4): the person's object record carries it (records.cpp).
+    c.vm.call(c.thread, id, tree, args, flags & 0x01);
     Frame& callee = c.thread.stack.back();
     callee.stackObject = id;
     for (size_t i = 4; i < params.size() && i < callee.params.size(); ++i)

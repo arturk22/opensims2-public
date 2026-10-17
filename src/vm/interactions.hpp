@@ -190,6 +190,33 @@ bool inInteraction(const Thread& t);
 // Refreshes the person data that mirrors the queue.
 void syncQueueData(Object& sim);
 
+// cTSPerson::ActionSkipped (Mac BV 0xaca0cc): an entry leaves the queue
+// unrun: its links are undone and, when its object is there, the object's
+// OBJf entry 4 "queue skipped" runs with the person as stack object
+// (cTSObject::RunTree(4, person)).
+void actionSkipped(VM& vm, ObjectId person, const QueuedInteraction& q);
+
+// The person's object records (records.cpp; Person::ObjectRecord,
+// docs/primitives-mac.md §4j). cTSPerson::OnGosubObjectTree: VM::call
+// pushed `object`'s tree on a person's thread.
+void gosubObjectTree(VM& vm, Thread& t, ObjectId object, bool changeIcon);
+// cTSPerson::StackJustPopped: a frame of the thread left the stack.
+void stackJustPopped(VM& vm, Thread& t);
+// Pops frames down to `size`, each with stackJustPopped.
+void popFrames(VM& vm, Thread& t, size_t size);
+// The records a thread run apart (one-tick, check or OBJf-entry tree) left
+// when it is dropped.
+void dropThreadRecords(VM& vm, const Thread& t);
+// cTSPerson::HasObjectReference: `id` is in one of the person's records.
+bool hasObjectReference(const Object& person, ObjectId id);
+// cTSPerson::OnCleanup's records: all of them go (data 62 - 1 each), and
+// with `cascade` each record's object and its other users are reset.
+void cleanupRecords(VM& vm, ObjectId person, bool cascade);
+// cEdithObjectModule::CleanupPeople(x): every other person's OnCleanup(x).
+void cleanupPeople(VM& vm, ObjectId x, bool cascade);
+// cTSObject::Cleanup(nobody) of an object (VM::resetObject).
+void cleanupObject(VM& vm, ObjectId id);
+
 // Linked interactions (links.cpp, cTSInteraction::UnLinkInteractions in the
 // Mac binary): IDs are unique across Sims; Push Interaction's flag 0x40
 // links the new entry to another interaction; when an interaction ends or

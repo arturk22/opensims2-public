@@ -1,6 +1,7 @@
 // Interaction queues, Push Interaction, Idle for Input and the pie menu on
 // synthetic objects (src/vm/interactions.hpp).
 
+#include "vm/engine.hpp"
 #include "vm/interactions.hpp"
 
 #include <cstdio>
@@ -876,6 +877,76 @@ static void testContinuationAfterReturn() {
     }
 }
 
+// Round n46: the person's object records (cTSPerson +0x60c,
+// docs/primitives-mac.md §4j). Idle for Input's gosub of the action tree
+// makes one (the object, the stack's depth with the frame); the object's
+// data 62 "use count" is the number of records on it; the record goes with
+// its frame. Test Sim Interacting With reads them. A person's reset resets
+// the objects of its records (their cleanup tree runs) unless it is dying.
+// An entry that leaves the queue unrun (ActionSkipped) runs its object's
+// OBJf entry 4 "queue skipped" with the person as stack object.
+static void testObjectRecords() {
+    Fixture fx;
+    ObjectFunctions f;
+    f.functions.resize(5);
+    f.functions[1].action = 0x1010; // Main: idle for ever
+    f.functions[3].action = 0x1011; // cleanup: attribute 2 := 9
+    f.functions[4].action = 0x1012; // queue skipped: attribute 3 := the stack object
+    fx.code.add(kObjGroup, 0x80, std::move(f));
+    fx.code.add(kObjGroup, 0x1010, tree({expr(Param, 0, Assign, Lit, 30000, go(1), E), idle(0, false, go(0))}, 1));
+    fx.code.add(kObjGroup, 0x1011, tree({expr(Attr, 2, Assign, Lit, 9, T, E)}));
+    fx.code.add(kObjGroup, 0x1012, tree({expr(Attr, 3, Assign, StackId, 0, T, E)}));
+    fx.code.add(kObjGroup, 0x1013, tree({instr(0x25, T, F)})); // Test Sim Interacting With (the stack object)
+    fx.vm.startMain(fx.fridge);
+    if (fx.o().attributes.size() < 4)
+        fx.o().attributes.resize(4);
+
+    enqueue(fx.vm, fx.s(), fx.make(1)); // "Clean": waits 1000 ticks
+    fx.vm.tick();
+    auto& rec = fx.s().person->objectRecords;
+    check(fx.s().activeInteraction == 0 && rec.size() == 1 && rec[0].object == fx.fridge && rec[0].depth == 2 &&
+              !rec[0].flag,
+          "the action tree's gosub made an object record (the object, the depth with its frame)");
+    check(fx.o().data[62] == 1, "the object's data 62 'use count' counts the record");
+    check(fx.s().person->recordsAtAction == 1, "+0x646: the records with the action's own");
+    check(hasObjectReference(fx.s(), fx.fridge) && !hasObjectReference(fx.s(), fx.sim), "HasObjectReference");
+    {
+        std::array<int16_t, kTempCount> temps{};
+        check(runOneTickTree(fx.vm, temps, fx.sim, fx.fridge, fx.fridge, 0x1013, {}),
+              "Test Sim Interacting With: the stack object is in my records");
+        check(fx.s().person->objectRecords.size() == 1, "a one-tick tree leaves the records as they were");
+    }
+    cancelInteraction(fx.vm, fx.s(), fx.s().queue[0].uid);
+    for (int i = 0; i < 3; ++i)
+        fx.vm.tick();
+    check(fx.s().activeInteraction == -1 && rec.empty() && fx.o().data[62] == 0,
+          "the record goes with its frame; data 62 back to 0");
+
+    // The reset cascade.
+    enqueue(fx.vm, fx.s(), fx.make(1));
+    fx.vm.tick();
+    check(fx.o().data[62] == 1 && fx.o().attributes[2] == 0, "using it again");
+    fx.vm.resetObject(fx.sim, fx.vm.threads[fx.sim]);
+    check(fx.o().attributes[2] == 9 && fx.o().data[62] == 0 && fx.s().person->objectRecords.empty(),
+          "a person's reset resets the objects of its records (their cleanup tree ran)");
+    fx.o().attributes[2] = 0;
+    enqueue(fx.vm, fx.s(), fx.make(1));
+    fx.vm.tick();
+    fx.vm.dyingObjects.insert(fx.sim);
+    fx.vm.resetObject(fx.sim, fx.vm.threads[fx.sim]);
+    fx.vm.dyingObjects.clear();
+    check(fx.o().attributes[2] == 0 && fx.o().data[62] == 0, "not when the person is in the kill queue");
+
+    // ActionSkipped: OBJf entry 4 of the skipped entry's object.
+    fx.o().attributes[3] = 0;
+    fx.vm.tick();
+    enqueue(fx.vm, fx.s(), fx.make(3)); // its guard says no
+    for (int i = 0; i < 3; ++i)
+        fx.vm.tick();
+    check(fx.s().queue.empty() && fx.o().attributes[3] == fx.sim,
+          "a skipped entry runs its object's 'queue skipped' tree with the person as stack object");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -897,6 +968,7 @@ int main() {
     testSkippedEntryUnlinks();
     testPushTestsTheEntry();
     testContinuationAfterReturn();
+    testObjectRecords();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

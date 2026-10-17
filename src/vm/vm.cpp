@@ -449,8 +449,6 @@ static std::vector<int16_t>& typeAttributesOf(VM& vm, const Object& o) {
     return it->second;
 }
 
-constexpr int16_t kObjectDataUseCount = 62;
-
 // A BCON of the code owner's, or error 0x2E ("Invalid constant.") without it.
 static const Constants& constantsOf(VM& vm, const Object& owner, int scope, uint16_t table) {
     try {
@@ -600,8 +598,6 @@ static int16_t slotContent(VM& vm, const Object& o, int16_t slot) {
 }
 
 int16_t Context::get(uint8_t owner, int16_t data) const {
-    if ((owner == 0x03 || owner == 0x04) && data == kObjectDataUseCount)
-        return useCount(vm, owner == 0x03 ? me() : stackObject()); // computed (engine.hpp)
     if (int16_t* v = storage(*this, owner, data))
         return *v;
     switch (owner) {
@@ -957,6 +953,7 @@ std::optional<Thread> VM::runFunction(ObjectId id, size_t function, size_t maxTu
     Thread t = start(id, tree, args, stackObject);
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < maxTurns; ++turn)
         run(t, instructionsPerTurn);
+    dropThreadRecords(*this, t); // records.cpp: a thread run apart
     return t;
 }
 
@@ -1136,15 +1133,52 @@ void VM::resetAfterError(ObjectId id, Thread& t) {
 // Cleanup(nobody) (cTSObject::Cleanup, BV 0xb09838), as above, without the
 // error: also what an object's removal does to a person whose current
 // interaction object or route target it was (kill.cpp).
-void VM::resetObject(ObjectId id, Thread& t) {
+void VM::resetObject(ObjectId id, Thread& t, bool cascade) {
     Object* o = object(id);
     const uint16_t main = o ? functionTree(*o, 1) : 0;
-    if (!o || !main)
+    if (!o || !main || cleaningUp.contains(id))
         return;
+    // The guard of cTSObject::Cleanup (flag 0x40000) and cTSPerson::OnCleanup
+    // (0x800): a cascade of resets (records.cpp) does not come back here.
+    cleaningUp.insert(id);
+    struct Guard {
+        std::set<ObjectId>& set;
+        ObjectId id;
+        ~Guard() { set.erase(id); }
+    } guard{cleaningUp, id};
     if (o->person) {
+        // cTSPerson::OnCleanup (BV 0xadcbcc): the object records go, each
+        // with its frames (data 62 - 1), and unless the person is in the
+        // kill queue (flag 0x1000) each record's object is reset with its
+        // other users (records.cpp). The running interactions' links are
+        // undone as their frames go (StackJustPopped's end of the action);
+        // the waiting entries leave by DeleteTopAction / DeleteTopSubAction:
+        // ActionSkipped, OBJf entry 4 on their objects.
+        cleanupRecords(*this, id, cascade && !dying(*this, id));
+        o = object(id);
+        if (!o)
+            return;
+        std::vector<QueuedInteraction> running, waiting;
+        for (size_t i = 0; i < o->queue.size(); ++i)
+            (int(i) <= o->activeInteraction ? running : waiting).push_back(o->queue[i]);
+        if (o->subAction)
+            running.push_back(*o->subAction);
+        for (const auto& q : o->subQueue)
+            waiting.push_back(q);
         o->queue.clear();
         o->activeInteraction = -1;
         o->subAction.reset();
+        o->subQueue.clear();
+        // SetCurrentAction(the empty interaction): its priority, 0.
+        o->person->data[persondata::Priority] = kPriorityIdle;
+        syncQueueData(*o);
+        for (const auto& q : running)
+            unlinkInteraction(*this, id, q);
+        for (const auto& q : waiting)
+            actionSkipped(*this, id, q);
+        o = object(id);
+        if (!o)
+            return;
         syncQueueData(*o);
     }
     // The router's OnCleanup (BV 0x5727c8) empties the route stack
@@ -1307,6 +1341,7 @@ Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args, Ob
                  ObjectId codeOwner) {
     Thread t;
     t.me = me;
+    t.serial = ++threadSerials;
     if (const Object* o = object(me))
         t.meSerial = o->serial;
     try {
@@ -1345,6 +1380,11 @@ void VM::push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::span<const in
     t.stack.push_back(std::move(f));
 }
 
+void VM::call(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args, bool changeIcon) {
+    push(t, codeOwner, treeId, args);
+    gosubObjectTree(*this, t, codeOwner, changeIcon); // records.cpp
+}
+
 void VM::fail(Thread& t, const std::string& message) {
     t.status = Thread::Status::Failed;
     t.error = message;
@@ -1376,6 +1416,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
             const std::optional<bool> forced = t.stack.back().callerResult;
             const bool rerun = t.stack.back().rerunCaller;
             t.stack.pop_back();
+            stackJustPopped(*this, t); // a person's object records (records.cpp)
             if (t.stack.empty()) {
                 t.status = Thread::Status::Finished;
                 t.result = value;

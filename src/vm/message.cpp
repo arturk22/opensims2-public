@@ -31,6 +31,7 @@
 #include "engine.hpp"
 #include "errors.hpp"
 #include "formats/binreader.hpp"
+#include "interactions.hpp"
 #include "vm.hpp"
 
 #include <array>
@@ -166,10 +167,13 @@ bool runOneTickTree(VM& vm, std::array<int16_t, kTempCount>& temps, ObjectId me,
             vm.run(t, vm.instructionsPerTurn);
         } catch (...) { // any type: the depth is put back, then it goes on (throw;)
             --messageDepth;
+            dropThreadRecords(vm, t);
             throw;
         }
         --messageDepth;
     }
+    // The object records its frames left (it failed or blocked; records.cpp).
+    dropThreadRecords(vm, t);
     temps = t.temps;
     if (t.status == Thread::Status::Failed)
         throw VMError(t.error.substr(0, t.error.find('\n')) + " (in one-tick tree " + hexString(tree) + " of object " +

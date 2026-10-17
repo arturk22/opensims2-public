@@ -63,11 +63,14 @@ bool unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
             me->subAction.reset();
             syncQueueData(*me);
         }
+    // The frames go one by one, each with StackJustPopped (the person's
+    // object records, records.cpp).
     if (action && *action > 0) {
-        t.stack.resize(*action);
+        popFrames(vm, t, *action);
         endInteraction(vm, t);
         return true;
     }
+    popFrames(vm, t, 0);
     const Object* o = vm.object(owner);
     const uint16_t main = o ? vm.functionTree(*o, 1) : 0;
     if (!main) {
@@ -92,12 +95,15 @@ bool unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
 // Cleanup(nobody) does; so does the target of the route it walks
 // (cTSRoutingObjectAggregate::OnCleanup BV 0x5727c8 flags the route,
 // DoObjectDeletedWhileWalking 0x56d880 resets the walker,
-// "Router::DoObjectDeletedWhileWalking"). The objects the person keeps in
-// its object records (+0x60c) are not modelled.
+// "Router::DoObjectDeletedWhileWalking"); so does an object in one of its
+// object records (HasObjectReference, records.cpp).
 bool personLosesTarget(VM& vm, const Object& p, const std::vector<ObjectId>& gone) {
     auto isGone = [&](ObjectId id) { return id > 0 && std::find(gone.begin(), gone.end(), id) != gone.end(); };
     if (!p.person)
         return false;
+    for (ObjectId g : gone)
+        if (hasObjectReference(p, g))
+            return true;
     if (isGone(p.person->data[persondata::CurrentInteractionObject]) || isGone(p.person->data[persondata::SubQueueObject]))
         return true;
     return p.route && isGone(p.route->target);
@@ -149,7 +155,7 @@ void flushKillQueue(VM& vm) {
             if (std::find(gone.begin(), gone.end(), tid) == gone.end() && t.status == Thread::Status::Running &&
                 !unwind(vm, tid, t, gone))
                 if (const Object* p = vm.object(tid); p && personLosesTarget(vm, *p, gone))
-                    vm.resetObject(tid, t);
+                    vm.resetObject(tid, t, false); // the object is in the kill queue (flag 0x1000): no cascade
         // Its own table goes with it, and every object left drops the entry
         // keyed by its ID (KillOutOfWorldObject, BV 0x532d08: RemoveEntry on
         // each object's table; the key is raw, so an ownership entry whose

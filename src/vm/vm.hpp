@@ -502,6 +502,27 @@ struct Person {
     std::vector<MemoryInfo> memories;
     bool memoriesRead = false;
     uint64_t memoriesTick = 0;
+    // The object records (cTSPerson +0x60c, cObjectRecord; records.cpp,
+    // docs/primitives-mac.md §4j): one for each tree of an object that a
+    // GosubObjectTree pushed on the person's tree stack (VM::call: the
+    // action and sub-action trees, Run Tree by Name, Run Functional Tree, the
+    // router's trees), with the object, the stack's depth with that frame
+    // and Run Functional Tree's "change icon" flag. Each adds 1 to the
+    // object's data 62 "use count" while its frame is on the stack. `thread`
+    // is the Thread::serial that pushed it (a one-tick tree runs on the
+    // same stack in the game, on a thread of its own here); not saved.
+    struct ObjectRecord {
+        ObjectId object = 0;
+        int16_t depth = 0;
+        bool flag = false;
+        uint64_t thread = 0;
+    };
+    std::vector<ObjectRecord> objectRecords;
+    // The number of records when the current action (+0x646) and sub-action
+    // (+0x644) began (SetCurrentAction, SetCurrentSubAction): the action
+    // ends when its record goes (one fewer), the sub-action when the count
+    // is back to it. Saved in the PERS.
+    uint16_t recordsAtAction = 1, recordsAtSubAction = 0;
 };
 
 // Where an object is in the lot, as the lot's saved state has it: the tile
@@ -956,6 +977,9 @@ struct Thread {
 
     ObjectId me = 0;
     uint64_t meSerial = 0; // Object::serial of `me` when the thread started (0: not checked)
+    // Unique per thread (VM::start, lot_resume): which thread pushed an
+    // object record (Person::ObjectRecord::thread).
+    uint64_t serial = 0;
     std::array<int16_t, kTempCount> temps{};
     std::vector<Frame> stack;
     // What the tree a primitive ran returned, for the primitive running
@@ -1163,6 +1187,11 @@ public:
     // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
     std::vector<ObjectId> killQueue;
     std::set<ObjectId> dyingObjects;
+    // Objects in the middle of their Cleanup (cTSObject flag 0x40000,
+    // cTSPerson 0x800): a cascade of resets does not come back to them.
+    std::set<ObjectId> cleaningUp;
+    // The next Thread::serial.
+    uint64_t threadSerials = 0;
     const std::map<ObjectId, Object>& objects() const { return objects_; }
     // The same objects in the same (ID) order, as a table indexed by ID with
     // null holes: scanning it is cheaper than walking the map. Objects must
@@ -1286,7 +1315,10 @@ public:
     // Starts the object's Main in its thread; false if it has none.
     bool startMain(ObjectId id);
     void resetAfterError(ObjectId id, Thread& t);
-    void resetObject(ObjectId id, Thread& t); // the same reset, not after an error
+    // The same reset, not after an error. `cascade`: a person's reset also
+    // resets the objects of its records and their other users (unless the
+    // person, or the object whose removal resets it, is dying; records.cpp).
+    void resetObject(ObjectId id, Thread& t, bool cascade = true);
     // A loaded lot's objects run their load entry (OBJf 2, lot_resume.hpp);
     // off only for the save checks (s2pkg lot-save --check), which compare
     // what the save carries, not what the game's load trees do after.
@@ -1594,10 +1626,10 @@ public:
     std::map<uint16_t, size_t> missingPrimitives;
     std::map<uint8_t, size_t> missingOwners;
 
-    // Pushes tree `treeId` of `codeOwner`'s code as a subroutine of the thread.
-    void call(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args) {
-        push(t, codeOwner, treeId, args);
-    }
+    // Pushes tree `treeId` of `codeOwner`'s code as a subroutine of the
+    // thread: cTSObject::GosubObjectTree, which for a person adds an object
+    // record (records.cpp; `changeIcon`: Run Functional Tree's flag 0x01).
+    void call(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args, bool changeIcon = false);
 
     // Resolves a call opcode for code owned by `owner`: {group, BHAV} or {0, null}.
     std::pair<uint32_t, const Behavior*> resolveTree(const Object& owner, uint16_t treeId);

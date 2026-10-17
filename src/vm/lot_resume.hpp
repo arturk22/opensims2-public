@@ -20,6 +20,9 @@ void applySavedSimulator(VM& vm, const LotObjects& saved);
 // Only the Sims' saved motives (the first set of floats of the PERS,
 // clamped to -100..100), for when the objects start from their Inits.
 void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved);
+// Started from their Inits instead of their saved stacks: no person keeps
+// an object record, so every object's data 62 "use count" is 0.
+void clearUseCounts(VM& vm);
 
 // Restores each created object's saved state (attributes, semi-attributes,
 // object data, person data and motives, object arrays, temporary token,

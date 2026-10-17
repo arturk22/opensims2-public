@@ -4359,10 +4359,41 @@ entradas cujo objeto ou alvo é ele e tira o alvo da ação corrente e da
 **Quem lê.** `cTSPerson::HasObjectReference(id)` (BV `0xacce70`, vtable
 `0x6a4`): o ID está num registro. É o **Test Sim Interacting With** (0x25,
 `TryTestInteractingWith` BV `0xaca1f0`: o stack object nos meus registros);
-o VM procura na fila (inferido). Os registros são o **contador de uso**
+o VM procurava na fila (inferido). Os registros são o **contador de uso**
 (od 62): 87 Expressions do jogo base leem o od 62 de si mesmas e 39 o do
 stack object (os "Function - Main" esperam ninguém usar o objeto, os carros
 de NPC só saem com 0, "Function - In Use?").
+
+**No VM** (rodada n46, `vm/records.cpp`): `Person::objectRecords`; o
+`VM::call` é o `GosubObjectTree` (os chamadores do VM são os do binário: o
+Idle for Input, o Gosub Found Action, o Run Tree by Name no modo 2, o Run
+Functional Tree com a flag 0x01, as árvores do roteador) e faz o registro;
+o `VM::branch` chama o `StackJustPopped` em cada quadro tirado; o od 62 é o
+dado guardado (era calculado ao ler, contando quem tinha o objeto na fila
+ou código dele na pilha, como a FreeSO: inferido). As árvores de um tick, de
+check e de entradas do OBJf rodam numa thread à parte aqui: o registro
+guarda a thread que o fez e os que ela deixar saem com ela. Lidos e gravados
+no PERS (e `+0x644`/`+0x646`); um Sim sem a pilha salva retomada perde os
+seus (od 62 − 1). O reset (`VM::resetObject`) faz o `OnCleanup`: os
+registros saem e, sem a pessoa na fila de morte, cada objeto deles é
+resetado (a árvore de limpeza, entrada 3) com as outras pessoas que o usam
+(`cleanupPeople`); as entradas da fila e da sub-fila saem por
+`ActionSkipped` e as que rodavam têm os vínculos desfeitos; o dado 33 vai a
+0 (a ação vazia). O objeto apagado (`flushKillQueue`) reseta quem o tem num
+registro, sem cascata (ele está na fila de morte). O Test Sim Interacting
+With lê os registros. Nos lotes salvos de N001–N003 o od 62 bate com os
+registros em todos os objetos (um registro só, no `N001_Lot11`). O filtro
+do Find Best Interaction que pula objetos em uso (`useCount`, como a FreeSO)
+segue inferido: o `FBA_FindStaticInteractions` do BV não lê o od 62 (pula
+objetos fora do mundo, na fila de morte, com `AreInteractionsDisabled(1)` ou
+o bit 0 do od 56); o VM soma o od 62 das partes do objeto de várias partes
+(com o od 62 de cada parte só, a banheira de duas partes era escolhida pela
+parte livre enquanto outro Sim a usava, e o banho falhava na rota: 12 → 52
+interações autônomas falsas em 14 sementes do `N001_Lot68`).
+**Inferido:** o adiamento do `Cleanup` de um objeto no meio de uma árvore
+de um tick (`+0x290`/`+0x3c`) não é feito; os quadros do Reach e das
+Animate Sim/Overlay que o binário empurra por `GosubObjectTree` não têm
+correspondente aqui (o VM roda as árvores de evento em um tick).
 
 ### Os dados de pessoa 109 e 164 (`SetCurrentAction`, `SetCurrentSubAction`, `SetInteractionData`)
 

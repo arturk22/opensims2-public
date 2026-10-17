@@ -35,12 +35,13 @@ bool runOneTickTree(VM& vm, std::array<int16_t, kTempCount>& temps, ObjectId me,
                     ObjectId stackObject, uint16_t tree, std::span<const int16_t> params,
                     std::vector<ActionString>* actionStrings = nullptr);
 
-// Object data 62 "use count", which the engine computes when it is read
-// (as FreeSO's VMEntity::GetUsers/IsInUse; not checked in the binary): the
-// Sims other than the object whose queue, up to the running entry, has an
-// interaction on it or on another part of its multi-tile object, or whose
-// thread runs its code (a reaction object stays while the reacting Sim runs
-// "CT - Do Anim" of it: its Main removes it once the use count is 0).
+// The use of a multi-tile object for Find Best Interaction's filter: the
+// sum of object data 62 "use count" (the persons' object records on each
+// part, records.cpp) over its parts. Inferred (as FreeSO's
+// VMEntity::GetUsers): the binary's FBA_FindStaticInteractions does not
+// read data 62 (it skips objects out of the world, in the kill queue, with
+// AreInteractionsDisabled(autonomous) or data 56 bit 0; docs/primitives-mac.md
+// §4j).
 int16_t useCount(VM& vm, const Object& o);
 
 // A UI Effect / Camera Control / Cinematic a tree ran (headless they do

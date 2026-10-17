@@ -163,6 +163,7 @@ add_library(os2_vm
   src/vm/autonomy.cpp
   src/vm/autonomy_trees.cpp
   src/vm/links.cpp
+  src/vm/records.cpp
   src/vm/lot.cpp
   src/vm/lot_neighborhood.cpp
   src/vm/lot_records.cpp

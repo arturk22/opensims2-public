@@ -133,6 +133,14 @@ void capturePerson(VM& vm, const Object& o, LotObjects::State& s, bool known) {
     if (s.personData.size() < p.data.size())
         s.personData.resize(p.data.size(), 0);
     std::copy(p.data.begin(), p.data.end(), s.personData.begin());
+    // The object records (cTSPerson +0x60c, cObjectRecord::Write BV
+    // 0xad5cd8: the object's ID, the tree stack's depth as a u32, the flag)
+    // and the counts when the action and sub-action began (+0x646, +0x644).
+    s.objectRecords.clear();
+    for (const auto& r : p.objectRecords)
+        s.objectRecords.push_back({int16_t(r.object), uint32_t(uint16_t(r.depth)), uint8_t(r.flag ? 1 : 0)});
+    s.personU646 = p.recordsAtAction;
+    s.personU644 = p.recordsAtSubAction;
     // The running interaction in the slot at +0x5D4 (empty: tree table
     // entry -1), the rest in the queue.
     const LotObjects::SavedInteraction* runningBefore =

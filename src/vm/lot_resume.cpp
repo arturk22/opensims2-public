@@ -334,6 +334,7 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
         } else {
             Thread t;
             t.me = id;
+            t.serial = ++vm.threadSerials;
             t.meSerial = vm.object(id) ? vm.object(id)->serial : 0;
             std::copy(s->temps.begin(), s->temps.end(), t.temps.begin());
             for (const auto& f : s->stack) {
@@ -370,6 +371,16 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
                 t.stack.push_back(std::move(fr));
             }
             if (problem.empty() && t.stack.size() <= kMaxStackDepth) {
+                // A person's object records (cTSPerson::cObjectRecord::Read
+                // BV 0xad27fc) name frames of this stack.
+                if (Object* p = vm.object(id); p && p->person) {
+                    p->person->objectRecords.clear();
+                    for (const auto& r : s->objectRecords)
+                        p->person->objectRecords.push_back(
+                            {ObjectId(r.object), int16_t(uint16_t(r.value)), r.flag != 0, t.serial});
+                    p->person->recordsAtAction = s->personU646;
+                    p->person->recordsAtSubAction = s->personU644;
+                }
                 vm.threads.insert_or_assign(id, std::move(t));
                 ++out.stacks;
             } else if (problem.empty()) {
@@ -377,9 +388,32 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
             }
         }
         if (!problem.empty()) {
+            // The saved object records name frames that are not there: their
+            // objects' data 62 loses them (as StackJustPopped would).
+            if (s)
+                for (const auto& r : s->objectRecords)
+                    if (Object* x = vm.object(ObjectId(r.object)))
+                        x->data[62] = int16_t(x->data[62] - 1);
             ++out.problems[problem];
             out.freshMains += vm.startMain(id);
         }
+    }
+    // OS2_DEBUG_RECORDS=1: the objects whose saved data 62 "use count" is not
+    // the number of the persons' object records on them, and each record.
+    if (std::getenv("OS2_DEBUG_RECORDS")) {
+        std::map<ObjectId, int> uses;
+        for (const Object* o : vm.objectTable())
+            if (o && o->person)
+                for (const auto& r : o->person->objectRecords) {
+                    ++uses[r.object];
+                    const auto t = vm.threads.find(o->id);
+                    std::fprintf(stderr, "records: %d -> %d depth %d of %zu%s\n", o->id, r.object, r.depth,
+                                 t == vm.threads.end() ? size_t(0) : t->second.stack.size(), r.flag ? " flag" : "");
+                }
+        for (const Object* o : vm.objectTable())
+            if (o && o->data[62] != uses[o->id])
+                std::fprintf(stderr, "records: object %d (%s) data 62 = %d, %d records\n", o->id,
+                             o->definition ? o->definition->fileName.c_str() : "?", o->data[62], uses[o->id]);
     }
     // The Sims' saved interaction queues, now that their stacks are back.
     for (ObjectId id : ids)
@@ -551,6 +585,12 @@ size_t updateSimObjects(VM& vm, bool casLot) {
     return made;
 }
 
+void clearUseCounts(VM& vm) {
+    for (Object* o : vm.objectTable())
+        if (o)
+            o->data[62] = 0;
+}
+
 ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved, bool fromInit) {
     applySavedSimulator(vm, saved);
     if (!fromInit) {
@@ -560,6 +600,7 @@ ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved,
         vm.refreshObjectPortals(); // a modular stair's pieces are linked by their object data 80
         return r;
     }
+    clearUseCounts(vm);
     for (const auto& e : load.objects)
         if (e.created && vm.object(e.id))
             vm.runFunction(e.id, 0);

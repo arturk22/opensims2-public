@@ -4,6 +4,7 @@
 // planned way (planRoute).
 #include "vm.hpp"
 
+#include "interactions.hpp"
 #include "locomotion.hpp"
 #include "routing_internal.hpp"
 #include "sim_motion.hpp"
@@ -331,6 +332,7 @@ bool portalLockedFor(VM& vm, const Object& me, const PathPlanner& planner, size_
     std::copy(u->params.begin(), u->params.end(), f.params.begin());
     for (int turn = 0; t.status == Thread::Status::Running && turn < 4; ++turn)
         vm.run(t, vm.instructionsPerTurn);
+    dropThreadRecords(vm, t); // records.cpp
     return t.status == Thread::Status::Finished && !t.result;
 }
 

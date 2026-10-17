@@ -311,6 +311,7 @@ bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::vecto
     }
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < 100; ++turn)
         vm.run(t, vm.instructionsPerTurn);
+    dropThreadRecords(vm, t); // records.cpp
     vm.trace = saved;
     if (traceName && c.name.find(traceName) != std::string::npos)
         std::fprintf(stderr, "  -> %s %d\n", t.status == Thread::Status::Finished ? "finished" : "not finished", int(t.result));
@@ -618,6 +619,10 @@ Exit gosubFoundAction(Context& c) {
     const ObjectId me = sim.id;
     updateObjectOwnership(c.vm, me, item.object);
     c.vm.call(c.thread, item.object, item.action, item.args);
+    // The binary's gosub comes before SetCurrentAction: +0x646 counts the
+    // action's own object record.
+    if (Object* s = c.vm.object(me); s && s->person)
+        s->person->recordsAtAction = uint16_t(s->person->objectRecords.size());
     Frame& f = c.thread.stack.back();
     f.stackObject = item.object;
     f.interaction = true;

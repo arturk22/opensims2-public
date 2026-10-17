@@ -1195,6 +1195,7 @@ bool allowsIntersection(VM& vm, const Object& o, ObjectId other) {
     Thread t = vm.start(o.id, tree, args, other);
     for (int turn = 0; t.status == Thread::Status::Running && turn < 4; ++turn)
         vm.run(t, vm.instructionsPerTurn);
+    dropThreadRecords(vm, t); // records.cpp
     return t.status == Thread::Status::Finished && t.result;
 }
 

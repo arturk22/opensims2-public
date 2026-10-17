@@ -21,10 +21,12 @@
 #include "engine.hpp"
 #include "formats/log_once.hpp"
 #include "errors.hpp"
+#include "interactions.hpp"
 #include "formats/binreader.hpp"
 #include "vm.hpp"
 #include "formats/strings.hpp"
 
+#include <algorithm>
 #include <deque>
 
 namespace os2::vm {
@@ -100,43 +102,26 @@ Exit uiPrimitive(Context& c) {
     return Exit::True;
 }
 
+// Test Sim Interacting With (0x25): the stack object is in one of my object
+// records (cTSPerson::TryTestInteractingWith BV 0xaca1f0 ->
+// HasObjectReference 0xacce70: I run a tree of it; records.cpp). Was: in my
+// queue (inferred).
 Exit testSimInteractingWith(Context& c) {
     const Object& me = c.me();
     if (!me.person)
         throw gameError(err::NotSupported, "Test Sim Interacting With");
-    const ObjectId target = c.frame.stackObject;
-    for (const auto& q : me.queue)
-        if (q.object == target)
-            return Exit::True;
-    return Exit::False;
+    return hasObjectReference(me, c.frame.stackObject) ? Exit::True : Exit::False;
 }
 
 } // namespace
 
 int16_t useCount(VM& vm, const Object& o) {
-    const ObjectId lead = o.data[objdata::LeadTileObjectId] ? o.data[objdata::LeadTileObjectId] : o.id;
-    auto part = [&](ObjectId id) {
-        if (id == o.id)
-            return true;
-        const Object* x = vm.object(id);
-        return x && (x->data[objdata::LeadTileObjectId] ? x->data[objdata::LeadTileObjectId] : x->id) == lead;
-    };
-    int16_t users = 0;
-    for (const Object* simp : vm.objectTable()) {
-        if (!simp || !simp->person || simp->id == o.id)
-            continue;
-        const Object& sim = *simp;
-        const ObjectId id = sim.id;
-        bool uses = false;
-        for (int i = 0; i <= sim.activeInteraction && size_t(i) < sim.queue.size() && !uses; ++i)
-            uses = part(sim.queue[size_t(i)].object);
-        if (auto it = vm.threads.find(id); !uses && it != vm.threads.end())
-            for (const Frame& f : it->second.stack)
-                if ((uses = part(f.codeOwner)))
-                    break;
-        users = int16_t(users + uses);
-    }
-    return users;
+    const ObjectId lead = multiTileGroup(o);
+    int sum = 0;
+    for (const Object* x : vm.objectTable())
+        if (x && (x->id == o.id || multiTileGroup(*x) == lead))
+            sum += x->data[62];
+    return int16_t(std::clamp(sum, -32768, 32767));
 }
 
 std::deque<UiEvent>& uiEvents() {

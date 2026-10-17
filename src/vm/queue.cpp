@@ -399,6 +399,9 @@ Exit handleSubQueue(Context& c) {
     Object* sim = c.vm.object(c.thread.me);
     if (!sim)
         return Exit::True;
+    // SetCurrentSubAction comes before the gosub in the binary: +0x644 is
+    // the number of object records without the sub-action's own.
+    const uint16_t records = sim->person ? uint16_t(sim->person->objectRecords.size()) : 0;
     if (ok) {
         try {
             c.vm.call(c.thread, item.object, item.action, item.args);
@@ -412,7 +415,7 @@ Exit handleSubQueue(Context& c) {
         const ObjectId id = sim->id;
         clearSubActions(c.vm, *sim);
         if (exists)
-            unlinkInteraction(c.vm, id, item);
+            actionSkipped(c.vm, id, item);
         if (Object* s = c.vm.object(id))
             syncQueueData(*s);
         return Exit::True;
@@ -431,6 +434,8 @@ Exit handleSubQueue(Context& c) {
             return Exit::Call;
     }
     sim->subAction = item;
+    if (sim->person)
+        sim->person->recordsAtSubAction = records;
     // SetCurrentSubAction (base 1.0 0xb849ec): with the sub-action's object,
     // person data 39 "route status" := 0 (0xb84ac0); then, as
     // SetCurrentAction, 73 "footprint extension", 71 "non-interruptible" and
@@ -664,6 +669,16 @@ Exit changeActionString(Context& c) {
 
 } // namespace
 
+void actionSkipped(VM& vm, ObjectId person, const QueuedInteraction& q) {
+    const bool exists = vm.object(q.object) != nullptr;
+    unlinkInteraction(vm, person, q);
+    if (exists && vm.object(q.object) && vm.object(person))
+        try {
+            vm.runFunction(q.object, 4, 1000, {}, person); // OBJf "queue skipped"
+        } catch (const VMError&) {
+        }
+}
+
 std::optional<InteractionTableRef> interactionTable(VM& vm, const Object& o) {
     if (!o.definition)
         return std::nullopt;
@@ -758,19 +773,21 @@ uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
         // of a lower priority on, the waiting entries are skipped (Action-
         // Skipped: they leave the queue, their links undone) and the new one
         // goes last; none lower: it goes last. (A fire's panic clears what
-        // the Sims had queued; a user pick drops the autonomous ones waiting.
-        // The object event ActionSkipped also sends, 4, is not done.)
+        // the Sims had queued; a user pick drops the autonomous ones waiting.)
         size_t cut = queue.size();
         for (size_t i = first; i < queue.size(); ++i)
             if (queue[i].priority < q.priority) {
                 cut = i;
                 break;
             }
+        std::vector<QueuedInteraction> skipped;
         while (queue.size() > cut) {
-            const QueuedInteraction gone = queue.back();
+            skipped.push_back(queue.back());
             queue.pop_back();
-            unlinkInteraction(vm, sim.id, gone);
         }
+        const ObjectId simId = sim.id;
+        for (const auto& gone : skipped)
+            actionSkipped(vm, simId, gone);
         at = queue.size();
     }
     queue.insert(queue.begin() + std::ptrdiff_t(std::min(at, queue.size())), std::move(q));
@@ -867,6 +884,7 @@ CheckResult checkInteraction(VM& vm, ObjectId sim, const QueuedInteraction& q, s
         t.temps = it->second.temps;
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < maxTurns; ++turn)
         vm.run(t, vm.instructionsPerTurn);
+    dropThreadRecords(vm, t); // records.cpp
     switch (t.status) {
     case Thread::Status::Finished: return t.result ? CheckResult::True : CheckResult::False;
     case Thread::Status::Running:
@@ -929,12 +947,12 @@ PushOutcome attemptPush(VM& vm, Thread& t, bool nested) {
         if (!ok) {
             // ActionSkipped (Mac BV 0xaca0cc): out of the queue with its
             // links undone, so the Sim on the other side of a social stops
-            // waiting (person data 110); not for an entry whose object is gone.
-            // (Its object event 4 is not done.)
+            // waiting (person data 110), and its object's OBJf entry 4
+            // "queue skipped" runs; not for an entry whose object is gone.
             const ObjectId id = sim->id;
             sim->queue.erase(it);
             if (exists)
-                unlinkInteraction(vm, id, item);
+                actionSkipped(vm, id, item);
             if (Object* s = vm.object(id))
                 syncQueueData(*s);
             return PushOutcome::Skipped;
@@ -995,6 +1013,9 @@ void setCurrentAction(VM& vm, Object& sim) {
         for (size_t k : {size_t(persondata::RouteStatus), size_t(persondata::NonInterruptible), size_t(73), size_t(110)})
             if (k < d.size())
                 d[k] = 0;
+        // +0x646: the object records with the action's own (the gosub
+        // came first): the action ends when its record goes.
+        sim.person->recordsAtAction = uint16_t(sim.person->objectRecords.size());
     }
     clearSubActions(vm, sim);
     syncQueueData(sim);

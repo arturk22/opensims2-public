@@ -889,6 +889,8 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
             resumed = vm::resumeLotObjects(machine, load, saved);
             for (const auto& t : resumed->failedLoads)
                 ++reasons["load: " + failureReason(t)];
+        } else {
+            vm::clearUseCounts(machine);
         }
         for (const auto& e : load.objects) {
             if (!fromInit || !e.created || !machine.object(e.id))
