@@ -1,6 +1,8 @@
 # Goal — Noite de RE do lado PC (`Sims2EP9RPC.exe`)
 
-- **Status:** em andamento — 17/10 manhã: run grande da noite travou sem salvar; diagnóstico feito, correções validadas e **retry rodando** (ver log).
+- **Status:** **fechado o essencial** — 17/10 (dia): projeto `pcb` analisado e salvo; goals
+  (a)/(b)/(c) documentados em `docs/re-pc-ghidra.md`; falta só o cross-check REA (1 rodada solo)
+  e a limpeza de resíduos.
 - **Mandato:** Artur — "Arrocha, use o REA + Ghidra, pode usar mais capacidade, vou dormir, rode por no mínimo 8h, faça um goal." (noite de 16→17/10/2026)
 - **Branch:** `windows-x64-ghidra-pc`
 - **Cutoff:** ~08:00 de 17/10. Parar limpo: nenhum processo pendurado, nada pela metade sem nota.
@@ -33,15 +35,15 @@
 
 ## Critérios de sucesso
 
-- [ ] Projeto `rea-snapshots/ghidra-pc` (`rpc`) criado, salvo, reabrível (`-process ... -noanalysis -readOnly`).
-- [ ] Scripts de consulta funcionando (testados antes no exe pequeno `s2pkg.exe`).
-- [ ] `functions.tsv` + `strings.tsv` + `symbols.tsv` do exe gerados.
-- [ ] `TSData\Res`: varredura localizada e documentada (ordem/prioridade).
-- [ ] `Neighborhoods`: idem.
-- [ ] Catálogo/knob: candidatos localizados + pseudocódigo (ou estado do que falta).
+- [x] Projeto `C:\Users\Artur\sims2-re\pcb` (`rpc`) criado, salvo, reabrível (`-process ... -noanalysis`).
+- [x] Scripts de consulta funcionando (testados antes no exe pequeno `s2pkg.exe`).
+- [x] `functions.tsv` + `strings.tsv` + `symbols.tsv` do exe gerados.
+- [x] `TSData\Res`: varredura localizada e documentada (ordem/prioridade).
+- [x] `Neighborhoods`: idem.
+- [x] Catálogo/knob: candidatos localizados + pseudocódigo (residual 53×47 fechado).
 - [ ] Cross-check REA de ≥1 achado (evidence JSON em `rea-snapshots`).
-- [ ] Docs + commits na branch; log abaixo atualizado.
-- [ ] Máquina limpa ao final (sem processos pendurados).
+- [x] Docs + commits na branch; log abaixo atualizado.
+- [x] Máquina limpa ao final (sem processos pendurados).
 
 ## Riscos
 
@@ -110,3 +112,28 @@
   comprovado no s2pkg), 12G/6 GC, postScripts DumpInventory+MemoryInfo. Lançado **destacado**
   (WMI; imune a fim de sessão) via `C:\Users\Artur\sims2-re\pcb-run.cmd`; watcher avisa no fim.
   Consultas prontas em `run-queries.ps1` (4 lotes: catalog/bins/paths/ui → `pcb\out\refs-*.tsv`).
+- (17/10 ~09:40) **Run `pcb` concluído e salvo** (~16-20 min, exit 0): `DumpInventory` =
+  101.530 funções / 25.268 strings / 513.110 símbolos → `pcb\out\{functions,strings,symbols}.tsv`.
+  Consultas readonly em ~24 s (4 lotes → `refs-catalog/bins/paths/ui.tsv` + `decomp-main.c`,
+  `decomp-handlers.c`). Achados iniciais: serializer do Exchange (Price=0x12, RoomFlags=0x27,
+  FunctionFlags=0x28, FunctionSubsort=0x5E/**94**, CommunitySort=0x64) e pares read/write dos
+  objetos de build; tabela de diretórios em `FUN_01032f20`; módulo nGameState.
+- (17/10 tarde) **Regiões cegas consertadas** (`0xBDF100-0xBE0A77` etc. — código só alcançado
+  por vtable): scripts novos `DisasmFix`/`WhoRefs`/`RedoFns`/`NoRetOff`/`FnAt` (ver doc);
+  descoberto o prólogo SEH `MOV EAX,<handler>; CALL 0xE5C86C` (helper que prepara
+  `ExceptionList` e **retorna**) antes das funções grandes; criadas e decompiladas
+  `FUN_00bdf275` (CreateGameDirectoryFileSegment), `FUN_00be0141`, `FUN_00bdfa42`,
+  `FUN_00be0787` (BuildResourceMaps) + `FUN_00bdf753` (switch do ResourceManager) e
+  `FUN_00cf5a70` (bitmask de EPs).
+- (17/10 tarde) **`re-pc-ghidra.md` preenchido**: (a) tabela de props de reflexão em 0x124B470
+  (9 props, getters/setters; read-only = `notInCatalog`/`subsort`/`thumbnailResource`/
+  `deprecated`), STR# do catálogo (hash `0xFB4CB0DE`), **campo 94 = `FunctionSubsort`** (residual
+  53×47 do port fechado); (b) cadeia `BuildResourceMaps` → packed → directory files, seções ini
+  (`DBSegments`/`DBSegmentDirectoryFiles`/`PackedDBSegments`/`SampleDataSegments`/
+  `TrackDefSegments`/`MusicDirectories`), `%DataDirectory%`/`%Language%\\`, paths `tsdata/` +
+  `/tsdata/res/locale/`, `Hitlab.ini`; (c) `Neighborhoods/` pela tabela de segmentos + EPs via
+  nGameState (`IsEPInstalled` = `1<<n` sobre a máscara `DAT_01499168`).
+- Pendências deixadas: (1) cross-check REA solo (tentativa final — 3 falhas anteriores);
+  (2) região dos bins `0xCDF41B`+ ainda sem função definida; (3) handlers de linha
+  `0xBDF83B`/`FUN_00bdd8f2`/`FUN_00bde67d` não decompilados.
+- (17/10 tarde) Resíduos limpos (projeto morto `pc`, testbeds) e docs commitados.

@@ -44,6 +44,20 @@ Ver também: `docs/goal-ghidra-pc.md` (goal/log da noite), `docs/buy-build-mac.m
 - Scripts em `rea-snapshots/ghidra-pc/scripts/`; dump de strings cru em
   `rea-snapshots/ghidra-pc/strings.py` + `out/strings-ascii.txt` (offsets de **arquivo**).
   Pitfall de compilação dos scripts: `Data` é `ghidra.program.model.listing` (não `model.data`).
+- **Conserto de regiões "cegas"** (código alcançado só por ponteiro/vtable, que a análise não
+  disassembla): `DisasmFix.java <va> <len> [cap]` (varredura linear via
+  `DisassembleCommand(set,set,true)`), `FnAt.java <va>…` (cria função), `RedoFns.java <va>…`
+  (remove+recria p/ corpo novo), `NoRetOff.java <va>` (limpa a flag `setNoReturn`),
+  `WhoRefs.java <ini> <fim>` (quem aponta pra região — slots de vtable).
+- **Padrão MSVC** das funções grandes do jogo: `MOV EAX,<handler em .text>; CALL 0xE5C86C`
+  (prólogo SEH compartilhado — `0xE5C86C` = `ExceptionList = local; return`, **retorna**,
+  apesar do decompiler dizer "does not return") seguido de `SUB ESP,imm; PUSH regs…`.
+  O flow de criação de função para no CALL → criar a função **no `SUB ESP`** se necessário
+  (perde só o prólogo). Os "stubs" de 10 B espalhados pelo exe são esses prólogos.
+- Regiões consertadas nesta sessão: `0xBDF100-0xBE0A77` (módulo de filesystem/segmentos).
+  Funções criadas: `FUN_00be0787` (BuildResourceMaps), `FUN_00be0141`, `FUN_00bdfa42`,
+  `FUN_00bdf275` (CreateGameDirectoryFileSegment); `FUN_00bdf753` (switch de categoria do
+  ResourceManager de áudio); `FUN_00e5c86c`/`0xCF5A70` decompilados (ver seções).
 
 ## Âncoras de strings (offset de arquivo; VA a registrar via Ghidra)
 
@@ -63,9 +77,150 @@ Ver também: `docs/goal-ghidra-pc.md` (goal/log da noite), `docs/buy-build-mac.m
 | 0xEAA934 | `Neighborhoods/` | enumeração de bairros |
 | 0xED9F4C | `BuildModeThumbnails.package` | pacote de thumbnails do buy/build |
 | 0xDF4080 | `UIPieMenu` (+ `kPieMenu*`) | pie menu (contexto) |
+| 0xE50DF8 | `Hitlab.ini` | ini base das configs de segmento |
+| 0xE50E04..0xE50E80 | `MusicDirectories`, `ResourceFactories`, `DBSegmentDirectoryFiles`, `TrackDefSegments`, `SampleDataSegments`, `PackedDBSegments`, `DBSegments` | seções ini do índice de recursos |
+| 0xE50E8C | `%DataDirectory%` | macro do diretório base |
+| 0xE51234 | `.\source\TSAudioResourceManager.cpp` | TU de origem dos logs |
+| 0xE53F00 | `TSAudio` | módulo de log |
 
-## (a) Catálogo / bins — PENDENTE
+## (a) Catálogo / bins
 
-## (b) Varredura de `TSData\Res` — PENDENTE
+**Tabela de descritores de props (metadados de reflexão) — VA `0x124B470`.**
+Cada registro = **10 ponteiros (40 B) + nome ASCIIZ inline (padded a 4)**. Layout observado:
+`{p0=type, p1=?, p2=?, p3=?, p4=setter, p5=getter-do-nome, p6..p9=handlers genéricos}`.
+Os 9 registros do objeto de catálogo, na ordem, com getter (`p5`) e setter (`p4`):
 
-## (c) Enumeração de `Neighborhoods` — PENDENTE
+| prop | getter-nome (p5) | setter (p4) |
+|---|---|---|
+| catalogTextResource | 0xBC554E | 0xBC5F02 |
+| catalogTextIndex | 0xBC5554 | 0xBC5F63 |
+| catalogTextIndices | 0xBC555A | 0xBC6031 |
+| buildTipIndex | 0xBC5560 | 0xBC6117 |
+| buildTipIndices | 0xBC5566 | 0xBC6173 |
+| notInCatalog | 0xBC556C | 0xBC5572 (stub) |
+| subsort | 0xBC55D6 | 0xBC55DC (stub) |
+| thumbnailResource | 0xBC5650 | 0xBC5656 (stub) |
+| deprecated | 0xBC5713 | 0xBC5719 (stub) |
+
+- Getters são `MOV EAX,<ptr do nome>; RET` (daí `DATA from 0x124B4xx` nas xrefs).
+- "Stub" = `MOV EAX,<ptr>; CALL 0xE5C86C` (ver Infra: é o prólogo SEH compartilhado, **retorna**)
+  ⇒ `notInCatalog`, `subsort`, `thumbnailResource`, `deprecated` são **read-only** (sem setter real).
+- p0/p1/p2/p3/p6/p7/p8/p9 compartilhados: `0xCFAC60, 0x85EF10, 0xCFACA0, 0xBCD20F, 0x68F2B0,
+  0x68CDF0, 0x1094750, 0xBCD8B1` (handlers genéricos tipo/compare/serialize); a próxima tabela
+  (outro tipo) começa em `0x124B698`.
+
+**Texto do catálogo = recursos STR#.** `FUN_00bc57a0` monta um registro `{tipo='STR#' (0x53545223),
+hash 0xFB4CB0DE}` e registra via singleton `FUN_00cd42b0` (vtable `+0x28` por nome → `+0x14`
+registra); guarda o índice em `this+0x154`. `FUN_00bc5787` = "get get-count/index" (`+0x18`/`+0x3C`).
+
+**Serializer do Exchange (metadados de objeto de compra).** `FUN_009e7060`, tabela de slots em
+`.data` `0x140FE60..0x140FED0` (Name/Description/Price/FunctionFlags/FunctionSubsort/RoomFlags/
+CommunitySort/Thumbnails/PackageFile/SKU…), escrita por `FUN_009e1370(campo, valor)`. Números de
+campo (batem com o formato do port):
+
+| campo | nº |
+|---|---|
+| Price | 0x12 (18) |
+| RoomFlags | 0x27 (39) |
+| FunctionFlags | 0x28 (40) |
+| **FunctionSubsort** | **0x5E (94)** |
+| CommunitySort | 0x64 (100) |
+
+⇒ **Residual do port (53×47) fechado: campo 94 do engine = `FunctionSubsort`** — o campo 94 do
+port está certo.
+
+**Parser read/write dos objetos de build (.package).**
+- write: `FUN_00d2b0f0`/`FUN_00d2b760` (tipos `floor/wall/roof/fence/canh/terrainPaint`);
+- read: `FUN_00d2d1f0`/`FUN_00d2d750` → `deprecated`→`FUN_00d29180` (+0x30),
+  `showincatalog`→`FUN_00d29190` (+0x34), categoria→`FUN_00ab9ed0` (+0x8),
+  `nicenessmultiplier`→`FUN_00ce1940` (+0x38), `crapscore`→`FUN_00883ab0` (+0x3C);
+  strings em +0xC/+0x18/+0x64/+0x7C/+0x88 (`material/subsort/surfacetype/routingcost/brightness/filename`).
+
+**Bins**: os padrões `Bin Prod ID/Type/Sort Idx/Key/Name`, `Frag Prod ID/Sort Idx`
+(offsets 0xE62535+) estão na região `0xCDF41B`+ — **ainda sem função definida** no projeto
+(entrada desconhecida; é a única parte do goal (a) que sobra em aberto).
+
+## (b) Varredura de `TSData\Res`
+
+**Tabela de segmentos de diretório** — `FUN_01032f20` (o "DBSegments" do jogo): registra cada
+diretório/arquivo com ID+parentID (`Neighborhoods/`, `Collections/`, `Downloads/`
+(+`Patterns/`,`Skins/`,`Objects/`), `ContentRegistry`, `LotCatalog/`, `UserData/`, `Res/`, `Sys/`,
+`UI/`, `3D/`, `BuildModeThumbnails.package` (+DesignMode/CAS/Object/CANHObjects),
+`TS2DownloadsDir`/`TS2Downloads`). É a base da resolução multi-pack do port.
+
+**Cadeia de startup** (entradas descobertas nesta sessão; a região `0xBDF100-0xBE0A77` estava
+"cega" — disassemblada e com funções criadas, ver Infra):
+
+`FUN_00be0787` = **BuildResourceMaps** (orquestrador):
+1. log `Starting BuildResourceMaps.` (0x125173C; módulo de log `TSAudio` 0x1253F00; TU de origem
+   `.\\source\\TSAudioResourceManager.cpp` 0x1251234);
+2. registra as classes de segmento (`FUN_00bdd89f` ×3, `FUN_00bdd613`) e ids fixos;
+3. itera a lista `[vtbl+0x8C](0xADD550A7)` → para cada entrada chama **`FUN_00bdfa42`** (packed segments);
+4. itera a lista `FUN_00cd2990(0xEC43275C, …)` → para cada raiz: `FUN_0040ddfd("TSAudio",7,1)`,
+   checa `Hitlab.ini` (`FUN_0040cd43`), monta o path e chama **`FUN_00be0141`** (directory files);
+5. fecha logando `Audio resource initialization took %d milliseconds.`
+
+`FUN_00bdf275` = **CreateGameDirectoryFileSegment** (prólogo SEH em `0xBDF26B`):
+- logs `CreateGameDirectoryFileSegment : Skipping creation of non-existent/empty directory file
+  segment %s` (linhas 0x573/0x57A) e `Failed to create directory file segment object.` (0x58E);
+- cria o objeto pela fábrica `[vtbl+0xC](0xA079CE1B, 0x856C8CF7, &out)`, seta flags
+  (`+0x70`, `+0x74`, `+0x3C`, `+0x40`) e registra os padrões de arquivo;
+- parseia a **lista de extensões separada por `,`** (`FUN_0040e487(',')`, padrões tipo `*.<ext>`)
+  e registra cada um (`[vtbl+0xC]`, opcional `[vtbl+0xC4]`);
+- inicializa/abre (`+0xC`, `+0x14(1,0)`), loga `Failed to initialize/open directory file segment
+  at %s` (0x5C6/0x5CC); callback final opcional ([EBP+0x14]/[EBP+0x18]).
+
+`FUN_00be0141` = **registrador dos segmentos de diretório da instalação** (prólogo em `0xBE0137`):
+- constrói `"tsdata/"` (0x1251644) e `"/tsdata/res/locale/"` (0x12516F0) sobre a raiz;
+  `FUN_0040d883("tsdata/")` (papel exato em aberto — recebe o path base);
+- lê as seções ini **`DBSegments`**, **`DBSegmentDirectoryFiles`**, `SampleDataSegments`,
+  `TrackDefSegments` (×2), `MusicDirectories` (ponteiros em `0x142C7DC..0x142C7F8`; handler de
+  linha das duas primeiras = `0xBDF83B`, no fim de `FUN_00bdf753`);
+- expande o token **`%Language%\\`** com o idioma corrente (`FUN_0040E0D6`/`_strlen`/
+  `FUN_0040D2A1`/`FUN_0040E0AB`);
+- por entrada chama `FUN_00bdf26b(...)` = CreateGameDirectoryFileSegment (tipo `0x656B8F0C`);
+  logs `Segment at %s has no extensions defined in section %s` (0x3B0) / `Failed to create
+  segment at %s` (0x3D9).
+
+`FUN_00bdfa42` = **registrador dos packed segments** (prólogo em `0xBDFA38`; chamado pelo passo 3):
+- o .ini pode vir **como recurso** (log `Failed to find segment containing .ini resource
+  %08x:%08x:%08x%08x`, linha 0x325);
+- mesmos paths `"tsdata/"`/`"/tsdata/"`; seções **`PackedDBSegments`**, `SampleDataSegments`,
+  `TrackDefSegments` (×2), `MusicDirectories`;
+- cria os segmentos via `[vtbl+0x58](0x656B8F0C, &out, 2 /*packed*/, nome,
+  FUN_00c02519(1,1))`; log `Failed to create segment for %s` (0x377).
+
+**Chaves/macros**: `%DataDirectory%` (0x1250E8C), `%Language%\`, ini `Hitlab.ini` (0x1250DF8);
+`,` = separador de extensões, `;` = comentário ini, `:` = separador. Handlers de linha
+`0xBDF83B` (DBSegments), `FUN_00bdd8f2` (SampleData/TrackDef), `FUN_00bde67d` (MusicDirectories)
+ainda não decompilados.
+
+**Para o port** (`src\formats\resindex.cpp`, `src\app\user_data.cpp`): ordem *packed → directory
+files*; tudo relativo a `tsdata/`, com o ramo de idioma em `/tsdata/res/locale/`; a tabela de
+`FUN_01032f20` lista os segmentos de user-data que o port já modela.
+
+## (c) `Neighborhoods` / EPs
+
+- **`Neighborhoods/`** vem da tabela `FUN_01032f20` (junto de `AllUsersData/`,
+  `NeighborhoodTemplate/`, `LotCatalog/`, `Collections/`, `UserData/` — âncoras 0xEAA868+).
+  A enumeração no jogo passa pelo mesmo sistema de segmentos acima (resolver o segmento →
+  varrer `.package`s), não por varredura ad-hoc de diretório.
+- **EPs**: o módulo de script **`nGameState`** é registrado por `FUN_0090d3c0` via
+  `FUN_00cd3b60(this, "nGameState", &DAT_0148a358, 8)`; tabela `0x148A358`:
+
+  | native | endereço |
+  |---|---|
+  | GetLotTripInfo | 0x8FC510 |
+  | GetTransitionsEnabled | 0x8FC590 |
+  | GetSaveLotEnabled | 0x8FC5C0 |
+  | GetCurrentState | 0x8FC5F0 |
+  | **GetInstalledEps** | **0x8FC630** |
+  | **IsEPInstalled** | **0x8FC670** |
+
+  (+ `GetProperty`/`SetProperty` = 8 no total.)
+- Implementação: natives da VM (args via helpers `0xCF5A70`/`0xCF5B40`); `IsEPInstalled` faz
+  `1 << n` e testa via vtable do VM (`+0xDC`); o backend da máscara é **`FUN_00cf5a70`**, que
+  cacheia em **`DAT_01499168`**: para i em 0..31, `FUN_00cd2930(0x4BCFCE5E, …, 1, 0, 1<<i)` →
+  OR no bit; no fim força o bit `0x1000`.
+- **Conclusão p/ o port**: "EP instalada" = bit do bitmask (com 0x1000 forçado); listar bairros =
+  iterar o segmento `Neighborhoods/` do sistema de segmentos.
