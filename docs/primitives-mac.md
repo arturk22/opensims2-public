@@ -4145,7 +4145,7 @@ Notify" lê; quem o liga é o `cTSInteraction::UnLinkInteractions`, BV
 `0x4c6a54`, no outro Sim de uma interação ligada: `vm/links.cpp`); `ClearSubActions`; `SetInteractionData`. No opensims2,
 `vm::setCurrentAction` (`queue.cpp`), menos o 164.
 
-## 4j. Rodada n41 (VM, resto): o que foi lido
+## 4j. Rodadas n41 e n46 (VM, resto): o que foi lido
 
 Ghidra MCP (só leitura), programas `sims2_base_1.0.ppc` (o alvo; sem
 símbolos: as funções foram achadas pelas do BV, que têm nome) e
@@ -4269,34 +4269,183 @@ ou nome `_lp` (inferido, para o alarme não calar depois de 3 s).
 
 ### Os registros de objetos da pessoa (`cTSPerson +0x60c`, `cObjectRecord`)
 
-Lido em parte (BV). É um `std::vector<cObjectRecord>` (12 bytes: vtable
-`Write`, o objeto (`+4`), a profundidade da pilha de árvores (s16 `+8`) e
-uma flag (u8 `+10`)), salvo no PERS (`save-mac.md` §3; o VM o lê e grava
-como veio, sem mexer). É o **contador de uso** dos objetos: cada registro
-soma 1 no object data 62 do objeto, e sai tirando 1.
+Lido na rodada n41 (em parte) e na n46 (inteiro), no BV e no base 1.0
+(Ghidra MCP, só leitura). No BV é um `std::vector<cObjectRecord>` em
+`+0x60c`/`+0x610`; no base 1.0 um vetor próprio com o começo em `+0x53c` e
+a contagem em `+0x540`. Cada registro tem 12 bytes: vtable (`Write`), o
+objeto (`+4`, ponteiro com contagem de referência), a **profundidade da
+pilha de árvores** (s16 `+8`) e a flag "trocar ícone" (u8 `+10`). Salvo no
+PERS (`save-mac.md` §3) por `cObjectRecord::Write` (BV `0xad5cd8`): o ID do
+objeto (o gerenciador de objetos, vtable `0xf8`), a profundidade num u32 e
+a flag num u8; `Read` (BV `0xad27fc`) lê o mesmo.
 
-- `cTSPerson::StackJustPopped` (BV `0xadef18`, a cada quadro tirado da
-  pilha de árvores da pessoa): com registros, olha o último; se a pilha
-  agora tem a profundidade dele − 1 (o quadro dele saiu), od 62 do objeto −=
-  1, para cada registro com a flag a ação corrente (a sub-ação, se houver)
-  recebe o objeto dele (vtable `0x104`), e o registro sai; se a pilha está
-  mais rasa que ele, só od 62 −= 1 e sai. Depois: com sub-ação e o número de
-  registros igual ao `+0x644` (anotado quando ela começou) a sub-ação
-  acabou (157 := 0, 102 := 21, 103 := 80); sem registros, ou com o número
-  igual ao `+0x646` − 1, a ação acabou (`SetCurrentAction` da próxima).
-- `cTSPerson::OnCleanup` (BV `0xadcbcc`): no reset (`Cleanup(nada)`) tira
-  os registros um a um do fim, desempilhando a pilha de árvores até a
-  profundidade de cada um, e tira 1 do od 62 do objeto; com um objeto
-  apagado, a pessoa é reiniciada se ele está num registro (além dos dados
-  80 e 157).
-- `SetCurrentAction`/`SetCurrentSubAction` anotam o número de registros
-  (`+0x646`/`+0x644`) para saber quando a ação acaba.
+**Quem cria.** `cTSPerson::OnGosubObjectTree(objeto, flag)` (BV `0xad2318`,
+vtable `0x55c` do `cTSObject`; base 1.0 `0xb878f0`, vtable `0x4a0`); o
+`cTSObject::OnGosubObjectTree` (BV `0xaff3b0`) não faz nada, então só as
+pessoas têm registros. Ele monta o registro com o objeto, a profundidade da
+pilha **depois** do quadro novo (vtable `0x5c` do tree sim; base `0x58`) e
+a flag; com a flag, a sub-ação corrente (`+0x5dc`; senão a ação, `+0x5d4`)
+recebe o objeto como alvo (`SetTargetObject`, vtable `0x104` da interação:
+`+0x10`, o ícone da fila) e zera o ícone por GUID (`0x120(0, 0)`: `+0x38`/
+`+0x3c`); põe o registro no fim e soma 1 no **object data 62** do objeto.
+Quem o chama: as duas `cTSObject::GosubObjectTree` (BV `0xb033b8`, vtable
+`0x3cc`, e `0xb03270`, `0x3d0`; base 1.0 as chamadas em `0xb2ce20` e `0xb2cfd0`), depois de empurrar a
+árvore do objeto na pilha (vtable `0x30` do tree sim). No base 1.0 só quando
+o empurrão deu certo (no BV a `0x3cc` o chama mesmo sem quadro novo). E elas
+são chamadas por: o Idle for Input (a ação e a sub-ação), o Gosub Found
+Action, o Run Tree by Name no modo 2 (e 3), o Run Functional Tree, as árvores
+do roteador (`TriggerPreRouteTree`, `TriggerPostRouteTree`,
+`TriggerPortalTree`, `TriggerPauseTree`, `TriggerAlongRouteTree`,
+`TriggerGoalCheckTree`, `TriggerRouteBlockedTree`, `TriggerFailureAnimation`,
+`TriggerAskToMoveAnimation`, `TriggerWaitAnimation`,
+`TriggerBlockedAnimation`), o Reach e as Animate Sim/Overlay/Stop. A flag é
+0 em todos, menos no **Run Functional Tree**, que passa o bit 0x01 das flags
+do operando ("trocar ícone", `TryCallFunctionalTree` BV `0xe253a4`). O
+objeto é o dono do código empurrado (o da interação; o próprio Sim nas
+árvores do roteador que são dele, como a pré-rota e o "CT - Route Blocked").
 
-Quem **cria** os registros não foi achado (o `push_back` é inline; a função
-de inserção `0x19b68b4` não tem chamadores resolvidos). O VM calcula o od
-62 contando quem tem a interação ou código do objeto na pilha
-(`engine_prims.cpp useCount`, inferido) e acha o fim da ação pela pilha de
-quadros; os registros ficam por fazer (`TODO.md`).
+**Quem tira.** `cTSPerson::StackJustPopped` (BV `0xadef18`, vtable `0x6e8`;
+base 1.0 `0xb83b04`), a cada quadro tirado da pilha da pessoa (também os
+das árvores de um tick, que rodam na mesma pilha: `cTSTreeSim::
+RunOneTickTree` BV `0xe1ab54` empurra um marcador e a árvore em cima da
+pilha corrente): sem registros, nada. Com o último registro: se a pilha
+ficou com a profundidade dele − 1 (o quadro dele saiu), od 62 do objeto −=
+1, **cada** registro com a flag (do primeiro ao último, inclusive o que
+sai) dá o seu objeto como alvo da sub-ação corrente (senão da ação), e o
+registro sai; se a pilha está mais rasa que ele, só od 62 −= 1 e sai.
+Depois: com sub-ação e o número de registros igual ao `+0x644` a sub-ação
+acabou (157 := 0, `+0x644` := 0, 102 := 21, 103 := 80); sem registros, ou
+com o número igual ao `+0x646` − 1, a ação acabou (abaixo).
+
+**Fim da ação e as interrompidas.** O Idle for Input empurra a árvore da
+ação e só então chama `SetCurrentAction` (BV `0xadec48`/`0xadec8c`; base
+1.0 `0xb7fbac`/`0xb7fc20`), que guarda o número de registros no `+0x646`
+(base `+0x55a`): a ação acaba quando o registro dela sai. A sub-ação é o
+contrário: `SetCurrentSubAction` antes do empurrão (BV `0xade834` →
+`0xade854`), o `+0x644` (base `+0x558`) é o número antes do registro dela.
+No fim da ação o base 1.0 faz uma interação vazia, desfaz os vínculos da que
+acabou (`UnLinkInteractions`, vtable `0xe8` no base), `SetCurrentAction(vazia)`,
+`+0x55a` := 1 e zera 21, 102, 103, 80. **No base 1.0 não há pilha de ações
+interrompidas**: quando uma entrada roda por cima de outra (o Idle for Input
+dentro de uma interação), o base desfaz os vínculos da corrente
+(`0xb7fc08`) e põe a nova no lugar; quando a nova acaba, a pessoa fica com a
+interação vazia (21/80/33 = 0) enquanto a árvore da interrompida segue
+rodando. O BV guarda a interrompida numa `deque` (`+0x5e0`, BV `0xadec80`)
+e a devolve como corrente no fim da que interrompeu (a não ser que a
+primeira da fila seja "continuar"). O VM faz como o BV (`endInteraction`
+volta ao `activeInteraction` de baixo).
+
+**No reset.** `cTSPerson::OnCleanup(nada)` (BV `0xadcbcc`), o
+`Cleanup(nobody)` de uma pessoa (o reset depois de um erro): guarda pela
+flag `0x800` do objeto; para cada registro, do último ao primeiro: tira
+quadros da pilha até a profundidade dele − 1 (cada um com
+`StackJustPopped`, que tira o registro e o od 62) e, **se a pessoa não está
+na fila de morte** (flag `0x1000`, que o `AddToKillQueue` põe):
+`cEdithObjectModule::CleanupPeople(objeto)` (BV `0x524ea4`: cada outra
+pessoa recebe `Cleanup(objeto)`) e `objeto->Cleanup(nada)` (vtable `0x320`,
+BV `0xb09838`: o reset do objeto, com a guarda `0x40000`). Um registro cujo
+quadro já não está na pilha sai à mão (od 62 −= 1). Depois vem o resto do
+reset (RemoveFromWorld/lugar livre, dados de pessoa 0 e 59 := 0, **object
+data 34** := 0, o tree sim volta ao Main, a entrada 3 do OBJf, a ação
+vazia, a fila e a sub-fila apagadas). Ou seja: **o reset de um Sim reseta os
+objetos que ele usava e as pessoas que os usavam** (um parceiro de social,
+quem estava no mesmo objeto).
+`OnCleanup(objeto)` (o objeto apagado ou resetado): faz o reset inteiro
+acima se o objeto está num registro, é o 157 ou o 80 (com a cascata só se o
+**objeto** não está na fila de morte); senão tira da fila e da sub-fila as
+entradas cujo objeto ou alvo é ele e tira o alvo da ação corrente e da
+última (`SetTargetObject(0)`).
+
+**Quem lê.** `cTSPerson::HasObjectReference(id)` (BV `0xacce70`, vtable
+`0x6a4`): o ID está num registro. É o **Test Sim Interacting With** (0x25,
+`TryTestInteractingWith` BV `0xaca1f0`: o stack object nos meus registros);
+o VM procura na fila (inferido). Os registros são o **contador de uso**
+(od 62): 87 Expressions do jogo base leem o od 62 de si mesmas e 39 o do
+stack object (os "Function - Main" esperam ninguém usar o objeto, os carros
+de NPC só saem com 0, "Function - In Use?").
+
+### Os dados de pessoa 109 e 164 (`SetCurrentAction`, `SetCurrentSubAction`, `SetInteractionData`)
+
+BV `0xadc6d8`/`0xadae58`/`0xada7b0`; base 1.0 `0xb83f54` e seguintes.
+
+- **109 "ci: Current Interaction GUID"** := o GUID da interação (o `+0x40`,
+  `GetGUID`: vtable `0x110` no BV, `0xec` no base). `SetInteractionData`
+  grava o da ação corrente (e 45/72/79 da primeira da fila); chamam-no o
+  `AddAction`, o `RemoveAction`, o `OnCleanup` e o `SetCurrentAction`. O
+  `SetCurrentSubAction` grava o da **sub-ação**, e nada o volta ao da ação
+  quando a sub-ação acaba (fica até o próximo `SetInteractionData`). O
+  `SetCurrentAction` dá um GUID novo à ação que não tem (`AssignUniqueGUID`,
+  vtable `0x108`/`0xe4`, e o `+0x42`). Leem o 109 dois Push Interaction
+  (vínculo, flag 0x40): "Interaction - Read to" e "Test Interaction Cancel".
+- **164 "Current Interaction Joinable"** := 1 se a entrada do TTAB da ação
+  tem a flag **0x02** ("joinable": `cTSTreeTableEntry` vtable `0x38` no BV,
+  `0x30` no base, bit 1 das flags `+0x30`/`+0x88`), senão 0 (ação vazia: 0).
+  Lê: "Joinable - Are Sim X and Y in same joinable Obj?".
+
+### `UpdatePersonDataFields` (base 1.0 `FUN_00c64a70`, BV `0x570674`): 37, 38, 40, 55
+
+Da rota corrente do roteador (vtable `0xb0` do agregado; o BV pula a rota
+interna, vtable `0xcc`): **40** := o objeto alvo (vtable `0x108`) ou 0; **37**
+:= `WorkOutSlotIndex(slot, alvo)` (BV `0x56dfe4`, base `FUN_00c54cc0`: o índice
+do slot de rota entre os slots do SLOT do alvo, procurado do fim; não achado,
+entre os slots globais, + 1000; nada: −1); **55** := a rota `0x5c` (BV `0x68`,
+`+0x126`), que o `Construct` (base `FUN_00c452dc`) põe em −1 e só o `FindPath`
+(base `FUN_00c475d0`) troca: o índice do ponto de partida escolhido quando o
+Sim sai de um contêiner pelos slots dele (`FUN_00c49c58`), −1 ao partir do
+lugar onde está; **38** := o `+0x14` do objetivo corrente (vtable `0xf0`/`0xf4`)
+ou −1; sem rota corrente, 40 = 0 e 37/55/38 = −1. Com o bool, 39 := o valor.
+Chamam: o `InitRoute` a cada planejamento (com caminho e sem, com a rota
+ainda na pilha) e o `PopRoute` (antes de tirar a rota: na última os campos
+ficam os dela). Leem: 37 os "Goal Check" e "Force - Stand - In Place"; 38 as
+camas, sofás, banheiras etc. (43 leituras); **40** o "Test - Sim Routing to
+Inside?", o "Fire - Another Fighter Routing to Fire?", o "Route - Is Person
+going to Ped Portal?" (o de outro Sim, por isso vale para toda rota, não só
+o Go To Routing Slot); 55 o "Function - Stand" e o "Stand - Try Snap".
+
+### As sobras da fila (BV)
+
+- **`ActionSkipped`** (BV `0xaca0cc`): `UnLinkInteractions(pessoa)` da
+  entrada e, com o objeto, `RunTree(4, pessoa, nada)` no objeto: é a
+  **entrada 4 do OBJf, "queue skipped"** (não um evento), com o stack object
+  = a pessoa. 13 OBJf do jogo base a têm ("Function - Queue Skipped" de dois
+  grupos e três árvores semi-globais).
+- **`TestInteraction`** (BV `0x4c6214`), os testes do objeto: vtable `0x214`
+  é `IsBurning` (od 8 bit `0x200`) e `0x2e8(autônomo)` é
+  `AreInteractionsDisabled` (BV `0xb01634`: autônomo e od 25 "lockout" ≥ 1,
+  ou od 87 ≥ 1, ou od 82 bit `0x04`); qualquer um recusa. O "flag do sim
+  system 0x23" é o **global 35 "Parental Control"** (`TS::Globals()->
+  GetSimulator()->GetGlobal(35)`, simulador vtable `0x3c` = `+0x24 + 2i`):
+  ligado, recusa a entrada com a flag `0x20000` (bit 1 do flags2, vtable
+  `0x84` da entrada).
+- **A fila cheia** (`TryPushAction` BV `0xe33de0`): a vtable `0x1FC` da
+  pessoa é `AnyLowerPriorityInteractions(prioridade)` (BV `0xad65b0`): há uma
+  entrada **esperando** de prioridade menor que a nova. Não aninhada: mais de
+  6 esperando (vtable `0x1f4`, sem a corrente) e nenhuma menor → resultado 3;
+  com uma menor o push entra (e o `AddAction` pula as menores). Aninhada:
+  mais de 4 na sub-fila → 4. O VM conta a fila com a interação que roda
+  (as do `activeInteraction` para trás) e não troca.
+
+### `cTSGlobals` e `cTSDataTables`
+
+- **`cTSGlobals`** (BV vtable `0x27a20d0`; 58 métodos) não guarda os globais
+  da SimAntics: é o registro de serviços do jogo (`GetLot`, `GetSimulator`,
+  `GetWantSimulator`, `GetMemorySimulator`, `GetNeighborhood`,
+  `FamilyManager`, `GetRouteManager`, `ObjectManager`, `TypeAttributes`,
+  `TestingCheatsEnabled`, `TextDebuggingEnabled`…; os nomes pelo
+  `baserom.sym` do projeto de decompilação, na ordem dos getters de
+  `0xaa210` em diante: `+0x2c` lote, `+0x20` simulador, `+0x24` desejos,
+  `+0x28` memórias, `+0x30` bairro…). Nada a portar. Os globais (STR# 0x81)
+  são do `cTSSimulator` (`+0x24`, s16): `GetGlobal` (vtable `0x3c`), o
+  endereço (`0x44`, que o `InterpValue` usa para ler e gravar, índice > 57:
+  erro) e `SetGlobal` (`0x40`, BV `0x49caf0`), que **ignora** os globais 19
+  ("Mode") e 55 e grava o 53 ("Instant Write Once Flags") também na
+  configuração `edithConfigFlags`. Quem chama o `SetGlobal` no motor não foi
+  levantado (`TODO.md`).
+- **`cTSDataTables`** (39 métodos: tabelas hash nomeadas de
+  `cGenericData` com `GetBool`/`GetFloat32`/`GetSint32`/`GetUint32` por
+  nome, um recurso salvo) **não existe no base 1.0** (nem a RTTI nem as
+  strings `NeighborDataTable`/`ObjectDataTable`, que só o BV tem): é de uma
+  expansão. Nada a portar para o jogo base.
 
 ## 5. Outras primitivas: operandos pelo disassembler
 
