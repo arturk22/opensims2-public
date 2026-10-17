@@ -337,9 +337,13 @@ struct App {
 
     os2::ResourceIndex& resources() {
         if (!index) {
-            std::printf("opensims2: indexing %s\n", res.string().c_str());
+            const std::vector<std::filesystem::path> roots = os2::installationResRoots(res);
+            std::printf("opensims2: indexing %zu resource tree%s of %s\n", roots.size(), roots.size() == 1 ? "" : "s",
+                        res.string().c_str());
             std::fflush(stdout);
-            index = std::make_unique<os2::ResourceIndex>(res);
+            index = std::make_unique<os2::ResourceIndex>();
+            for (const auto& root : roots)
+                index->addRoot(root);
         }
         return *index;
     }

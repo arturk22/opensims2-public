@@ -129,11 +129,19 @@ O layout está no script (`s2pkg ui-dump … 49060004`). O código
 
   Em negrito estão as exceções ao padrão 20→1, 30→2, 40→4, 50→8, 80→0x10. No B7, o
   `…60` é crianças (0x10) e o "Diversos" é `B770` (0x80); o "Tudo" é `B780`.
-  O histograma do campo 94 nos dados confere com esses bits, mas **por
-  conferir**: na captura do jogo em 1280x720 o `B120` (cadeiras de jantar)
-  mostrou 53 itens (barra: 304 px de 620, 26 por página) contra os nossos
-  17 (`campo 94 & 1` sobre os 75 do Conforto); deste lado as contagens por
-  bit particionam exatamente os 75 (17+12+20+8+11+7).
+  O histograma do campo 94 nos dados confere com esses bits, e as contagens
+  por bit particionam exatamente os 75 do Conforto (17+12+20+8+11+7). Os 17
+  do `B120` (cadeiras de jantar) eram só o base: o app agora indexa a
+  instalação inteira (`ResourceIndex::addRoot` + `installationResRoots`, no
+  CLI `s2pkg catalog --installation`; o `TSData/Res` do base primeiro, os
+  outros packs por caminho), e com as expansões o `B120` tem **47** (os 1666
+  compráveis da instalação, Conforto 201 = 47+31+45+42+13+23). Conferido: a
+  lista do `B120` não muda invertendo a prioridade dos packs, e nenhum
+  candidato de `campo 94 & 1` é escondido pelos filtros (recompensa/Sim;
+  nenhum item só-comunitário). **Por conferir**: os 6 que faltam para os 53
+  da captura do jogo em 1280x720 (barra: 304 px de 620, 26 por página) só
+  se explicam por outra instalação (conteúdo próprio/loja?) ou pela leitura
+  do knob da barra.
 - **Sala** `0xC100…0xC900`: C100 sala de estar = 8, C200 jantar = 0x20,
   C300 exterior = 0x10, C400 diversos = 0x40 (oculto), C500 estudo = 0x80,
   C600 quarto = 2, C700 cozinha = 1, C800 crianças = 0x100, C900 banheiro

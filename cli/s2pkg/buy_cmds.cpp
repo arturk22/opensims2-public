@@ -65,7 +65,7 @@ void printEntry(const CatalogEntry& e, Catalog& c, bool verbose) {
 int cmdCatalog(const std::vector<std::string>& args) {
     fs::path res;
     int function = -1, room = -1, sub = -1;
-    bool verbose = false;
+    bool verbose = false, installation = false;
     std::string thumbKey, thumbOut;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--function" && i + 1 < args.size())
@@ -76,6 +76,8 @@ int cmdCatalog(const std::vector<std::string>& args) {
             sub = std::stoi(args[++i]);
         else if (args[i] == "-v" || args[i] == "--verbose")
             verbose = true;
+        else if (args[i] == "--installation")
+            installation = true;
         else if (args[i] == "--thumb" && i + 2 < args.size())
             thumbKey = args[i + 1], thumbOut = args[i + 2], i += 2;
         else
@@ -83,7 +85,15 @@ int cmdCatalog(const std::vector<std::string>& args) {
     }
     if (res.empty())
         throw std::runtime_error("usage: " + std::string(buyUsage()));
-    ResourceIndex index(res);
+    std::unique_ptr<ResourceIndex> owned = std::make_unique<ResourceIndex>(res);
+    if (installation) {
+        // What the app's index reads (src/app/win_main.cpp): the Res tree of
+        // every pack of the installation, the base game's first.
+        owned = std::make_unique<ResourceIndex>();
+        for (const auto& root : installationResRoots(res))
+            owned->addRoot(root);
+    }
+    ResourceIndex& index = *owned;
     Catalog c = Catalog::load(index);
     c.setThumbnailPackage(res / "UserData/Thumbnails/ObjectThumbnails.package");
     if (!thumbKey.empty()) {
@@ -388,7 +398,7 @@ int buyCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* buyUsage() {
-    return "       s2pkg catalog <Res-dir> [--function bit [--sub bit] | --room bit [--sub function-bit]] [-v]\n"
+    return "       s2pkg catalog <Res-dir> [--installation] [--function bit [--sub bit] | --room bit [--sub function-bit]] [-v]\n"
            "       s2pkg catalog <Res-dir> --thumb <guid|name> <out.png>\n"
            "       s2pkg buy <lot.package> [--buy|--check <guid|name>@x,y[,dir[,level]]] [--sell id] [--move id@x,y[,dir[,level]]]...\n"
            "       s2pkg placement-sweep <lot.package>...   (each saved object tested where it stands, with and without the lot's heights)\n"
