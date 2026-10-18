@@ -165,7 +165,11 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id);
 // container slot is looked for, as Create New Object Instance asks). The
 // objects' test is the binary's TestPlacementWithRespectToObjects (base
 // 1.0 FUN_00ffb990) by the footprints where the parts would stand.
-Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots = true);
+// `at`: the lead's exact place on `tile` (Create New Object Instance's,
+// the anchor's FTilePt), the other parts as far from it as their tiles;
+// without it, the tiles' centres.
+Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots = true,
+                         const Position* at = nullptr);
 
 // cTSObject::ShouldAutoRotate (Mac BV 0xafec08; cEdithMTObject's, 0xaf062c,
 // asks every part): the wall placement flags (od 13) ask for a wall on some

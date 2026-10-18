@@ -353,8 +353,19 @@ static void testCreateObject() {
     Thread t = fx.run(0x1001, 0);
     const Object* made = fx.vm.object(t.temps[5]);
     check(t.result && made && made->guid() == 0xAAAA0003 && made->position.x == 3.5f && made->position.y == 2.5f &&
-              made->data[objdata::Direction] == 4,
-          "in front of me, facing my way");
+              made->data[objdata::Direction] == 0,
+          "in front of me, not turned (TryCreateObject turns it only with flag 0x20)");
+    // Flag 0x20: turned the way the stack object faces (Orient); the place is
+    // the anchor's own, not its tile's centre.
+    fx.vm.object(fx.table)->data[objdata::Direction] = 6;
+    sim.position.x = 2.25f;
+    fx.code.add(kGroup, 0x1007, tree({create(0xAAAA0003, 0, 0x20, 0, 0, go(1)), expr(Temp, 5, Assign, StackId, 0, T, E)}));
+    t = fx.run(0x1007, fx.table);
+    made = fx.vm.object(t.temps[5]);
+    check(t.result && made && made->data[objdata::Direction] == 6 && made->position.x == 3.25f,
+          "0x20: facing as the stack object; a tile on from my own place");
+    sim.position.x = 2.5f;
+    fx.vm.removeObject(t.temps[5]);
     fx.code.add(kGroup, 0x1002, tree({create(0xAAAA0003, 0, 0x01)}));
     t = fx.run(0x1002, 0);
     check(t.status == Thread::Status::Finished && !t.result, "0x01: not when one is already there");
@@ -366,7 +377,13 @@ static void testCreateObject() {
     fx.code.add(kGroup, 0x1004, tree({expr(Temp, 0, Assign, Lit, int16_t(0x0004), go(1), E),
                                       expr(Temp, 1, Assign, Lit, int16_t(0xAAAA), go(2), E),
                                       create(0, 4, 0x80, 0, 0, go(3)), expr(Temp, 5, Assign, StackId, 0, T, E)}));
+    // The slot's TSObjectCanPlaceInSlot: the new table's od 4 (no Init here:
+    // 0) lacks the slot's height bit (0x25), so it is deleted.
     t = fx.run(0x1004, fx.table);
+    check(t.status == Thread::Status::Finished && !t.result, "in a slot it does not fit: false");
+    fx.vm.checkCreatedPlacement = false;
+    t = fx.run(0x1004, fx.table);
+    fx.vm.checkCreatedPlacement = true;
     made = fx.vm.object(t.temps[5]);
     check(t.result && made && made->guid() == 0xAAAA0004, "0x80: the GUID from temps 0/1");
     check(made && made->data[objdata::ContainerId] == fx.table && made->data[objdata::SlotNumber] == 0,

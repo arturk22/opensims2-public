@@ -582,7 +582,7 @@ bool placementWall(const World& w, TilePos t, int dx, int dy) {
 
 } // namespace
 
-Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots) {
+Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots, const Position* at) {
     Placement p;
     p.level = tile.level;
     p.direction = normDir(direction);
@@ -611,6 +611,9 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         const auto off = partOffset(sub, p.direction);
         const int dl = o->definition ? int16_t(o->definition->field(0xB0)) - leadLevel : 0;
         p.parts.push_back({part, {tile.x + off[0] - leadOff[0], tile.y + off[1] - leadOff[1], tile.level + dl}});
+        if (at)
+            p.parts.back().at = Position{at->x + float(off[0] - leadOff[0]), at->y + float(off[1] - leadOff[1]),
+                                         at->level + dl};
     }
     std::set<std::tuple<int, int, int>> tiles;
     for (const auto& part : p.parts)
@@ -983,7 +986,13 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
     // The pool ladder's and diving board's portals follow it (build mode
     // does the same, build_edit.cpp).
     vm.refreshObjectPortals();
-    vm.planner.reset();
+    // The path planner hears of an object that blocks (AddThisToPathPlanner
+    // puts in nothing for the others).
+    if (std::any_of(p.parts.begin(), p.parts.end(), [&](const Placement::Part& part) {
+            const Object* o = vm.object(part.id);
+            return o && VM::blocksRouting(*o);
+        }))
+        vm.planner.reset();
     // SetPosition (BV 0xafd048): UpdateWallAdjacency (entry 6 when od 5
     // changes), OnPlacement (entry 9), then FinishEditing tells the room
     // (OnRoomChanged, entry 7).

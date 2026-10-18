@@ -644,33 +644,38 @@ Exit testObjectType(Context& c) {
 }
 
 // Create New Object Instance (0x2A), as the Mac binary has it
-// (TryCreateObject, base 1.0 and Bon Voyage): GUID u32 at 0, where s8 at 4
-// (STR# 0xA7), flags u8 at 5, local u8 at 6 (where 8 and 9), slot u8 at 9
-// (where 4 and 10), flags u8 at 10; bytes 7-8 are not read here. Where: 0 in
-// front of me (my tile + 1 the way I face), 1 "on top of me" and 2 "in my
-// hand" (both: my slot 0), 3 in front of the stack object, 4 in slot (byte 9)
-// of the stack object, 5 underneath me (my tile), 6 out of world, 7 below
-// the object whose ID is parameter 0 (no parameters: error 0x08), 8 below
-// the object in the local, 9 next to me in the direction in the local plus
-// mine (N/E/S/W only), facing me, 10 in slot (byte 9) of the object in temp
-// 0. Flags (byte 5): 0x01 do not duplicate (false when an object of that
-// GUID is already on the tile), 0x02 the new object's Main gets my ID in
+// (TryCreateObject, base 1.0 0xb56320 and Bon Voyage 0xe34b2c): GUID u32 at
+// 0, where s8 at 4 (STR# 0xA7), flags u8 at 5, local u8 at 6 (where 8 and
+// 9), slot u8 at 9 (where 4 and 10), flags u8 at 10; bytes 7-8 are not read
+// here. Where: 0 in front of me (my place + a tile the way I face, eight
+// ways), 1 "on top of me" and 2 "in my hand" (both: my slot 0), 3 in front
+// of the stack object (in its room), 4 in slot (byte 9) of the stack object,
+// 5 underneath me (my place), 6 out of world, 7 below the object whose ID is
+// parameter 0 (no parameters: error 0x08), 8 below the object in the local,
+// 9 next to me in the direction in the local plus mine (N/E/S/W only; false
+// with a wall between, FUN_00b49108), 10 in slot (byte 9) of the object in
+// temp 0. A place is the anchor's own (its FTilePt, not its tile's centre).
+// Flags (byte 5): 0x01 do not duplicate (false when an object of that GUID
+// is already on the tile), 0x02 the new object's Main gets my ID in
 // parameter 0 and my stack object, 0x04 a Sim of the neighbor in the stack
 // object (false without one), 0x08 false when the tile is not empty, 0x10
 // temp 0 goes to the Main's parameter 0 (0x02 with 0x10: error 0x36), 0x20
-// the new object goes on the stack object's level, 0x40 the GUID is that of
-// my temporary inventory token, 0x80 the GUID is in temps 0 (low) / 1
-// (high). Byte 10: 0x01 "moving in a new Sim" (nothing here), 0x02 copies
-// the design materials of the object in temp 5 (missing: error 0x0A). False,
-// with no error: no definition for the GUID, a dead definition (OBJD type
-// 0x11), nowhere to go, a full slot or one the container does not have;
-// a template definition (type 0x10) is error 0x90. Otherwise the stack
-// object becomes the new object and the result is true. An object that
-// does not fit where it goes in the world (TSObjectCanSetPosition) is
-// deleted and the result is false. With VM::initCreatedObjects,
-// every part runs its Init right away and gets its Main thread (as FreeSO's
-// VMEntity.Init); an Init that fails does not fail the creator (it is kept
-// in createdInits). Only the lead part of a new multi-tile object is placed.
+// the new object turns the way the stack object faces (Orient), 0x40 the
+// GUID is that of my temporary inventory token, 0x80 the GUID is in temps 0
+// (low) / 1 (high). Byte 10: 0x01 "moving in a new Sim" (nothing here),
+// 0x02 copies the design materials of the object in temp 5 (missing: error
+// 0x0A). False, with no error: no definition for the GUID, a dead definition
+// (OBJD type 0x11), nowhere to go, off the lot, not in the anchor's room, a
+// full slot or one the container does not have; a template definition (type
+// 0x10) is error 0x90. The object is made out of the world (its Init runs
+// there, with VM::initCreatedObjects: every part's Init and its Main
+// thread, as FreeSO's VMEntity.Init; an Init that fails does not fail the
+// creator, it is kept in createdInits), then tested where it goes
+// (TSObjectCanSetPosition with its own facing, or the slot's
+// TSObjectCanPlaceInSlot) and deleted with a false result when it does not
+// fit, else put there (SetPosition: every part, its wall adjacency, the
+// "placement" tree; or PlaceInSlot). Otherwise the stack object becomes the
+// new object and the result is true.
 Exit createObjectInstance(Context& c) {
     const auto& o = c.instruction.operands;
     const int8_t where = int8_t(o[4]);
@@ -709,18 +714,23 @@ Exit createObjectInstance(Context& c) {
             throw gameError(err::NoTreeParameter, "object " + std::to_string(c.thread.temps[5]) + " in temp 5");
     }
 
-    // Where it goes: a tile and direction, or a containment slot.
+    // Where it goes: a place, or a containment slot (base 1.0 TryCreateObject
+    // 0xb56320, BV 0xe34b2c). The place is the anchor's own (its FTilePt,
+    // cTSObject +0x1c0: the exact x, y, not its tile's centre) moved a tile
+    // the way it faces for 0 and 3 (eight ways), and the anchor's level; the
+    // new object is not turned to anything (flag 0x20 below).
     Object& me = c.me();
     std::optional<Position> at;
-    int dir = 0;
     const Object* container = nullptr;
     int slot = o[9];
+    int16_t room = -1;        // cases 3, 4, 10: the place must be in the anchor's room
+    int backToMe = -1;        // case 9: no wall between the place and me
     auto anchor = [&](const Object* x) {
         if (!x)
             throw gameError(err::InvalidObjectId);
-        dir = x->data[objdata::Direction];
         if (x->position.inWorld())
-            at = Position{std::floor(x->position.x) + 0.5f, std::floor(x->position.y) + 0.5f, x->position.level};
+            at = Position{x->position.x, x->position.y, x->position.level};
+        return x;
     };
     auto step = [&](int d) {
         if (!at)
@@ -729,12 +739,17 @@ Exit createObjectInstance(Context& c) {
         at->x += float(dx), at->y += float(dy);
     };
     switch (where) {
-    case 0: anchor(&me); step(dir); break;
+    case 0: anchor(&me); step(me.data[objdata::Direction]); break;
     case 1:
     case 2: container = &me, slot = 0; break;
     case 5: anchor(&me); break;
-    case 3: anchor(&c.stackObject()); step(dir); break;
-    case 4: container = &c.stackObject(); break;
+    case 3: {
+        const Object* x = anchor(&c.stackObject());
+        step(x->data[objdata::Direction]);
+        room = x->data[objdata::Room];
+        break;
+    }
+    case 4: container = &c.stackObject(), room = container->data[objdata::Room]; break;
     case 6: break;
     case 7:
         if (c.frame.params.empty())
@@ -748,19 +763,20 @@ Exit createObjectInstance(Context& c) {
         break;
     case 9: {
         anchor(&me);
-        const int d = (c.get(0x19, o[6]) + (me.data[objdata::Direction] / 2) * 2) % 8;
-        step(d);
-        dir = d + 4; // facing me
+        const int local = c.get(0x19, o[6]);
+        const int d = ((local + me.data[objdata::Direction]) % 8 + 8) % 8;
+        if (d % 2 == 0) // N/E/S/W only (the others: my place)
+            step(d);
+        backToMe = ((local + me.data[objdata::Direction] + 4) % 8 + 8) % 8;
         break;
     }
     case 10:
         container = c.vm.object(c.thread.temps[0]);
         if (!container)
             throw gameError(err::InvalidObjectId);
+        room = container->data[objdata::Room];
         break;
     }
-    if (at && (flags & 0x20))
-        at->level = c.stackObject().position.level;
     if (container) {
         size_t slots = 0;
         if (const Slots* t = container->definition ? c.vm.code().slots(container->group, container->definition->slotId())
@@ -772,15 +788,31 @@ Exit createObjectInstance(Context& c) {
         if (c.vm.containedIn(container->id, int16_t(slot)))
             return Exit::False;
     }
-    if (at && (flags & 0x09)) {
-        const TilePos t = VM::tileOf(Object{.position = *at});
-        for (ObjectId id : c.vm.objectsOnTile(t)) {
+    const std::optional<TilePos> tile =
+        at ? std::optional<TilePos>(TilePos{int(std::floor(at->x)), int(std::floor(at->y)), at->level}) : std::nullopt;
+    if (tile && (flags & 0x09)) {
+        for (ObjectId id : c.vm.objectsOnTile(*tile)) {
             if (id == me.id)
                 continue; // "non-empty" means another object (inferred)
             const Object* x = c.vm.object(id);
             if ((flags & 0x08) || (x && x->guid() == guid))
                 return Exit::False;
         }
+    }
+    // Off the lot: false (WorldDB 0xc8 on the place's tile).
+    if (tile && c.vm.world && !c.vm.world->contains(*tile))
+        return Exit::False;
+    // The anchor's room (cases 3, 4 and 10, the room manager's room at the
+    // place, definition 2).
+    if (tile && room != -1 && c.vm.world && c.vm.world->room(*tile) != room)
+        return Exit::False;
+    // Case 9: a wall between the place and me (FUN_00b49108, the place's
+    // walls turned to the way back to me: the binary's loop starts at the
+    // second side, so a wall on the place's -Y edge is never seen).
+    if (tile && backToMe >= 0 && c.vm.world) {
+        const auto s = directionStep(backToMe);
+        if (!(s[0] == 0 && s[1] == -1) && c.vm.world->wallBetween(*tile, s[0], s[1], true))
+            return Exit::False;
     }
 
     std::vector<ObjectId> before;
@@ -799,18 +831,7 @@ Exit createObjectInstance(Context& c) {
             c.vm.removeObject(id);
         return Exit::False;
     }
-    if (container) {
-        c.vm.setContainer(*x, container->id, int16_t(slot));
-        x->position = container->position;
-        x->data[objdata::Room] = container->data[objdata::Room];
-    } else if (at) {
-        x->position = *at;
-        x->data[objdata::Direction] = int16_t(((dir % 8) + 8) % 8);
-        if (c.vm.world)
-            x->data[objdata::Room] = c.vm.world->room(VM::tileOf(*x));
-    } else {
-        x->data[objdata::Room] = -1; // out of world: every saved one has room -1
-    }
+    x->data[objdata::Room] = -1; // out of the world while its Init runs
     if (materialSource)
         x->materials = materialSource->materials;
     if (neighbor && x->person) {
@@ -839,39 +860,65 @@ Exit createObjectInstance(Context& c) {
         x->person->data[kPersondataPersonType] = 1;
     const ObjectId stackObject = c.frame.stackObject, meId = me.id;
     const int16_t temp0 = c.thread.temps[0];
-    if (c.vm.initCreatedObjects) {
+    // The object manager makes it out of the world, its Init run (vtable 0x40
+    // of the manager); then flag 0x20 turns it the way the stack object faces
+    // (Orient, vtable 0x2a0 / base 0x234, when the two differ). Was: "the
+    // stack object's level", and every new object turned to its anchor.
+    if (c.vm.initCreatedObjects)
         c.vm.initialize(created, before);
-        if (flags & 0x12)
-            if (auto it = c.vm.threads.find(created); it != c.vm.threads.end() && !it->second.stack.empty()) {
-                Frame& f = it->second.stack.front();
-                if (flags & 0x02)
-                    f.stackObject = stackObject;
-                if (!f.params.empty())
-                    f.params[0] = flags & 0x10 ? temp0 : meId;
-            }
+    if (flags & 0x20)
+        if (const Object* so = c.vm.object(stackObject); so && c.vm.object(created))
+            for (ObjectId part : groupOf(c.vm, created))
+                if (Object* y = c.vm.object(part))
+                    y->data[objdata::Direction] = so->data[objdata::Direction];
+    const Object* made = c.vm.object(created);
+    if (!made)
+        return Exit::False; // its Init took it away
+    // In the world: TSObjectCanSetPosition (BV 0x8ae264: TestPlaceInWorld,
+    // the buy tool's position tests without its slot search) at the place
+    // with the object's own facing, else the slot's TSObjectCanPlaceInSlot
+    // (BV 0x8aa14c); what does not fit is deleted (the manager's vtable 0x44)
+    // and the result is false. Then SetPosition (vtable 0x2a4 / base 0x238:
+    // the wall adjacency, the "placement" tree, OBJf 9, the room) or
+    // PlaceInSlot (0x2a8). The Fires a Fire spreads to a tile it cannot take
+    // are not made.
+    auto drop = [&](const char* why) {
+        if (std::getenv("OS2_LOG_CREATE"))
+            std::fprintf(stderr, "  \"%s\" does not fit%s%s\n", def->fileName.c_str(), why[0] ? ": " : "", why);
+        for (ObjectId id : groupOf(c.vm, created))
+            c.vm.removeObject(id);
+        return Exit::False;
+    };
+    if (container) {
+        // (A person's hands, slots 0 and 1, are not in a SLOT here: not tested.)
+        if (c.vm.checkCreatedPlacement && !container->person)
+            if (const int e = slotPlacementError(c.vm, *made, *container, slot))
+                return drop(("error 0x" + hexString(uint32_t(e)) + " in the slot").c_str());
+        if (Object* y = c.vm.object(created))
+            placeInSlot(c.vm, *y, *container, slot);
+    } else if (at && c.vm.world) {
+        const Placement fit = checkPlacement(c.vm, created, *tile, made->data[objdata::Direction], false, &*at);
+        if (!fit.ok && c.vm.checkCreatedPlacement)
+            return drop(("at (" + std::to_string(tile->x) + ", " + std::to_string(tile->y) + ", " +
+                         std::to_string(tile->level) + "): " + fit.reason)
+                            .c_str());
+        applyPlacement(c.vm, created, fit);
+        if (std::getenv("OS2_LOG_CREATE"))
+            if (const Object* y = c.vm.object(created))
+                std::fprintf(stderr, "  placed at (%.3f, %.3f, %d) facing %d\n", y->position.x, y->position.y,
+                             y->position.level, y->data[objdata::Direction]);
+    } else if (at) {
+        if (Object* y = c.vm.object(created))
+            y->position = *at;
     }
-    // TSObjectCanSetPosition (BV 0x8ae264: TestPlaceInWorld, the buy mode's
-    // position tests without its slot search, the objects by footprints)
-    // where it goes in the world: an object that does not fit is deleted
-    // and the result is false (TryCreateObject, BV 0xe34b2c). The binary
-    // creates the object (its Init runs: the flags that let people or
-    // objects through are set there) and then tests the place; here the
-    // place is set before the Init and tested after it. The Fires a Fire
-    // spreads to a tile it cannot take are not made.
-    const Object* placed = c.vm.object(created);
-    if (at && !container && c.vm.world && c.vm.checkCreatedPlacement && placed && placed->position.inWorld() &&
-        !placed->data[objdata::ContainerId]) {
-        const TilePos t = VM::tileOf(*placed);
-        const Placement fit = checkPlacement(c.vm, created, t, placed->data[objdata::Direction], false);
-        if (!fit.ok) {
-            if (std::getenv("OS2_LOG_CREATE"))
-                std::fprintf(stderr, "  \"%s\" does not fit at (%d, %d, %d): %s\n", def->fileName.c_str(), t.x, t.y,
-                             t.level, fit.reason.c_str());
-            for (ObjectId id : groupOf(c.vm, created))
-                c.vm.removeObject(id);
-            return Exit::False;
+    if (c.vm.initCreatedObjects && (flags & 0x12))
+        if (auto it = c.vm.threads.find(created); it != c.vm.threads.end() && !it->second.stack.empty()) {
+            Frame& f = it->second.stack.front();
+            if (flags & 0x02)
+                f.stackObject = stackObject;
+            if (!f.params.empty())
+                f.params[0] = flags & 0x10 ? temp0 : meId;
         }
-    }
     c.frame.stackObject = created;
     return Exit::True;
 }

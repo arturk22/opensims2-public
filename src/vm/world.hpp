@@ -153,8 +153,12 @@ public:
         int16_t slotA = 0, slotB = 0; // routing slot numbers in each part's SLOT
         bool oneWay = false;          // from a to b only (cPortal::IsOneWay)
         int stair = -1;               // the World::stairs entry a stair's portal climbs
+        bool operator==(const ObjectPortal&) const = default;
     };
+    // (The world changes, its revision with it, only when the portals do.)
     void setObjectPortals(std::vector<ObjectPortal> p) {
+        if (p == objectPortals_)
+            return;
         ++revision_;
         objectPortals_ = std::move(p);
     }
