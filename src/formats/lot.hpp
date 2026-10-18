@@ -33,12 +33,24 @@ struct Lot {
     // (west, north, east, south) as SMAP 0x0E references; 0 is no floor.
     std::vector<std::array<uint16_t, 4>> floors;
 
-    // 3ARY 0x15: the rotation of every quarter tile's floor pattern, laid
-    // out as `floors`: 1, 2, 4 or 8 (0, 90, 180, 270 degrees; the
-    // cTSMainToolbar rotation mode the floor tool's `,`/`.` cycle). The
-    // shipped lots hold 1 everywhere (0 in a few tiles). Inferred from the
-    // data: one byte per quarter, the values of the toolbar's modes.
-    std::vector<std::array<uint8_t, 4>> floorRotations;
+    // 3ARY 0x15: the floors' visibility layer (cWorldDB +0x9c, cWorldDB::Load
+    // BV 0xd7758 reads it as the array of instance 0x15; FloorVisible /
+    // SetFloorVisibility, BV 0xd29bc / 0xd8ed4), laid out as `floors`: a
+    // byte a quarter, 1 visible, 0 hidden. The pool tool hides the ground's
+    // quarters over a pool (ModifyFloorVisibility, BV 0x9adec8) and a "Hide
+    // Floor" object (od 8 0x4000, the sunken hot tub) its tiles' while it
+    // stands there; a hidden quarter is not drawn and gives no floor to the
+    // placement test (HasFloorTest with "visible"). The shipped lots hold
+    // 0 and 1 only (docs/buy-build-mac.md §7.26; was read as the floors'
+    // rotation, inferred).
+    std::vector<std::array<uint8_t, 4>> floorVisibility;
+    // 3ARY 0x20: the rotation of every tile's floor patterns (cWorldDB +0x94,
+    // FloorPatternRotation BV 0xd3c24), a u16 a tile laid out as `floors`,
+    // quarter q in bits 4q..4q+3: 1, 2, 4 or 8 (0, 90, 180, 270 degrees,
+    // the cTSMainToolbar rotation mode the floor tool's `,`/`.` cycle), 0
+    // read as 1. None of the shipped lots has it (cWorldDB::Load then fills
+    // 0x1111); empty here until a floor is turned.
+    std::vector<uint16_t> floorRotations;
 
     // 3ARY 0x03: the locked tiles (cWorldDB +0xa0, a byte per tile,
     // [level][x][y] over width x height; non-zero = locked), read by

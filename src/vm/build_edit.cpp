@@ -79,6 +79,7 @@ BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm
 BuildEditor::Geometry BuildEditor::capture() const {
     Geometry g;
     g.elevations = lot_.elevations;
+    g.floorVisibility = lot_.floorVisibility;
     g.floorRotations = lot_.floorRotations;
     g.objects = lot_.objects;
     g.fencePosts = lot_.fencePosts;
@@ -103,6 +104,7 @@ BuildEditor::Geometry BuildEditor::capture() const {
 void BuildEditor::restore(const Geometry& g) {
     merges_.clear();
     lot_.elevations = g.elevations;
+    lot_.floorVisibility = g.floorVisibility;
     lot_.floorRotations = g.floorRotations;
     lot_.objects = g.objects;
     lot_.fencePosts = g.fencePosts;

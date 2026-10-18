@@ -852,9 +852,10 @@ do roteamento e os light maps das salas afetadas.
   quarto de tile no sim system, vtable `0xcc`/`0xdc`) é **só BV**. O
   `ChangeTile` compara o padrão (`WorldDB` vtable `0x9c`) **e** a rotação
   (`0xa0`) de cada quarto com os da ferramenta (toolbar vtable `0x78`). Nos
-  lotes a rotação fica no **3ARY `0x15`**, um byte por quarto de tile, 1 em
-  quase todos os quartos dos 62 lotes (inferido pelos dados: os valores do
-  modo da toolbar; nenhum lote gira um piso).
+  lotes a rotação fica no **3ARY `0x20`** (`cWorldDB +0x94`, um `u16` por
+  tile, um nibble por quarto; nenhum lote do jogo o tem); o 3ARY `0x15`,
+  que o app lia como a rotação, é a camada de visibilidade do piso (rodada
+  n48, §7.26: só 0 e 1 nos lotes).
 - **Ao soltar** (BV `0x301324`): se pintou (modo 0 ou 2), cria um undoable de
   elevação como pré-operação e **aplaina o terreno** sob o retângulo (a altura
   do tile inicial, `LevelRect`) ou sob a sala; submete e toca o som.
@@ -1376,7 +1377,11 @@ O resto das regras (escavar piscina, telhados, aplainar terreno) não foi lido.
   profundidade da água (0,25), 0; o lote tem o andar −1 (elevações −3), o
   fundo tem o piso "floor_poolroundedlipblue" e as paredes 29 ficam no andar
   −1. Na colocação, tile de piscina sem od 42 0x800 → `0x8F`.
-- **Rotação de piso**: 3ARY `0x15`, um byte por quarto (1/2/4/8).
+- **Rotação de piso**: 3ARY **`0x20`**, um `u16` por tile, o quarto q nos
+  bits 4q..4q+3 (1/2/4/8; 0 lido como 1; `FloorPatternRotation` BV
+  `0xd3c24`, `cWorldDB +0x94`). Nenhum lote do jogo o tem (o `Load` enche com
+  `0x1111`). O 3ARY `0x15` é a **camada de visibilidade do piso** (§7.26;
+  rodada n48: antes lido como a rotação, inferido pelos dados).
 
 ### 7.12 Escadas modulares, auto-telhado e a ferramenta Design (rodada 11, binário)
 
@@ -2859,7 +2864,18 @@ ao apagar. Há também uma ferramenta `cTSUserToolFloorVisibility` (BV
 `0x3644cc`). Quem a lê na colocação: `HasFloorTest(tile, máscara, todos,
 visível)` (`FUN_000d2798`): com "todos", cada quarto da máscara com piso **e**
 visível; com "algum", o primeiro quarto com piso basta (a visibilidade nem é
-lida). Os slots do `cWorldDB` (vtable `0x27a326c`): `0xb0` = (todos,
+lida). **Onde ela fica** (`cWorldDB::Load`, BV `0xd7758`): a camada é o **3ARY
+`0x15`** do lote (um byte por quarto, 1 visível, 0 escondido; um lote sem ele
+lê o antigo 3ARY 2 e o traduz, `TranslateDeprecatedFloorVisibilityLayer`).
+Nos lotes do jogo só há 0 e 1: 2.940 quartos escondidos, nos lotes com
+piscina (o térreo sobre a água) e com banheira embutida (os 9 tiles dela,
+com o padrão de piso guardado por baixo: N001_Lot82, N002_Lot29,
+N003_Lot192). O `SetPosition` (BV `0xafd048`) esconde o tile de um objeto
+`HidesFloorOnPlace` e o `RemoveFromWorld` (`0xafc508` → `FUN_00af75b8`) o
+mostra de novo. Os outros arrays que o `Load` lê: `+0x90` o 0 (pisos),
+`+0x98` o 1 (alturas), `+0xa0` o 3 (travados), `+0xa4` o `0x0C`, `+0xcc` o
+`0x14` (marcadores), `+0x94` o **`0x20` (rotação dos pisos)**, `+0xd0` o
+`0x1b` (BV). Os slots do `cWorldDB` (vtable `0x27a326c`): `0xb0` = (todos,
 visível do argumento), `0xb4` = (algum), `0xb8` = no nível 0 sempre sim, senão
 (todos), `0xbc` = no nível 0 sempre sim, senão (algum). O piso do
 `TestPlacementCommon` é `0xb8(tile, 0xF, !HidesFloorOnPlace)` (base `0x90`):

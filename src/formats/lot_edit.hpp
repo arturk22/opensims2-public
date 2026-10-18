@@ -56,10 +56,14 @@ uint16_t patternRef(std::map<uint16_t, std::string>& map, const std::string& nam
 // for none. Out of range: no change, false.
 bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern);
 
-// The rotation of quarter `q`'s floor pattern (Lot::floorRotations: 1, 2,
-// 4 or 8); 1 when the lot has none.
+// The rotation of quarter `q`'s floor pattern (Lot::floorRotations, 3ARY
+// 0x20: 1, 2, 4 or 8); 1 when the lot has none.
 bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation);
 uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q);
+// The floors' visibility layer (Lot::floorVisibility, 3ARY 0x15): visible
+// when the lot has none.
+bool floorVisible(const Lot& lot, int level, int x, int y, int q);
+bool setFloorVisibility(Lot& lot, int level, int x, int y, int q, bool visible);
 
 // Fence arches (fencearches.txt "fenceArch N", PartitionType 2): cPartition
 // Manager::AddWallToGraph puts them in their own wall graph (0x13) and in no

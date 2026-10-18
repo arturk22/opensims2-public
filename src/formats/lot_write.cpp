@@ -17,7 +17,7 @@ constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11, kTypeLo
                    kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC, kWaterLevels = 0x3B76;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
                    kTypeWallLayer = 0x8A84D7B0;
-constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorRotations = 0x15, kArrayDeckFoundations = 0x14, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
+constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorVisibility = 0x15, kArrayFloorRotations = 0x20, kArrayDeckFoundations = 0x14, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
                    kWallLayerPartitions = 0x04;
 constexpr size_t kFileNameSize = 64;
 
@@ -74,13 +74,24 @@ LotGeometryRecord elevationArray(DbpfPackage& pkg, const Lot& lot) {
     return {kType3DArray, h.group, kArrayElevation, std::move(w.bytes())};
 }
 
+// 3ARY 0x15: the floors' visibility, a byte a quarter (Lot::floorVisibility).
+LotGeometryRecord visibilityArray(DbpfPackage& pkg, const Lot& lot) {
+    const Head h = headOf(pkg, kType3DArray, kArrayFloorVisibility, 1);
+    BinWriter w = begin(h, kType3DArray, "c3DArray");
+    w.u32(lot.width), w.u32(lot.height), w.u32(uint32_t(lot.levelCount));
+    for (const auto& q : lot.floorVisibility)
+        for (uint8_t v : q)
+            w.u8(v);
+    return {kType3DArray, h.group, kArrayFloorVisibility, std::move(w.bytes())};
+}
+
+// 3ARY 0x20: the floors' rotation, a u16 a tile (Lot::floorRotations).
 LotGeometryRecord rotationArray(DbpfPackage& pkg, const Lot& lot) {
     const Head h = headOf(pkg, kType3DArray, kArrayFloorRotations, 1);
     BinWriter w = begin(h, kType3DArray, "c3DArray");
     w.u32(lot.width), w.u32(lot.height), w.u32(uint32_t(lot.levelCount));
-    for (const auto& q : lot.floorRotations)
-        for (uint8_t v : q)
-            w.u8(v);
+    for (uint16_t v : lot.floorRotations)
+        w.u16(v);
     return {kType3DArray, h.group, kArrayFloorRotations, std::move(w.bytes())};
 }
 
@@ -281,7 +292,8 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
         if (added > 0)
             for (const auto& e : source.entries()) {
                 if (e.tgi.type != kType3DArray || e.tgi.instance == kArrayElevation || e.tgi.instance == kArrayFloors ||
-                    e.tgi.instance == kArrayRooms || e.tgi.instance == kArrayFloorRotations ||
+                    e.tgi.instance == kArrayRooms || e.tgi.instance == kArrayFloorVisibility ||
+                    (e.tgi.instance == kArrayFloorRotations && !lot.floorRotations.empty()) ||
                     (e.tgi.instance == kArrayDeckFoundations && !lot.deckFoundationStyles.empty()) ||
                     lot.roomLayers.count(e.tgi.instance))
                     continue;
@@ -307,6 +319,8 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
         out.push_back(elevationArray(source, lot));
     if (!lot.floors.empty())
         out.push_back(quarterArray(source, kArrayFloors, lot, lot.floors));
+    if (!lot.floorVisibility.empty())
+        out.push_back(visibilityArray(source, lot));
     if (!lot.floorRotations.empty())
         out.push_back(rotationArray(source, lot));
     if (!lot.deckFoundationStyles.empty())

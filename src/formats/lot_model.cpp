@@ -340,7 +340,10 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
                 // Counter-clockwise from above: west, north, east, south.
                 const std::array<std::array<Vec3f, 2>, 4> edges{{{p00, p01}, {p01, p11}, {p11, p10}, {p10, p00}}};
                 for (size_t q = 0; q < 4; ++q) {
-                    if (!quarters[q])
+                    // A hidden quarter (the visibility layer, 3ARY 0x15: over a
+                    // pool, under a sunken hot tub) is not drawn
+                    // (cWorldDB::FloorVisible, BV 0xd29bc).
+                    if (!quarters[q] || !floorVisible(lot, level, x, y, int(q)))
                         continue;
                     auto it = materials.find(quarters[q]);
                     if (it == materials.end() || it->second.empty())
@@ -366,13 +369,12 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
                     // (floorMaterialScaleU/V spans several), and a turn of
                     // the quarters is one of the texture about the centre.
                     int turns = 0;
-                    if (at < lot.floorRotations.size())
-                        switch (lot.floorRotations[at][q]) {
-                        case 2: turns = 1; break;
-                        case 4: turns = 2; break;
-                        case 8: turns = 3; break;
-                        default: break;
-                        }
+                    switch (floorRotation(lot, level, x, y, int(q))) {
+                    case 2: turns = 1; break;
+                    case 4: turns = 2; break;
+                    case 8: turns = 3; break;
+                    default: break;
+                    }
                     auto v = [&](const Vec3f& p) {
                         float lu = p[1] - fy - 0.5f, lv = p[0] - fx - 0.5f;
                         for (int k = 0; k < turns; ++k)

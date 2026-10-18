@@ -432,7 +432,8 @@ public:
 private:
     struct Geometry {
         std::vector<float> elevations;
-        std::vector<std::array<uint8_t, 4>> floorRotations;
+        std::vector<std::array<uint8_t, 4>> floorVisibility;
+        std::vector<uint16_t> floorRotations;
         std::vector<Lot::Object> objects;
         std::vector<Lot::FencePost> fencePosts;
         std::vector<Lot::TerrainPaint> paints;

@@ -377,8 +377,8 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern) {
     if (lot.floors.empty())
         lot.floors.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), {});
     lot.floors[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] = pattern;
-    if (lot.floorRotations.empty())
-        lot.floorRotations.assign(lot.floors.size(), {1, 1, 1, 1});
+    if (lot.floorVisibility.empty())
+        lot.floorVisibility.assign(lot.floors.size(), {1, 1, 1, 1});
     // A quarter left without a floor above the ground is in no room.
     if (!pattern && level != 0) {
         if (!lot.rooms.empty())
@@ -400,8 +400,10 @@ bool addLowerLevel(Lot& lot) {
     lot.elevations.insert(lot.elevations.begin(), below.begin(), below.end());
     if (!lot.floors.empty())
         lot.floors.insert(lot.floors.begin(), tiles, std::array<uint16_t, 4>{});
+    if (!lot.floorVisibility.empty())
+        lot.floorVisibility.insert(lot.floorVisibility.begin(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
     if (!lot.floorRotations.empty())
-        lot.floorRotations.insert(lot.floorRotations.begin(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
+        lot.floorRotations.insert(lot.floorRotations.begin(), tiles, uint16_t(0x1111));
     // The locked tiles of the new level: the ground's (as lot_write copies
     // the lowest plane of the arrays it does not read; inferred).
     if (lot.locked.size() >= tiles) {
@@ -525,8 +527,10 @@ void addUpperLevel(Lot& lot) {
     }
     if (!lot.floors.empty())
         lot.floors.insert(lot.floors.end(), tiles, std::array<uint16_t, 4>{});
+    if (!lot.floorVisibility.empty())
+        lot.floorVisibility.insert(lot.floorVisibility.end(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
     if (!lot.floorRotations.empty())
-        lot.floorRotations.insert(lot.floorRotations.end(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
+        lot.floorRotations.insert(lot.floorRotations.end(), tiles, uint16_t(0x1111));
     if (lot.locked.size() >= tiles) {
         const std::vector<uint8_t> top(lot.locked.end() - long(tiles), lot.locked.end());
         lot.locked.insert(lot.locked.end(), top.begin(), top.end());
@@ -546,8 +550,9 @@ bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation
     if (!lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height) || q < 0 || q > 3)
         return false;
     if (lot.floorRotations.empty())
-        lot.floorRotations.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), {1, 1, 1, 1});
-    lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] = rotation;
+        lot.floorRotations.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), uint16_t(0x1111));
+    uint16_t& v = lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)];
+    v = uint16_t((v & ~(0xF << (4 * q))) | ((rotation & 0xF) << (4 * q)));
     return true;
 }
 
@@ -555,7 +560,24 @@ uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q) {
     if (lot.floorRotations.empty() || !lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) ||
         y >= int(lot.height) || q < 0 || q > 3)
         return 1;
-    return lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)];
+    const uint8_t r = uint8_t((lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)] >> (4 * q)) & 0xF);
+    return r ? r : 1; // FloorPatternRotation: 0 is 1
+}
+
+bool floorVisible(const Lot& lot, int level, int x, int y, int q) {
+    if (lot.floorVisibility.empty() || !lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) ||
+        y >= int(lot.height) || q < 0 || q > 3)
+        return true;
+    return lot.floorVisibility[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] != 0;
+}
+
+bool setFloorVisibility(Lot& lot, int level, int x, int y, int q, bool visible) {
+    if (!lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height) || q < 0 || q > 3)
+        return false;
+    if (lot.floorVisibility.empty())
+        lot.floorVisibility.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), {1, 1, 1, 1});
+    lot.floorVisibility[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] = visible ? 1 : 0;
+    return true;
 }
 
 int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side, uint32_t which) {

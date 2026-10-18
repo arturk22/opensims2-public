@@ -1566,8 +1566,8 @@ static void testWallGeometry() {
             f.walls.clear();
             f.floors[0] = {0, 1, 0, 0}; // tile (0, 0): the north quarter
             f.floorPatterns[1] = "tile";
-            f.floorRotations.assign(f.floors.size(), {1, 1, 1, 1});
-            f.floorRotations[0][1] = rotation;
+            f.floorRotations.assign(f.floors.size(), uint16_t(0x1111)); // 3ARY 0x20: a nibble a quarter
+            f.floorRotations[0] = uint16_t(0x1101 | rotation << 4);
             const ObjectModel m = buildLotModel(f, index, patterns);
             std::vector<std::array<float, 2>> uvs;
             if (const auto* fl = part(m, "floor:tile"))
@@ -1585,6 +1585,14 @@ static void testWallGeometry() {
         check(turned.size() == 3 && turned[0] == std::array<float, 2>{1, 0} && turned[1] == std::array<float, 2>{0, 0},
               "floor rotation 2 takes the quarter before");
         check(northUvs(3) == plain && northUvs(8) != plain, "floor rotations other than 2, 4, 8 leave the texture");
+        // The visibility layer (3ARY 0x15): a hidden quarter is not drawn.
+        Lot f = lot;
+        f.walls.clear();
+        f.floors[0] = {0, 1, 0, 0};
+        f.floorPatterns[1] = "tile";
+        f.floorVisibility.assign(f.floors.size(), {1, 1, 1, 1});
+        f.floorVisibility[0][1] = 0;
+        check(!part(buildLotModel(f, index, patterns), "floor:tile"), "a hidden floor quarter is not drawn");
     }
     {
         // A T: the junction polygon over (1, 1).
