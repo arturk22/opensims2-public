@@ -4486,12 +4486,16 @@ planejamento (`planRoute`, com caminho 39 := 1, sem 39 := 0 e 38 := −1) e
 quando o planejador não acha objetivos, para toda rota (o Go To Relative
 Position também: 40 é o alvo dele); 37 é o slot do Go To Routing Slot, −1
 nas outras. Era: 37/38/40 só no começo do Go To Routing Slot, 55 nunca.
-**Inferido:** o 37 de um slot global fica o índice, sem o + 1000 do
-binário: com ele a aproximação dos sociais ("Route - Dynamic w/Lead in", o
-slot global 33) falhava com 13 tick após tick (`N001_Lot11` semente 2, 3
-dias: 59 → 1.367 falhas), então algo no jogo lê o 37 de volta como slot
-global (uma árvore ou o Go To Routing Slot com o slot num parâmetro; não
-achado); 55 é sempre −1 (o planejador do
+**Rodada n49** (`docs/routing-mac.md` §9.5): o 37 de um slot global é o
+índice + 1000, como o `WorkOutSlotIndex`; quem o lê de volta é a árvore
+social "Turn toward incoming Sim's target slot" (semi-global `0x7FD90EDB`
+`0x2019`: o 37 do Sim que chega == 1033 → vira para a direção absoluta do
+ponto pelo 38, global `0x2DF`; senão vira para o Sim) e o `resumeRoutes` do
+VM (tira os 1000). O laço do 13 que a n46 viu com o + 1000 (`N001_Lot11`
+semente 2) não volta com as pegadas encostadas da n49; o 13 a cada tick do
+Mortimer no alpendre aparece com e sem o + 1000 (semente 8) e acaba com a
+interação (a espera da aproximação; §9.5). `OS2_SLOT_PLAIN=1` volta ao
+índice só, para comparar. **Inferido:** 55 é sempre −1 (o planejador do
 VM parte de onde o Sim está; o do jogo parte dos slots do contêiner quando o
 Sim sentado planeja antes da pré-rota), o 38 de um objetivo sem índice é 0,
 e o `PopRoute` não grava de novo (os valores são os do último planejamento,

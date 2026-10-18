@@ -882,6 +882,41 @@ static void testRoutePersonDataFields() {
     }
 }
 
+// Person data 37 of a global routing slot is its index + 1000
+// (WorkOutSlotIndex, round n49: "Turn toward incoming Sim's target slot"
+// compares it with 1033, the social approach's global slot 33); a slot of
+// the target's own SLOT is its index.
+static void testRouteSlotIndex() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(10, 10);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0x80));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Slots table;
+    table.slots.resize(2);
+    for (auto& sl : table.slots) {
+        sl.type = 3;
+        sl.flags = 0x01;
+        sl.minDistance = sl.maxDistance = sl.optimalDistance = 1;
+        sl.resolutionTiles = 1;
+    }
+    code.add(kGroup, 0x80, table);
+    code.add(kGlobalGroup, 0x64, table); // the global SLOT
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {6.5f, 5.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {1.5f, 1.5f, 1};
+    for (const auto& [scope, want] : {std::pair{uint8_t(1), int16_t(1)}, std::pair{uint8_t(2), int16_t(1001)}}) {
+        code.add(kGroup, 0x1000 + scope, tree({instr(0x2D, T, F, {1, 0, scope, 0, 0})}));
+        Thread t = vm.start(sim.id, uint16_t(0x1000 + scope), {}, lamp.id);
+        vm.run(t);
+        check(sim.person->data[37] == want, scope == 2 ? "route slot: a global slot's index + 1000" : "route slot: a local slot's index");
+        for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i)
+            vm.run(t);
+        sim.position = {1.5f, 1.5f, 1};
+    }
+}
+
 // A Sim standing in a one-tile corridor blocks another: the walker waits
 // (asking it to move), plans again, and after five tries fails with
 // "blocked by person" (14).
@@ -2409,6 +2444,7 @@ int main() {
     testRouteResult();
     testRouteStatus();
     testRoutePersonDataFields();
+    testRouteSlotIndex();
     testBlockedBySim();
     testMutualBlock();
     testPredictionOnCurve();
