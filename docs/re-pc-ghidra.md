@@ -137,8 +137,18 @@ port está certo.
   strings em +0xC/+0x18/+0x64/+0x7C/+0x88 (`material/subsort/surfacetype/routingcost/brightness/filename`).
 
 **Bins**: os padrões `Bin Prod ID/Type/Sort Idx/Key/Name`, `Frag Prod ID/Sort Idx`
-(offsets 0xE62535+) estão na região `0xCDF41B`+ — **ainda sem função definida** no projeto
-(entrada desconhecida; é a única parte do goal (a) que sobra em aberto).
+(offsets 0xE62535+) são usados pela **`FUN_00cdf160`** (entrada `0xCDF160`, SEH, criada 17/10 —
+era a "região `0xCDF41B`+" sem função; os `PUSH` dos formatos ficam em 0xCDF2F4/0xCDF41A): é o
+**dump de Frag/Bin** — recebe a fonte dos dados (vtbl `+0xC/+0x4C/+0x54/+0x64/+0x6C`) e um sink
+de impressão (vtbl `+0x20/+0x4C`, uma linha por `[vtbl+0x4C](&string)`):
+- cabeçalho (`Frag Key:`) + buffers de 0xB bytes via `FUN_00ec685a`;
+- se a propriedade `0x6C4F3599` existe em A (`[vtbl+0x14]`): pega a **STR# do catálogo**
+  (hash `0xFB4CB0DE`, `[vtbl+0x40]`) e resolve o texto (`[vtbl+0x1C]`) → `\nBin Name = %s`;
+  senão `\nBin Key = 0x%08X 0x%08X 0x%08X` (a chave de 12 bytes);
+- `\nFrag Prod ID = %d\nFrag Sort Idx = %d` e depois `\nBin Prod ID = %d\nBin Type = %s\n
+  Bin Sort Idx = %d`, com `FUN_00cd42b0`/`FUN_00cdedd0` e `[vtbl+0x30/+0x50/+0x58]`;
+- formatação por `FUN_0040cd66` (sprintf-like) / `FUN_0040bc29` (concat).
+⇒ fechou a última parte em aberto do goal (a).
 
 ## (b) Varredura de `TSData\Res`
 
@@ -172,10 +182,12 @@ diretório/arquivo com ID+parentID (`Neighborhoods/`, `Collections/`, `Downloads
 
 `FUN_00be0141` = **registrador dos segmentos de diretório da instalação** (prólogo em `0xBE0137`):
 - constrói `"tsdata/"` (0x1251644) e `"/tsdata/res/locale/"` (0x12516F0) sobre a raiz;
-  `FUN_0040d883("tsdata/")` (papel exato em aberto — recebe o path base);
+  `FUN_0040d883("tsdata/")` = **`std::string::operator+=(const char*)`** (strlen + `FUN_00405f2a`
+  = append(first,last): cresce com `FUN_0040e923`, preserva o conteúdo antigo e copia o 1º char
+  por último p/ self-append) — o montador de path que anexa cada fragmento;
 - lê as seções ini **`DBSegments`**, **`DBSegmentDirectoryFiles`**, `SampleDataSegments`,
   `TrackDefSegments` (×2), `MusicDirectories` (ponteiros em `0x142C7DC..0x142C7F8`; handler de
-  linha das duas primeiras = `0xBDF83B`, no fim de `FUN_00bdf753`);
+  linha das duas primeiras = `0xBDF83B`, logo após `FUN_00bdf753`);
 - expande o token **`%Language%\\`** com o idioma corrente (`FUN_0040E0D6`/`_strlen`/
   `FUN_0040D2A1`/`FUN_0040E0AB`);
 - por entrada chama `FUN_00bdf26b(...)` = CreateGameDirectoryFileSegment (tipo `0x656B8F0C`);
@@ -192,8 +204,21 @@ diretório/arquivo com ID+parentID (`Neighborhoods/`, `Collections/`, `Downloads
 
 **Chaves/macros**: `%DataDirectory%` (0x1250E8C), `%Language%\`, ini `Hitlab.ini` (0x1250DF8);
 `,` = separador de extensões, `;` = comentário ini, `:` = separador. Handlers de linha
-`0xBDF83B` (DBSegments), `FUN_00bdd8f2` (SampleData/TrackDef), `FUN_00bde67d` (MusicDirectories)
-ainda não decompilados.
+(decompilados 17/10; `0xBDF83B`/`FUN_00bde67d` têm prólogo MSVC SEH `MOV EAX,<__ehhandler>;
+CALL __SEH_prolog`):
+- `FUN_00e5c86c` = **`__SEH_prolog`** (EAX = handler; monta EXCEPTION_REGISTRATION, `FS:[0]=ESP`,
+  EBP = framebase; volta com `PUSH EAX/RET`);
+- `0xBDF83B` (DBSegments/DBSegmentDirectoryFiles; corpo = `FUN_00bdf845`, 302 B): linha
+  `begin_group`/`end_group` → ignora; senão hash do id (`[vtbl+0x14]` → `FUN_00410720`) e
+  insere no mapa do 3º param (`FUN_00415585`); id duplicado → log nível 2
+  `Ini file section has duplicate id %08x = %s\n` (`TSAudioResourceManager.cpp:0x477`).
+  O registro do callback fica em `FUN_00bdf973` (`[vtbl+0x34](…, 0xBDF83B, 0x142C7F4)` + caso
+  especial do hash `0x5B945038`), usado por `FUN_00be0141`/`FUN_00bdfa42`;
+- `FUN_00bdd8f2` (SampleData/TrackDef): se 3º arg ≠ 0 → hash (`FUN_00410720`) do id em `this+4`
+  → `FUN_00bdd887(&hash)`;
+- `FUN_00bde67d` (MusicDirectories; corpo = `FUN_00bde687`, 102 B): se 3º arg ≠ 0 → nome do
+  1º arg (`[vtbl+0x14]` → `FUN_00425bbc`) + id do 2º (`thunk_FUN_0047b878`) →
+  `arg3->[vtbl+0xC](nome, id)`.
 
 **Para o port** (`src\formats\resindex.cpp`, `src\app\user_data.cpp`): ordem *packed → directory
 files*; tudo relativo a `tsdata/`, com o ramo de idioma em `/tsdata/res/locale/`; a tabela de

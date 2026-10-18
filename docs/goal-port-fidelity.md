@@ -66,9 +66,11 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       evidence `rea-crosscheck.success.json` (`ev_6b0910b0…` em `..\..\rea-snapshots\ghidra-pc\`).
 - [x] **2. Baseline Windows**: **FECHADO 17/10 22:39** — `tools\build_windows.cmd`: configure ok,
       `ninja: no work to do` (build já em dia) e **39/39 ctest verdes em 3,29 s**. Sem skips.
-- [ ] **3. RE relâmpago** (Ghidra `pcb`, consultas curtas): região dos bins `0xCDF41B`+;
-      handlers `0xBDF83B`/`FUN_00bdd8f2`/`FUN_00bde67d`; papel de `FUN_0040d883("tsdata/")`
-      → atualizar `re-pc-ghidra.md`.
+- [x] **3. RE relâmpago** (Ghidra `pcb`): **FECHADO 17/10 22:57** — bins = **`FUN_00cdf160`**
+      (criada 17/10; dump Frag/Bin, nome resolvido pela STR# `0xFB4CB0DE`); handlers:
+      `0xBDF83B` (corpo `FUN_00bdf845` — begin/end_group ignorados; hash→mapa; warning de id
+      duplicado), `FUN_00bdd8f2` e `FUN_00bde67d` (corpo `FUN_00bde687`); `FUN_0040d883` =
+      `std::string::operator+=(const char*)`. Detalhes em `re-pc-ghidra.md` (§a/§b).
 - [ ] **4. Buy §1.6 — a sobra de 1 px** na costura do catálogo (532 no app vs 533 do
       original): medir com `--screenshot` no Windows e fechar a conta pixel a pixel.
 - [ ] **5. Buy §1.4 — "6 de 53"** (cadeiras B120): `[BLOQUEADO: perguntar ao Artur se a
@@ -119,3 +121,23 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 - (17/10 ~22:39) **Item 2 FECHADO**: baseline Windows — `tools\build_windows.cmd` com configure
   limpo, `ninja: no work to do` e **39/39 ctest verdes (3,29 s)**; sem skips. Próximo: item 3
   (RE relâmpago no `pcb` — consultas curtas; máquina livre).
+- (17/10 ~22:40-22:57) **Item 3 FECHADO** (RE relâmpago no `pcb`, 6 rodadas headless curtas):
+  - **Bins** (`0xCDF41B`+ → era a última pendência do goal (a)): os formatos `Bin Prod ID/...`
+    vêm da **`FUN_00cdf160`** (entrada `0xCDF160`, SEH) — dump de Frag/Bin: chave de 12 bytes
+    `0x%08X…` ou nome resolvido pela STR# do catálogo (hash `0xFB4CB0DE`); Frag/Bin Prod
+    ID/Sort Idx/Type; fonte = vtbl `+0xC/+0x4C/+0x54/+0x64/+0x6C`, sink = vtbl `+0x20/+0x4C`.
+  - **Handlers**: `0xBDF83B` (DBSegments; corpo `FUN_00bdf845` = ignora begin/end_group; hash
+    do id → mapa; warning `duplicate id %08x = %s` em `TSAudioResourceManager.cpp:0x477`);
+    `FUN_00bdd8f2` (SampleData/TrackDef); `FUN_00bde67d` (MusicDirectories; corpo
+    `FUN_00bde687`). `FUN_00e5c86c` = `__SEH_prolog` (prólogo comum `MOV EAX,<handler>; CALL`).
+    Registro do callback em `FUN_00bdf973` (`[vtbl+0x34](…, 0xBDF83B, 0x142C7F4)`).
+  - `FUN_0040d883` = `std::string::operator+=(const char*)` (strlen + append em
+    `FUN_00405f2a`) — monta os paths `"tsdata/"`/`"/tsdata/res/locale/"`.
+  - Toolkit novo em `rea-snapshots\ghidra-pc\scripts\`: `RedoFrom.java` (limpa garbage e
+    re-disassembla a partir de uma entrada) e `ExtendFn.java` (redefine o body). Lição:
+    função com `__SEH_prolog` decompila só até o `CALL` do prólogo — o corpo sai criando
+    função nova depois do prólogo (encolher o body do wrapper com `ExtendFn` + `MakeFns`).
+  - Edits em `re-pc-ghidra.md` (§a Bins + §b handlers/`FUN_0040d883`); build+ctest
+    **39/39 verdes (2,19 s)**.
+- (17/10 22:57) Próximo da fila: **item 4** — §1.6 do `buy-build-mac.md`, o pixel da costura
+  do catálogo (532×533); medir com `--screenshot` no Windows.
