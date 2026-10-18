@@ -187,35 +187,51 @@ Slots Slots::parse(std::span<const uint8_t> data) {
     BinReader r(data);
     Slots s;
     s.fileName = r.fixed(kNameSize);
-    uint32_t n;
-    if (data.size() >= kNameSize + 4 && std::string(reinterpret_cast<const char*>(&data[kNameSize]), 4) == "TOLS") {
-        // Sims 2: 'TOLS', version, unused, count.
-        s.sims2Layout = true;
-        r.skip(4);
-        s.version = r.u32();
+    // cTSSlotLoader::Read (base 1.0 0xbc50c0; docs/routing-mac.md §9.5): three
+    // u32, the second the version (1 to 0x47), then the count. The Sims 1
+    // layout has the tag third ("unused, version, 'TOLS'"), the Sims 2's
+    // first; the game reads both alike.
+    s.sims2Layout = data.size() >= kNameSize + 4 && std::string(reinterpret_cast<const char*>(&data[kNameSize]), 4) == "TOLS";
+    r.u32();
+    s.version = r.u32();
+    if (s.sims2Layout)
         r.u32();
-        n = count(r, "slot");
-    } else {
-        // Sims 1: unused, version, 'TOLS', count.
-        r.u32();
-        s.version = r.u32();
+    else
         expectTag(r, "TOLS", "SLOT");
-        n = count(r, "slot");
-    }
-    const uint32_t v = s.sims2Layout ? 10 : s.version; // Sims 2 slots carry every v10 field
+    const uint32_t n = count(r, "slot");
+    const uint32_t v = s.version;
+    if (v < 1 || v > 0x47) // the loader refuses these
+        throw FormatError("SLOT: version " + std::to_string(v) + " not supported");
+    // (Versions 1 and 2 have a layout of their own, not followed: no SLOT of
+    // the base game has them; read here as 3.)
     s.slots.resize(n);
+    // cTSSlotDescriptor::Read (base 1.0 0xbc3f1c, BV 0x4b08a4), field by
+    // field as the version has them.
     for (auto& sl : s.slots) {
         sl.type = r.u16();
-        sl.offset = {r.f32(), r.f32(), r.f32()};
+        sl.offset = {r.f32(), r.f32(), 0};
+        if (v < 0x47) // sixteenths of a tile before 0x47
+            sl.offset[0] *= 0.0625f, sl.offset[1] *= 0.0625f;
+        sl.offset[2] = r.f32();
         sl.standing = r.i32();
         sl.sitting = r.i32();
         sl.ground = r.i32();
         sl.flags = r.u32();
-        sl.snapTargetSlot = r.i32();
-        if (v >= 6) {
-            sl.minProximity = r.i32();
-            sl.maxProximity = r.i32();
-            sl.optimalProximity = r.i32();
+        if (v >= 4)
+            sl.snapTargetSlot = r.i32();
+        if (v >= 5) {
+            if (v >= 0x43) {
+                sl.minDistance = r.f32(), sl.maxDistance = r.f32(), sl.optimalDistance = r.f32();
+                sl.minProximity = std::bit_cast<int32_t>(sl.minDistance);
+                sl.maxProximity = std::bit_cast<int32_t>(sl.maxDistance);
+                sl.optimalProximity = std::bit_cast<int32_t>(sl.optimalDistance);
+            } else {
+                sl.minProximity = r.i32(), sl.maxProximity = r.i32(), sl.optimalProximity = r.i32();
+                const float scale = v >= 0xA ? 0.0625f : 1.0f; // whole tiles before 0xA
+                sl.minDistance = float(sl.minProximity) * scale;
+                sl.maxDistance = float(sl.maxProximity) * scale;
+                sl.optimalDistance = float(sl.optimalProximity) * scale;
+            }
             sl.maxSize = r.i32();
             sl.unknown10 = r.i32();
         }
@@ -223,24 +239,23 @@ Slots Slots::parse(std::span<const uint8_t> data) {
             sl.gradient = r.f32();
         if (v >= 8)
             sl.height = r.i32();
-        if (v >= 9)
+        if (v >= 9) {
             sl.facing = r.i32();
-        if (v >= 10)
-            sl.resolution = r.i32();
-        if (s.sims2Layout)
-            sl.ts2Extra = {r.u32(), r.u32()};
-        if (s.sims2Layout) {
-            sl.minDistance = std::bit_cast<float>(sl.minProximity);
-            sl.maxDistance = std::bit_cast<float>(sl.maxProximity);
-            sl.optimalDistance = std::bit_cast<float>(sl.optimalProximity);
-            const float res = std::bit_cast<float>(sl.resolution);
-            sl.resolutionTiles = res > 0.01f && res < 64.0f ? res : float(sl.resolution) / 16.0f;
-        } else {
-            sl.minDistance = float(sl.minProximity) / 16.0f;
-            sl.maxDistance = float(sl.maxProximity) / 16.0f;
-            sl.optimalDistance = float(sl.optimalProximity) / 16.0f;
-            sl.resolutionTiles = float(sl.resolution) / 16.0f;
+        } else if (sl.flags & 0x200) {
+            sl.facing = -3, sl.flags &= ~0x200u;
+        } else if (sl.flags & 0x400) {
+            sl.facing = -1, sl.flags &= ~0x400u;
         }
+        if (v >= 0x47) {
+            sl.resolutionTiles = r.f32();
+            sl.resolution = std::bit_cast<int32_t>(sl.resolutionTiles);
+        } else if (v >= 0xA) {
+            sl.resolution = r.i32();
+            sl.resolutionTiles = float(sl.resolution) * 0.0625f;
+        } else {
+            sl.gradient *= 0.0625f;
+        }
+        sl.ts2Extra = {v >= 0x40 ? r.u32() : 0u, v >= 0x41 ? r.u32() : 0xFFFFFFFFu};
     }
     r.expectEnd("SLOT");
     return s;

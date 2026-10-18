@@ -206,6 +206,62 @@ static void testSimAntics() {
     check(fc.entries.size() == 1 && fc.value("hour", 7.0f) == 8.0f && fc.value("other", 7.0f) == 7.0f, "FCNS");
 }
 
+// SLOT by version, as cTSSlotDescriptor::Read has it (round n49, base 1.0
+// 0xbc3f1c): x, y in sixteenths of a tile before 0x47; the proximities
+// floats from 0x43, sixteenths from 0xA, whole tiles before; the resolution
+// sixteenths before 0x47, a float from it; before version 9 the facing from
+// the flags 0x200 (-3) and 0x400 (-1).
+static void testSlotVersions() {
+    auto u32 = [](std::vector<uint8_t>& d, uint32_t v) {
+        for (int i = 0; i < 4; ++i)
+            d.push_back(uint8_t(v >> (8 * i)));
+    };
+    auto f32 = [&](std::vector<uint8_t>& d, float v) { u32(d, std::bit_cast<uint32_t>(v)); };
+    auto slot = [&](uint32_t version, bool ts2, float x, uint32_t flags, uint32_t prox, float proxF, uint32_t res, float resF) {
+        std::vector<uint8_t> d(64, 0);
+        if (ts2) {
+            d.insert(d.end(), {'T', 'O', 'L', 'S'}), u32(d, version), u32(d, 0);
+        } else {
+            u32(d, 0), u32(d, version), d.insert(d.end(), {'T', 'O', 'L', 'S'});
+        }
+        u32(d, 1);
+        d.push_back(3), d.push_back(0); // type
+        f32(d, x), f32(d, -x), f32(d, 0.5f);
+        u32(d, 1), u32(d, 0), u32(d, 0), u32(d, flags), u32(d, uint32_t(-1)); // multipliers, flags, snap
+        if (version >= 0x43)
+            f32(d, proxF), f32(d, proxF * 2), f32(d, proxF);
+        else
+            u32(d, prox), u32(d, prox * 2), u32(d, prox);
+        u32(d, 0), u32(d, 0);                     // max size, +0x24
+        f32(d, 2.0f), u32(d, 4);                  // gradient, height
+        if (version >= 9)
+            u32(d, 5);                            // facing
+        if (version >= 0x47)
+            f32(d, resF);
+        else if (version >= 0xA)
+            u32(d, res);
+        if (version >= 0x40)
+            u32(d, 7), u32(d, 9);
+        return Slots::parse(d);
+    };
+    const Slots a = slot(0x46, true, 48, 0, 0, 1.0f, 4, 0);
+    check(a.slots[0].offset[0] == 3.0f && a.slots[0].offset[1] == -3.0f && a.slots[0].offset[2] == 0.5f &&
+              a.slots[0].minDistance == 1.0f && a.slots[0].maxDistance == 2.0f && a.slots[0].resolutionTiles == 0.25f &&
+              a.slots[0].facing == 5 && a.slots[0].ts2Extra[0] == 7,
+          "SLOT 0x46: x, y and the resolution in sixteenths, the proximities floats");
+    const Slots b = slot(0x47, true, 0.7f, 0, 0, 0.5f, 0, 0.25f);
+    check(b.slots[0].offset[0] == 0.7f && b.slots[0].minDistance == 0.5f && b.slots[0].resolutionTiles == 0.25f,
+          "SLOT 0x47: x, y and the resolution in tiles");
+    const Slots c = slot(0xA, false, 16, 0, 32, 0, 8, 0);
+    check(c.slots[0].offset[0] == 1.0f && c.slots[0].minDistance == 2.0f && c.slots[0].maxDistance == 4.0f &&
+              c.slots[0].resolutionTiles == 0.5f && c.slots[0].ts2Extra[0] == 0 && c.slots[0].ts2Extra[1] == 0xFFFFFFFFu,
+          "SLOT 0xA (The Sims 1's layout): the proximities in sixteenths");
+    const Slots e = slot(8, false, 0, 0x400, 2, 0, 0, 0);
+    check(e.slots[0].minDistance == 2.0f && e.slots[0].facing == -1 && !(e.slots[0].flags & 0x400) &&
+              e.slots[0].gradient == 0.125f,
+          "SLOT 8: whole-tile proximities, the facing from flag 0x400, the gradient in sixteenths");
+}
+
 static void testInteractionTable() {
     // Version 0x48, one interaction with 16 advertisements for the first age
     // group, then 96 zero bytes and the name, as in the game's "Reaction
@@ -2381,6 +2437,7 @@ int main() {
     testSimAntics();
     testBhav();
     testInteractionTable();
+    testSlotVersions();
     testCameraConfig();
     testLightingConfig();
     testStandardMaterial();

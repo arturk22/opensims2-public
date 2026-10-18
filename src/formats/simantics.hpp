@@ -131,12 +131,13 @@ struct Slots {
         float gradient = 0;                                                                         // v >= 7
         int32_t height = 0;                                                                          // v >= 8
         int32_t facing = 0, resolution = 0;                                                          // v >= 9/10
-        std::array<uint32_t, 2> ts2Extra{};                                                          // Sims 2 layout
-        // Routing distances in tiles. The Sims 2 stores the proximities as
-        // floats in tiles (the global SLOT: 1-3, 0.7, 15), and the resolution
-        // as a float too (1.0, 0.5, 0.25) except in some version 70 files,
-        // where it is a small integer in sixteenths of a tile, as in The Sims 1
-        // (16 per tile; FreeSO). Inferred from the values.
+        std::array<uint32_t, 2> ts2Extra{0, 0xFFFFFFFF}; // v >= 0x40: the name index; v >= 0x41: +0x1c
+        // Routing distances in tiles, as cTSSlotDescriptor::Read has them by
+        // the file's version (base 1.0 0xbc3f1c; docs/routing-mac.md §9.5):
+        // the proximities whole tiles before 0xA, sixteenths to 0x42, floats
+        // from 0x43; the resolution sixteenths before 0x47, a float from it
+        // (the raw ints above keep the bits). The offset's x and y are in
+        // sixteenths before 0x47 too (scaled here).
         float minDistance = 0, maxDistance = 0, optimalDistance = 0, resolutionTiles = 0;
     };
     std::string fileName;
