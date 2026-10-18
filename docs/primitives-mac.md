@@ -4586,7 +4586,13 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   um destino float (motivo) também é aceito. Sempre verdadeiro.
 - **0x0B Get Distance To**: destino = temp (u16 0); flags byte 6: 0x02 em
   centésimos de tile; distância de mim (ou do objeto do operando) ao stack
-  object.
+  object. **Rodada n49** (`cTSObject::TryDistanceTo` BV `0xe25a28`): a
+  distância é o `CalcShortDistance` (vtable `0x1f8`, BV `0xaf581c`) com 10,0
+  (BV `0x277a900`): √(distância no plano² + (10 × andares entre eles)²),
+  cortada para inteiro (ou × 100 e cortada). O VM somava 20 por andar (da
+  FreeSO), também em centésimos: um Sim no andar de cima a 1,6 tile ficava a
+  "180" e o "Goal Check - Continue?" (≤ 300) da aproximação social o achava
+  perto (o 13 a cada tick do Mortimer no alpendre do `N001_Lot11`).
 - **0x0C Get Direction To**: destino (dado u16 0, dono u16 2); flags byte 8:
   0x02 em graus.
 - **0x0E Find Best Object for Function**: função u16 0 (STR# 0xC9); flags

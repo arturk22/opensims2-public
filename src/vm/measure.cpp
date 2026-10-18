@@ -25,20 +25,26 @@ const Object& operandObject(Context& c, size_t flagAt, size_t at) {
 
 // Get Distance To (0x0B): temp u16 at 0 := the distance from an object
 // (flags u8 at 2, 0x01: owner u8 at 3, data u16 at 4; else me) to the stack
-// object, in whole tiles, plus 20 per level between them (FreeSO's). With
-// flag 0x02 in byte 6 it is in hundredths of a tile (confirmed by the Mac
-// binary's disassembler, docs/primitives-mac.md §5).
+// object. cTSObject::TryDistanceTo (BV 0xe25a28) takes it from
+// CalcShortDistance (vtable 0x1f8, BV 0xaf581c) with 10.0 (BV 0x277a900):
+// sqrt(the distance in the plane^2 + (10 x the levels between them)^2),
+// cut to whole tiles, or with flag 0x02 in byte 6 to hundredths of a tile
+// (round n49, docs/routing-mac.md §9.5; was FreeSO's whole tiles + 20 a
+// level, which put a Sim a floor up 0.2 tile further in hundredths: the
+// social approach's "Goal Check - Continue?" took one 1.6 tiles off on the
+// floor above as near enough and the route ended with 13 tick after tick).
 Exit getDistanceTo(Context& c) {
     const auto& o = c.instruction.operands;
     const Object& from = operandObject(c, 2, 3);
     const Object& to = c.stackObject();
-    const double d = std::hypot(double(to.position.x - from.position.x), double(to.position.y - from.position.y));
-    const int levels = std::abs(to.position.level - from.position.level);
-    const double value = (o[6] & 0x02) ? std::floor(d * 100) : std::floor(d);
+    const float dx = to.position.x - from.position.x, dy = to.position.y - from.position.y;
+    const float dz = float(to.position.level - from.position.level) * 10.0f;
+    const double d = double(std::sqrt(dz * dz + (dx * dx + dy * dy)));
+    const double value = (o[6] & 0x02) ? std::trunc(d * 100) : std::trunc(d);
     const uint16_t temp = le16(&o[0]);
     if (temp >= kTempCount)
         throw VMError("Get Distance To: temp " + std::to_string(temp) + " out of range");
-    c.thread.temps[temp] = int16_t(std::min(32767.0, value + 20.0 * levels));
+    c.thread.temps[temp] = int16_t(std::min(32767.0, value));
     return Exit::True;
 }
 

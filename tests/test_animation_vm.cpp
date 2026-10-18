@@ -561,8 +561,9 @@ static void testMeasure() {
     Thread t = vm.start(s.id, 0x1000, {}, far.id);
     t.temps[4] = east.id;
     vm.run(t);
-    check(t.status == Thread::Status::Finished && t.temps[0] == 5 + 20 && t.temps[1] == 500 + 20,
-          "distance: whole tiles (or hundredths) plus 20 a level");
+    // CalcShortDistance with 10 a level (round n49): sqrt(5^2 + 10^2) = 11.18.
+    check(t.status == Thread::Status::Finished && t.temps[0] == 11 && t.temps[1] == 1118,
+          "distance: whole tiles (or hundredths), 10 tiles a level");
     check(t.temps[2] == directionOf(3, 4) && t.temps[3] == directionOf(1, 4), "direction to the stack object");
 }
 
