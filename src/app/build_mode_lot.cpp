@@ -117,7 +117,7 @@ void BuildMode::pointAt(simd_float3 eye, simd_float3 dir) {
     if (!active_)
         return;
     pointer_ = groundPoint(eye, dir);
-    if (tool_ == Tool::Object && held_ && pointer_)
+    if ((tool_ == Tool::Object || tool_ == Tool::Fireplace) && held_ && pointer_)
         holdObjectAt(int(std::floor(pointer_->x)), int(std::floor(pointer_->y)), direction_, true);
     dirty_ = true;
 }
@@ -133,6 +133,19 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
     if (tool_ == Tool::Object) {
         if (held_ && object_)
             placeObjectAt(int(std::floor(p->x)), int(std::floor(p->y)), direction_, true);
+        return true;
+    }
+    if (tool_ == Tool::Fireplace) {
+        if (control) { // the sledgehammer: the fireplace piece under the mouse
+            const vm::ObjectId id = pickObject ? pickObject(eye, dir) : 0;
+            const auto r = id ? editor_->deleteFireplace(id) : vm::BuildEditor::Result{false, 0, 0, 0, "no fireplace there"};
+            sound(r.ok ? "ui_object_sell" : "ui_error");
+            applied(r);
+            if (r.ok)
+                syncAfterObject();
+        } else if (held_ && fireplace_) {
+            placeFireplaceAt(int(std::floor(p->x)), int(std::floor(p->y)), direction_);
+        }
         return true;
     }
     if (tool_ == Tool::Design) {
@@ -496,7 +509,7 @@ void BuildMode::update() {
             }
             if (n > 0 && dragFrom_ && stairs_)
                 message_ = std::to_string(n) + " steps: " + money(n * stairs_->price);
-        } else if (tool_ == Tool::Object && held_) {
+        } else if ((tool_ == Tool::Object || tool_ == Tool::Fireplace) && held_) {
             for (const auto& part : last_.parts)
                 put(last_.ok, placeQuad(float(part.tile.x) + 0.04f, float(part.tile.y) + 0.04f,
                                         z(float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f), 0.92f, 0.92f, 0, false));

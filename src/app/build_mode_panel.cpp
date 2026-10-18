@@ -422,6 +422,14 @@ std::vector<BuildMode::Item> BuildMode::items() {
     case 10:
         if (subsort_ == 6)
             objectItems(8, 8); // gates
+        if (subsort_ == 3) // BA30 fireplaces (fireplaces.txt, catalog text "build" 144)
+            for (const BuildFireplace& fp : patterns_.fireplaces()) {
+                Item it;
+                it.tool = Tool::Fireplace;
+                it.fireplace = &fp;
+                it.name = fp.name, it.description = fp.description, it.price = fp.price;
+                out.push_back(std::move(it));
+            }
         if (subsort_ == 4) { // BA40 pools: the pool tool (catalog text "build" 138, index 6), then the pool objects
             Item it;
             it.tool = Tool::Pool;
@@ -609,7 +617,9 @@ UiScreen BuildMode::screen(int width, int height) {
                                   (it.stairs && it.stairs == stairs_ && tool_ == Tool::Stairs) ||
                                   (it.dormer && it.dormer == dormer_ && tool_ == Tool::Dormer) ||
                                   (it.arch && tool_ == Tool::FenceArch) ||
-                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && !it.dormer && !it.arch && it.tool != Tool::Terrain &&
+                                  (it.fireplace && it.fireplace == fireplace_ && tool_ == Tool::Fireplace) ||
+                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && !it.dormer && !it.arch &&
+                                   !it.fireplace && it.tool != Tool::Terrain &&
                                    it.tool != Tool::Roof && it.tool == tool_);
             if (selected) {
                 UiQuad q;
@@ -795,6 +805,8 @@ bool BuildMode::press(simd_float2 p) {
                     selectStairsTool(*it.stairs);
                 else if (it.dormer)
                     selectDormerTool(*it.dormer);
+                else if (it.fireplace)
+                    selectFireplaceTool(*it.fireplace);
                 else if (it.arch) {
                     cancel();
                     tool_ = Tool::FenceArch, arch_ = it.arch;

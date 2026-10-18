@@ -242,6 +242,47 @@ void BuildMode::selectDormerTool(const BuildRoofProduct& product) {
     say(product.name + " (" + money(product.price) + ")");
 }
 
+void BuildMode::selectFireplaceTool(const BuildFireplace& product) {
+    cancel();
+    const auto def = vm_.code().definitionByName(product.mantle);
+    if (!def) {
+        say(product.name + ": no object \"" + product.mantle + "\"");
+        return;
+    }
+    try {
+        held_ = vm::createGhost(vm_, def->first, def->second);
+    } catch (const std::exception& ex) {
+        say(product.name + ": " + ex.what());
+        held_ = 0;
+        return;
+    }
+    tool_ = Tool::Fireplace;
+    fireplace_ = &product;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    last_ = {};
+    say("holding " + product.name + " (" + money(product.price) + ")");
+}
+
+bool BuildMode::placeFireplaceAt(int x, int y, int direction) {
+    if (!held_ || !fireplace_)
+        return false;
+    holdObjectAt(x, y, direction, true);
+    const vm::ObjectId id = held_;
+    const auto r = editor_->placeFireplace(*fireplace_, id, {x, y, level_}, direction_);
+    if (!r.ok) {
+        sound("ui_error");
+        applied(r);
+        holdObjectAt(x, y, direction_); // shown where it would go again
+        return false;
+    }
+    sound(objectSound(id));
+    held_ = 0;
+    applied(r);
+    syncAfterObject();
+    selectFireplaceTool(*fireplace_); // another of the same (inferred: as the object tool keeps buying)
+    return true;
+}
+
 BuildMode::StairsDrag BuildMode::stairsDrag(simd_float2 from, simd_float2 to) const {
     StairsDrag d;
     d.top = {int(std::floor(from.x)), int(std::floor(from.y)), level_};
@@ -638,7 +679,9 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
 // (Shift on that face), --door <guid|name>@x,y[,dir] places
 // a door, window or gate (no dir: turned to its wall, as a click does;
 // --door <guid|name> alone only holds it, for the mouse steps), --build-undo / --build-redo (with any value),
-// --build-tool pool (the pool tool, for the mouse steps --drag / --hover).
+// --build-tool pool (the pool tool, for the mouse steps --drag / --hover),
+// --fireplace product,x,y,dir (holds the mantle and clicks there),
+// --delete-fireplace <piece id> (the sledgehammer on a fireplace).
 void BuildMode::runSteps(const std::vector<std::string>& args) {
     if (!active_)
         return;
@@ -799,6 +842,17 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
         } else if (a == "--railing" && f.size() >= 2) { // part id,side 0|1[,delete]
             selectRailingTool();
             r = ed.changeRailing(vm::ObjectId(n(0)), n(1) != 0, f.size() > 2 && f[2] == "delete");
+        } else if (a == "--fireplace" && f.size() >= 4) { // product 0-4,x,y,direction (holds it, then a click)
+            const BuildFireplace* fp = nullptr;
+            for (const auto& b : patterns_.fireplaces())
+                if (b.id == n(0))
+                    fp = &b;
+            if (!fp)
+                throw std::runtime_error("--fireplace: no fireplace " + f[0]);
+            selectFireplaceTool(*fp);
+            placeFireplaceAt(n(1), n(2), n(3));
+        } else if (a == "--delete-fireplace" && !f.empty()) { // any piece's object id (the sledgehammer)
+            r = ed.deleteFireplace(vm::ObjectId(n(0)));
         } else if (a == "--delete-stairs" && !f.empty()) {
             r = ed.deleteStairs(vm::ObjectId(n(0)));
             releaseSound(Tool::Stairs, true, *r);

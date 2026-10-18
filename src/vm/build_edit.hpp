@@ -107,7 +107,7 @@ public:
     };
     static constexpr int kMantleLink = -2;
     struct ChimneyPlan {
-        int error = 0; // 0 fits
+        int error = 0; // 0 fits, -1 refused (TryPlace gives no text: the footprint goes red)
         std::string why;
         bool newLevel = false; // the cap needs a level over the lot's top (SetLevelRange)
         std::vector<ChimneyPiece> pieces; // in TryPlace's order: the caps from the top, then the hearths down

@@ -6,8 +6,9 @@
 # cap at a new story's height makes the chimney's top again; undo gives the
 # links back. The saved fireplaces against the tool's chimneys
 # (fireplace-sweep).
-# usage: fireplace.sh <s2pkg executable> <scratch dir>
-s2pkg=$1; out=$2
+# Build mode's BA30 in the app: the sledgehammer and the tool's click.
+# usage: fireplace.sh <s2pkg executable> <opensims2 executable> <scratch dir>
+s2pkg=$1; app=$2; out=$3
 if [ -z "$OS2_DATA" ]; then echo "fireplace: ok (skipped: no OS2_DATA)"; exit 0; fi
 mkdir -p "$out"
 fail=0
@@ -43,5 +44,13 @@ grep -q "same .* at (45.5,13.5,4) dir 0:" "$out/lot82.log" && grep -q "chain $wa
 "$s2pkg" fireplace-sweep "$OS2_DATA"/TSData/Res/UserData/Neighborhoods/N00[12]/Lots/*.package > "$out/sweep.log" 2>&1
 grep -q "fireplace-sweep: .* 25 fireplaces, 22 the tool's chimney (13 of them in a chain with other mantles, 10 of those" "$out/sweep.log" ||
     { echo "FAIL sweep: $(tail -1 "$out/sweep.log")"; fail=1; }
+# The app: Build mode on N001_Lot68, the sledgehammer on 525, then the
+# Loft fireplace held and clicked at (16, 11) on level 2 facing 2.
+"$app" --data "$OS2_DATA" --user-dir "$out/user" --no-audio --lot N001_Lot68 --vm --mode build --delete-fireplace 525 \
+    --build-level 2 --fireplace 0,16,11,2 --screenshot "$out/app.png" -ApplePersistenceIgnoreState YES > "$out/app.log" 2>&1
+grep -q "build: --delete-fireplace 525: a fireplace of 10 objects sold for §2525" "$out/app.log" &&
+    grep -q "build mode: .* placed with 9 chimney pieces for §2500; funds §2.275" "$out/app.log" ||
+    { echo "FAIL app: $(grep 'build' "$out/app.log" | tail -4)"; fail=1; }
+rm -rf "$out/user"
 [ $fail = 0 ] && echo "fireplace: ok"
 exit $fail

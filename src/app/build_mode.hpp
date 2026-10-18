@@ -104,7 +104,7 @@ public:
     bool design(vm::ObjectId id, simd_float2 at);
     DesignTool& designTool() { return *design_; }
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer, FenceArch, Railing };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer, FenceArch, Railing, Fireplace };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -130,6 +130,12 @@ public:
     // Dormers (B940, roofs.txt "roof 6-11"): a click on the attic level puts
     // one with its corner at the grid point under the mouse, turned by `,`/`.`.
     void selectDormerTool(const BuildRoofProduct& product);
+    // Fireplaces (BA30, fireplaces.txt): the mantle held as the object tool
+    // holds a door (`,`/`.` turn it); a click puts it with its chimney
+    // (BuildEditor::placeFireplace), another held after; Ctrl on a piece is
+    // the sledgehammer (the chain sold, deleteFireplace).
+    void selectFireplaceTool(const BuildFireplace& product);
+    bool placeFireplaceAt(int x, int y, int direction);
     // Terrain: a sculpt brush (raise, lower, flatten, smooth) or a paint
     // (the paint's texture); `size` 0-2 small/medium/large.
     void selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint = nullptr);
@@ -238,6 +244,7 @@ private:
         const BuildStairs* stairs = nullptr;
         const BuildRoofProduct* dormer = nullptr;
         const BuildFenceArch* arch = nullptr;
+        const BuildFireplace* fireplace = nullptr;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -307,6 +314,7 @@ private:
     const BuildStairs* stairs_ = nullptr;
     const BuildRoofProduct* dormer_ = nullptr;
     const BuildFenceArch* arch_ = nullptr;
+    const BuildFireplace* fireplace_ = nullptr;
     // The flight the stairs tool would lay from the drag (or the pointer):
     // top tile, direction and the dragged end (none: found by itself).
     struct StairsDrag {

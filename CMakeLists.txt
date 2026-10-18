@@ -584,8 +584,8 @@ set_tests_properties(guob_walls PROPERTIES PASS_REGULAR_EXPRESSION "guob walls: 
 # With the game's data: Build mode's undo and redo give the lot back byte for byte (tests/build_undo.sh, round n20).
 add_test(NAME build_undo COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build_undo.sh $<TARGET_FILE:s2pkg> ${CMAKE_BINARY_DIR}/build_undo)
 set_tests_properties(build_undo PROPERTIES PASS_REGULAR_EXPRESSION "build undo: ok" TIMEOUT 600)
-# With the game's data: the fireplace tool, its chimneys and the sledgehammer (tests/fireplace.sh, round n48).
-add_test(NAME fireplace COMMAND sh ${CMAKE_SOURCE_DIR}/tests/fireplace.sh $<TARGET_FILE:s2pkg> ${CMAKE_BINARY_DIR}/fireplace)
+# With the game's data: the fireplace tool, its chimneys and the sledgehammer, in s2pkg and Build mode (tests/fireplace.sh, round n48).
+add_test(NAME fireplace COMMAND sh ${CMAKE_SOURCE_DIR}/tests/fireplace.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/fireplace)
 set_tests_properties(fireplace PROPERTIES PASS_REGULAR_EXPRESSION "fireplace: ok" TIMEOUT 600)
 # With the game's data: objects refused on slopes (IsFlat 0x12) and the saved objects tested where they stand (tests/placement_slope.sh, round n20).
 add_test(NAME placement_slope COMMAND sh ${CMAKE_SOURCE_DIR}/tests/placement_slope.sh $<TARGET_FILE:s2pkg>)

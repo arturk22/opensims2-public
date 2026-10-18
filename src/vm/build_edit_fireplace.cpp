@@ -47,7 +47,7 @@ float roofHeightAt(const roofgame::World& w, float x, float y) {
 BuildEditor::ChimneyPlan BuildEditor::chimneyPlan(ObjectId mantleId, const Position& at, int direction) const {
     ChimneyPlan plan;
     if (!vm_.object(mantleId)) {
-        plan.error = 0x0E, plan.why = "no mantle";
+        plan.error = -1, plan.why = "no mantle";
         return plan;
     }
     // FUN_002035cc on the mantle: a stove (type 4) has its pipe over itself,
@@ -108,7 +108,7 @@ BuildEditor::ChimneyPlan BuildEditor::chimneyPlan(ObjectId mantleId, const Posit
         // must be a full one.
         const float rise = floorAt(T + 1, cx, cy) - floorAt(T, cx, cy);
         if (rise < kStory) {
-            plan.error = 0x2F, plan.why = "the story is too low for the chimney";
+            plan.error = -1, plan.why = "the story is too low for the chimney";
             return plan;
         }
         if (T < topVm) {
@@ -202,7 +202,7 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
             if (vm_.world)
                 rooms.insert(vm_.world->room(part.tile));
         if (rooms.size() > 1)
-            return fail(3, "its parts are not in one room");
+            return fail(0, "its parts are not in one room (the tool's error 3)");
     }
     const Position at{float(tile.x) + 0.5f, float(tile.y) + 0.5f, tile.level};
     // The pieces' definitions.
@@ -251,7 +251,7 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
         try {
             id = createGhost(vm_, def->first, def->second);
         } catch (const std::exception& e) {
-            why = e.what(), code = 0x0E;
+            why = e.what(), code = 0;
             return 0;
         }
         pieces.push_back(id);
@@ -365,18 +365,18 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
                 if (parts == 0 && groupOf(vm_, id).size() > 1)
                     piece = multiTileGroup(*x);
                 if (const auto under = l->below != -1 ? fireplaceLinks(vm_, l->below) : std::nullopt; under && under->type == 1)
-                    return fail(6, "a mantle is in front of that chimney already");
+                    return fail(0, "a mantle is in front of that chimney already (the tool's error 6)");
                 ++valid;
             }
             ++parts;
         }
         if (valid != parts || piece == -1)
-            return fail(5, "the chimney behind does not fit the mantle");
+            return fail(0, "the chimney behind does not fit the mantle (the tool's error 5)");
         // CreateClonedUndoableListFromIDLinkedList (BV 0x27d3ac) makes the
         // chain again (each piece a copy, its undo's) and turns the copies
         // to the mantle's facing: a chimney facing another way is not done.
         if (const Object* x = vm_.object(piece); !x || x->data[objdata::Direction] != p.direction)
-            return fail(5, "the chimney behind faces another way (not done)");
+            return fail(0, "the chimney behind faces another way (not done)");
         const auto pl = fireplaceLinks(vm_, piece);
         applyPlacement(vm_, mantle, p);
         ObjectId under = pl->below, over = piece;
@@ -403,7 +403,7 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
                 pickUp(vm_, id);
             ChimneyPlan plan = chimneyPlan(mantle, at, p.direction);
             if (plan.error)
-                return revert(plan.why, plan.error);
+                return revert(plan.why, 0);
             if (plan.newLevel)
                 levelsBefore = lot_, addUpperLevel(lot_);
             ObjectId prev = -1, atMantle = -1;
@@ -411,7 +411,7 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
                 if (cp.at.level < at.level)
                     break;
                 if (!definitionOf(cp.kind))
-                    return revert("no object for a chimney piece", 0x0E);
+                    return revert("no object for a chimney piece", 0);
                 std::string why;
                 int code = 0;
                 const ObjectId id = placePiece(cp, p.direction, false, why, code);
@@ -426,7 +426,7 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
                     atMantle = id;
             }
             if (atMantle == -1)
-                return revert("no hearth piece on the mantle's story", 5);
+                return revert("no hearth piece on the mantle's story", 0);
             over = atMantle;
             link(over, -1, fireplaceLinks(vm_, over)->above);
         }
@@ -441,10 +441,10 @@ BuildEditor::Result BuildEditor::placeFireplace(const BuildFireplace& product, O
 
     ChimneyPlan plan = chimneyPlan(mantle, at, p.direction);
     if (plan.error)
-        return fail(plan.error, plan.why);
+        return fail(0, plan.why);
     for (const ChimneyPiece& piece : plan.pieces)
         if (!definitionOf(piece.kind))
-            return fail(0x0E, "no object for a chimney piece");
+            return fail(0, "no object for a chimney piece");
     if (plan.newLevel)
         levelsBefore = lot_, addUpperLevel(lot_);
     applyPlacement(vm_, mantle, p);
