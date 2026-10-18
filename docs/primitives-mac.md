@@ -4492,10 +4492,10 @@ social "Turn toward incoming Sim's target slot" (semi-global `0x7FD90EDB`
 `0x2019`: o 37 do Sim que chega == 1033 → vira para a direção absoluta do
 ponto pelo 38, global `0x2DF`; senão vira para o Sim) e o `resumeRoutes` do
 VM (tira os 1000). O laço do 13 que a n46 viu com o + 1000 (`N001_Lot11`
-semente 2) não volta com as pegadas encostadas da n49; o 13 a cada tick do
-Mortimer no alpendre aparece com e sem o + 1000 (semente 8) e acaba com a
-interação (a espera da aproximação; §9.5). `OS2_SLOT_PLAIN=1` volta ao
-índice só, para comparar. **Inferido:** 55 é sempre −1 (o planejador do
+semente 2) não aparece nas sementes 1–12 de 3 dias com o resto da rodada
+n49 (as trajetórias mudaram; a causa não foi achada); o 13 a cada tick do
+Mortimer perto do alpendre aparece com e sem o + 1000 (semente 8) e acaba
+com a interação. `OS2_SLOT_PLAIN=1` volta ao índice só, para comparar. **Inferido:** 55 é sempre −1 (o planejador do
 VM parte de onde o Sim está; o do jogo parte dos slots do contêiner quando o
 Sim sentado planeja antes da pré-rota), o 38 de um objetivo sem índice é 0,
 e o `PopRoute` não grava de novo (os valores são os do último planejamento,
