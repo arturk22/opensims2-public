@@ -1062,9 +1062,9 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
 // footprint (AggregateFootprint with object data 9, the footprint index:
 // that list by name, the first by name when 0) for the part's tile of the
 // model, else the OBJD box (footprintOf). The model's space is the lead
-// part's, as for the bone slots: the part's tile is its offset from the lead
-// turned back into it (inferred: the binary asks the object, vtable 0x150),
-// and the rectangles turn with the lead's facing as the bones do (the
+// part's, as for the bone slots: the part's tile is its normalized offset
+// from the lead (the binary asks the object, vtable 0x150: the OBJD's sub
+// index, partTileInModel), and the rectangles turn with the lead's facing as the bones do (the
 // binary's FUN_0191fa14 turns by direction & 6). A list without the part's
 // tile gives no rectangle (the bench of a piano has a tile with part of a
 // row). A model without a footprint list gives its box (the xy bounds of
@@ -1074,14 +1074,15 @@ namespace {
 
 // The part's tile in the model: cEdithMTObject::GetLocalOffsetFromLeader
 // (vtable 0x150, BV 0xaf2410), (part x - leader x, leader y - part y) of the
-// parts' normalized offsets (GetNormalizedOffset), here the OBJD's
-// multi-tile sub index (field 0x56: x in the high byte, y in the low one;
-// inferred, and checked against the world offset turned back on the beds
-// and pianos of the lots); without definitions, the world offset turned back.
+// parts' normalized offsets (GetNormalizedOffset), which cEdithMTObject::
+// OnInit (base 0xb23280, BV 0xaef22c) sets from the OBJD's multi-tile sub
+// index (GetMultiTileOffsets, base 0xbb4834: field 0x56, x the high byte
+// with its sign, y the low byte without; docs/routing-mac.md §9.5);
+// without definitions, the world offset turned back.
 std::pair<int, int> partTileInModel(const Object& part, const Object& lead, float turnedX, float turnedY) {
     if (&part != &lead && part.definition && lead.definition) {
         const uint16_t p = part.definition->field(0x56), l = lead.definition->field(0x56);
-        return {int(int8_t(p >> 8)) - int(int8_t(l >> 8)), int(int8_t(l & 0xFF)) - int(int8_t(p & 0xFF))};
+        return {int(int8_t(p >> 8)) - int(int8_t(l >> 8)), int(l & 0xFF) - int(p & 0xFF)};
     }
     return {int(std::lround(turnedX)), int(std::lround(turnedY))};
 }
