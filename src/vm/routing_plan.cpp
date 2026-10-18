@@ -6,6 +6,7 @@
 
 #include "interactions.hpp"
 #include "locomotion.hpp"
+#include "placement.hpp"
 #include "routing_internal.hpp"
 #include "sim_motion.hpp"
 
@@ -909,6 +910,84 @@ void VM::refreshObjectPortals() {
         if (!merged)
             out.push_back(p);
     }
+    // The cost-10 rectangles at a stair's ends (PortalAddToPathPlannerImpl,
+    // BV 0xe22a44; docs/routing-mac.md §9.5): a straight stair (type 10, its
+    // lead) or a modular stair's "Portal - A" (12) whose railing model
+    // (TSObjectGetModelType, BV 0xe1ec30: OBJf entry 48 as a check tree, its
+    // temp 0, else 1) is not 1 puts, at the end on the higher level, by the
+    // box (x0, y0, x1, y1) of its world footprint (GetFootprint's
+    // +0xc..+0x18, the snapped rectangles' union), x in [x0 - 0.32499, x0]
+    // and y in [y0 - 0.32499, y0 + 0.12499] (models 2 and 4) or [y1 -
+    // 0.12499, y1 + 0.32499] (3 and 4); at the lower end the same y and x in
+    // [x1, x1 + 0.32499]: passable, cost 10, on each end's level, the same
+    // side of x whatever the stair's direction. The other end: the modular
+    // stair's end of object data 80 (as above; the binary's last type 11/12
+    // member of its group), the straight stair's the last part with a next
+    // in its group's list (cEdithMTObject::PortalGetOtherEndOfStairs, BV
+    // 0xaf1570; here the parts by ID: inferred, the list's order is not read).
+    std::vector<World::CostRect> costs;
+    for (const auto& [id, o] : objects_) {
+        if (o.person || !o.definition || !o.position.inWorld() || o.data[objdata::ContainerId] != 0)
+            continue;
+        const uint16_t type = o.definition->objectType();
+        if (type != kObjectTypeModularStairsPortal && !(type == kObjectTypeStairs && multiTileGroup(o) == id))
+            continue;
+        const int model = railingObjectModel(*this, id);
+        if (model == 1)
+            continue;
+        const Object* other = nullptr;
+        if (type == kObjectTypeModularStairsPortal) {
+            ObjectId end = id;
+            for (int i = 0; i < 64; ++i) {
+                const Object* x = object(end);
+                const ObjectId next = x ? x->data[80] : 0;
+                if (next <= 0 || !object(next))
+                    break;
+                end = next;
+            }
+            if (const Object* e = end != id ? object(end) : nullptr;
+                e && e->definition &&
+                (e->definition->objectType() == kObjectTypeModularStairs ||
+                 e->definition->objectType() == kObjectTypeModularStairsPortal))
+                other = e;
+        } else {
+            std::vector<const Object*> parts;
+            for (const auto& [pid, po] : objects_)
+                if (po.position.inWorld() && multiTileGroup(po) == id)
+                    parts.push_back(&po);
+            for (size_t k = 0; k + 1 < parts.size(); ++k)
+                if (parts[k]->id != id)
+                    other = parts[k];
+        }
+        const Object* upper = &o;
+        const Object* lower = other;
+        if (other && other->position.level > o.position.level)
+            std::swap(upper, lower);
+        auto box = [&](const Object& end) {
+            std::array<float, 4> b{3.4e38f, 3.4e38f, -3.4e38f, -3.4e38f};
+            for (const auto& r : routingFootprint(end))
+                b = {std::min(b[0], r[0]), std::min(b[1], r[1]), std::max(b[2], r[2]), std::max(b[3], r[3])};
+            return b;
+        };
+        constexpr float kOut = 0.32499f, kIn = 0.12499f, kCost = 10;
+        for (const Object* end : {upper, lower}) {
+            if (!end)
+                continue;
+            const auto b = box(*end);
+            if (!(b[0] < b[2] && b[1] < b[3]))
+                continue;
+            const float xa = end == upper ? b[0] - kOut : b[2], xb = end == upper ? b[0] : b[2] + kOut;
+            if (model == 2 || model == 4)
+                costs.push_back({end->position.level, {xa, b[1] - kOut, xb, b[1] + kIn}, kCost});
+            if (model == 3 || model == 4)
+                costs.push_back({end->position.level, {xa, b[3] - kIn, xb, b[3] + kOut}, kCost});
+        }
+    }
+    if (std::getenv("OS2_OBJECT_PORTALS"))
+        for (const auto& c : costs)
+            std::fprintf(stderr, "stair cost rectangle (%.2f, %.2f)-(%.2f, %.2f, %d) cost %.0f\n", c.r[0], c.r[1], c.r[2], c.r[3],
+                         c.level, c.cost);
+    world->setCostRects(std::move(costs));
     if (std::getenv("OS2_OBJECT_PORTALS"))
         for (const auto& p : out)
             std::fprintf(stderr, "object portal %d slot %d (%.2f, %.2f, %d) %s %d slot %d (%.2f, %.2f, %d) stair %d\n", p.partA,

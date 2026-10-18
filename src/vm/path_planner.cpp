@@ -179,6 +179,18 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         p.oneWay = o.oneWay;
         portals_.push_back(p);
     }
+    // The world's fixed cost rectangles (the stairs' railing feet), over
+    // the floor's cost: the most of the two in each cell they overlap.
+    for (const World::CostRect& c : world.costRects()) {
+        if (c.level < world.firstLevel() || c.level >= world.firstLevel() + levels)
+            continue;
+        auto& cost = staticCosts_[size_t(c.level - world.firstLevel())];
+        const int cx0 = std::max(0, int(std::floor(c.r[0] * K))), cy0 = std::max(0, int(std::floor(c.r[1] * K)));
+        const int cx1 = std::min(cw_, int(std::ceil(c.r[2] * K))), cy1 = std::min(ch_, int(std::ceil(c.r[3] * K)));
+        for (int cx = cx0; cx < cx1; ++cx)
+            for (int cy = cy0; cy < cy1; ++cy)
+                cost[cellIndex(cx, cy)] = std::max(cost[cellIndex(cx, cy)], c.cost);
+    }
     cells_ = static_;
     costs_ = staticCosts_;
     for (const auto& level : staticCosts_)

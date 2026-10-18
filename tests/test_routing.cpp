@@ -2291,6 +2291,25 @@ static void testSnappedFootprints() {
           "snapped footprint: half a cell into it does not");
 }
 
+// The world's fixed cost rectangles (round n49: the cost-10 rectangles at a
+// railed stair's ends, PortalAddToPathPlannerImpl): passable, the most of
+// the floor and the rectangle in each cell they overlap; a plan goes round
+// them when that is cheaper.
+static void testCostRects() {
+    World w(10, 6);
+    w.setCostRects({{1, {4.0f, 0.0f, 5.0f, 4.0f}, 10.0f}});
+    PathPlanner planner(w);
+    check(planner.free(1, {4.5f, 2.0f}) && planner.costAt(1, {4.5f, 2.0f}) == 10 && planner.costAt(1, {5.5f, 2.0f}) == 1,
+          "cost rectangles: passable, costing 10 inside");
+    PlannedPath path;
+    RouteFail why;
+    check(planner.plan({1.5f, 1.0f}, 1, 1, {{8.5f, 1.0f, 0}}, path, why), "cost rectangles: a way");
+    float maxY = 0;
+    for (const auto& q : path.points)
+        maxY = std::max(maxY, q.y);
+    check(maxY >= 4.0f, "cost rectangles: the walk goes round");
+}
+
 // The terrain under a low floor (round n49; base 1.0's
 // WorkOutTileCostAndPassability state 5, FUN_01038900): a quarter of the
 // ground whose quarter on the level above has a visible floor standing less
@@ -2409,6 +2428,7 @@ int main() {
     testFloorCosts();
     testLowFloorTerrain();
     testSnappedFootprints();
+    testCostRects();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

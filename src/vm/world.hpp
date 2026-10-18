@@ -163,6 +163,24 @@ public:
         objectPortals_ = std::move(p);
     }
     const std::vector<ObjectPortal>& objectPortals() const { return objectPortals_; }
+    // Passable rectangles (x0, y0, x1, y1) that cost `cost` per tile walked,
+    // fixed while the objects that put them stay: the cost-10 rectangles at
+    // the ends of a straight or modular stair with a railing
+    // (PortalAddToPathPlannerImpl, VM::refreshObjectPortals). A cell costs
+    // the most of its floor and these.
+    struct CostRect {
+        int level = 0;
+        std::array<float, 4> r{};
+        float cost = 0;
+        bool operator==(const CostRect&) const = default;
+    };
+    void setCostRects(std::vector<CostRect> rects) {
+        if (rects == costRects_)
+            return;
+        ++revision_;
+        costRects_ = std::move(rects);
+    }
+    const std::vector<CostRect>& costRects() const { return costRects_; }
 
     // The doors openDoor opened, in order: the tile, the facing and whether
     // the door stands in a diagonal wall (the path planner makes each a
@@ -224,6 +242,7 @@ private:
     std::vector<int16_t> underSteps_; // [level][x][y]: 1 + the stair whose steps stand on it, 0 none
     std::set<size_t> pools_;          // cells over pools
     std::vector<ObjectPortal> objectPortals_;
+    std::vector<CostRect> costRects_;
     std::vector<int16_t> rooms_;      // [level][x][y]
     std::vector<uint8_t> xWalls_;     // [level][x][y]: wall (x, y)-(x + 1, y), x < width, y <= height
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height
