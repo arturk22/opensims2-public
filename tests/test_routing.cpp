@@ -836,6 +836,52 @@ static void testRouteStatus() {
     }
 }
 
+// Round n46: UpdatePersonDataFields (base 1.0 FUN_00c64a70) at every plan:
+// person data 40 "route goal" (the target), 37 "route slot" (-1 without a
+// routing slot of the target's or the global SLOT), 55 "route start slot"
+// (-1: from where the walker stands) and 38 "route multi slot index" (the
+// current goal's; -1 when the plan found no way), for any route, not only
+// Go To Routing Slot's; the pre-route tree already sees them.
+static void testRoutePersonDataFields() {
+    for (const bool walled : {false, true}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(10, 10);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        ObjectFunctions f;
+        f.functions.resize(0x26);
+        f.functions[0x25] = {0, 0x1010};
+        code.add(kGroup, 0x81, f);
+        constexpr uint8_t Global = 0x06, MyPersonData = 0x12;
+        // The pre-route tree: global 10 = my person data 40.
+        code.add(kGroup, 0x1010, tree({expr(Global, 10, Assign, MyPersonData, 40, T, E)}));
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {8.5f, 8.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {1.5f, 1.5f, 1};
+        for (int k : {37, 38, 40, 55})
+            sim.person->data[size_t(k)] = 77;
+        if (walled)
+            for (int x = 0; x < 10; ++x)
+                vm.world->addWall(1, x, 5, x + 1, 5);
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i)
+            vm.run(t);
+        const auto& d = sim.person->data;
+        if (walled)
+            check(t.status == Thread::Status::Finished && !t.result && d[40] == lamp.id && d[37] == -1 && d[55] == -1 &&
+                      d[38] == -1,
+                  "no way: 40 the target, 37 and 55 -1, 38 -1 (no current goal)");
+        else
+            check(t.status == Thread::Status::Finished && t.result && vm.globals[10] == lamp.id && d[40] == lamp.id &&
+                      d[37] == -1 && d[55] == -1 && d[38] == 0,
+                  "a Go To Relative Position route: 40 the target (the pre-route tree sees it), 37 and 55 -1, 38 the "
+                  "goal's 0");
+    }
+}
+
 // A Sim standing in a one-tile corridor blocks another: the walker waits
 // (asking it to move), plans again, and after five tries fails with
 // "blocked by person" (14).
@@ -2259,6 +2305,7 @@ int main() {
     testObjectPortals();
     testRouteResult();
     testRouteStatus();
+    testRoutePersonDataFields();
     testBlockedBySim();
     testMutualBlock();
     testPredictionOnCurve();

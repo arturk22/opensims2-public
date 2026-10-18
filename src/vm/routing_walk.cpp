@@ -1084,12 +1084,21 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     if (!me.position.inWorld())
         throw VMError("Trying to route while out of world.");
     const VM::RouteGoals goals = plan();
+    // The route's routing slot (person data 37; WorkOutSlotIndex): Go To
+    // Routing Slot's, + 1000 for a global one; -1 for the other routes.
+    const int16_t slotIndex =
+        c.frame.routeSlot < 0 ? int16_t(-1) : int16_t(c.frame.routeSlot + (c.frame.routeSlotGlobal ? 1000 : 0));
     if (goals.goals.empty()) { // the last refused candidate's result (InitRoute: none at all → 6)
-        if (me.person) // InitRoute's FindPath failed: route status 0 (base 1.0 0xc58130)
-            me.person->data[persondata::RouteStatus] = 0;
+        // InitRoute's FindPath failed: UpdatePersonDataFields(0, true), route
+        // status 0 (base 1.0 0xc58130), no current goal.
+        Object::Route none;
+        none.target = target;
+        none.slotIndex = slotIndex;
+        updatePersonDataFields(me, none, 0);
         return failRoute(c, goals.refused ? RouteFail(goals.refused) : RouteFail::NoValidGoals, 0, failureTrees);
     }
     Object::Route r;
+    r.slotIndex = slotIndex;
     for (size_t i = 0; i < goals.goals.size(); ++i)
         r.goals.push_back({goals.points[i][0], goals.points[i][1], goals.goals[i].cost});
     r.facings = goals.facings;
@@ -1115,7 +1124,7 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         for (size_t i = 0; i < r.chairs.size(); ++i)
             if (r.chairs[i] == in) {
                 if (i < r.multi.size())
-                    me.person->data[38] = r.multi[i];
+                    me.person->data[38] = r.goalMulti = r.multi[i];
                 if (startPostRoute(c, 1, 0, in))
                     return Exit::Call;
                 me.person->data[62] = 0;
@@ -1183,6 +1192,7 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
         c.frame.preRouteRan = false; // the instruction is done
         c.frame.postRoute = 0;
         c.frame.routeSlot = -1;
+        c.frame.routeSlotGlobal = false;
         c.frame.routeResume = false;
     }
     return e;
@@ -1224,23 +1234,6 @@ const Slots::Slot& routingSlot(VM& vm, const Object& target, bool global, int in
     return *slots[size_t(index)];
 }
 
-// The routing person data the trees read after a Go To Routing Slot (labels
-// of STR# 0xC8): 37 "route slot" (the routing slot number), 38 "route multi
-// slot index" (which of the places the slot gives was taken; "Sofa -
-// Animate - Get In" passes it on as the seat; 0 here, then the bone of a
-// bone slot the planned way goes to) and 40 "route goal" (the object). Inferred
-// from the labels and those uses (the base game's UpdatePersonDataFields, base
-// 1.0 FUN_00c64a70, writes them from the current route at every plan and pop,
-// docs/primitives-mac.md §4j); 39 "route status" is set by the plan, the start
-// and the end of a route (walkStep, planRoute, walk).
-void noteRouteSlot(Object& me, int slot, ObjectId target) {
-    if (!me.person)
-        return;
-    me.person->data[37] = int16_t(slot);
-    me.person->data[38] = 0;
-    me.person->data[40] = target;
-}
-
 // Go To Routing Slot (0x2D): slot u16 at 0, where it is u16 at 2 (STR#
 // 0xD7: 0 the stack param of that number, 1 the literal routing slot, 2 the
 // global slot; 3 "???" is not done), flags u8 at 4, from the editor's
@@ -1270,14 +1263,9 @@ Exit goToRoutingSlot(Context& c) {
     if (!starting) // mid-instruction: as read before the route's trees (they change the temps)
         index = c.frame.routeSlot;
     c.frame.routeSlot = int16_t(index);
+    c.frame.routeSlotGlobal = scope == 2;
     const Slots::Slot& slot = routingSlot(c.vm, *target, scope == 2, index);
     const ObjectId id = target->id;
-    // Once, as the walk starts: each tick of the walk runs the instruction
-    // again, and resetting person data 38 then lost the side of the chair
-    // the planned way had chosen (the Sims sat sideways on the chairs they
-    // reached from their south-west bone).
-    if (starting)
-        noteRouteSlot(c.me(), index, id);
     const bool ignoreFootprint = flags & 0x04;
     return walk(
         c, id,
@@ -1648,10 +1636,13 @@ size_t resumeRoutes(VM& vm, Thread& t) {
         const uint16_t op = f.behavior->instructions[f.pc].opcode;
         if (op != 0x2D && op != 0x1B)
             continue;
-        // The routing slot noted as the walk started (noteRouteSlot: person
-        // data 37), not read again from the temps.
-        if (op == 0x2D && me->person)
-            f.routeSlot = me->person->data[37];
+        // The routing slot the route had (person data 37, + 1000 for a
+        // global one), not read again from the temps.
+        if (op == 0x2D && me->person) {
+            const int16_t slot = me->person->data[37];
+            f.routeSlotGlobal = slot >= 1000;
+            f.routeSlot = int16_t(slot >= 1000 ? slot - 1000 : slot);
+        }
         f.preRouteRan = true;
         if (i + 1 == t.stack.size()) { // walking
             f.routeResume = true;

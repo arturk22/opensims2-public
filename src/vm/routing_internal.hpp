@@ -55,6 +55,11 @@ std::optional<Object::Route::Point> turnPoint(VM& vm, const Object& me, int step
 float facingOf(const Object& me);
 // Plans the route's points from where the walker stands to its goals.
 bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why);
+// cTSRoutingObjectAggregate::UpdatePersonDataFields (base 1.0 FUN_00c64a70,
+// BV 0x570674): the walker's person data 40 "route goal", 37 "route slot",
+// 55 "route start slot" and 38 "route multi slot index" from the route, and
+// 39 "route status" when given.
+void updatePersonDataFields(Object& me, const Object::Route& r, std::optional<int16_t> status);
 // Notes where a router stands in the route's map (SetRouterLastKnownLocation).
 void notePlace(Object::Route& r, const Object& who);
 

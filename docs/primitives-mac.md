@@ -4442,6 +4442,19 @@ camas, sofás, banheiras etc. (43 leituras); **40** o "Test - Sim Routing to
 Inside?", o "Fire - Another Fighter Routing to Fire?", o "Route - Is Person
 going to Ped Portal?" (o de outro Sim, por isso vale para toda rota, não só
 o Go To Routing Slot); 55 o "Function - Stand" e o "Stand - Try Snap".
+Os Sims salvos do `N003_Lot52` mostram os campos de rotas do jogo: 37 = 1033
+e 1004 (slots globais 33 e 4), 38 = 4 e 6, 40 = o alvo, 55 = −1.
+
+**No VM** (n46): `updatePersonDataFields` (`routing_plan.cpp`) a cada
+planejamento (`planRoute`, com caminho 39 := 1, sem 39 := 0 e 38 := −1) e
+quando o planejador não acha objetivos, para toda rota (o Go To Relative
+Position também: 40 é o alvo dele); 37 é o slot do Go To Routing Slot (+ 1000
+o global), −1 nas outras. Era: 37/38/40 só no começo do Go To Routing Slot
+(37 sem o + 1000), 55 nunca. **Inferido:** 55 é sempre −1 (o planejador do
+VM parte de onde o Sim está; o do jogo parte dos slots do contêiner quando o
+Sim sentado planeja antes da pré-rota), o 38 de um objetivo sem índice é 0,
+e o `PopRoute` não grava de novo (os valores são os do último planejamento,
+os mesmos que ele gravaria).
 
 ### As sobras da fila (BV)
 

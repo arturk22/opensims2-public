@@ -588,11 +588,11 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     }
     planner.portalLocked = nullptr;
     if (!planned) {
-        // InitRoute without a way: UpdatePersonDataFields(0, true) sets
-        // person data 39 "route status" to 0 (base 1.0 0xc58130;
-        // docs/primitives-mac.md §4j).
-        if (me.person)
-            me.person->data[persondata::RouteStatus] = 0;
+        // InitRoute without a way: UpdatePersonDataFields(0, true): person
+        // data 39 "route status" := 0 (base 1.0 0xc58130), the other fields
+        // the route's, without a current goal (docs/primitives-mac.md §4j).
+        r.goalMulti = -1;
+        updatePersonDataFields(me, r, 0);
         return false;
     }
     r.points.clear();
@@ -645,11 +645,11 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         std::fprintf(stderr, "\n");
     }
     r.facing = r.facings.empty() ? -1 : r.facings[path.goal];
-    // Person data 38 "route multi slot index": which of a bone slot's places
-    // the way goes to (the goal's +0x14 in the binary; "Sofa - Animate - Get
-    // In" reads it as the seat, the dining chairs as the side to sit from).
-    if (me.person && path.goal < r.multi.size())
-        me.person->data[38] = r.multi[path.goal];
+    // The current goal's multi slot index (its +0x14; person data 38): which
+    // of a bone slot's places the way goes to ("Sofa - Animate - Get In"
+    // reads it as the seat, the dining chairs as the side to sit from); 0
+    // for a goal without one (inferred).
+    r.goalMulti = path.goal < r.multi.size() ? r.multi[path.goal] : int16_t(0);
     // The goal's chair, for the post-route tree (a sitting goal; 0 standing).
     r.chair = path.goal < r.chairs.size() ? r.chairs[path.goal] : 0;
     shapeWalk(vm, me, r, me.route.has_value() && !me.route->waiting && me.route->climb.ticksLeft == 0);
@@ -657,9 +657,27 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     // InitRoute with a way: UpdatePersonDataFields(1, true), route status 1
     // (base 1.0 0xc57cb4), at every plan (DoInitial), also when the walker
     // is at the goal already.
-    if (me.person)
-        me.person->data[persondata::RouteStatus] = 1;
+    updatePersonDataFields(me, r, 1);
     return true;
+}
+
+// The fields as the base game writes them (docs/primitives-mac.md §4j): 55
+// is the start candidate the planner took when the walker leaves a
+// container by its slots (FindPath, base FUN_00c475d0), -1 when it starts
+// where it stands; the VM's planner always starts there (inferred: a
+// seated Sim's first plan, before its pre-route tree stands it up, would
+// have the chair's slot), as the saved Sims of N003_Lot52 have it (55 = -1
+// with 37 = 1033, 38 = 4, 40 = 158).
+void updatePersonDataFields(Object& me, const Object::Route& r, std::optional<int16_t> status) {
+    if (!me.person)
+        return;
+    auto& d = me.person->data;
+    d[40] = r.target;
+    d[37] = r.slotIndex;
+    d[55] = -1;
+    d[38] = r.goalMulti;
+    if (status)
+        d[persondata::RouteStatus] = *status;
 }
 
 } // namespace routing_internal
