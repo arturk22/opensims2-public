@@ -2543,25 +2543,114 @@ locais) e **"Turn toward incoming Sim's target slot"** (semi-global social
 direção absoluta do ponto (global `0x2DF` "Turn toward absolute direction");
 senão vira para o Sim (Turn Body Towards). Ou seja: as árvores contam com o
 + 1000 do `WorkOutSlotIndex`. No VM o 37 era o índice; com o + 1000 o
-`N001_Lot11` (semente 2, 3 dias) refaz por horas a aproximação do Mortimer
+`N001_Lot11` (semente 2, 3 dias) refazia por horas a aproximação do Mortimer
 (197) ao Alexander (142) com 13 a cada tick no topo da escada do alpendre
-(8,67; 12,19; 2): §9.5 "o que mudou".
+(8,67; 12,19; 2). Esse laço não é do + 1000 (aparece com e sem ele, semente
+8): é a distância entre andares abaixo.
+
+### O 13 a cada tick do Mortimer: o Get Distance To entre andares
+
+O "Goal Check - Continue?" da aproximação social (semi-global `0x2079`)
+acaba a rota (13, "perto o bastante") quando o `Get Distance To` em
+centésimos é ≤ 300. O `cTSObject::TryDistanceTo` (BV `0xe25a28`) toma a
+distância do `CalcShortDistance` (vtable `0x1f8`, BV `0xaf581c`) com o float
+de `0x277a900`, que o `cTSAutonomyConstantsClient::UpdateConstants` (BV
+`0xac8f80`) lê do FCNS 2 global, "autonomy floor to floor distance cost" (10,
+o mesmo padrão): **√(distância no plano² + (10 × andares entre eles)²)**,
+cortada para inteiro (ou × 100). O VM somava 20 por andar, da FreeSO, também
+em centésimos (0,2 tile): o Alexander um andar acima a 1,6 tile ficava a
+"180" e o Mortimer, no alpendre, acabava a rota com 13 a cada tick enquanto
+a interação durava (`N001_Lot11` semente 8, ticks 40.246–40.637).
+
+### O que mudou no código (rodada n49) e as medidas
+
+Um commit por parte, `ctest -j4` verde em cada um (62 testes; casos novos no
+`test_routing`, no `test_formats` e no `test_animation_vm`):
+
+1. **O terreno debaixo de um piso baixo** (`World::fromLot`,
+   `World::blockedQuarters`, `path_planner.cpp`): o estado 5 do base; as
+   células do planejador nesses quartos ficam fechadas, sem inflação.
+   8.437 tiles nos 103 lotes do jogo (debaixo das fundações e dos deques).
+   Teste "low floor".
+2. **As pegadas encostadas na grade de 1/8** (`snapFootprintRect`,
+   `VM::routingFootprint` / `worldFootprint`, `VM::personFootprintAt`): para o
+   planejador, o teste por passo, o `EvalTileForGoal` e a colocação; a caixa
+   do Sim também, com o dado 73 calculado na direção 0 e girado por direção
+   & 6. O passo de partida junto de uma quina (a Mary-Sue da semente 7 da
+   n31b, que não se repete no main atual) passa: entrar menos de meia célula
+   na célula da pegada não a toca. Teste "snapped footprint".
+3. **A caixa do modelo sem lista** pelos limites das formas
+   (`ObjectModel::bounds` não escondidos), não pelas malhas sem os planos de
+   sombra: arandelas, luminárias de parede e espelhos mudam (8 objetos no
+   `N001_Lot68`, 9 no `N001_Lot11`).
+4. **O subíndice do multi-tile** com o y sem sinal (sem efeito nos dados).
+5. **Os retângulos de custo 10 das escadas com corrimão**
+   (`World::CostRect`, `refreshObjectPortals`; a outra ponta da escada reta
+   pela ordem dos IDs das partes: inferido). 10 lotes do jogo base têm
+   escadas com corrimão (`N001_Lot82`: 10 retângulos). Teste "cost
+   rectangles".
+6. **O SLOT pela versão** (`Slots::parse`). Teste "SLOT".
+7. **O destino de sair do caminho** mantém a sua direção (0 ao ser feito):
+   as direções 1, 2, 6 e 7 dos tipos 1/2 ficam absolutas; as flags dos
+   setters guardadas no slot.
+8. **O dado 37 de um slot global = índice + 1000** (`OS2_SLOT_PLAIN=1` volta
+   ao índice). Teste "route slot".
+9. **O Get Distance To com 10 por andar** (`vm/measure.cpp`;
+   `OS2_DEBUG_DIST=1` lista as consultas entre andares).
+
+Medidas: `s2pkg autonomy`, 14 sementes × 12.000 ticks (`OS2_SEED` 0–13,
+`OS2_ROUTE_FAILS=1`, `OS2_DEBUG_BLOCK=1`; "resto" = as falhas sem o 13 de
+propósito dos sociais), main = `1676117d`:
+
+| | main | 2 | 7 | 8 | 9 (n49) |
+|---|---|---|---|---|---|
+| `N001_Lot68`: falhas / 13 dos sociais / resto | 393 / 287 / 106 | 405 / 278 / 127 | 366 / 265 / 101 | 346 / 261 / 85 | 341 / 263 / 78 |
+| `N001_Lot68`: bloqueios por passo; ações autônomas verdadeiras / falsas | 18; 634 / 20 | 14; 638 / 18 | 20; 644 / 17 | 6; 646 / 16 | 5; 644 / 18 |
+| `N001_Lot11`: falhas / 13 dos sociais / resto | 408 / 314 / 94 | 415 / 316 / 99 | 414 / 314 / 100 | 399 / 296 / 103 | 216 / 106 / 110 |
+| `N001_Lot11`: bloqueios por passo; ações verdadeiras / falsas | 7; 430 / 2 | 6; 440 / 2 | 6; 440 / 2 | 6; 428 / 2 | 12; 385 / 12 |
+
+As partes 1, 3, 4, 5 e 6 não mudam a saída desses dois lotes (byte a byte).
+As 12 ações falsas do `N001_Lot11` na parte 9 são "Pegar um Prato.../Gelatina"
+na mesa de bufê do térreo (uma por semente): a rota "Route - Social
+Distance" de quem está no andar da casa é interrompida pela árvore along route
+(16) e a interação acaba falsa (antes a distância entre andares era quase a
+do plano); não seguido (TODO).
+
+Três dias, sementes 1–12 (`S2PKG_VISITORS=1 S2PKG_FIRES=1`; os incêndios
+mudam de semente e pesam no `N001_Lot68`):
+
+| | main | n49 |
+|---|---|---|
+| `N001_Lot68`: falhas de rota / 13 dos sociais; ações verdadeiras / falsas; corridas com incêndio | 2.513 / 1.389; 4.325 / 362; 3 | 1.817 / 927; 3.378 / 268; 4 |
+| `N001_Lot11`: falhas de rota / 13 dos sociais; ações verdadeiras / falsas | 3.322 / 2.808; 2.040 / 68 | 2.127 / 607; 2.102 / 366 |
+
+Das 366 falsas do `N001_Lot11`, 302 são das sementes 8 e 10: a Cassandra
+fica no andar de cima com a escada reta trancada para ela (o "Portal - TEST"
+`0x7F0C60C8` `0x2003` tranca enquanto o semi-atributo 4 do stack object é >
+0, e o "Portal" `0x2002` só o desconta no fim da subida: um contador que
+ficou alto; os visitantes saíram do lote e o Alexander foi reiniciado logo
+antes), "Comer Refeição" falha com 2 até o fim. O mesmo acontece no main em
+outras sementes (com o + 1000 só: 2 e 3). `stair_top`, `deck_stairs` e
+`front_door` passam; o alpendre (28 sementes × 3.000 ticks) fica sem Sim
+preso antes e depois; `lot-run` 3.000 ticks dos 103 lotes: os mesmos
+números salvo `N001_Lot11` e `N002_Lot22` (objetos criados e mortos).
 
 ## 10. O que falta
 
-- Os retângulos de custo 10 junto das pontas das escadas reta e modular
-  (§9.1, §9.2, §9.4: são os pés do corrimão, modelos 2–4 da entrada 48;
-  passáveis; nenhum nos lotes medidos; falta saber se a caixa `+0xc..+0x18`
-  da vtable `0x100` é no mundo) e os portais dinâmicos dos dados de objeto
-  `0x58`–`0x61` (só no BV).
+- A outra ponta da escada reta para os retângulos de custo 10 (§9.5: a
+  penúltima parte da lista do grupo; aqui pela ordem dos IDs) e os portais
+  dinâmicos dos dados de objeto `0x58`–`0x61` (só no BV).
 - O cercado das urnas do `N003_Lot52` (§9.4): ler o alcance do `0x4c` do
   gerente de partições (`0xa0(5)`) e o `0xac` da parede no teste de parede do
   `TrySnap`, e ver no jogo se quem chuta uma urna lá à noite sai; no VM, o
   teste de parede do Snap só quando x e y mudam, como o binário.
-- O passo de partida junto de uma quina (§9.4, `N001_Lot68` semente 7): um Sim
-  a 0,015 de uma pegada, dentro da inflação, cujo clipe de partida o leva
-  para dentro dela, falha com 15 a cada rota por uma hora.
-- O `+10` do `WorldOutsideSupport` e o estado 7 no custo do piso (§9.1).
+- A varredura não lê as flags `0x100000` (outras direções com placar menor) e
+  `0x1000000` (descer ao piso de baixo) dos slots sintéticos (§9.5), nem a
+  `0x4000`/`0x8000`; o tipo 2 do sair do caminho não é feito.
+- A escada reta trancada pelo contador do "Portal" (`N001_Lot11` sementes 8 e
+  10 de 3 dias, §9.5): achar quem deixa o semi-atributo 4 alto.
+- O "Pegar um Prato.../Gelatina" que acaba falso com a distância entre andares
+  (§9.5).
 - O alpendre do `N001_Lot11` (rodadas n18b, n23, n30; §9.2, §9.3): os
   impasses das sementes 2 e 4 acabaram com a leitura da rodada n30 (o passo
   de 0,3 para sair do caminho, o contador, o "CT - Route Blocked" que
@@ -2575,8 +2664,5 @@ senão vira para o Sim (Turn Body Towards). Ou seja: as árvores contam com o
   21; antes 6: 2, 4, 10, 12, 15, 18). Não lido: se o relógio do jogo traz
   outra saída (a autonomia que muda de escolha por outra razão), só no jogo
   rodando (TESTAR).
-- A escala de x,y por 1/16 do `cTSSlotDescriptor::Read` até a "versão"
-  `0x46` (os SLOT `0x43`–`0x46` do jogo base já estão em tiles: qual versão
-  ele compara?).
 - Confirmar que nada escreve a escala de portal (`DAT_02d86430`) por um
   caminho indireto.
