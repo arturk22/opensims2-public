@@ -535,7 +535,11 @@ UiScreen BuildMode::screen(int width, int height) {
     }
     const UiElement& puck = puck_.roots.front();
     const auto pa = puck.area();
-    const float puckX = 8, puckY = float(height) - float(pa[3] - pa[1]);
+    // The pod as in Buy and Live: the client's left edge and 3 px above the
+    // script's own reach to its foot (the pill's art at 3,396 at 800x600,
+    // measured; the join below rides the same place; docs/buy-build-mac.md
+    // §1.6).
+    const float puckX = 0, puckY = float(height) - float(pa[3] - pa[1]) - 3;
     float x0 = puckX, y0 = puckY - 137;
     if (const UiElement* a = puck.child(0x4BDEFFAA))
         if (const UiElement* b = root.child(0x0000AAAA))

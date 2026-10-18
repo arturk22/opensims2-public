@@ -435,7 +435,11 @@ UiScreen LiveUi::screen(int width, int height) {
     const UiElement& puck = puck_.roots.front();
     const UiElement& live = live_.roots.front();
     const auto pa = puck.area();
-    const float puckX = 0, puckY = float(height) - float(pa[3] - pa[1]);
+    // The original's pod sits 3 px above the script's own reach to the
+    // client's foot (the pill's art at 516/396 over the 519/399 of the
+    // script's place), so the panel rises with it (measured: the panel's own
+    // background at height-289 at 800x600; docs/buy-build-mac.md §1.6).
+    const float puckX = 0, puckY = float(height) - float(pa[3] - pa[1]) - 3;
     float liveX = puckX + 5, liveY = puckY - 86;
     if (const UiElement* a = puck.child(0x4BDEFFAA))
         if (const UiElement* b = live.child(0x0000AAAA)) {

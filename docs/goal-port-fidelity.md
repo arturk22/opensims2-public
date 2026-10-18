@@ -4,7 +4,7 @@
   verificados; log no fim. Segue até o Artur mandar parar.
 - **Mandato:** Artur — "Faça um goal para gente portar com fidelidade, fique rodando em
   looping para gente fazer história, vamos pra cima." (17/10/2026)
-- **Branch:** `windows-x64-ghidra-pc` (11 commits à frente de `origin/main`). Um commit por
+- **Branch:** `windows-x64-ghidra-pc` (16 commits à frente de `origin/main`). Um commit por
   item; mensagem única em inglês (padrão do repo para código) / pt-BR sem acentos (padrão dos
   commits de docs), prefixo de área.
 - **Fonte de verdade:** docs de RE deste repo (`re-pc-ghidra.md`, `buy-build-mac.md`,
@@ -71,8 +71,16 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       `0xBDF83B` (corpo `FUN_00bdf845` — begin/end_group ignorados; hash→mapa; warning de id
       duplicado), `FUN_00bdd8f2` e `FUN_00bde67d` (corpo `FUN_00bde687`); `FUN_0040d883` =
       `std::string::operator+=(const char*)`. Detalhes em `re-pc-ghidra.md` (§a/§b).
-- [ ] **4. Buy §1.6 — a sobra de 1 px** na costura do catálogo (532 no app vs 533 do
-      original): medir com `--screenshot` no Windows e fechar a conta pixel a pixel.
+- [x] **4. Buy §1.6 — o painel na tela** (fechado 18/10): a sobra de 1 px na costura
+      era leitura equívoca — o endcap (`0x4CC48AA4`, 23 px) fica em 532..555 cobrindo a emenda
+      532..536 com o cap da janela em 537 (o slot do script +5) e a coluna 1 em
+      589 = 537 + 52 (kCellInX 4→0, o canto (52,19) da própria janela) nas duas
+      resoluções; a linha 1 desce para `altura − 129`; o trilho vai de 589 ao navy
+      em 1207 (619 = colunas×48−5) e a arte do slider virou barra de cantos r=4
+      (trilho com 1 px de navy no topo/base e o fill até as pontas; knob com 2 px de
+      navy em todas as bordas e 1 px de (157,171,241) por dentro nas pontas);
+      fechado, o endcap vai ao fim do sort (588) e o repeat (`0x4CC48AA6`) estica
+      até lá (265..503); o pod sobe 3 px (a pílula em 516/396) em Buy, Build e Live.
 - [ ] **5. Buy §1.4 — "6 de 53"** (cadeiras B120): `[BLOQUEADO: perguntar ao Artur se a
       captura do original era de instalação limpa, sem Downloads/CC]`; tentar fechar também
       por RE (o que o campo 94 & 1 esconde / a leitura do knob da barra). Não trava a fila.
@@ -86,6 +94,14 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 - [ ] **8. Rapas pequenas**: `soak-report` (1 load error recorrente N002_Lot32), `audio.md`
       (SFX que soam como ruído — "sem nome para conferir"), itens corrigíveis do
       `live-qa-report.md`.
+- [ ] **9. Regressão `1020fd3` — BHAV 288**: `src/formats/bhav.cpp` (L110-114) rejeita
+      o BHAV 288 do lote do Double Deluxe ("branch to instruction N of count") e derruba
+      o VM na carga; decidir o que o original faz com o alvo fora da contagem (alvo =
+      fim/sentinela? base 0 vs 1 do contador?) e consertar — hoje o lote só roda com a
+      junction `Res` → árvore base.
+- [ ] **10. Painel do Build vs capturas 30-34** (`orig2/`): comparar o painel do Build
+      mode com as capturas `30_build_top`..`34_build_pisos` como no item 4 (pode ter as
+      mesmas sobras de alinhamento).
 
 ## Critérios de sucesso
 
@@ -141,3 +157,23 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
     **39/39 verdes (2,19 s)**.
 - (17/10 22:57) Próximo da fila: **item 4** — §1.6 do `buy-build-mac.md`, o pixel da costura
   do catálogo (532×533); medir com `--screenshot` no Windows.
+- (18/10 ~01:30) **Item 4 FECHADO** — §1.6 medido e corrigido no app e no doc. As capturas
+  do jogo (800x600 e 720) saem com o cliente em +(3,29) (o port, em (0,0)): aplicando o
+  offset, o catálogo está 5 px à direita do slot do script (cap em 537, não ≈533), a coluna
+  1 em 589 = 537 + 52 (kCellInX 4→0 — o "+4+8" antigo era o canto da janela da coleções), a
+  linha 1 em `altura − 129` (não −126) e o trilho de 589 ao navy em 1207 (619 = colunas×48−5,
+  não 591..1211/620). O endcap (`0x4CC48AA4`) fica em 532..555 cobrindo a emenda 532..536 (o
+  joint `0x4CC48AA8` não desenha em estado nenhum) e, fechado, vai ao fim do sort (588) com o
+  repeat (`0x4CC48AA6`) esticado do 265 até lá; o pod sobe 3 px em Buy, Build e Live (a
+  pílula em 516/396 sobre os 519/399 do script). A arte do slider (achada na verificação) não
+  era um estádio: é uma barra de cantos r≈4 (a coluna extrema abrange 8 das 12 linhas) —
+  trilho com 1 px de navy no topo/base e o fill até as pontas, knob com 2 px de navy em todas
+  as bordas e 1 px de (157,171,241) por dentro nas pontas. Verificação: capturas do port em
+  720 (aberto — `cmp5` com o slider novo — e fechado) contra o jogo e o script; o botão do
+  grid bate linha a linha (coluna da cadeira 591..616 = 500..525 do jogo) e a barra fecha no
+  mesmo navy (605 no cliente) nos dois; diferenças de tom pequenas (arte Mac × Win). Falsos
+  positivos derrubados: o "verde × azul" dos subsorts do jogo (é o painel 0xB100 do Seating
+  com o B120 selecionado vs o port forçando Decoração — estados diferentes) e o "frame 0" do
+  Comfort (o jogo desenha o frame 1 azul como o port). Fica de polimento: as bevels do knob e
+  o raio das placas (as artes do jogo divergem ±1 px nas colunas extremas). build+ctest
+  39/39. Próximo: item 9 (regressão `1020fd3`), depois 5 (bloqueado) / 6 / 7 / 8 / 10.

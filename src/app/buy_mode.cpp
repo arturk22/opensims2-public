@@ -39,19 +39,20 @@ constexpr uint32_t kCatalog = 0x898F42CD, kCollapsed = 0x1000, kPrev = 0x1004, k
 constexpr uint32_t kToolHand = 0xCC607031, kToolEyedropper = 0xCC607032, kToolDesign = 0xCC607030, kUndo = 0xCC607033,
                    kRedo = 0xCC607034, kDayNight = 0xCC607035, kTopDown = 0xCC607036;
 // The grid's slot within the catalog's window (0x1006 of 0x1000: 176 x 100;
-// the expanded 0x2006 of 0x2000: 176 x 196). The cells come at the same
-// (4, 8) corner in both, 44 px on a 48 px pitch (sampled from the
-// original's screenshots: 592, 640, 688 over 500, 548; the script's own
-// margins are the collections window's, inferred, and go unused here).
+// the expanded 0x2006 of 0x2000: 176 x 196). The cells come at the window's
+// own (52, 19) corner with no extra inset, 44 px on a 48 px pitch (measured:
+// the first cell at 589 over the window's 537, the rows at 591, 639 and 687
+// at 1280x720; the script's own margins are the collections window's,
+// inferred, and go unused here).
 constexpr float kGridX = 52, kGridY = 19;
-constexpr float kCell = 44, kCellStep = 48, kCellInX = 4, kCellInY = 8, kThumb = 40, kCellRadius = 8;
+constexpr float kCell = 44, kCellStep = 48, kCellInX = 0, kCellInY = 8, kThumb = 40, kCellRadius = 8;
 constexpr int kRows = 2;
 // The original keeps the catalog's left part and stretches its right one
-// (docs/buy-build-mac.md §1.6): the first cell at x 589 over a first row at
-// height-126 in both resolutions, and the strip's own last cap at the right
-// edge — 20 px wide with its right at width-30 — with the cells' block
-// (44 px plates on a 48 px pitch, its 4 last px of slack) filling up to it
-// (13 columns at 1280 wide, 3 at 800).
+// (docs/buy-build-mac.md §1.6): the window's left cap at 537, the first cell
+// at x 589, and the strip's own last cap at the right edge — 20 px wide with
+// its right at width-30 — with the cells' block (44 px plates on a 48 px
+// pitch, its 4 last px of slack) filling up to it (13 columns at 1280 wide,
+// 3 at 800).
 constexpr float kGridLeft = 589, kStripRight = 29, kCapW = 20;
 int catalogColumns(float width) {
     const float capL = width - kStripRight - kCapW; // the cap's left edge
@@ -972,25 +973,43 @@ UiScreen BuyMode::screen(int width, int height) {
     const UiElement& puck = puck_.roots.front();
     // The catalog keeps the script's place (x 447, over the strip's own end)
     // and the strip its own width there; the end cap closes the bar at the
-    // open sort area's end when there is nothing to show (the top-level
-    // sorts), and gives way to the catalog's joint ("center piece") when
-    // there is: the original's screenshots show the joint over the strip's
-    // end and the cap out (docs/buy-build-mac.md §1.4; as Build mode's
-    // panel, build_mode_panel.cpp).
+    // sort area's end when there is nothing to show (the top-level sorts),
+    // and, with the catalog open, sits at its own place over the window's
+    // left, where its grey closes the seam between the bar and the window
+    // (532..536 over the window's cap at 537, measured at 800x600 and
+    // 1280x720; docs/buy-build-mac.md §1.6; as Build mode's panel,
+    // build_mode_panel.cpp). The joint ("center piece", 0x4CC48AA8) draws
+    // nowhere in either state (the script hides it and the seam shows only
+    // the cap's own greys), so it keeps its script's place and flag.
     const auto list = items();
     const bool showCatalog = !list.empty();
     {
         UiElement& r = panel_.roots.front();
         const UiElement* sortArea = r.child(sort_ == Sort::Function ? kFunctionSort : kRoomSort);
         const int right = sortArea ? sortArea->area()[2] : 447;
-        if (UiElement* e = r.child(0x4CC48AA4)) { // the end cap: at the open sort's end
+        if (UiElement* e = r.child(0x4CC48AA4)) { // the end cap: at the sort's end, or over the window's left
             const auto a = e->area();
-            e->set("area", area(right, a[1], right + (a[2] - a[0]), a[3]));
+            const int x = showCatalog ? 447 : right;
+            e->set("area", area(x, a[1], x + (a[2] - a[0]), a[3]));
+        }
+        // The bar's repeat piece (0x4CC48AA6): the script's own 265..447 with
+        // the catalog open, reaching the end cap at the sort's own end when
+        // there is nothing to show — the original's grey runs, in a stretched
+        // gradient, all the way to the cap's piece (measured at 800x600,
+        // docs/buy-build-mac.md §1.6).
+        if (UiElement* t = r.child(0x4CC48AA6)) {
+            const auto a = t->area();
+            const int end = showCatalog ? 447 : right;
+            t->set("area", area(a[0], a[1], std::max(a[0], end), a[3]));
         }
     }
     const UiElement& root = panel_.roots.front();
     const auto pa = puck.area();
-    const float puckX = 0, puckY = float(height) - float(pa[3] - pa[1]);
+    // The original's pod sits 3 px above the script's own reach to the
+    // client's foot: the pill's art at 516 and 396 at 720 and 600 over the
+    // 519/399 of the script's place (measured in Buy, Build and Live alike;
+    // docs/buy-build-mac.md §1.6).
+    const float puckX = 0, puckY = float(height) - float(pa[3] - pa[1]) - 3;
     float x0 = puckX, y0 = puckY - 137;
     if (const UiElement* a = puck.child(0x4BDEFFAA))
         if (const UiElement* b = root.child(0x0000AAAA))
@@ -1009,10 +1028,9 @@ UiScreen BuyMode::screen(int width, int height) {
         hk.hide.insert(e);
     if (const UiElement* e = root.child(kCatalog)) // out with nothing to show (as Build mode's panel)
         (showCatalog ? hk.show : hk.hide).insert(e);
-    if (const UiElement* e = root.child(0x4CC48AA4))
-        (showCatalog ? hk.hide : hk.show).insert(e);
-    if (const UiElement* e = root.child(0x4CC48AA8)) // the joint ("center piece"): over the strip's end with items
-        (showCatalog ? hk.show : hk.hide).insert(e);
+    // The end cap draws in both states (its own place over the window's left
+    // with the catalog open, the sort's end without: set above), and the
+    // joint stays as the script leaves it (hidden).
     if (const UiElement* e = root.child(kToolHand))
         hk.buttonState[e] = (held_ && !heldNew_) || (tool_ == Tool::Hand && !held_) ? 2 : 1;
     if (const UiElement* e = root.child(kToolEyedropper))
@@ -1080,7 +1098,18 @@ UiScreen BuyMode::screen(int width, int height) {
     // script's place.
     if (UiElement* cat = panel_.roots.front().child(kCatalog))
         if (UiElement* win = cat->child(expanded_ ? kExpanded : kCollapsed)) {
-            const float base = x0 + 447; // the catalog window's left on the client
+            // The original's window sits 5 px right of the script's own slot:
+            // its left cap at 537 while the bar's own pieces keep the
+            // anchors' place (the sort's buttons at 361, the end cap at 588
+            // and the join at 85, measured at 800x600 and 1280x720;
+            // docs/buy-build-mac.md §1.6). The window carries its pieces, so
+            // the cap/middle/arrows ride the same 5 px and the conversions
+            // below move with the base. The window's own left in the script
+            // is 0, so the 5 is set outright (never compounded frame over
+            // frame).
+            const auto wa = win->area();
+            win->set("area", area(5, wa[1], 5 + (wa[2] - wa[0]), wa[3]));
+            const float base = x0 + 452; // the catalog window's left on the client
             const float capL = float(width) - kStripRight - kCapW;
             const uint32_t d = expanded_ ? 0x2000 : 0x1000;
             if (UiElement* e = win->child(d | 2)) { // middle: up to the cap
@@ -1150,19 +1179,30 @@ UiScreen BuyMode::screen(int width, int height) {
     const RgbaImage* plateHover = makePlate(kRingHover);
     const RgbaImage* plateSelect = makePlate(kRingSelect);
 
-    // The page slider (window 0x1008 of 0x1000): a 12 px tall stadium under
-    // the cells — three px past the first column's left, three over the
-    // block's end — and a knob of the page's share of the block at its head
-    // (the knob 6 px wider than that fill; measured: 304 px of fill for a 26
-    // of 53 list, its own frame 2 px of navy on the ends); the original
-    // draws it at the cells' block, not at the script's own rectangle (4 px
-    // in and a row lower; sampled: the track (135,163,152) under a 1 px navy
-    // edge, the knob (174,189,255) over a (157,171,241) inner edge).
+    // The page slider (window 0x1008 of 0x1000): a 12 px tall rounded bar
+    // under the cells — its left edge at the first column's left, its right
+    // one px short of the block's end (the navy closing at 1207 with the
+    // paper at 1208, measured) — and a knob of the page's share of the
+    // block at its head (the knob 6 px wider than that fill; measured: 304
+    // px of fill for a 26 of 53 list); the original draws it at the cells'
+    // block, not at the script's own rectangle (4 px in and a row lower;
+    // its corners 4 px — the outermost column spans 8 of the 12 rows — the
+    // track (135,163,152) under a 1 px navy edge on its top and bottom with
+    // the fill reaching the ends, the knob (174,189,255) under 2 px of navy
+    // on all its edges with a (157,171,241) inner on the ends).
     auto makeSlider = [&](float w, bool knob) {
         constexpr int S = 4;
         RgbaImage img;
         img.width = uint32_t(w), img.height = 12;
         img.pixels.assign(size_t(w) * 12 * 4, 0);
+        // A point inside a rounded rectangle (its corners at rr).
+        auto inRound = [](float qx, float qy, float x0, float x1, float y0, float y1, float rr) {
+            if (qx < x0 || qx > x1 || qy < y0 || qy > y1)
+                return false;
+            const float dx = std::max(std::max(x0 + rr - qx, qx - (x1 - rr)), 0.0f);
+            const float dy = std::max(std::max(y0 + rr - qy, qy - (y1 - rr)), 0.0f);
+            return dx * dx + dy * dy <= rr * rr;
+        };
         for (int py = 0; py < 12; ++py)
             for (int px = 0; px < int(w); ++px) {
                 float r = 0, g = 0, b = 0;
@@ -1170,18 +1210,16 @@ UiScreen BuyMode::screen(int width, int height) {
                 for (int sy = 0; sy < S; ++sy)
                     for (int sx = 0; sx < S; ++sx) {
                         const float qx = float(px) + (float(sx) + 0.5f) / S, qy = float(py) + (float(sy) + 0.5f) / S;
-                        // The distance inside the stadium (its ends rounded with the height).
-                        const float dx = qx - std::clamp(qx, 6.0f, w - 6.0f), dy = qy - 6.0f;
-                        const float d = 6.0f - std::sqrt(dx * dx + dy * dy);
-                        if (d < 0)
+                        if (!inRound(qx, qy, 0, w, 0, 12, 4))
                             continue;
                         float cr = 135, cg = 163, cb = 152;
                         if (knob) {
                             cr = 174, cg = 189, cb = 255;
-                            if (d < 2)
+                            if (!inRound(qx, qy, 2, w - 2, 2, 10, 2))
+                                cr = 5, cg = 6, cb = 113;
+                            else if (!inRound(qx, qy, 3, w - 3, 2, 10, 2))
                                 cr = 157, cg = 171, cb = 241;
-                        }
-                        if (d < 1)
+                        } else if (!inRound(qx, qy, 0, w, 1, 11, 3))
                             cr = 5, cg = 6, cb = 113;
                         r += cr, g += cg, b += cb, ++n;
                     }
@@ -1189,15 +1227,6 @@ UiScreen BuyMode::screen(int width, int height) {
                 if (n)
                     o[0] = uint8_t(r / n), o[1] = uint8_t(g / n), o[2] = uint8_t(b / n), o[3] = uint8_t(255 * n / (S * S));
             }
-        if (knob) // its own frame is two px of navy on the ends (measured)
-            for (int py = 0; py < 12; ++py)
-                for (int px : {0, 1, 2, int(w) - 3, int(w) - 2, int(w) - 1}) {
-                    uint8_t* o = &img.pixels[(size_t(py) * size_t(w) + size_t(px)) * 4];
-                    if (px < 2 || px > int(w) - 3)
-                        o[0] = 5, o[1] = 6, o[2] = 113;
-                    else
-                        o[0] = 157, o[1] = 171, o[2] = 241;
-                }
         frameImages_.push_back(std::make_unique<RgbaImage>(std::move(img)));
         return frameImages_.back().get();
     };
@@ -1221,8 +1250,8 @@ UiScreen BuyMode::screen(int width, int height) {
             cells.push_back({{cx, cy, cx + kCell, cy + kCell}, e});
         }
         const float ty = y + kGridY + kCellInY + float(rows - 1) * kCellStep + kCell + 4;
-        const float trackX = x + kGridX + kCellInX + 2;
-        const float trackW = float(columns) * kCellStep - 3;
+        const float trackX = x + kGridX + kCellInX;
+        const float trackW = float(columns) * kCellStep - 5;
         const float blockW = float(columns) * kCellStep - 4; // the cells' block
         const float fill = list.empty() ? blockW
                                         : std::clamp(float(int(blockW * float(perPage) / float(list.size()))), 4.0f, trackW - 6);
@@ -1242,11 +1271,12 @@ UiScreen BuyMode::screen(int width, int height) {
     if (collapsed && page_ == 0)
         if (const UiElement* e = collapsed->child(expanded_ ? kExpandedPrev : kPrev))
             hk.hide.insert(e);
-    // The original's grid sits one px right of the script's slot and 4 px
-    // higher (measured at 1280x720 against the script's own place).
+    // The original's grid sits at the window's own left (the script's slot
+    // plus the window's 1 px, above) and 4 px higher (measured at 1280x720
+    // against the script's own place).
     place(root, x0, y0, hk);
     if (auto r = rectOf(collapsed))
-        drawGrid(out, (*r)[0] + 1, (*r)[1] - 4);
+        drawGrid(out, (*r)[0], (*r)[1] - 4);
     for (const auto& [r, e] : cells)
         targets_.push_back({r, Action::Item, int(std::find(list.begin(), list.end(), e) - list.begin())});
     // Targets.

@@ -139,7 +139,7 @@ O layout está no script (`s2pkg ui-dump … 49060004`). O código
   lista do `B120` não muda invertendo a prioridade dos packs, e nenhum
   candidato de `campo 94 & 1` é escondido pelos filtros (recompensa/Sim;
   nenhum item só-comunitário). **Por conferir**: os 6 que faltam para os 53
-  da captura do jogo em 1280x720 (barra: 304 px de 620, 26 por página) só
+  da captura do jogo em 1280x720 (barra: 304 px de 619, 26 por página) só
   se explicam por outra instalação (conteúdo próprio/loja?) ou pela leitura
   do knob da barra.
 - **Sala** `0xC100…0xC900`: C100 sala de estar = 8, C200 jantar = 0x20,
@@ -186,27 +186,44 @@ Coordenadas de cliente, medidas nas capturas do jogo em janela (o mesmo
 binário; o jogo estava preso no preset `$Low` do `Graphics Rules.sgr`,
 máx 800x600 — destravado para o 1280x720). Com o catálogo cheio de itens:
 
-- À esquerda nada anda com a tela: o puck em x 0 e o catálogo (a janela
-  `0x1000`/`0x2000`) começando em x ≈533 nas duas resoluções (coluna 1 em
-  589 = 533 + 56; a barra do sort fecha logo antes).
+- À esquerda nada anda com a tela: o puck em x 0 (a arte da pílula em 516 e
+  396, 3 px acima dos 519/399 que o script alcança — igual em Buy, Build e
+  Live) e a janela do catálogo (`0x1000`/`0x2000`) com o cap esquerdo em
+  x 537 nas duas resoluções — 5 px à direita do slot do script; o endcap da
+  barra (`0x4CC48AA4`, 23 px) fica em 532..555 por cima da emenda (o cinza
+  dele cobre 532..536, o cap em 537) e a coluna 1 em 589 = 537 + 52 (o canto
+  (52, 19) da própria janela, sem inset).
+- Com o catálogo fechado (nenhuma categoria escolhida) a barra fecha no fim
+  da área do sort: o endcap no 503 do script (588 no cliente, 23 px) com o
+  repeat (`0x4CC48AA6`) esticado do 265 até lá — o gradiente da arte corre
+  até o cap (medido em 800x600); aberto, o endcap volta ao próprio 447
+  (532 no cliente) e o repeat fica no 265..447 do script.
 - A grade também não anda: coluna 1 em x 589 e topo da linha 1 em
-  `altura − 126` (474 em 800x600, 594 em 1280x720); placas 44x44 de passo
-  48, duas linhas.
+  `altura − 129` (471 em 800x600, 591 em 1280x720); placas 44x44 de passo
+  48, duas linhas (a expandida `0x2000`, quatro).
 - Quem estica é só o catálogo: o cap final (20 px, `0x1003`/`0x2003`) fica
   com a borda direita visível em `largura − 30`, o miolo (`…02`) se estica
   até ele e o bloco de células (colunas × 48 − 4) cabe até lá — 3 colunas
   em 800x600 e 13 em 1280x720. O `▶` e o `⌃` vão por cima do cap (o glifo
   do `▶` em `largura − 61`, o `⌃` 3 px à direita) e o `◀` some na página 0.
-- A barra de rolagem (`0x1008`, um estádio de 12 px em `altura − 30`) vai
-  da coluna 1 mais 2 px (x 591) até `largura − 68`; o knob (moldura de
-  2 px de navy nas pontas) preenche a fração da página sobre o bloco — 304
-  px de 620 numa lista de 26 de 53.
+- A barra de rolagem (`0x1008`, 12 px de altura, cantos de raio 4 — a
+  coluna extrema abrange 8 das 12 linhas) vai da coluna 1 (x 589) até
+  `largura − 72` (o navy fecha em 1207, o papel em 1208): 619 px = colunas
+  × 48 − 5; o trilho (135,163,152) sob 1 px de navy no topo e na base, com
+  o fill alcançando as pontas, e o knob — 2 px de navy em todas as bordas,
+  1 px de (157,171,241) por dentro nas pontas, (174,189,255) no miolo —
+  preenche a fração da página sobre o bloco: 304 px de 619 numa lista de
+  26 de 53.
 
-**Para nós**: o app agora segue isso (puck em x 0, largura fixa 265
-descartada, colunas dinâmicas até o cap) e bate a captura do jogo em
-1280x720 pixel a pixel (cap 1244..1250, `▶` (1219,615)-(1231,662), `⌃`
-(1222,584)-(1230,596), trilho até o navy 1211 com teal em 1212); sobra 1 px
-na costura do catálogo (o app em 532, o jogo em 533).
+**Para nós**: o app segue isso (puck em x 0 com a pílula 3 px acima do pé
+do script, a janela 5 px à direita do slot — cap em 537 —, o grid no canto
+(52, 19) da própria janela, o endcap em 532 com o repeat esticado até o fim
+da barra quando o catálogo está fechado, as colunas dinâmicas até o cap) e
+bate a captura do jogo em 1280x720 (cap 1244..1250, `▶`
+(1219,615)-(1231,662), `⌃` (1222,584)-(1230,596), o trilho de 589 ao navy
+em 1207 com o papel em 1208); ficam de nota de polimento as bevels do knob
+(±1 px) e o raio das placas (8 no app; as artes do jogo divergem ±1 px nas
+colunas extremas).
 
 ---
 
