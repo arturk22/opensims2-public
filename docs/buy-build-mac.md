@@ -2580,7 +2580,7 @@ mínimo, `+0xd0` o máximo, vértices; os tiles vão de `+0xc4` a `+0xd0` − 1)
    level terrain" (`0x2F` fora do térreo);
 3. `FUN_009dae20` em cada tile (alguma forma do tile, sem código; não lido);
 4. fundação: cada objeto do tile que não `ObjectMayBeInFoundation` (`0x34e380`:
-   um dos três testes do serviço `0x60` sobre o seletor, não identificados,
+   um dos marcadores da pasta de objetos — vir ver, vá aqui, túmulo, §7.26 —
    ou `IsSupport` — OBJD tipo 5 — com `ConformsToCeiling`) → **`0x83`**; palco
    no tile, neste andar ou no de cima → `0x99`; deck: só o palco (`0x99`),
    **nenhum teste de objeto** (os objetos no chão em volta pegam o `0x60` do
@@ -2641,9 +2641,9 @@ no lote (`0xf8`):
 - se o vértice está acima do andar mais baixo e a altura nova fica **menos de
   `StandardLevelHeight` (− 0,001) acima do vértice de baixo**, o tile um andar
   abaixo com `HasNonCeilingConformingObjects` (`0x16c7a8`: algum objeto que não
-  passa nos três testes do serviço `0x60` e não `ConformsToCeiling`, vtable
-  `0x1f0` → `AggregateConformsToCeiling` `0xafdd94`, uma interface
-  `0xaae90adb` das partes do modelo, não lida) → **`0x60`**;
+  é marcador da pasta de objetos e não `ConformsToCeiling`, vtable `0x1f0` →
+  `AggregateConformsToCeiling` `0xafdd94`: o nó `post_trans` do modelo, §7.26)
+  → **`0x60`**;
 - cada objeto do tile com od 42 bit `0x80`: escada modular (OBJD tipo 11/12),
   os quatro cantos da pegada pela direção (±0,5 de lado, 0,25 para a frente,
   `FloorElevationUnit` de altura nos dois de cima); outros, a posição; se o
@@ -2740,11 +2740,9 @@ bit 4 (o andar de cima teria de subir junto e tem piso em volta, `0x69`).
   criado se faltar. Ficam do app (inferido): tile travado `0x45`, piso no
   térreo `0x0C`, água `0x1E` (o `CanPlaceTile` só é da piscina). A água do
   chão segue as mudanças de altura (`ChangeFloorAndWaterElevation` →
-  `UpdateWaterElevations` com a flag de piso: os pontos secos ficam 1 abaixo
-  do chão, ou a lagoa vizinha − 0,1; a água ligada, `FUN_008b02d4`, não lida).
+  `UpdateWaterElevations` com a flag de piso, ponto por ponto: lido na §7.26).
 - Bit 7 do teste de vértice: `BuildEditor::vertexObjectsError` (`0x61`,
-  `0x60`, `0x68`); `ConformsToCeiling` não lido: só suportes (OBJD tipo 5)
-  passam no `0x60` (inferido). Vale para o nivelador das paredes, o cômodo,
+  `0x60`, `0x68`); o `0x60` com os marcadores e o `ConformsToCeiling` da §7.26. Vale para o nivelador das paredes, o cômodo,
   as escadas modulares, o pincel e o deck. `OS2_DEBUG_VERTEX=1` diz quem
   recusa. O `tests/door_cut_wall.sh` e o `build_undo.sh` vendem antes as
   escadas do deck do `N002_Lot23` (o degrau de cima delas ficava onde o cômodo
@@ -3020,6 +3018,53 @@ conta); as cópias da chaminé (o jogo troca as peças por cópias novas; aqui
 as mesmas ficam) e uma chaminé virada para outro lado (recusada, não feito).
 As tampas de N001_Lot11 não cabem onde estão (`0x08`: a cerca do terraço do
 andar 4 corta as duas partes), por isso a lareira de lá não se refaz.
+
+**Terreno: os marcadores, o `ConformsToCeiling` e a água ligada** (rodada
+n48). O serviço `0x60` do `FUN_000c7fb0` (GZCOM `0x7a3e667d`) é a **pasta de
+objetos** (`cTSObjectFolder`, vtable de interface BV `0x27c29e8`): o `0xac` é
+`IsSelectorComeAndSee` (`0x4e483c`: o seletor é o "vir ver" normal
+`0x4C859106`, o apagado `0xACC53DFF` ou o de decorar `0xEC85F0F3`), o `0xc4`
+`IsSelectorGoHere` (`0x4e49fc`: o "vá aqui" `0x000007C4` ou o da piscina
+`0xECFEDB37`) e o `0xcc` `IsSelectorGraveMarker` (`0x4e4a74`: o túmulo
+`0x6CD4A8BC`); o `0xc8` (`IsSelectorPondGoHere`) fica de fora. No base 1.0 os
+mesmos GUIDs (`0xb14a34`–`0xb14ca8`, vtable primária `0x15d7ce8`: `0xbc`/`0xc0`/`0xc4`,
+`0xd0`/`0xd4`, `0xd8`; um quarto `GetXxx` de `0x7FD96B54` fora do teste). O
+`ConformsToCeiling` (`cTSObject` `0xaff1a4` → `0x508` →
+`AggregateConformsToCeiling` `0xafdd94`) pergunta às partes da cena do objeto a
+interface `0xaae90adb` (o `QueryInterface` `0x6544b4` do `nTSSG::cObject` dá
+`+0x70`); o slot `0x1c` dela é **`nTSSG::cObject::AttachedToCeiling`**
+(`0x6542f0`): o modelo tem um nó **`post_trans`** (`FUN_009466bc`, busca por
+nome na árvore). Dos suportes (OBJD tipo 5) dos 62 lotes só a coluna do deck
+(`Column - Square Brick`, modelo `deckSupport`) o tem; as outras sete colunas
+(Art Nouveau, Club, Colonial 1, Designer, Moroccan, Quaint, Value1) não: não
+entram numa fundação (`0x83`) e um tile com elas sob um teto baixo recusa o
+vértice (`0x60`; antes todo suporte passava, inferido).
+
+`UpdateWaterElevations` (`0x8b185c`) com a flag de piso vem de
+`UpdateWaterElevation` (`0x419000`) **um vértice por vez**, logo depois de
+`ChangeFloorElevation` (só no térreo). As entradas (`GetWaterHtChangeEntry`
+`0x8b1098`: terreno, água antes e depois, flags 1 feito / 2 lagoa);
+`FUN_008b02d4`: um ponto que **não tinha** a flag de lagoa (`+0xd8`, posta pelo
+`UpdatePondFlag` `0x8aee90` da vez anterior: terreno − água ≤ 0,25) fica com a
+água 1 abaixo do chão; o que fica com a água até 0,25 abaixo do chão é lagoa.
+Depois, para os dois caminhos: `ExpandWaterHtChangeArrayToIncludeConnectedPreExistingWater`
+(`0x8b16cc` → `AddPondNeighborsOfVertsToChangeArray` `0x8b150c`: os vizinhos
+`IsPondVertex`, `0x8af560`, terreno − água ≤ 0,25, como lagoa, de novo em
+volta dos novos); cada entrada de antes: sem lagoa, feita; lagoa,
+`ChooseWaterElevationsForPondWithVertex` (`0x8b11ec`: o grupo de lagoa, **cada
+vizinho vira entrada**, a água 0,25 abaixo do menor chão dos vizinhos que não
+são lagoa, o ponto mais de 0,25 acima dela seco); por fim
+`AdjustWaterElevationsAtNonPondVertices` (`0x8afbe4`) em **todas** as entradas
+(também as da borda criadas no passo anterior): o que não é lagoa recebe a
+água do primeiro vizinho lagoa (ordem `DAT_02737e20`/`e00`) − 0,1 ou o chão − 1.
+Antes o app tratava só os pontos secos e não mexia nas bordas; a ferramenta
+de água (sem a flag) também ganhou as bordas: dois traços de água em
+N001_Lot68 (`lot-save --terrain water,8,30,60,2 --terrain water,10,30,40,1`)
+mudam 61 dos pontos da água (a borda 0,1 abaixo da lagoa, −0,35, em vez de 1
+abaixo do chão, −0,5; um ponto da borda passa a lagoa, −0,25). Inferido: as
+flags de lagoa no começo de cada mudança (aqui: terreno − água ≤ 0,25, como o
+`UpdatePondFlag` deixaria); um lote sem o array de água não ganha um com a
+flag de piso.
 
 ---
 
