@@ -26,8 +26,10 @@ const Object& operandObject(Context& c, size_t flagAt, size_t at) {
 // Get Distance To (0x0B): temp u16 at 0 := the distance from an object
 // (flags u8 at 2, 0x01: owner u8 at 3, data u16 at 4; else me) to the stack
 // object. cTSObject::TryDistanceTo (BV 0xe25a28) takes it from
-// CalcShortDistance (vtable 0x1f8, BV 0xaf581c) with 10.0 (BV 0x277a900):
-// sqrt(the distance in the plane^2 + (10 x the levels between them)^2),
+// CalcShortDistance (vtable 0x1f8, BV 0xaf581c) with BV 0x277a900, which
+// cTSAutonomyConstantsClient::UpdateConstants (BV 0xac8f80) sets from the
+// global FCNS 2's "autonomy floor to floor distance cost" (10, its default
+// too): sqrt(the distance in the plane^2 + (10 x the levels between them)^2),
 // cut to whole tiles, or with flag 0x02 in byte 6 to hundredths of a tile
 // (round n49, docs/routing-mac.md §9.5; was FreeSO's whole tiles + 20 a
 // level, which put a Sim a floor up 0.2 tile further in hundredths: the
@@ -45,6 +47,12 @@ Exit getDistanceTo(Context& c) {
     if (temp >= kTempCount)
         throw VMError("Get Distance To: temp " + std::to_string(temp) + " out of range");
     c.thread.temps[temp] = int16_t(std::min(32767.0, value));
+    // OS2_DEBUG_DIST=1: the queries between levels.
+    static const bool debug = std::getenv("OS2_DEBUG_DIST") != nullptr;
+    if (debug && to.position.level != from.position.level)
+        std::fprintf(stderr, "t%llu dist %d (%.2f,%.2f,%d) -> %d (%.2f,%.2f,%d) = %d in \"%s\" #%u\n", (unsigned long long)c.vm.ticks, from.id,
+                     from.position.x, from.position.y, from.position.level, to.id, to.position.x, to.position.y, to.position.level,
+                     c.thread.temps[temp], c.frame.behavior ? c.frame.behavior->fileName.c_str() : "?", unsigned(c.frame.pc));
     return Exit::True;
 }
 
