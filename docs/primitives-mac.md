@@ -4499,6 +4499,22 @@ dava lugar). Nas 14 sementes do `N001_Lot68` e do `N001_Lot11` a saída do
 `s2pkg autonomy` é a mesma. **Inferido:** o menu de pie não aplica esses
 testes do objeto (só a idade, como antes).
 
+### Medidas da rodada n46
+
+`s2pkg autonomy`, main `41956eed` → o fim da rodada. 14 sementes × 12.000
+ticks: `N001_Lot68` interações autônomas que terminam verdadeiro 640 → 631,
+falso 12 → 17, falhas de rota 416 → 366 (fora do 13: 94 → 68);
+`N001_Lot11` 442 → 441, 1 → 1, 550 → 456 (112 → 89); nenhum reset nem morte
+dos dois lados. Três dias (129.600 ticks, `S2PKG_FIRES=1`): `N001_Lot68`
+sementes 0–12, mortes 10 → 20, objetos de fogo 196 → 395, resets por erro
+17 → 9; mais 40 sementes (13–52), sementes com fogo 13 → 11, mortes 49 → 49,
+objetos de fogo 409 → 725 (os fogos crescem mais: o "Sub - Can Destroy?" do
+fogo, grupo `0x7FD0A790`, lê o od 62 do objeto, agora o da parte, e o
+"Function - Main" o do próprio fogo); `N001_Lot11` sementes 1–6, mortes 0 →
+0, falhas de rota 669 → 1.377 (fora do 13: 317 → 196; o 13 é o laço da
+aproximação do Mortimer em "Route - Dynamic w/Lead in" nas sementes 4 e 5,
+o mesmo da rodada n31), resets 15 → 14, interações ≥ 6 h 44 → 56.
+
 ### `cTSGlobals` e `cTSDataTables`
 
 - **`cTSGlobals`** (BV vtable `0x27a20d0`; 58 métodos) não guarda os globais
