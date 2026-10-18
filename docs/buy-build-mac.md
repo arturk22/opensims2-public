@@ -2705,8 +2705,8 @@ outras; acima do último andar a ferramenta cria um andar novo, `0x1c`), uma
 peça de chaminé (`chimneyhearth`) por andar, e, no térreo sobre fundação
 (`HasFoundation`) ou terreno baixo (`FUN_0027741c`), o `chimneyFoundation`;
 cada peça é ligada à de baixo e à de cima (os mapas `+0x244`/`+0x258`,
-`LinkObjects`). Uma peça que não cabe desfaz tudo (`RevertChanges`). Não feito
-no app (a lareira segue objeto comum).
+`LinkObjects`). Uma peça que não cabe desfaz tudo (`RevertChanges`). Feito na
+rodada n48 (§7.26, que corrige o andar de cima: o `HasSupport` é de um quarto).
 
 **Correção do bit 13 do teste de vértice.** O `FUN_009e8124` não lê os
 marcadores de deck: pergunta a vtable **`0xcc`** do `WorldDB` (thunk
@@ -2929,6 +2929,91 @@ tiles, como no jogo). Bateria (14 sementes × 12.000 ticks, `s2pkg autonomy`):
 N001_Lot68 autônomas terminadas verdadeiras 638 → 641, falsas 19 → 19;
 N001_Lot11 a mesma saída. A diferença vem dos `ReserveTile (Passable)` que o
 Create New Object Instance agora põe sob um Sim (a árvore 5 deixa).
+
+**A ferramenta de lareira, lida de novo** (`cTSUserToolFireplace::TryPlace`
+BV `0x27a38c`; corrige o parágrafo da §7.25). Depois do `TryPlace` de objeto e
+do `AreObjectBoundsInSameRoom` (erro 3), uma cornija **multi-tile** (vtable
+`0x19c`) com chaminé atrás (`IsChimneyBehindHeldMantle` `0x278a34`: uma peça de
+tipo 2 ou 3 no tile atrás de alguma parte, pela direção `0xac` de cada parte)
+não faz peças: vai na frente da chaminé (abaixo). Senão:
+
+- **O andar de cima.** Do andar da cornija para cima enquanto
+  `HasSupport` vale no **ponto da cornija** (`FUN_0015d84c` faz o `cFloorTile`
+  do ponto: o tile e **um quarto só**, o do ponto, `FUN_0015d2f0`: 1 oeste,
+  2 norte, 4 leste, 8 sul; o centro do tile cai no **norte**), até o último
+  andar do mundo (`0x144`); T = esse andar, não abaixo do da cornija. (Era o
+  tile todo: uma parede de outro lado do tile subia T um andar, 11 das 48
+  lareiras salvas.)
+- **Um andar só (T ≤ andar da cornija):** a altura do andar (`SampledFloorElevation`
+  de T+1 menos a de T no tile da chaminé) tem de ser ≥ `StandardLevelHeight`
+  (3), senão nada; abaixo do último andar o `ChimneyTopFP` em T+1 com elevação
+  0; no último, se T < `FUN_00163808` (o máximo do mundo, 4 sem `WorldDB`), o
+  mundo ganha um andar (`SetLevelRange`, vtable `0x1c`) e o `ChimneyTopFP` vai
+  em T+1; senão um `ChimneyTop` em T com a elevação da altura do andar.
+- **Mais andares:** as tampas em T, de `floor(max(2, RoofHeightAt − piso de T + 2))`
+  até 0 de 1 em 1 (`ChimneyTopFP` na elevação 0, `nearlyEqual`, as outras
+  `ChimneyTop`); `RoofHeightAt` (`0xc23a18`, slot `0x60` da vtable de interface
+  `0x281b948` do `cWorldRoof`; a primária `0x281b870` o tem em `0x6c`) é o
+  máximo, por andar com `IsAnyRoofAtLocation(ponto, true)`, do
+  `RoofHeightAtLocation(ponto, false)` (`0xc23f8c`: o maior
+  `GetSampledElevationByRoofID(id, x, y, andar, true)` dos telhados do andar,
+  a partir de 0; o piso de cima sem telhado).
+- **As peças de lareira** (`chimneyhearth`) de T (ou T−1) para baixo até o chão
+  (o fogão, tipo 4: até o andar acima dele); abaixo do andar da cornija para
+  num tile de cômodo que carrega peso (gerente de partições `0x13c`) ou sob
+  telhado (`0x7c` = `IsAnyRoofAtLocation`); no chão, fora do andar da
+  cornija, `HasFoundation` do tile todo ou `FUN_0027741c` (o térreo não está
+  a `StandardLevelHeight` do chão) dão o `chimneyFoundation`. Só as peças de
+  lareira passam pelo `FUN_0027664c` (no chão, não sobre piscina; nenhum
+  objeto no tile sem od 42 bit 0x01); as tampas não.
+- **Elos:** cada peça abaixo da anterior; a cornija fica **abaixo** da peça do
+  seu andar e acima da de baixo (o fogão: abaixo da primeira tampa sem cano).
+  `LinkObjects(true)` em cada parte, duas vezes.
+
+**Cornija na frente de uma chaminé** (`IsValidChimneyBehindHeldMantle`
+`0x2784a8`; `OnRelease` `0x27e0ac`): atrás de cada parte uma peça de lareira
+(tipo 2) ou a tampa com elevação 0 (tipo 3, `nearlyEqual(0xb0, 0)`), e a peça
+de baixo dela não é cornija (erro **6**); contagem diferente → erro **5**. O
+`CreateFireplaceLinkedListFromPart` (`0x277524`) lista a chaminé de baixo
+para cima e o `CreateClonedUndoableListFromIDLinkedList` (`0x27d3ac`) a refaz
+peça por peça (cópias com o od 41 da original, viradas para a cornija) e
+religa em sequência, a cornija **abaixo da peça atrás dela**. Se a peça é a
+tampa (um andar construído sobre o topo da chaminé), a tampa e as de cima
+saem e `CreateUndoableListBehindObjectHeld` (`0x27cab8`) refaz o topo atrás
+da cornija: o mesmo laço de suporte e as mesmas tampas, peças de lareira de
+T (ou T−1) até o andar da cornija, sem fundação e sem `FUN_0027664c`.
+
+**A marreta** (`cTSUserToolSledgeHammer::DeleteFireplaces` `0x3065a0` →
+`EraseLinkedFireplace` `0x306454`, único chamador `OnButtonUp` `0x306b04`): a
+corrente de cima da peça, depois a de baixo, depois ela, cada uma vendida
+(`EraseObjectRecursive`).
+
+**O preço.** Os OBJD das peças custam 0; a cornija salva tem o preço do
+produto no od 41 (Loft 2525 nos lotes de N001, Colonial 3000, Pot Belly 1000;
+o catálogo dá 2500, 3000, 1000, 600, 2000); onde a ferramenta põe o valor não
+foi lido (inferido: o preço do produto na cornija).
+
+**No código (rodada n48).** `BuildEditor::chimneyPlan` / `placeFireplace` /
+`deleteFireplace` (`src/vm/build_edit_fireplace.cpp`); o `Op` do desfazer
+guarda os elos mudados (`links`). O VM carrega a elevação salva
+(`cTSObject +0x20c`) em `Position::elevation` (antes 0 nos objetos lidos). `s2pkg
+fireplace-sweep` (cada lareira salva contra a corrente que a ferramenta faria
+onde a cornija está; uma corrente com outras cornijas é comparada sem elas):
+das 48 lareiras dos 62 lotes, **36** iguais (antes da correção do quarto, 25);
+das 15 em corrente com outras cornijas, 11 iguais (as 4 outras são as
+cornijas postas depois, na frente da chaminé); as 8 diferentes restantes são
+de N003 (Strangetown) e o lote mudou depois da lareira: as duas de
+N003_Lot133 são iguais em N003_Lot179, a mesma casa com as lareiras postas de
+novo. `lot-save --delete-fireplace 525 --fireplace 0,16,11,2,2` em N001_Lot68
+refaz a corrente salva peça por peça (§2500); em N001_Lot59, a cornija do
+andar 2 e depois a do 3 refazem a corrente com as duas; em N001_Lot82, com um
+cômodo no andar 4, a cornija nova na frente da tampa refaz o topo. Desfazer
+volta os elos. Inferido: o preço na cornija; a pessoa no tile da peça (o
+`ObjectOnTileAtIndex(…, true)` do `FUN_0027664c` não lido: a pessoa não
+conta); as cópias da chaminé (o jogo troca as peças por cópias novas; aqui
+as mesmas ficam) e uma chaminé virada para outro lado (recusada, não feito).
+As tampas de N001_Lot11 não cabem onde estão (`0x08`: a cerca do terraço do
+andar 4 corta as duas partes), por isso a lareira de lá não se refaz.
 
 ---
 
