@@ -60,13 +60,12 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 
 ## Fila inicial (ordem de ataque; reordenável pelo log)
 
-- [ ] **1. Cross-check REA** (herdado do `goal-ghidra-pc.md`): retry #2 rodando (12G + 4
-      analisadores desligados + deadline de 55 min). Ao terminar: comparar âncoras
-      `TSCatalog` @ `0x0124AE10`, `FunctionSubsort` @ `0x012358AC`,
-      ` Bin Prod ID = %d Bin Type = %s Bin Sort Idx = %d` @ `0x01262534` e arquivar a
-      evidence (`rea-crosscheck.json` em `..\..\rea-snapshots\ghidra-pc\`).
-- [ ] **2. Baseline Windows**: build + 39 ctest verdes; anotar skips legítimos (sem
-      `OS2_DATA`) e qualquer dívida de teste visível. É o chão para o resto do loop.
+- [x] **1. Cross-check REA** (herdado do `goal-ghidra-pc.md`): **FECHADO 17/10 22:38** — REA
+      magro (12G + 19 analisadores desligados; ~2 min de análise) devolveu **3/3 âncoras exatas**:
+      `TSCatalog` @ `0x0124AE10`, `FunctionSubsort` @ `0x012358AC`, print dos bins @ `0x01262534`;
+      evidence `rea-crosscheck.success.json` (`ev_6b0910b0…` em `..\..\rea-snapshots\ghidra-pc\`).
+- [x] **2. Baseline Windows**: **FECHADO 17/10 22:39** — `tools\build_windows.cmd`: configure ok,
+      `ninja: no work to do` (build já em dia) e **39/39 ctest verdes em 3,29 s**. Sem skips.
 - [ ] **3. RE relâmpago** (Ghidra `pcb`, consultas curtas): região dos bins `0xCDF41B`+;
       handlers `0xBDF83B`/`FUN_00bdd8f2`/`FUN_00bde67d`; papel de `FUN_0040d883("tsdata/")`
       → atualizar `re-pc-ghidra.md`.
@@ -106,5 +105,17 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 
 - (17/10 ~21:50) Goal aberto; fila montada a partir de `goal-ghidra-pc.md` (pendências),
   `buy-build-mac.md` §1.4/§1.6, `inventario-binario.md` §5 e `performance.md`. O item 1 já está
-  em curso: retry #2 do cross-check REA (12G + 4 analisadores off + 55 min) rodando desde
-  21:32 — vira o primeiro ciclo assim que fechar.
+  em curso (cross-check REA).
+- (17/10 ~22:26) Retry #2 do cross-check cortado aos 55 min ainda no meio da análise — o REA
+  rodou ~5-6× mais lento que o run manual do `pcb` (17,4 min); culpados prováveis: GC/JIT
+  hardcoded em 2 threads e os pesos-pesados ligados (Callee Purge 255 s, Data Reference/
+  Reference ~212 s cada...). Tentativa #3 lançada ~22:36 com 19 analisadores desligados +
+  watcher `rea-watch-r3.log` (CPU a cada 30 s + cópia do `ghidra.log` do runtime + kill em
+  stall); o patch de threads do cache do npx pegou o cache errado (há dois) — replicado no
+  certo, a #3 ainda roda com 2 threads. Item 1 segue em curso.
+- (17/10 ~22:38) **Item 1 FECHADO**: cross-check REA deu **3/3 âncoras exatas** em ~2 min de
+  análise (bullet no `goal-ghidra-pc.md` + seção nova em `re-pc-ghidra.md`); evidence
+  `rea-crosscheck.success.json`. O `goal-ghidra-pc.md` fechou (status CONCLUÍDO).
+- (17/10 ~22:39) **Item 2 FECHADO**: baseline Windows — `tools\build_windows.cmd` com configure
+  limpo, `ninja: no work to do` e **39/39 ctest verdes (3,29 s)**; sem skips. Próximo: item 3
+  (RE relâmpago no `pcb` — consultas curtas; máquina livre).

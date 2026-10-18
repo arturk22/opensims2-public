@@ -224,3 +224,36 @@ files*; tudo relativo a `tsdata/`, com o ramo de idioma em `/tsdata/res/locale/`
   OR no bit; no fim força o bit `0x1000`.
 - **Conclusão p/ o port**: "EP instalada" = bit do bitmask (com 0x1000 forçado); listar bairros =
   iterar o segmento `Neighborhoods/` do sistema de segmentos.
+
+## Cross-check REA (fechado em 17/10, ~22:38)
+
+Critério do goal da noite: o REA (ferramenta independente) confirma ≥1 achado do projeto `pcb`.
+Fechado com **3/3 âncoras exatas** via `search_strings` (regex
+`Bin Prod ID|Bin Sort Idx|TSCatalog|FunctionSubsort`):
+
+| âncora (projeto `pcb`, VA) | REA (rodada final) | match |
+|---|---|---|
+| `FunctionSubsort` @ `0x012358AC` | `0x12358ac` | sim |
+| `TSCatalog` @ `0x0124AE10` | `0x124ae10` | sim |
+| `" Bin Prod ID = %d Bin Type = %s Bin Sort Idx = %d"` @ `0x01262534` | `0x1262534` (`\nBin Prod ID = %d\nBin Type = %s\nBin Sort Idx = %d`) | sim |
+
+- **Evidence**: `rea-snapshots/ghidra-pc/rea-crosscheck.success.json` — `evidence_id`
+  `ev_6b0910b0a3bef8159244960ac31bf15bb885e21e3fadd7e7a354dfa128b899a5`, provider Ghidra 12.1.4,
+  target sha256 `cc4bb4e1…`, `operation: search_strings`, `confidence: observed`.
+- **Receita reproduzível** (~2 min de análise; rodar solo — nada de Ghidra em paralelo):
+  - `GHIDRA_INSTALL_DIR` + `JAVA_HOME` como em `run-queries.ps1`;
+  - `GHIDRA_HEADLESS_MAXMEM=12G` (o default do REA é 2G);
+  - `REA_GHIDRA_STARTUP_TIMEOUT_MS=3300000` (o deadline de startup cobre a análise inteira);
+  - `REA_GHIDRA_DISABLED_ANALYZERS` = os 19 nomes de `analyzer-list.txt` (todos os pesos-pesados
+    do resumo de análise do `pcb`; `ASCII Strings` fica ligado — é o que a busca usa);
+  - `npx -y rea-agents@6.5.0 search '<exe>' --kind strings --pattern '...' --mode regex --format json`.
+- **Histórico das falhas** (todas por tempo, nenhuma por resultado): a rodada de 1 h caiu no
+  default de 3600 s do headless (`analysis_timeout`); as rodadas de 15 e 55 min caíram no deadline
+  de startup do REA **ainda no meio da análise** com os analyzers pesados ligados (X86 Function
+  Callee Purge 255 s, Data Reference 213 s, Reference 211 s, x86 Constant Reference 90 s,
+  Stack 71 s…; o run manual do `pcb` fecha em 17,4 min). Com o pacote pesado desligado a análise
+  cai para ~2 min mesmo com as 2 GC threads hardcoded do REA (`GhidraJavaLaunch.js`; há **dois**
+  caches do npx — patch com backup `.orig` nos dois, ver log do goal).
+- **Limitações do envelope** (relevantes p/ consultas futuras): o inventário cobre só strings
+  *definidas* (`defined-data-coverage-v1`); projeto efêmero (`-readOnly`, `-deleteProject` — nada
+  persiste); o deadline do REA cobre o ciclo inteiro (import → análise → operação).

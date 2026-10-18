@@ -1,8 +1,9 @@
 # Goal — Noite de RE do lado PC (`Sims2EP9RPC.exe`)
 
-- **Status:** **fechado o essencial** — 17/10 (dia): projeto `pcb` analisado e salvo; goals
-  (a)/(b)/(c) documentados em `docs/re-pc-ghidra.md`; falta só o cross-check REA (1 rodada solo)
-  e a limpeza de resíduos.
+- **Status:** **CONCLUÍDO** — 17/10 22:38: projeto `pcb` analisado e salvo; goals (a)/(b)/(c)
+  documentados em `docs/re-pc-ghidra.md`; **cross-check REA fechado (3/3 âncoras exatas**,
+  evidence `rea-crosscheck.success.json`); resíduos limpos. Pendências (bins/handlers) seguiram
+  para o `goal-port-fidelity.md` (fila item 3).
 - **Mandato:** Artur — "Arrocha, use o REA + Ghidra, pode usar mais capacidade, vou dormir, rode por no mínimo 8h, faça um goal." (noite de 16→17/10/2026)
 - **Branch:** `windows-x64-ghidra-pc`
 - **Cutoff:** ~08:00 de 17/10. Parar limpo: nenhum processo pendurado, nada pela metade sem nota.
@@ -41,7 +42,7 @@
 - [x] `TSData\Res`: varredura localizada e documentada (ordem/prioridade).
 - [x] `Neighborhoods`: idem.
 - [x] Catálogo/knob: candidatos localizados + pseudocódigo (residual 53×47 fechado).
-- [ ] Cross-check REA de ≥1 achado (evidence JSON em `rea-snapshots`).
+- [x] Cross-check REA de ≥1 achado (evidence JSON em `rea-snapshots`; 3/3 âncoras exatas — 17/10 22:38).
 - [x] Docs + commits na branch; log abaixo atualizado.
 - [x] Máquina limpa ao final (sem processos pendurados).
 
@@ -167,3 +168,39 @@
   Confirmado **ao vivo** via `Win32_Process`: `java.exe` (PID 18376) com **`-Xmx12G`** — o env
   propaga; só o `-XX:ParallelGCThreads=2`/`CICompilerCount=2` é hardcoded do REA (aplicado
   depois dos vmargs, não dá para subir). Análise esperada: ~20-30 min.
+- (17/10 ~22:26) **Retry #2 também cortado — aos 55 min, ainda no meio da análise**
+  (`timeout_ms: 3300000`; o stdout do Ghidra termina em `MultEntSubModel` +
+  `Applied data type archive: windows_vs12_32`). Comparação com o run manual do `pcb`: lá os
+  mesmos marcadores aparecem aos ~8,5 min (ADA às 09:10:48; PNG cedo às 09:02:37) e o resumo de
+  análise fecha em **17,4 min** (total 1044 s) — o REA rodou **~5-6× mais lento que o manual**.
+  Onde o tempo ia (resumo do `pcb`): X86 Function Callee Purge 255 s, Data Reference 213 s,
+  Reference 211 s, x86 Constant Reference 90 s, Stack 71 s, Create Address Tables 43 s,
+  Non-Returning 28 s, Function ID 15 s, PE Exception Handling 15 s, Scalar Operand 14 s,
+  Subroutine References 12 s, Shared Return Calls 8 s, Demangler 1,4 s (lista completa das 135
+  opções validada no projeto e arquivada em `rea-snapshots\ghidra-pc\analyzer-list.txt`).
+  Evidência do #2: `rea-crosscheck.attempt55min.json`.
+- (17/10 ~22:36) **Tentativa #3 lançada** com três correções independentes: (1) **patch local do
+  cache do npx** (`GhidraJavaLaunch.js` com backup `.orig`): `ParallelGCThreads=6`/
+  `CICompilerCount=4`; (2) `REA_GHIDRA_DISABLED_ANALYZERS` com **19 nomes validados** na lista das
+  135 opções do `pcb` (todos os pesos-pesados acima; mantém `ASCII Strings` p/ a busca);
+  (3) **watcher** `rea-watch-r3.log` — amostra CPU/RAM do java a cada 30 s, sobe prioridade p/
+  `High`, copia o `ghidra.log` do runtime dir do REA (apagado no fim) p/ `rea-ghidra-r3-live.log`
+  e mata se ficar 12 min sem CPU (stall). Deadline segue 55 min. Se passar: comparar endereços
+  com os anchors do `pcb` e registrar a evidence.
+- (17/10 ~22:37) **O watcher já pagou o preço**: a captura da linha de comando do java mostrou
+  que o `npx -y rea-agents@6.5.0` resolve para um **segundo cache** do npx
+  (`_npx\ad9a3fdbcad992c6` — não o `af752b90495482d7` que eu tinha patcheado): a #3 está rodando
+  com os `-XX:ParallelGCThreads=2`/`CICompilerCount=2` originais mesmo. Patch replicado no cache
+  certo (backup `.orig`) p/ qualquer nova tentativa. A linha confirma também: `-Xmx12G` ✓, os
+  **19 analyzers desligados** ✓, `-readOnly` + `-deleteProject` (nada persiste) e **sem
+  `-analysisTimeoutPerFile`** (default 3600 s do Ghidra segue valendo). Com o pacote pesado já
+  desligado, a expectativa é terminar bem antes do deadline mesmo com 2 threads — seguindo.
+- (17/10 ~22:38) **CROSS-CHECK FECHADO — exit 0 em ~2 min** (22:36:34→22:38:3x): `search_strings`
+  devolveu **3/3 âncoras exatas** — `FunctionSubsort` @ `0x12358ac`, `TSCatalog` @ `0x124ae10`,
+  `\nBin Prod ID = %d\nBin Type = %s\nBin Sort Idx = %d` @ `0x1262534` (idênticos ao
+  `strings.tsv` do `pcb`). Evidence: `rea-crosscheck.success.json` — `evidence_id`
+  `ev_6b0910b0…`, Ghidra 12.1.4, sha256 `cc4bb4e1…`; o próprio envelope grava o preset
+  `ghidra-default+disabled:<os 19 nomes>` (reproduzível). Nota: a rodada ainda usou as 2 GC
+  threads hardcoded (o patch foi para o outro cache na hora) — mesmo assim ~2 min: os
+  pesos-pesados desligados eram o gargalo todo (>55 min → ~2 min). Critério da noite completo;
+  seção nova em `re-pc-ghidra.md` com a receita reproduzível.
