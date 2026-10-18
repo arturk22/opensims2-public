@@ -38,6 +38,7 @@ constexpr uint16_t BadPriority = 0x2D; // no text in the game's table
 constexpr uint16_t InvalidGlobalSimCall = 0x2A;
 constexpr uint16_t InvalidConstant = 0x2E;
 constexpr uint16_t InvalidObjectId = 0x32;
+constexpr uint16_t NeighborhoodDataOutOfRange = 0x3C; // owner 0x22 outside 1-15 (InterpValue)
 constexpr uint16_t LocalOutOfRange = 0x33;
 constexpr uint16_t MoreThanOnePassingValue = 0x36;
 constexpr uint16_t MissingNeighbor = 0x37;
@@ -93,6 +94,9 @@ inline std::string errorString(uint16_t code) {
     case 0x36: return "More than one passing value specified.";
     case 0x37: return "Missing neighbor for data access.";
     case 0x3A: return "Job data not found.";
+    // Next to 0x3D's text in the error strings of both Mac binaries, and the
+    // code InterpValue throws for owner 0x22 outside 1-15.
+    case 0x3C: return "Neighborhood data index out of range.";
     case 0x3D: return "Start object required.";
     case 0x57: return "Inventory doesn't exist for ID passed to Manage Inventory.";
     case 0x59: return "Bad parameter value set in Manage Inventory Primitive.";

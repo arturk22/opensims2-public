@@ -789,3 +789,15 @@ listas sempre em ordem crescente.
 bool, lido como (byte ≠ 0) só se a versão > 0x6E; no base e no BV **só o
 construtor, o Read e o Write o tocam** (busca de `lbz`/`stb` no offset nos dois
 programas): é guardado e não usado. Vale 1 nos três bairros e 0 no Tutorial.
+
+**Dono 0x22 (dados do bairro).** `cTSObject::InterpValue` (base `0xb2d890`,
+BV `0xb15f2c`) aceita só os índices **1 a 15** (fora: erro **0x3C**,
+"Neighborhood data index out of range.", o texto ao lado do 0x3D nas strings
+de erro dos dois binários) e lê pelo getter do bairro (vtable 0x44 no base,
+0x60 no BV: `+0x14 + 2i`), **sem endereço**: o `TryExpression` (base
+`0xb67204`, BV `0xe4bb64`) não acha onde gravar e dá o erro **0x13**
+("Expression attempting to write in a read-only area"). O setter do bairro
+(0x64 no BV) existe, mas nenhuma primitiva grava por ele. Nas árvores do jogo
+o dono 0x22 aparece uma vez só, lido (o dado 2, "Main - Process - Do
+Generate", grupo `0x7F17187C`). No app (rodada n47) o dono é só de leitura,
+1–15.

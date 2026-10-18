@@ -296,11 +296,19 @@ static void testPrimitives() {
                tree({expr(Temp, 0, Assign, Neigh, 1, go(1), E), expr(Temp, 1, Assign, Neigh, 5, go(2), E),
                      expr(Temp, 2, Assign, Neigh, 7, go(3), E), expr(Temp, 3, Assign, Neigh, 8, go(4), E),
                      expr(Temp, 4, Assign, Neigh, 9, go(5), E), expr(Temp, 5, Assign, Neigh, 10, go(6), E),
-                     expr(Temp, 6, Assign, HoodData, 2, go(7), E), expr(HoodData, 3, Assign, Lit, 1, T, E)}),
+                     expr(Temp, 6, Assign, HoodData, 2, T, E)}),
                15);
     check(ok(t) && t.temps[0] == 1 && t.temps[1] == 1 && t.temps[2] == 1 && t.temps[3] == 1 && t.temps[4] == 3 &&
-              t.temps[5] == 1 && t.temps[6] == 11 && vm.neighborhoodData[3] == 1,
+              t.temps[5] == 1 && t.temps[6] == 11,
           "neighbor data: belongs in house, friends, telephone, baby, family friends, computer; neighborhood data");
+    // Neighborhood data is read-only and only 1-15 (InterpValue: no address,
+    // error 0x3C outside; TryExpression: a write is error 0x13).
+    t = fx.run(me.id, 0x1009, tree({expr(HoodData, 3, Assign, Lit, 1, T, E)}));
+    check(t.status == Thread::Status::Failed && t.error.find("read-only") != std::string::npos &&
+              vm.neighborhoodData[3] == 0,
+          "neighborhood data write: error 0x13");
+    t = fx.run(me.id, 0x100A, tree({expr(Temp, 0, Assign, HoodData, 0, T, E)}));
+    check(t.status == Thread::Status::Failed, "neighborhood data 0: error 0x3C");
 }
 
 // With the game's data (OS2_DATA): the lot objects' value of the Lots &

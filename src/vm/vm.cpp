@@ -511,7 +511,6 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x16:
         return &attribute(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
     case 0x19: return &slot(c.frame.locals, data, "local");
-    case 0x22: return &slot(c.vm.neighborhoodData, data, "neighborhood data");
     case 0x24: return &typeAttribute(typeAttributesOf(c.vm, c.me()), data, "type attribute");
     case 0x25: return &typeAttribute(typeAttributesOf(c.vm, c.stackObject()), data, "stack object type attribute");
     case 0x20: return &slot(neighborPersonData(c), data, "neighbor's person data");
@@ -639,6 +638,12 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     case 0x30: return slotContent(vm, me(), temp(thread.temps, data, "temp"));
     case 0x31: return slotContent(vm, stackObject(), temp(thread.temps, data, "temp"));
     case 0x18: return neighborField(*this, data);
+    case 0x22: // neighborhood data: cTSObject::InterpValue (base 0xb2d890, BV 0xb15f2c) reads it by
+               // cTSNeighborhood's getter (+0x14 + 2i) and only for 1-15, else error 0x3C; it gives
+               // no address, so it cannot be written (docs/save-mac.md §9.4)
+        if (data < 1 || data > 15)
+            throw gameError(err::NeighborhoodDataOutOfRange, "neighborhood data " + std::to_string(data));
+        return vm.neighborhoodData[size_t(data)];
     case 0x21: // job data: the game has none (InterpValue, base 1.0 and BV: always error 0x3A)
         throw gameError(err::JobDataNotFound, "job data " + std::to_string(data));
     case 0x26: {
@@ -682,6 +687,9 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     case 0x27: setTokenField(me().tempToken, data, value); return;
     case 0x28: setTokenField(stackObject().tempToken, data, value); return;
     case 0x21: throw gameError(err::JobDataNotFound, "job data " + std::to_string(data));
+    case 0x22: // a value without an address: the Expression's write is error 0x13 (TryExpression,
+               // base 0xb67204, BV 0xe4bb64)
+        throw gameError(err::ReadOnly, "neighborhood data " + std::to_string(data));
     case 0x07:
     case 0x10: // slots change by moving objects, not by writing to them
     case 0x14:
