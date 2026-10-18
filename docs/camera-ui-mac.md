@@ -532,10 +532,51 @@ senão alfa = 1
 Depois o `ParentFadeAlpha` (abaixo) e, só com a câmera de cinema, os bits do
 `+0x108`: bit 1 esconde sempre; sem o bit 3 o objeto some com alfa 0; com o
 bit 3 é tudo ou nada com histerese (some em ≤ 0,75 e marca o bit 4, volta em
-≥ 1), e o alfa vira 0 ou 1. Quem preenche a caixa `0x148` e os bits do
-`+0x108` não foi lido (as opções das cenas, `docs/cinematics-mac.md` §8:
-"ObjectHiding"); sem isso a conta não pode ser feita, e o app segue sem fade
-durante as cinemáticas.
+≥ 1), e o alfa vira 0 ou 1.
+
+**Quem preenche a caixa e os bits** (rodada n50; Ghidra MCP e Ghidra sem
+janela num clone APFS, só leitura; BV):
+
+- **Os parâmetros** (`ObjectFadeParams`, BV `0x7b35c4`): os cinco campos são
+  `+0x364` distância, `+0x368` queda, `+0x36c`/`+0x36d` (allObjects, câmera
+  de cinema) e mais **`+0x370` e `+0x374`**, que a conta da câmera de cinema
+  usa no lugar da distância e da queda (o `param_3 + 0xc`/`+ 0x10` do
+  `FUN_0065deb0`). O `+0x36d` é `objectFadeCineCam > 0` **e** o `+0x165` do
+  sistema: o `Prep` da cena (BV `0x7c82ec`) põe `+0x165` = a flag **`0x80`**
+  da primitiva Cinematic (`TryCinematic` BV `0xe24960` passa o bit 7 dos
+  flags) **ou** a cena ser `movein_cine` (o mesmo `strcmp` põe o `+0x164`,
+  "Show Entire House"). Nenhum dos 26 usos da primitiva no jogo base tem a
+  `0x80` (`s2pkg prim-usage 7B`: 0x00, 0x02, 0x04, 0x24, 0x40, 0x42): **só a
+  mudança (`moveIn`) usa o fade da câmera de cinema**. Nas outras cenas a
+  câmera "Animated" (`CineCamCamera.txt`: 1, 2, 0, 1) fica na regra comum:
+  os objetos "Obstructs View" com distância 1 e queda 2.
+- **A caixa `0x148`, o olho `0x140` e a direção `0x144`**
+  (`CinematicSceneBoundingBox` BV `0x7b367c` = `+0x390`,
+  `CinematicCameraPosition` `0x7b366c` = `+0x378`, `CinematicCameraDirection`
+  `0x7b3674` = `+0x384`), postos a cada quadro por `FUN_007b8834`: o olho e a
+  direção são os do viewer (vtable `0x230`: posição; a direção é o eixo do
+  viewer pelo seu quatérnio); a caixa começa vazia e soma, de cada ator da
+  cena (`+0x130`, os atores do CINE) **no mundo** (`cTSObject::IsInWorld`,
+  vtable `0x2e0`), a caixa do seu modelo (`FUN_00a45e54(caixa, 0xf, …)`,
+  a mesma das rotas) com o z cortado: **z₀ + 0,3·h e z₁ − 0,05·h**; um ator
+  que não é pessoa (`GetType` ≠ 2, vtable `0x184`) com meia diagonal
+  |máx − mín|/2 < 0,5 fica de fora. Sem nenhum, a caixa vira zero. Então
+  `+0x370` = max(0, (centro − olho)·direção) (a profundidade do centro) e
+  `+0x374` = min(1, 0,6 · |máx − mín|/2 / (tan(fov/2) · `+0x370`)), o fov do
+  viewer (constantes em `0x274b480` = 0, `0x274b4d4` = 0,5, `0x274b478` =
+  0,6, `0x274b470` = 1, `0x274b670` = 0,3, `0x274b9dc` = −0,05).
+- **Os bits do `+0x108`**: `cObject::OnInit` (BV `0x654f98`) põe o **bit 1**
+  no **PlumbBob** (`0xF37E5AE0`) e no **Overhead Meter** (`0x0CBBE10E`), pelo
+  GUID do objeto; o **bit 2** em portas e janelas (`cTSObject::IsWallPortal`,
+  vtable `0x188`, BV `0xafefa0`: `GetType` 8 ou 9); o **bit 3** nas pessoas
+  (`GetType`, BV `0xb01250`: o campo 9 do OBJD, = 2). O **bit 0** é o setter
+  da vtable `0x184` do `cObject` (`0x653cc8`: liga/desliga o bit 0, apaga o
+  bit 4, alfa 1, força a próxima conta): o `Prep` o liga nos atores da cena
+  (`+0x130`) quando ela fica pronta, o `Start` nos objetos que estão nos
+  slots dos atores (`+0x13c`, montados pelo `Prep` com os grupos de render
+  do ator) e o `Stop` desliga os dois. Ou seja: atores e o que eles seguram
+  não desbotam, portas e janelas também não, o PlumbBob e o medidor somem, os
+  Sims que não são atores somem ou aparecem inteiros.
 
 **`ParentFadeAlpha`** (BV `0x662c30`, rodada n39): para quem entrou na conta, o
 alfa vira o mínimo entre o seu e o do objeto que o contém (o `0x1f8` do pai
@@ -874,6 +915,20 @@ mostrados, de cima para baixo, onde o tile tem piso) corta o raio (5 cm de
 folga para o que está deitado no piso). Antes os Sims vinham antes de tudo
 e o raio atravessava o piso: clicar no piso de cima pegava o Sim de baixo.
 Inferido: o "tipo `0x12`" como piso/chão e o `0x13` como parede (pelos usos).
+
+**A geometria que o raio testa** (rodada n50, BV, lido em parte): o
+`cGeometryDataContainer` de um GMDC guarda um **limite rígido** (o
+`SetRigidBound` BV `0xcf44cc`/`RigidBound` `0xcf4764`, `+0x74`, um
+`cITriangleSetShape`) e **um limite por osso** (`SetBoneBound` `0xcf7bdc`,
+`+0x68`), e o `cGeometryNode` recebe os do osso
+(`SetBoneIntersectionBounds` `0xcb1214`, vtable `0x9c`, `+0xb8`): são as
+malhas de limite do GMDC (a "bounding mesh" e as dos joints, que o app lê em
+`Gmdc::boundingMesh`/`joints`), e não os triângulos desenhados. O teste da
+folha (o `NearerIntersection` do nó de geometria pelo
+`cINearerIntersectionQueryStrategy`) não foi achado: que o raio use essas
+malhas, as dos ossos na pose do quadro, segue **inferido**. O app escolhe os
+objetos pelos triângulos do modelo (com a máscara de alfa) e os animados
+pelos triângulos posados.
 
 ## 2.7 Cursores do mouse (dados + strings do binário; rodada 21, r21-cursor)
 

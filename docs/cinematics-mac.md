@@ -514,3 +514,51 @@ BV.
   direção no chão das luzes nos mapas de luz; e o `MacApplyLightSettings`
   do OpenGL, BV `0x21db0`, passa o Theta do D3D como `GL_SPOT_CUTOFF` em
   graus, ≤ 90, com expoente; isso é da frente de luz.)
+
+## 10. Rodada n50: o fade da câmera de cinema e o relógio da cena
+
+Leitura de 2026-10-18. Modo: **Ghidra MCP** (`sims2_bv.ppc`, só leitura) e
+**Ghidra sem janela** (clone APFS do projeto com `-readOnly -noanalysis`,
+`tools/symxfer/DecompileList.java` criando a função só na memória, nada
+salvo) para o `Prep` (`0x7c82ec`), o `Start` (`0x7c3898`), o `Stop`
+(`0x7c56b4`), o `UpdateFrameTime` (`0x73ea10`) e a atualização da câmera de
+cinema (`0x7b8834`). Endereços BV.
+
+- **O fade da câmera de cinema** está em `camera-ui-mac.md` §1.10 (a caixa
+  `0x148`, os bits `+0x108`, os parâmetros `+0x370`/`+0x374`). Em resumo: só
+  vale com a flag `0x80` da primitiva (nenhum uso no jogo base) ou na cena
+  `movein_cine`; os atores (bit 0, pelo `Prep`) e o que está nos slots deles
+  (pelo `Start`), as portas e as janelas (bit 2) não desbotam; o PlumbBob e
+  o Overhead Meter (bit 1) somem; os outros Sims (bit 3) somem ou aparecem
+  inteiros.
+- **O `Prep`** guarda os atores em `+0x130` (por ator: o objeto, os grupos de
+  render do CINE, uma flag), os objetos nos slots de cada ator em `+0x13c`
+  (vtable `0x104`/`0x110` do ator) com os grupos dele, `+0x164` (casa
+  inteira) = a flag `0x08` ou `movein_cine`, `+0x165` (fade de cinema) = a
+  `0x80` ou `movein_cine`, `+0x167` = o espelho; com a cena pronta liga o
+  bit 0 de cada ator.
+- **O `Start`** (além do §8): por ator, os bits 1/2/4 dos grupos de render
+  ligam o ator e os objetos dos seus slots aos grupos "Cinematic1/2/3"
+  (`FUN_0097cbe4`, como o app já faz para o rig de luz), e o bit 0 dos
+  objetos dos slots; guarda o `+0x24` do relógio em `+0x168` e põe **1**;
+  inicia um `cRZTimer` global (`0x2c32560`).
+- **O relógio** (`nTSSG::cCustomAnimTimer2`, vtable `0x27e4fd4`; o
+  construtor em `0x73f040` põe **escala `+0x1c` = 1,0**, **`+0x20` = 42 ms**,
+  **`+0x24` = 200 ms** e **o corte `+0x58` ligado**). Setters: `0x18`
+  escala (zera o resto `+0x30` quando muda), `0x58` `+0x20`, `0x5c` `+0x24`,
+  `0x60` `+0x58`, `0x64` `+0x34` (tempo fixo: com ele o relógio fica
+  parado nesse valor); getters `0x34` escala, `0x38` tempo de animação
+  `+0x28`, `0x70` `+0x20`, `0x74` `+0x24`. `UpdateFrameTime` (`0x1c`): o
+  tempo real desde a última chamada (o `cRZTimer` em `+8`) fica em no máximo
+  `+0x24`; somado ao resto, o que passar de `+0x20` fica para as próximas
+  (até 1000); vezes a escala, e no máximo 200 por chamada, vai para
+  `+0x28`. Com o corte ligado (o normal) e o `+0x24` = 1 do `Start`, **cada
+  chamada do `UpdateFrameTime` anda no máximo 1 ms × a escala** durante a
+  cena. O `Stop` (sem o argumento) desliga o corte e devolve o `+0x24`; no
+  fim (a câmera parou ou o argumento) liga o corte de novo.
+- **O que fica sem conclusão**: quem chama o `UpdateFrameTime` (por quadro
+  desenhado ou por tick do simulador; nenhuma chamada pelo `+0xB4` do
+  sistema) e quem muda a escala (nenhum chamador da `0x18` achado). Se é por
+  tick, a cena anda 1 ms de animação por tick, presa ao simulador; se é por
+  quadro, a cena anda devagar. O `opensims2` segue com a sua (o relógio da
+  cena na velocidade normal, sem pausa; **inferido**).
