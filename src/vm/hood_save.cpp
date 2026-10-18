@@ -530,8 +530,11 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         }
     }
 
-    // Inventories.
-    {
+    // Inventories. The game writes the NGBH at every neighborhood save
+    // (cTSNeighborhood::Save) after SanifyInventories (docs/save-mac.md §9.1,
+    // §9.3): the VM's inventories when they changed, then one per lot,
+    // family and neighbor of the neighborhood, by ID.
+    if (h.inventories.version) {
         const auto& inv = h.inventories;
         bool changed = false;
         std::map<std::pair<InventoryKind, int16_t>, const hood::Inventory*> was;
@@ -552,8 +555,8 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
                 changed = true;
         if (vm.neighborhoodData != inv.data)
             changed = true;
-        if (changed && inv.version) {
-            hood::NeighborhoodInventories n = inv;
+        hood::NeighborhoodInventories n = inv;
+        if (changed) {
             n.data = vm.neighborhoodData;
             auto rebuild = [&](InventoryKind kind, std::vector<hood::Inventory>& list) {
                 std::vector<hood::Inventory> out;
@@ -572,9 +575,27 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
             rebuild(InventoryKind::Lot, n.lots);
             rebuild(InventoryKind::Family, n.families);
             rebuild(InventoryKind::Neighbor, n.neighbors);
-            replaced[{hoodtype::NGBH, 0}] = n.write();
             res.inventories = true;
         }
+        // The lots (LotInfos), families (the family manager's: the
+        // package's, less those removed, and those made in play) and
+        // neighbors (the package's and those made in play) of the
+        // neighborhood.
+        std::vector<uint32_t> lotIds, familyIds, neighborIds;
+        for (const auto& l : h.lots)
+            lotIds.push_back(l.id);
+        for (const auto& f : h.families)
+            if (!removedFamilies.count(f.id))
+                familyIds.push_back(f.id);
+        for (const auto& [tgi, bytes] : added) // FAMIs made above
+            if (tgi.type == hoodtype::FAMI)
+                familyIds.push_back(tgi.instance);
+        for (const auto& nb : h.neighbors)
+            neighborIds.push_back(nb.id);
+        for (uint16_t id : newIds)
+            neighborIds.push_back(id);
+        n.sanify(lotIds, familyIds, neighborIds);
+        replaced[{hoodtype::NGBH, 0}] = n.write();
     }
 
     // SWAF: each Sim's wants, fears and achievement history, for those whose

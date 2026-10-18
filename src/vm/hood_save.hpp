@@ -10,8 +10,10 @@
 //   the list of neighbors each has a relationship with;
 // - SREL: the Sim-to-Sim relationships the VM changed or added (values the
 //   VM cut to 16 bits keep their saved 32 bits while the cut agrees);
-// - NGBH: the inventories (global, lot, family, neighbor) when the VM's
-//   differ from the package's;
+// - NGBH: always, as cTSNeighborhood::Save does at every neighborhood save
+//   (docs/save-mac.md §9.1): the inventories (global, lot, family,
+//   neighbor) the VM changed, then SanifyInventories (one per lot, family
+//   and neighbor of the neighborhood, by ID, §9.3);
 // - SWAF: the wants, fears and achievement history of the Sims whose want
 //   state changed (wants.hpp);
 // - neighbors made in play (Make New Character: babies, NPCs, townies):

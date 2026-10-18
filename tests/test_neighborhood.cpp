@@ -152,7 +152,7 @@ static void testDecoders() {
         check(n.neighbors.size() == 1 && n.neighbors[0].singular[0].flags == 3 &&
                   n.neighbors[0].singular[0].data[1] == 1997,
               "NGBH memory");
-        check(n.trailer == 1, "NGBH trailer");
+        check(n.flagFD, "NGBH flag +0xFD");
         // The 32 bytes after the region type are the 16 neighborhood data
         // (cTSNeighborhood +0x14, data owner 0x22), whatever they hold.
         const auto t = NeighborhoodInventories::parse(ngbh("Temperate"));
@@ -287,6 +287,21 @@ static void testWriters() {
     FamilyRecord rec = FamilyRecord::parse(f);
     rec.funds = 12345;
     check(FamilyRecord::parse(rec.write()).funds == 12345, "FAMI funds written");
+
+    // cTSNeighborhood::SanifyInventories (docs/save-mac.md §9.3): the
+    // inventories of lots, families and neighbors gone go, every one left
+    // has one, by ID.
+    NeighborhoodInventories n = NeighborhoodInventories::parse(ngbh());
+    check(n.tilesX == 128 && n.tilesY == 128, "NGBH tiles");
+    n.lots = {Inventory{9, {}, {}}, Inventory{2, {InventoryToken{0x1234, 1, {5}}}, {}}, Inventory{40, {}, {}}};
+    n.sanify({2, 3, 9}, {0, 1}, {});
+    check(n.lots.size() == 3 && n.lots[0].id == 2 && n.lots[1].id == 3 && n.lots[2].id == 9,
+          "lot inventories: one per lot, by ID, the gone one dropped");
+    check(n.lots[0].counted.size() == 1 && n.lots[0].counted[0].guid == 0x1234 && n.lots[1].counted.empty(),
+          "the kept inventory keeps its tokens, the new one is empty");
+    check(n.families.size() == 2 && n.families[0].id == 0 && n.families[1].id == 1, "family inventories: one each");
+    check(n.neighbors.empty(), "neighbor inventory of a neighbor gone dropped");
+    check(NeighborhoodInventories::parse(n.write()).lots.size() == 3, "sanified NGBH reads back");
 }
 
 int main() {

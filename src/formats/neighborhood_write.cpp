@@ -5,6 +5,9 @@
 
 #include "binwriter.hpp"
 
+#include <map>
+#include <set>
+
 namespace os2::hood {
 
 namespace {
@@ -44,16 +47,41 @@ std::vector<uint8_t> NeighborhoodInventories::write() const {
     BinWriter w;
     w.u32(hoodtype::NGBH);
     w.u32(version);
-    for (uint32_t h : header)
-        w.u32(h);
+    w.u32(zero);
+    w.u32(tilesX);
+    w.u32(tilesY);
     str32(w, regionType);
     w.shorts(data);
     writeInventory(w, global);
     writeInventories(w, lots);
     writeInventories(w, families);
     writeInventories(w, neighbors);
-    w.u8(trailer);
+    w.u8(flagFD ? 1 : 0);
     return std::move(w.bytes());
+}
+
+void NeighborhoodInventories::sanify(const std::vector<uint32_t>& lotIds, const std::vector<uint32_t>& familyIds,
+                                     const std::vector<uint32_t>& neighborIds) {
+    // Lots: those of LotInfos gone are erased, each LotInfo gets one
+    // (GetInventoryByLotID); families: those the family manager does not
+    // find are erased, each family gets one; neighbors: those whose
+    // neighbor is gone are erased, then CreateNewNeighborInventories gives
+    // one to each neighbor. The maps are by ID.
+    auto fix = [](std::vector<Inventory>& list, const std::vector<uint32_t>& ids) {
+        std::map<uint32_t, Inventory> byId;
+        const std::set<uint32_t> keep(ids.begin(), ids.end());
+        for (auto& i : list)
+            if (keep.count(i.id))
+                byId[i.id] = std::move(i); // the last of an ID, as Read's map assignment
+        for (uint32_t id : keep)
+            byId.try_emplace(id, Inventory{id, {}, {}});
+        list.clear();
+        for (auto& [id, i] : byId)
+            list.push_back(std::move(i));
+    };
+    fix(lots, lotIds);
+    fix(families, familyIds);
+    fix(neighbors, neighborIds);
 }
 
 std::vector<uint8_t> SimDescription::write() const {

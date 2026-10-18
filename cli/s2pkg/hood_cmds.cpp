@@ -163,8 +163,8 @@ int cmdHoodSweep(const char* dir) {
                 total[t].firstError = c.firstError;
         }
         const auto& inv = h.inventories;
-        ++unknowns["NGBH header"][long(inv.header[0]) << 16 | inv.header[1] << 8 | inv.header[2]];
-        ++unknowns["NGBH trailer"][inv.trailer];
+        ++unknowns["NGBH zero, tiles"][long(inv.zero) << 16 | inv.tilesX << 8 | inv.tilesY];
+        ++unknowns["NGBH flag +0xFD"][inv.flagFD];
         for (const auto& n : h.neighbors) {
             ++unknowns["SDSC u32 @0"][n.description.unknown0];
             ++unknowns["SDSC u32 @8"][n.description.unknown2];

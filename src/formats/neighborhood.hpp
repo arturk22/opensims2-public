@@ -49,13 +49,16 @@ namespace hood {
 // ---------------------------------------------------------------------------
 // NGBH: inventories of the whole neighborhood, as cTSNeighborhood::Write/
 // Read (BV 0x4dc43c/0x4e0d38; docs/save-mac.md §8) do them. Version 0x6F
-// (base game): 'NGBH' u32 magic, u32 version, u32 0, two u32 (+0x34, +0x38:
-// 0x80, 0x80 in every shipped neighborhood; not identified), u32-length
-// region type ("Temperate", "Desert"), the 16 i16 neighborhood data (+0x14,
-// data owner 0x22; N003's hold the bytes of "Temperate"), the global
-// inventory, then the lot, family and neighbor inventories (u32 count,
-// then u32 ID + inventory each) and one final byte (+0xFD; 1, 0 in the
-// tutorial; not identified).
+// (base game): 'NGBH' u32 magic, u32 version, u32 0, the neighborhood's
+// size in tiles (+0x34, +0x38: cTSNeighborhood::TileCountX/TileCountY, set
+// by SetSize; 128 x 128 from the constructor and in every shipped one),
+// u32-length region type ("Temperate", "Desert"), the 16 i16 neighborhood
+// data (+0x14, data owner 0x22; N003's hold the bytes of "Temperate"), the
+// global inventory, then the lot, family and neighbor inventories (u32
+// count, then u32 ID + inventory each; std::maps by ID, so in ascending
+// order) and one final byte (+0xFD: a bool, read as byte != 0, that only the
+// constructor (0), Read and Write touch in the base game and in BV; 1 in the
+// shipped neighborhoods, 0 in the tutorial). docs/save-mac.md §8, §9.4.
 // An inventory (cTSInventory::Read/Write, BV 0x497040/0x4949a0) is the
 // counted tokens then the singular ones (u32 count, then tokens); a token
 // is u32 GUID, u16 flags, u32 count and that many u16 values. The singular
@@ -74,15 +77,27 @@ struct Inventory {
 
 struct NeighborhoodInventories {
     uint32_t version = 0;
-    std::array<uint32_t, 3> header{};
-    std::string regionType;
+    uint32_t zero = 0;                    // written 0
+    uint32_t tilesX = 128, tilesY = 128;  // +0x34/+0x38 (TileCountX/Y)
+    std::string regionType = "Temperate";
     std::array<int16_t, 16> data{}; // the neighborhood data (data owner 0x22)
     Inventory global;
     std::vector<Inventory> lots, families, neighbors;
-    uint8_t trailer = 0;
+    bool flagFD = false; // +0xFD, kept and unused
 
     static NeighborhoodInventories parse(std::span<const uint8_t> data);
     std::vector<uint8_t> write() const; // neighborhood_write.cpp: parse's inverse
+
+    // cTSNeighborhood::SanifyInventories (base 0xbdbd5c, docs/save-mac.md
+    // §9.3), run before every NGBH write: the lot, family and neighbor
+    // inventories whose lot, family or neighbor is not in the given sets go,
+    // each one in them without an inventory gets an empty one
+    // (GetInventoryBy*ID, CreateNewNeighborInventories), and the three lists
+    // end in ascending ID order (the game's maps). Not done (inferred): the
+    // game also empties the inventory of a neighbor whose definition is a
+    // template (OBJD type 0x10), which the neighborhood file does not say.
+    void sanify(const std::vector<uint32_t>& lotIds, const std::vector<uint32_t>& familyIds,
+                const std::vector<uint32_t>& neighborIds);
 };
 
 // ---------------------------------------------------------------------------

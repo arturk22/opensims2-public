@@ -174,8 +174,9 @@ NeighborhoodInventories NeighborhoodInventories::parse(std::span<const uint8_t> 
     n.version = r.u32();
     if (n.version != 0x6F)
         throw FormatError("NGBH: unsupported version " + hexString(n.version));
-    for (auto& h : n.header)
-        h = r.u32();
+    n.zero = r.u32();
+    n.tilesX = r.u32();
+    n.tilesY = r.u32();
     n.regionType = str32(r);
     for (auto& d : n.data)
         d = r.i16();
@@ -183,7 +184,7 @@ NeighborhoodInventories NeighborhoodInventories::parse(std::span<const uint8_t> 
     n.lots = readInventories(r);
     n.families = readInventories(r);
     n.neighbors = readInventories(r);
-    n.trailer = r.u8();
+    n.flagFD = r.u8() != 0; // Read keeps (byte != 0)
     r.expectEnd("NGBH");
     return n;
 }
