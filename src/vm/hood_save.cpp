@@ -616,10 +616,10 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         if (e.tgi.type == hoodtype::FAMI && removedFamilies.count(e.tgi.instance))
             continue; // RemoveFamily
         if (auto it = replaced.find({e.tgi.type, instance}); it != replaced.end()) {
-            w.add(e.tgi, std::move(it->second), e.compressed());
+            w.add(e.tgi, std::move(it->second), true);
             replaced.erase(it);
         } else if (auto sw = e.tgi.type == wants::kTypeSwaf ? swaf.find(e.tgi.instance) : swaf.end(); sw != swaf.end()) {
-            w.add(e.tgi, std::move(sw->second), e.compressed());
+            w.add(e.tgi, std::move(sw->second), true);
             swaf.erase(sw);
         } else {
             w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);

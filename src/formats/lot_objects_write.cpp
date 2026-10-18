@@ -346,7 +346,10 @@ void LotObjects::save(DbpfPackage& source, const std::filesystem::path& out) con
         throw FormatError("refusing to write a lot over its source package");
     std::map<std::pair<uint32_t, uint32_t>, const DbpfEntry*> states;
     DbpfWriter w;
-    auto add = [&](const DbpfEntry& e, std::vector<uint8_t> bytes) { w.add(e.tgi, std::move(bytes), e.compressed()); };
+    // Every record written is offered to compression, as the game's packed
+    // file does (docs/save-mac.md §9.2); the ones not rewritten keep their
+    // stored bytes.
+    auto add = [&](const DbpfEntry& e, std::vector<uint8_t> bytes) { w.add(e.tgi, std::move(bytes), true); };
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, const Record*> others;
     for (const auto& r : otherRecords)
         others[{r.type, r.group, r.instance}] = &r;
@@ -379,15 +382,12 @@ void LotObjects::save(DbpfPackage& source, const std::filesystem::path& out) con
             w.addStored(e.tgi, source.readRaw(e), e.rawSize);
     }
     for (const auto& s : objects) {
-        // The key and compression of the state it was read from; new ones
-        // get the game's group (0xFFFFFFFF) and are compressed.
+        // The key of the state it was read from; new ones get the game's
+        // group (0xFFFFFFFF).
         Tgi tgi{resourceType(s.kind), 0xFFFFFFFF, uint32_t(uint16_t(s.id)), 0};
-        bool compress = true;
-        if (auto it = states.find({tgi.type, tgi.instance}); it != states.end()) {
+        if (auto it = states.find({tgi.type, tgi.instance}); it != states.end())
             tgi = it->second->tgi;
-            compress = it->second->compressed();
-        }
-        w.add(tgi, writeState(s, version), compress);
+        w.add(tgi, writeState(s, version), true);
     }
     for (const auto& [key, r] : others)
         w.add(Tgi{r->type, r->group, r->instance, 0}, r->bytes, true);

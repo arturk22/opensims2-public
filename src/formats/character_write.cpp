@@ -413,7 +413,7 @@ bool setCharacterNames(const std::filesystem::path& file, const std::string& fir
             if (e.tgi.type == ::os2::type::DIR)
                 continue;
             if (e.tgi == at)
-                w.add(e.tgi, std::move(replaced), e.compressed());
+                w.add(e.tgi, std::move(replaced), true);
             else
                 w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
         }
@@ -1169,7 +1169,7 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         };
         item("0", "The Sims 2");
         item("1", "0.14.0.735");
-        pkg.add(Tgi{kTypeVersion, kLocal, 1, 0}, std::move(w.bytes()));
+        pkg.add(Tgi{kTypeVersion, kLocal, 1, 0}, std::move(w.bytes()), true);
     }
     res.resources = pkg.size();
     std::filesystem::create_directories(out.parent_path().empty() ? "." : out.parent_path());

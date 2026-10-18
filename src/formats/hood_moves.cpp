@@ -56,7 +56,7 @@ void rewritePackage(const fs::path& file, const std::map<std::pair<uint32_t, uin
             if (drop.count(key))
                 continue;
             if (auto it = replace.find(key); it != replace.end())
-                w.add(e.tgi, it->second, e.compressed());
+                w.add(e.tgi, it->second, true);
             else
                 w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
         }

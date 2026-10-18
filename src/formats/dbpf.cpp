@@ -321,10 +321,19 @@ bool DbpfWriter::contains(const Tgi& tgi) const {
     return false;
 }
 
+bool worthCompressing(uint32_t resourceType, size_t rawSize, size_t compressedSize) {
+    if (resourceType == type::DIR || rawSize < kMinCompressedRecord || rawSize > kMaxCompressedRecord)
+        return false;
+    // The game's float compare: 0.8 <= compressed / raw keeps the raw bytes.
+    return float(compressedSize) / float(rawSize) < 0.8f;
+}
+
 void DbpfWriter::add(const Tgi& tgi, std::vector<uint8_t> data, bool compress) {
-    if (compress && !data.empty() && data.size() <= 0xFFFFFF) {
+    // QFS's u24 size field also caps it below 16 MiB.
+    if (compress && data.size() >= kMinCompressedRecord && data.size() <= kMaxCompressedRecord &&
+        tgi.type != type::DIR) {
         auto packed = qfsCompress(data);
-        if (packed.size() < data.size()) {
+        if (worthCompressing(tgi.type, data.size(), packed.size())) {
             const auto raw = uint32_t(data.size());
             addStored(tgi, std::move(packed), raw);
             return;
@@ -340,14 +349,21 @@ void DbpfWriter::addStored(const Tgi& tgi, std::vector<uint8_t> stored, std::opt
 }
 
 std::vector<uint8_t> DbpfWriter::build() const {
-    std::vector<uint8_t> dir; // 7.1 records: type, group, instance, instanceHi, raw size
+    // Key type (cGZDBSegmentPackedFile::DetermineKeyType, base 0x58a2b0): 2
+    // when some record has a high instance, else 1 (no high instance in the
+    // index nor in the DIR).
+    bool wide = false;
+    for (const auto& r : resources_)
+        wide = wide || r.tgi.instanceHi != 0;
+    std::vector<uint8_t> dir; // records: type, group, instance, [instanceHi,] raw size
     for (const auto& r : resources_) {
         if (!r.rawSize)
             continue;
         putLe32(dir, r.tgi.type);
         putLe32(dir, r.tgi.group);
         putLe32(dir, r.tgi.instance);
-        putLe32(dir, r.tgi.instanceHi);
+        if (wide)
+            putLe32(dir, r.tgi.instanceHi);
         putLe32(dir, *r.rawSize);
     }
 
@@ -360,7 +376,8 @@ std::vector<uint8_t> DbpfWriter::build() const {
         putLe32(index, k.type);
         putLe32(index, k.group);
         putLe32(index, k.instance);
-        putLe32(index, k.instanceHi);
+        if (wide)
+            putLe32(index, k.instanceHi);
         putLe32(index, uint32_t(out.size()));
         putLe32(index, uint32_t(bytes.size()));
         out.insert(out.end(), bytes.begin(), bytes.end());
@@ -374,13 +391,15 @@ std::vector<uint8_t> DbpfWriter::build() const {
     const size_t count = resources_.size() + hasDir;
     if (out.size() + index.size() > 0xFFFFFFFFull)
         throw DbpfError("package larger than 4 GiB");
-    setLe32(out, 0x04, 1); // DBPF 1.1
+    // cGZDBSegmentPackedFile::WriteHeaderRecord (base 0x587f80): DBPF 1.1,
+    // user version and dates 0, index 7 with the key type at 0x3C.
+    setLe32(out, 0x04, 1);
     setLe32(out, 0x08, 1);
-    setLe32(out, 0x20, 7); // index 7.1
+    setLe32(out, 0x20, 7);
     setLe32(out, 0x24, uint32_t(count));
     setLe32(out, 0x28, uint32_t(out.size()));
     setLe32(out, 0x2C, uint32_t(index.size()));
-    setLe32(out, 0x3C, 2);
+    setLe32(out, 0x3C, wide ? 2 : 1);
     out.insert(out.end(), index.begin(), index.end());
     return out;
 }

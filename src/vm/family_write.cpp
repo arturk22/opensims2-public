@@ -85,7 +85,7 @@ void writeFamilyThumbnail(const fs::path& neighborhood, uint32_t family, const s
             w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
         }
     }
-    w.add(Tgi{kTypeFamilyThumb, group, family, 0}, png);
+    w.add(Tgi{kTypeFamilyThumb, group, family, 0}, png, true);
     fs::create_directories(file.parent_path());
     w.save(file);
 }

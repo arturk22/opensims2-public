@@ -95,6 +95,46 @@ static void testRoundTrip() {
     std::filesystem::remove(path);
 }
 
+// The game's key type and compression rule (cGZDBSegmentPackedFile,
+// docs/save-mac.md §9.2): no high instance -> 20-byte index entries, 1 at
+// 0x3C and 16-byte DIR records; compression tried from 50 bytes and kept
+// only under 0.8 of the raw size.
+static void testGameLayout() {
+    DbpfWriter w;
+    const Tgi big{0x42484156, 0x7F000001, 0x00001000, 0};
+    const Tgi small{0x53545223, 0x7F000001, 0x00000081, 0};
+    const Tgi weak{0x4F424A44, 0x7F000001, 0x00000041, 0};
+    std::vector<uint8_t> tiny(49, 'a'); // compresses well, but under 50 bytes
+    std::mt19937 rng(11);
+    std::vector<uint8_t> half(400); // half noise: QFS saves ~10-20%, under the 20% the game asks
+    for (size_t i = 0; i < half.size(); ++i)
+        half[i] = i < 330 ? uint8_t(rng()) : 'b';
+    w.add(big, text(200), true);
+    w.add(small, tiny, true);
+    w.add(weak, half, true);
+    const auto bytes = w.build();
+    auto le = [&](size_t at) { return uint32_t(bytes[at]) | bytes[at + 1] << 8 | bytes[at + 2] << 16 | uint32_t(bytes[at + 3]) << 24; };
+    check(le(0x3C) == 1, "key type 1 without high instances");
+    check(le(0x2C) == le(0x24) * 20, "20-byte index entries");
+    check(le(0x18) == 0 && le(0x1C) == 0, "zero dates");
+    const auto path = tempPackage("layout");
+    w.save(path);
+    {
+        DbpfPackage pkg(path);
+        check(pkg.find(big) && pkg.find(big)->compressed(), "a large text is compressed");
+        check(pkg.find(small) && !pkg.find(small)->compressed(), "under 50 bytes stays raw");
+        check(pkg.find(weak) && !pkg.find(weak)->compressed(), "a record that keeps 0.8 of its size stays raw");
+        const auto* dir = pkg.find(kDirTgi);
+        check(dir && dir->size == 16, "one 16-byte DIR record");
+        check(pkg.read(*pkg.find(big)) == text(200), "compressed record reads back");
+    }
+    std::filesystem::remove(path);
+    check(!worthCompressing(0x42484156, 49, 10), "49 bytes: not tried");
+    check(worthCompressing(0x42484156, 50, 39), "50 bytes at 0.78: kept");
+    check(!worthCompressing(0x42484156, 50, 40), "exactly 0.8: raw");
+    check(!worthCompressing(type::DIR, 1000, 10), "the DIR is never compressed");
+}
+
 // The Sim parts are read on several threads (loadSimParts' parallelFor): a
 // package that cannot be reopened (it went, or the process ran out of open
 // files, as an app opened from the Finder did with its 256) throws in the
@@ -123,6 +163,7 @@ static void testParallelReadError() {
 int main() {
     testEmpty();
     testRoundTrip();
+    testGameLayout();
     testParallelReadError();
     if (failures == 0)
         std::printf("dbpf: all tests passed\n");

@@ -106,15 +106,24 @@ private:
     void applyDirectory();
 };
 
-// Builds a DBPF 1.1 package with index 7.1, the layout the game ships: 96-byte
-// header, resource data in insertion order, a generated DIR listing the
-// uncompressed size of every QFS-compressed resource, then the index.
+// Builds a DBPF 1.1 package as the game's cGZDBSegmentPackedFile writes one
+// (docs/save-mac.md §9.2): 96-byte header with zero dates, resource data in
+// insertion order, a generated DIR listing the uncompressed size of every
+// QFS-compressed resource, then the index. The index takes the game's key
+// type (DetermineKeyType): 24-byte entries and 2 at 0x3C (index 7.1, 20-byte
+// DIR records) when some resource has a high instance, else 20-byte entries,
+// 1 at 0x3C and 16-byte DIR records. The game writes in place, into holes;
+// this writer always makes the whole file, as the game's compaction does
+// (no holes; the order of the data and of the index is ours, which no reader
+// depends on).
 // Duplicate TGIs are kept as given (the format allows them); DIR resources
 // passed in are dropped, since the writer generates its own.
 class DbpfWriter {
 public:
     // Add uncompressed bytes. With `compress`, the resource is stored as QFS
-    // unless that does not shrink it (or it exceeds QFS's 16 MiB limit).
+    // when the game's packed file would keep it compressed
+    // (worthCompressing); the game compresses every record it writes, so the
+    // save writers pass true.
     void add(const Tgi& tgi, std::vector<uint8_t> data, bool compress = false);
     // Add bytes exactly as they will be stored; a `rawSize` lists the resource
     // in the DIR as compressed (the bytes should then be a QFS stream).
@@ -135,6 +144,13 @@ private:
     };
     std::vector<Resource> resources_;
 };
+
+// The game's rule for a record it writes (cGZDBSegmentPackedFile::
+// WriteRecordInternal and ShouldRecordBeCompressed, base 0x587004/0x589748,
+// docs/save-mac.md §9.2): try only from 50 bytes to 16,000,000 and never for
+// the DIR; keep the compressed bytes only under 0.8 of the raw size.
+bool worthCompressing(uint32_t resourceType, size_t rawSize, size_t compressedSize);
+constexpr size_t kMinCompressedRecord = 50, kMaxCompressedRecord = 16000000;
 
 // Key the game uses for the DIR resource.
 constexpr Tgi kDirTgi{type::DIR, 0xE86B1EEF, 0x286B1F03, 0};
