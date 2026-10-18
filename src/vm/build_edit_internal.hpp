@@ -26,5 +26,11 @@ bool street(const std::string& pattern);
 bool sameSection(const std::array<int, 4>& a, const Lot::Wall& w);
 // The partitions round the raised tiles (foundation, decks).
 bool raisedEdge(uint32_t type);
+// FUN_009ac8d0 (BV): the wall style's product may be deleted by the level
+// room tool (cTSProduct vtable 0x154 with 4: walls.txt "deleteTool
+// levelRoom", the table at 0x28660d0 partition 1, roof 2, levelroom 4,
+// modularstairs 8): the foundation (23), 16, the deck skirts (24, 4) and the
+// pool's wall (29).
+bool levelRoomDeletes(uint32_t type);
 
 } // namespace os2::vm::build_edit_internal

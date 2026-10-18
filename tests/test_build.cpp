@@ -1222,6 +1222,36 @@ static void testFolderMarkersN48() {
     check(!isFolderMarker(other) && !objectMayBeInFoundation(vm, other), "another object may not be in a foundation");
 }
 
+// MayPlaceQuadrilateral's walls (FUN_009ac8d0): a wall inside the rectangle
+// the level room tool deletes (walls.txt deleteTool levelRoom: the deck
+// skirt 24 here) lets a foundation be laid; a normal wall is 0x84. (The
+// level above is at the tool's height already, 0.75: no point is moved, so
+// the vertex test, which comes first, has nothing to refuse.)
+static void testLevelRoomWallsN48() {
+    for (const uint32_t type : {uint32_t(24), uint32_t(Lot::Normal)}) {
+        Lot lot = flatLot();
+        lot.levelCount = 2;
+        lot.elevations.assign(2 * 13 * 11, 0.0f);
+        for (size_t i = 13 * 11; i < lot.elevations.size(); ++i)
+            lot.elevations[i] = 0.75f;
+        lot.floors.assign(2 * 12 * 10, {});
+        lot.rooms.assign(2 * 12 * 10, {});
+        for (auto& [k, l] : lot.roomLayers)
+            l.resize(2 * 12 * 10);
+        addWall(lot, 0, 4, 4, 5, 4, type, {0xFFFF, 0xFFFF});
+        lot.deckFoundationStyles.assign(2 * 12 * 10, {-1, -1, -1, -1}); // no foundation yet (the markers say)
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World::fromLot(lot);
+        BuildEditor ed(vm, lot);
+        const auto r = ed.drawFoundation(3, 3, 6, 6, 0);
+        if (type == 24)
+            check(r.ok && r.cost > 0, "a deck skirt inside the rectangle: the level room tool deletes it");
+        else
+            check(!r.ok && r.error == 0x84, ("a wall inside the rectangle: 0x84 (" + r.message + ")").c_str());
+    }
+}
+
 static void testObjectsTestN48() {
     Lot lot = flatLot();
     lot.levelCount = 2;
@@ -1317,6 +1347,7 @@ static void testObjectsTestN48() {
 int main() {
     testObjectsTestN48();
     testFolderMarkersN48();
+    testLevelRoomWallsN48();
     testPoolOverFloor();
     testRedoFunds();
     testDeckLevelling();

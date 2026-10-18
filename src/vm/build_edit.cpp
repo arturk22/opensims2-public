@@ -48,6 +48,10 @@ bool sameSection(const std::array<int, 4>& a, const Lot::Wall& w) {
 // column deck skirt 4 (deckfoundations.txt wallStyle).
 bool raisedEdge(uint32_t type) { return type == Lot::Foundation || type == 16 || type == Lot::DeckSkirt; }
 
+bool levelRoomDeletes(uint32_t type) {
+    return type == Lot::Foundation || type == 16 || type == 24 || type == Lot::DeckSkirt || type == Lot::Pool;
+}
+
 } // namespace build_edit_internal
 
 std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {

@@ -356,9 +356,9 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
                     return fail(0x83, "something is in the way at " + point(x, y));
                 }
     // A wall strictly inside the rectangle that the level room tool may not
-    // erase (FUN_009ac8d0; here every wall but the raised edges) -> 0x84.
+    // erase (FUN_009ac8d0: its product's deleteTool has levelRoom) -> 0x84.
     for (const auto& w : lot_.walls) {
-        if (w.a.level != 0 || raisedEdge(w.type))
+        if (w.a.level != 0 || levelRoomDeletes(w.type))
             continue;
         const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
         if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f && my < float(by + 1) - 0.01f) {
