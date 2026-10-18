@@ -137,3 +137,33 @@
   (2) região dos bins `0xCDF41B`+ ainda sem função definida; (3) handlers de linha
   `0xBDF83B`/`FUN_00bdd8f2`/`FUN_00bde67d` não decompilados.
 - (17/10 tarde) Resíduos limpos (projeto morto `pc`, testbeds) e docs commitados.
+- (17/10 ~21:15) **Cross-check REA — tentativa final solo lançada (Artur autorizou: "força
+  total")**. Causa-raiz das falhas achada no próprio pacote `rea-agents@6.5.0` (cache do
+  npx): (a) o launcher do REA dá ao Ghidra `-Xmx` default **2G** e ignora nosso
+  `GHIDRA_HEADLESS_MAXMEM` só se ausente — `GhidraJavaLaunch.js` lê esse env (e
+  `GHIDRA_MAXMEM`) e ainda hardcoda `-XX:ParallelGCThreads=2`/`CICompilerCount=2` **depois**
+  dos vmargs; (b) o teto de 1 h não é do REA: é o **default do headless do Ghidra
+  (`-analysisTimeoutPerFile` = 3600 s)** que o REA não sobrescreve e não tem knob — a última
+  falha (`rea-catalog.json`) é `analysis_timeout` → "Analysis took too long" com
+  `timeout_ms: 3600000`. Ou seja: com 2G a análise do RPC afogava em GC e estourava 1 h
+  (contenção não era a causa principal). Retry config: `GHIDRA_HEADLESS_MAXMEM=12G`,
+  `REA_GHIDRA_STARTUP_TIMEOUT_MS=900000`, `REA_GHIDRA_DISABLED_ANALYZERS` = os mesmos 4 do
+  run `pcb` (`PDB Universal`, `Decompiler Parameter ID`, `Decompiler Switch Analysis`,
+  `Call Convention ID` — nomes validados por readback; o `ReaGhidraAnalysisOptions.java` do
+  REA **falha em nome desconhecido**). `rea-crosscheck.ps1` atualizado; rodando solo
+  (sem Ghidra paralelo), snapshot `ghidra-pc\rea-crosscheck.snapshot`, saída
+  `rea-crosscheck.json`/`.err`, teto ~1 h. Se passar: comparar endereços com os anchors do
+  `pcb` (Bin Prod ID/Bin Sort Idx/TSCatalog/FunctionSubsort) e registrar evidence.
+- (17/10 ~21:29) **Retry #1 cortado aos 15 min** — pelo `REA_GHIDRA_STARTUP_TIMEOUT_MS` que eu
+  havia setado (900 s): `failure_kind: timeout`/"Ghidra startup deadline elapsed",
+  `timeout_ms: 900000`, com o log do Ghidra terminando em plena análise (ruído de
+  `TypeDescriptorModel` + `PngDataType`, sem "analysis complete"). **Aprendizado: o deadline de
+  startup do REA cobre a análise inteira** (import → análise → pronto p/ servir); o "1 h" das
+  falhas antigas era o **deadline por arquivo do headless do Ghidra** (3600 s →
+  `timeout_ms: 3600000`), não do REA. Evidência arquivada em
+  `rea-crosscheck.attempt15min.json`.
+- (17/10 ~21:32) **Retry #2 lançado** com `REA_GHIDRA_STARTUP_TIMEOUT_MS=3300000` (55 min, sob
+  o teto de análise do Ghidra); resto da config igual (12G + os 4 analyzers desligados).
+  Confirmado **ao vivo** via `Win32_Process`: `java.exe` (PID 18376) com **`-Xmx12G`** — o env
+  propaga; só o `-XX:ParallelGCThreads=2`/`CICompilerCount=2` é hardcoded do REA (aplicado
+  depois dos vmargs, não dá para subir). Análise esperada: ~20-30 min.
