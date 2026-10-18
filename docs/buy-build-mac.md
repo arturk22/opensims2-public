@@ -2588,7 +2588,9 @@ mínimo, `+0xd0` o máximo, vértices; os tiles vão de `+0xc4` a `+0xd0` − 1)
    começo com fundação, deck ou palco → `0x86` (§7.18);
 5. a lista `+0x9c` (visibilidade do piso; piscina: `0x02`/`0x86`);
 6. paredes: de piscina atravessando → `0x46`; uma parede dentro do retângulo
-   cujo estilo o nivelador de cômodo não pode apagar (`FUN_009ac8d0`) → `0x84`.
+   cujo estilo o nivelador de cômodo não pode apagar (`FUN_009ac8d0`, lido na
+   rodada n48: o produto do estilo, `cTSProduct` vtable `0x154(4)`, o
+   `deleteTool levelRoom` do `walls.txt`, §7.26) → `0x84`.
 
 **`UserPlaceDeckFoundation` (`0x9b1bc0`), na ordem:** `SetDeckFoundationMarkers`
 (`0x9ad76c`), `MoveFloorElevations` (`0x9af1c4`), piscina: `ModifyFloorVisibility`
@@ -3065,6 +3067,16 @@ abaixo do chão, −0,5; um ponto da borda passa a lagoa, −0,25). Inferido: as
 flags de lagoa no começo de cada mudança (aqui: terreno − água ≤ 0,25, como o
 `UpdatePondFlag` deixaria); um lote sem o array de água não ganha um com a
 flag de piso.
+
+**`FUN_009ac8d0`** (BV; chamado pelo `MayPlaceQuadrilateral`, pelo
+`SetAwningMarkersRecursive` e por `FUN_002af4f4`): o produto do estilo da
+parede (`FUN_000c7fb0()` `0x40` → `0x5c(estilo)`) com a vtable `0x154(4)`. O
+`4` é o bit de `levelroom` na tabela do `deleteTool` (`0x28660d0`: `partition`
+1, `roof` 2 — o ponteiro `0x102c6c4` —, `levelroom` 4, `modularstairs` 8):
+o nivelador de cômodo apaga a parede. No `walls.txt`: a fundação (23), a 16,
+as saias de deck (24, 4) e a parede de piscina (29). O app tinha só as bordas
+levantadas (23, 16, 4): a saia 24 e a parede de piscina dentro do retângulo
+davam `0x84`.
 
 ---
 
