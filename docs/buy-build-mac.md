@@ -2995,7 +2995,13 @@ foi lido (inferido: o preço do produto na cornija).
 
 **No código (rodada n48).** `BuildEditor::chimneyPlan` / `placeFireplace` /
 `deleteFireplace` (`src/vm/build_edit_fireplace.cpp`); o `Op` do desfazer
-guarda os elos mudados (`links`). O VM carrega a elevação salva
+guarda os elos mudados (`links`). No app, o BA30 (categoria 10, subsort 3) lista
+as cinco lareiras de `fireplaces.txt` (sem miniatura: a
+`cTSUIThumbnailFactoryFireplace` não foi portada); a cornija vai na mão como
+uma porta (`,`/`.` giram), o clique a põe com a chaminé e pega outra (como a
+ferramenta de objeto; inferido para a lareira), Ctrl num pedaço é a marreta.
+Os erros próprios da ferramenta (3, 5, 6 em `+0x1a0`) não são os do STR#
+`0x89`: o app mostra a razão. O VM carrega a elevação salva
 (`cTSObject +0x20c`) em `Position::elevation` (antes 0 nos objetos lidos). `s2pkg
 fireplace-sweep` (cada lareira salva contra a corrente que a ferramenta faria
 onde a cornija está; uma corrente com outras cornijas é comparada sem elas):
