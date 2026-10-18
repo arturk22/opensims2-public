@@ -65,17 +65,29 @@ constexpr uint16_t kNamedTreeStrings = 0x12F;
 constexpr uint16_t kMeshGroupStrings = 0x87;
 constexpr uint16_t kMaterialStrings = 0x88;
 
-// Sizes of the engine-defined variable sets, from the labels of the game's own
-// SimAntics editor (objects.package, group 0x7FE59FD0: STR# 0x81 global labels,
-// 0x8D object data, 0xC8 person data, 0x86 motives). They match the highest
-// index any BHAV uses.
+// Sizes of the engine-defined variable sets. The base 1.0's were 0x58 (88),
+// 0x36 (54) and 0xAA (170), which is also what the game's own SimAntics editor
+// labels (objects.package, group 0x7FE59FD0: STR# 0x81 global labels, 0x8D
+// object data, 0xC8 person data, 0x86 motives) — and what this port pinned
+// until the packs' trees showed they read past them (the AL's `bhav-sweep` of
+// 18/10: 460 "global N out of range" — 456 + 4 in one-tick trees — 1.882 of
+// person data and 264 of object data, over 54/88/170-entry arrays). The BV-era
+// data owners check 0x71 (113), 0x3A (58) and 0xCC (204) (cTSObject::InterpValue
+// BV 0xb15f2c / cTSPerson::InterpValue BV 0xad56ec, docs/primitives-mac.md
+// §4j), and the AL goes one past each: raising the sizes until the same sweep
+// was clean gives the largest accesses of its trees — object data 113, global
+// 59, person data 230 — so the arrays hold 114, 60 and 231 (the OpenTS2
+// reimplementation sizes its object data and globals at 114 and 60 too). The
+// AL's own compiled limits are ≥ these (no AL binary read here).
+// A saved state keeps its own count per version (lotObjectDataCount /
+// lotPersonDataCount), applied to these arrays.
 // Temps: 8 per object (cTSObject +0x8A; InterpValue's owner 8 takes 0-7 and
 // gives error 0x02 past them, Mac base 1.0 and BV; no BHAV of the game uses
 // temp 8 or above).
 constexpr size_t kTempCount = 8;
-constexpr size_t kObjectDataCount = 88;
-constexpr size_t kGlobalCount = 54;
-constexpr size_t kPersonDataCount = 170;
+constexpr size_t kObjectDataCount = 114;
+constexpr size_t kGlobalCount = 60;
+constexpr size_t kPersonDataCount = 231;
 constexpr size_t kMotiveCount = 16;
 constexpr size_t kMaxStackDepth = 1000; // frames past it: "Max stack depth exceeded" (cTSTreeSim::Gosub BV 0xe1a428)
 // The nodes a thread may run in one turn before it fails as an infinite loop:

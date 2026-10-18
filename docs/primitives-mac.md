@@ -3780,9 +3780,18 @@ antes os donos 0x0C, 0x12, 0x1C, 0x1D e 0x1E.
   Array"); elemento fora (iterador ou temp 0, donos 0x2B–0x2E) → **erro
   0x6D**. O `Read` mantém a contagem da definição (arrays salvos a mais
   são lidos e descartados).
-- Object data: 0x71 (113) no BV, **0x58 (88) no base** (= o opensims2);
-  globais 0x3A no BV, **0x36 (54) no base**; dados de pessoa 0xCC no BV,
-  **0xAA (170) no base**. Fora: erros 0x07 / 0x3F / 0x21.
+- Object data: 0x71 (113) no BV, **0x58 (88) no base**; globais 0x3A no BV,
+  **0x36 (54) no base**; dados de pessoa 0xCC no BV, **0xAA (170) no base**.
+  Fora: erros 0x07 / 0x3F / 0x21. O port usa os **do AL** (18/10): as árvores
+  dos EPs leem além dos do base **e** além dos do BV — com 88/54/170 o
+  `bhav-sweep` do AL acusava 460 globais, 1.897 de person data (1.882 + os 15
+  de vizinho) e 264 de object data fora do intervalo; subindo os tamanhos até
+  a varredura zerar, os **maiores acessos** das árvores do AL são object data
+  **113**, global **59** e person data **230** → arrays de **114 / 60 / 231**
+  (`kObjectDataCount` / `kGlobalCount` / `kPersonDataCount`), e o sweep passa a
+  rodar 46.880 árvores / 13.054.928 instruções (+14,7%) sem nenhum deles. O
+  `OpenTS2` dimensiona object data e globais em 114 e 60 também; o limite
+  compilado do AL é ≥ o medido (aqui não há binário do AL para ler).
 - **Job data (0x21)**: sempre **erro 0x3A** ("Job data not found"), base e
   BV: o jogo não tem esse dono.
 - **Check tree ad (0x0C, 0x1C, 0x1D)**: só pessoa (senão erro 0x1C),

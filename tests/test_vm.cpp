@@ -2015,6 +2015,35 @@ static void testResetAfterError() {
     check(fx.vm.threads.at(o.id).status == Thread::Status::Failed, "without resets a failed Main stays failed");
 }
 
+// The interpreter's variable sets hold the AL's own trees: object data 114,
+// globals 60, person data 231 (docs/primitives-mac.md §4j: the BV binary's
+// 113/58/204 plus the one past each that the AL reaches; the base's 88/54/170
+// were what the port pinned, and the AL sweep of 18/10 showed the trees
+// reading past them).
+static void testVariableSets() {
+    Fixture fx;
+    fx.obj().person.emplace();
+    fx.code.add(kObjGroup, 0x1000, tree({expr(Data, 0x71, Assign, Lit, 5, go(1), E),
+                                         expr(Global, 0x3B, Assign, Lit, 6, go(2), E),
+                                         expr(PData, 0xE6, Assign, Lit, 7, T, E)}));
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && fx.obj().data[0x71] == 5 && fx.vm.globals[0x3B] == 6 &&
+              fx.obj().person->data[0xE6] == 7,
+          "the AL's last object data (0x71), global (0x3B) and person data (0xE6) work");
+    fx.code.add(kObjGroup, 0x1001, tree({expr(Data, 0x72, Assign, Lit, 1, T, E)}));
+    t = fx.run(0x1001);
+    check(t.status == Thread::Status::Failed && t.error.find("object data 114 out of range (114)") != std::string::npos,
+          "object data 0x72 is out of range");
+    fx.code.add(kObjGroup, 0x1002, tree({expr(Global, 0x3C, Assign, Lit, 1, T, E)}));
+    t = fx.run(0x1002);
+    check(t.status == Thread::Status::Failed && t.error.find("global 60 out of range (60)") != std::string::npos,
+          "global 0x3C is out of range");
+    fx.code.add(kObjGroup, 0x1003, tree({expr(PData, 0xE7, Assign, Lit, 1, T, E)}));
+    t = fx.run(0x1003);
+    check(t.status == Thread::Status::Failed && t.error.find("person data 231 out of range (231)") != std::string::npos,
+          "person data 0xE7 is out of range");
+}
+
 // Set to Next 3 on the last part of a multi-tile object (the others burnt)
 // gives the part itself, as the binary's round over the group does ("Burn -
 // Spread - MT" loops until it is back at its start).
@@ -2202,6 +2231,7 @@ int main() {
     testMakeNewCharacter();
     testReaperNeighborAndDyingObjects();
     testResetAfterError();
+    testVariableSets();
     testSetToNextWhereVersion();
     testLonePartOfMultiTile();
     if (failures)

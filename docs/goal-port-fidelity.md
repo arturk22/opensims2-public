@@ -110,12 +110,13 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 - [ ] **10. Painel do Build vs capturas 30-34** (`orig2/`): comparar o painel do Build
       mode com as capturas `30_build_top`..`34_build_pisos` como no item 4 (pode ter as
       mesmas sobras de alinhamento).
-- [ ] **11. Globais dos EPs** (achado do item 9): com as 17 árvores, semi-globais dos EPs
-      leem globais além da tabela carregada — `global 54 out of range (54)` em
-      `0x7FD46CD0/0x03E7` ("Lot - Is College Lot? - EP1"), `0x7FD46CD0/0x05DA` ("Neighborhood
-      - Is Vacation? - EP6") e `0x7FA903B8/0x1000` (Function - Main do Controller - Ninja),
-      cada um resetando o objeto no lote; 456 casos no `bhav-sweep` do AL. Decidir como o
-      original junta as tabelas GLOB das 17 árvores (grupo/ordem) e carregar todas.
+- [x] **11. Globais dos EPs** (achado do item 9): **FECHADO 18/10 ~03:55** — não era a
+      costura das tabelas GLOB: as 17 árvores indexam um só espaço de globais (nada a
+      juntar) e o `global 54 out of range` era o **tamanho do conjunto de variáveis** (o port
+      usava os 54 do editor do base; os EPs leem além). Fechado pelo sub-item das contagens
+      do item 6 — globais **60**, object data **114**, person data **231** — com o
+      `bhav-sweep` do AL zerado e o lote das 17 árvores (com o diálogo do Vida de
+      Apartamento) sem nenhum deles; números no log de 18/10 ~03:55.
 - [ ] **12. Primitivas `0x7E` (Run Script) e `0x7D` (Follow Sim)** (achado do item 9): o port
       registra as duas como "sem handler" (erro 0x05), mas o AL usa `0x7E` em controladores —
       no lote resetam `Controller - Fish Pond Effects` (`Sub - Remove All Effects` #6),
@@ -127,6 +128,13 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       unsupported version 0x50/0x51/0x54/0x55` — as interações desses objetos ficam de fora
       (20 recursos só no `objects.package` do AL). Estender o leitor de TTAB às versões
       novas.
+- [ ] **14. Vizinhanças e lotes do AL** (achado do sub-item das contagens): o lote E001 do AL
+      não carrega — `NGBH: unsupported version 0xCB` (o port conhece 0x6F), `FAMI:
+      unsupported version 0x55` (conhece 0x4E), `SDSC: unsupported version 0x36` (conhece
+      0x20), `NID: 20 trailing bytes` e `lot info: apartment base version not supported`
+      (`lot-run` de 18/10 em `E001_Lot127`); sem isso o port não lê as vizinhanças nem os
+      lotes salvos pelo UC/AL (o SDSC do AL deve ter mais person data que os 170 do base — o
+      runtime mediu até 230). Estender os leitores, medindo nos arquivos do UC.
 
 ## Critérios de sucesso
 
@@ -221,3 +229,22 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
   reset (build+ctest **39/39**); comentário e nota corrigidos. Resto do item 6: os slots do
   Look At (byte 14), depois 164 / evento 4 / `0x214`/`0x2e8` (precisam de RE do binário Mac),
   NGBH `+0x34`/`+0x38` e os registros `+0x60c`; depois 7 / 8 / 10 (5 bloqueado).
+- (18/10 ~03:55) **Item 6, sub-item das contagens do interpretador (fecha o item 11)** — o
+  "global 54 out of range" dos EPs não era a costura das tabelas GLOB: as árvores indexam um
+  só espaço de globais e o que faltava era o **tamanho dos conjuntos de variáveis**, que o
+  port tinha pelos rótulos do editor do base (88/54/170). Com esses tamanhos o `bhav-sweep`
+  do AL acusava **460 globais** (456 + 4 em árvores de um tick), **1.882 de person data**
+  (1.642 + 141 + 98 + 1; + 15 de person data de vizinho) e **264 de object data** (157 + 59 +
+  47 + 1) fora do intervalo; o BV compilado (0x71/0x3A/0xCC = 113/58/204, §4j do
+  `primitives-mac.md`) também não bastava. Medido subindo os tamanhos até a mesma varredura
+  (`S2PKG_SWEEP_REASON=out of range`) zerar: os **maiores acessos** das árvores do AL são
+  object data **113**, global **59** e person data **230** → arrays **114 / 60 / 231**
+  (`vm.hpp`), e o `OpenTS2` dimensiona object data e globais em **114 e 60** também. Depois:
+  sweep do AL com 46.880 árvores / **13.054.928 instruções** (contra 11.379.667 — +14,7%
+  rodadas a mais em vez de falhar) e **zero** "out of range" desses donos; N001_Lot11 com 627
+  objetos e 0 falhas em 60 ticks; e o lote 30x20 com as **17 árvores** no app (17 resource
+  trees, o diálogo do Vida de Apartamento) com **3** erros de SimAntics — só os três `0x7E`
+  do item 12 (os três "global 54" sumiram). `testVariableSets` pina 0x71/0x3B/0xE6 válidos e
+  0x72/0x3C/0xE7 fora (build+ctest **39/39**). Achado enfileirado: **14** (NGBH 0xCB / FAMI
+  0x55 / SDSC 0x36 / NID +20 / lot info de apartamento). Próximo: os slots do Look At (byte
+  14); depois 7 / 8 / 10 (5 bloqueado).
