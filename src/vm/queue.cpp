@@ -997,6 +997,24 @@ PushOutcome attemptPush(VM& vm, Thread& t, bool nested) {
             sim->queue.insert(sim->queue.begin() + std::ptrdiff_t(next), std::move(moved));
         }
         sim->activeInteraction = int(next);
+        // Over a running interaction (inside its tree): the base game keeps
+        // no stack of interrupted actions (base 1.0 TryIdleForInput 0xb7fc08:
+        // the current action's links are undone, UnLinkInteractions with no
+        // person, and SetCurrentAction puts the new one in its place). The
+        // interrupted one's tree goes on under the new one's, as an action of
+        // no one: when the new one ends the Sim's current action is the empty
+        // interaction (StackJustPopped; person data 21, 80 and 33 at 0). (The
+        // BV keeps it in a deque, +0x5e0, and makes it current again.)
+        if (next > 0 && next - 1 < sim->queue.size()) {
+            const QueuedInteraction old = sim->queue[next - 1];
+            sim->queue.erase(sim->queue.begin() + std::ptrdiff_t(next - 1));
+            sim->activeInteraction = int(next - 1);
+            const ObjectId id = sim->id;
+            unlinkInteraction(vm, 0, old);
+            sim = vm.object(id);
+            if (!sim)
+                return PushOutcome::Started;
+        }
         setPriority(*sim, item.priority);
         setCurrentAction(vm, *sim);
         updateObjectOwnership(vm, t.me, item.object);

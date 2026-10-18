@@ -4332,8 +4332,14 @@ dentro de uma interação), o base desfaz os vínculos da corrente
 interação vazia (21/80/33 = 0) enquanto a árvore da interrompida segue
 rodando. O BV guarda a interrompida numa `deque` (`+0x5e0`, BV `0xadec80`)
 e a devolve como corrente no fim da que interrompeu (a não ser que a
-primeira da fila seja "continuar"). O VM faz como o BV (`endInteraction`
-volta ao `activeInteraction` de baixo).
+primeira da fila seja "continuar"). O `try_gosub_action_found` (BV
+`0xade17c`) também põe a nova no lugar da corrente, sem guardá-la nem
+desfazer os vínculos. **No VM** (n46) como no base: a entrada que roda por
+cima da corrente (`attemptPush`) toma o lugar dela na fila, com os vínculos
+dela desfeitos, e o Gosub Found Action também (sem desfazer); a árvore da
+interrompida segue sem ser a ação de ninguém (dados 21/80/33 a 0) até
+voltar (era como o BV: a interrompida voltava a ser a corrente; nas 14
+sementes do `N001_Lot68` e do `N001_Lot11` a saída é a mesma).
 
 **No reset.** `cTSPerson::OnCleanup(nada)` (BV `0xadcbcc`), o
 `Cleanup(nobody)` de uma pessoa (o reset depois de um erro): guarda pela

@@ -1043,6 +1043,47 @@ static void testFullQueueGivesWayAndObjectTests() {
     fx.vm.globals[35] = 0;
 }
 
+// Round n46: base 1.0 keeps no stack of interrupted actions (TryIdleForInput
+// 0xb7fc08): the entry that runs over the current action takes its place
+// (its links undone); when it ends, the Sim has no current action (the empty
+// interaction: person data 80 and 33 at 0) while the interrupted tree goes on.
+static void testInterruptedActionIsDropped() {
+    Fixture fx;
+    // Clean: an Idle for Input of 1000 ticks that allows pushes, then one of
+    // 50 that does not, then attr 1 := 1.
+    fx.code.add(kObjGroup, 0x1002, tree({expr(Param, 0, Assign, Lit, 1000, go(1), E), idle(0, true, go(2)),
+                                         expr(Param, 0, Assign, Lit, 50, go(3), E), idle(0, false, go(4)),
+                                         expr(SAttr, 1, Assign, Lit, 1, T, E)},
+                                        4));
+    // Snack: an Idle for Input of 5 ticks, then attr 0 := 7.
+    fx.code.add(kObjGroup, 0x1001, tree({expr(Param, 0, Assign, Lit, 5, go(1), E), idle(0, false, go(2)),
+                                         expr(SAttr, 0, Assign, Lit, 7, T, E)},
+                                        4));
+    Object& s = fx.s();
+    auto clean = fx.make(1);
+    clean.priority = kPriorityAutonomous;
+    const uint16_t cleanUid = enqueue(fx.vm, s, clean);
+    fx.vm.tick();
+    auto snack = fx.make(0);
+    snack.priority = kPriorityUserDriven;
+    const uint16_t snackUid = enqueue(fx.vm, s, snack);
+    fx.vm.tick();
+    check(s.activeInteraction == 0 && s.queue.size() == 1 && s.queue[0].uid == snackUid &&
+              s.person->data[persondata::Priority] == kPriorityUserDriven,
+          "the interrupting entry is the current action; the interrupted one is in no queue");
+    for (int i = 0; i < 8; ++i)
+        fx.vm.tick();
+    check(fx.o().attributes.size() > 1 && fx.o().attributes[0] == 7 && fx.o().attributes[1] == 0,
+          "the interrupting one ended, the interrupted tree has not");
+    check(s.activeInteraction == -1 && s.queue.empty() && s.person->data[persondata::CurrentInteractionObject] == 0 &&
+              s.person->data[persondata::Priority] == 0 && cleanUid != 0,
+          "the Sim has no current action while the interrupted tree goes on");
+    for (int i = 0; i < 60; ++i)
+        fx.vm.tick();
+    check(fx.o().attributes[1] == 1 && fx.vm.threads[fx.sim].status == Thread::Status::Running,
+          "the interrupted tree went on to its end");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -1067,6 +1108,7 @@ int main() {
     testObjectRecords();
     testInteractionGuidAndJoinable();
     testFullQueueGivesWayAndObjectTests();
+    testInterruptedActionIsDropped();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -608,6 +608,14 @@ Exit gosubFoundAction(Context& c) {
     if (!sim.person->foundActionName.empty())
         q->name = sim.person->foundActionName;
     q->uid = newInteractionId(c.vm, sim);
+    // SetCurrentAction puts it in the current action's place: one running
+    // already (Gosub Found Action inside an interaction's tree) is no longer
+    // the current action, as in TryIdleForInput (queue.cpp attemptPush), here
+    // without its links undone (try_gosub_action_found BV 0xade17c).
+    if (sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < sim.queue.size()) {
+        sim.queue.erase(sim.queue.begin() + sim.activeInteraction);
+        --sim.activeInteraction;
+    }
     const auto at = size_t(sim.activeInteraction + 1);
     const QueuedInteraction item = *q;
     sim.queue.insert(sim.queue.begin() + std::ptrdiff_t(std::min(at, sim.queue.size())), std::move(*q));
