@@ -1108,6 +1108,12 @@ public:
     // the tile when the model has no footprint list, or the OBJD box
     // (routing.cpp, cTSObject::AddThisToPathPlanner).
     std::vector<std::array<float, 4>> routingFootprint(const Object& o);
+    // TSObjectIndexedWorldSpaceFootprint(o, its place, its facing, index,
+    // true) (BV 0x8a8c64): the model's footprint list named `index` (vtable
+    // 0x2cc), every tile of it, where `o` stands (turned with its lead as
+    // routingFootprint's); nothing when the model has no such list (the
+    // binary's false: no test). The doors' 0 and 2 (DoesFootprintIntersectDoor).
+    std::optional<std::vector<std::array<float, 4>>> indexedFootprint(const Object& o, int index);
     // A tile is in the world, has a floor and nothing that blocks stands on it.
     bool tileFree(TilePos t, std::span<const ObjectId> ignore = {});
     // A person's footprint box (0.2 tile) at (x, y) on `level` meets no

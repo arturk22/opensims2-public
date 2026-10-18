@@ -7,19 +7,23 @@
 //
 // TryPlace: first a free container slot of an object on the tile that
 // takes the object (FindFirstAvailableSlot); otherwise the position tests
-// in the binary's order, each with its error code (placementerror): in the
-// lot, a level of the lot, a floor under it unless in the air (od 42 bit
-// 0x200), the floor/terrain od 42 allows, the wall flags od 13 (STR# 0xE5:
+// of TestPlaceInWorld in the binary's order, each with its error code
+// (placementerror): TestPlacementCommon (in the lot, a level of the lot, a
+// floor under it unless in the air, od 42 bit 0x200, with its quarters
+// visible unless it hides the floor itself, not over a pool, the water,
+// the slope, the floor or terrain od 42 allows, a fence post for the post
+// lamps), TestPlacementWithRespectToWalls (the wall flags od 13, STR# 0xE5:
 // bits 0-3 wall required in front / right / behind / left, 8-11 wall not
-// allowed there) and no wall through the object (unless od 42 bit 0x400),
-// then the objects on its tiles in a common exclusive layer (od 63, STR#
-// 0xFB: 1 floor, 2 wall, 4 no other object of the same type, 8 ceiling; 0
-// counts as floor) unless od 8 lets them through (0x02 allow object
-// intersection, 0x04 object and person, 0x10 person), and the height test
-// (od 4 bit 0 = on the floor). The VM entry points run as the binary runs
-// them (§4): 9 placement on a position change, 10 pickup out of the world,
-// 11 user placement on the click (if od 40 bit 0x200), 12 user pickup, 50
-// user delete, 49 delete and 3 cleanup when destroyed.
+// allowed there, and no wall through the object unless od 42 has 0x400 or
+// 0x2000; a door's wall counts), TestPlacementWithRespectToObjects as base
+// 1.0 has it (the exclusive placement flags od 63 on the object's tile, the
+// intersection flags of od 8, the "allow intersection" trees, OBJf 5, and
+// the footprints where the parts would stand, the doors' own) and the
+// height test (od 4 bit 0 = on the floor: the 0xFBA4DA53 object's 0x2c(1)
+// is 1). The VM entry points run as the binary runs them (§4): 9 placement
+// on a position change, 10 pickup out of the world, 11 user placement on
+// the click (if od 40 bit 0x200), 12 user pickup, 50 user delete, 49
+// delete and 3 cleanup when destroyed.
 //
 // Multi-tile objects: each part's OBJD "sub index" holds its tile offset,
 // x in the low byte and y in the high byte (signed) in the object's frame;
@@ -28,16 +32,15 @@
 // facing 2 has (1,0) at +x).
 //
 // With the lot's geometry (VM::placementLot) TestPlacementCommon's IsFlat
-// (0x12 unless od 42 has 0x100) and the floor of all four quarters above
-// the ground (HasFloorTest) are tested (docs/buy-build-mac.md §7.24; the
-// staircases' CeilingTooHighForObject, 0x30, is BuildEditor::
-// stairCeilingError). Inferred or left out (TODO.md): od 4 compared with the
-// slot's height bit (FreeSO's rule for The Sims 1; on the floor, bit 0, the
-// 12,930 saved objects of the shipped lots all pass) and the weight against
-// the support strength; the floors' visibility layer, the pool under a
-// ground tile and floors that objects give (TileHasFloorFromObject); water,
-// ceilings, room placement (od 30), the footprints inside a tile and the
-// "allow intersection" tree (entry 5).
+// (0x12 unless od 42 has 0x100), the floor of all four quarters above the
+// ground (HasFloorTest), the floor / terrain flags, the water and the fence
+// posts are tested (docs/buy-build-mac.md §7.24, §7.26; the staircases'
+// CeilingTooHighForObject, 0x30, is BuildEditor::stairCeilingError).
+// Inferred or left out (TODO.md): od 4 compared with the slot's height bit
+// (FreeSO's rule for The Sims 1, the slots' 1 << (height - 1) as the binary's
+// height object gives) and the weight against the support strength; pool
+// objects over a pool; ceilings, room placement (od 30); TryPlace snapping a
+// post lamp to a fence's post.
 
 #include "vm.hpp"
 
@@ -53,6 +56,7 @@ constexpr int16_t WallAdjacencyFlags = 5;
 constexpr int16_t WallPlacementFlags = 13;
 constexpr int16_t Weight = 27;
 constexpr int16_t SupportStrength = 28;
+constexpr int16_t HiddenFlags = 34; // bits 0x21: hidden (the floor under a "Hide Floor" object shows again)
 constexpr int16_t CurrentValue = 41;
 constexpr int16_t FlagField2 = 40; // bit 0x200: the user placement tree runs
 constexpr int16_t PlacementFlags = 42;
@@ -158,13 +162,10 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id);
 // its own tiles do not count) fits with its lead part on `tile` facing
 // `direction` (0, 2, 4, 6), and how. Without `slots` the position tests
 // alone (TSObjectCanSetPosition, BV 0x8ae264 -> TestPlaceInWorld: no free
-// container slot is looked for, as Create New Object Instance asks).
-// With `footprints` the objects' test is the binary's
-// TestPlacementWithRespectToObject (BV 0x8ac158) by footprints: the parts
-// must already stand where they are tested (their footprints are taken
-// where they are; Create New Object Instance places the new object first).
-Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots = true,
-                         bool footprints = false);
+// container slot is looked for, as Create New Object Instance asks). The
+// objects' test is the binary's TestPlacementWithRespectToObjects (base
+// 1.0 FUN_00ffb990) by the footprints where the parts would stand.
+Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots = true);
 
 // cTSObject::ShouldAutoRotate (Mac BV 0xafec08; cEdithMTObject's, 0xaf062c,
 // asks every part): the wall placement flags (od 13) ask for a wall on some
@@ -176,7 +177,7 @@ bool shouldAutoRotate(VM& vm, ObjectId id);
 // test passes on `tile` (FUN_009eb96c: TSObjectIsInLockedArea, then
 // TSObjectCanSetPositionAndOrientation; no slot is looked for). None passing:
 // `direction` is kept (the overload below goes on with the twin).
-int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction, bool footprints = false);
+int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction);
 
 // The other OBJD of a grid-aligned / diagonal pair (doors, windows, arches,
 // curtains), which the object tool holds next to the one picked
@@ -200,7 +201,7 @@ struct AutoRotation {
     ObjectId held = 0;
     int direction = 0;
 };
-AutoRotation autoRotate(VM& vm, ObjectId id, ObjectId twin, TilePos tile, int direction, bool footprints = false);
+AutoRotation autoRotate(VM& vm, ObjectId id, ObjectId twin, TilePos tile, int direction);
 
 // Where the group of `id` is now (its lead's direction, level, container
 // slot and each part's tile), for putting it back with applyPlacement.

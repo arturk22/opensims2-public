@@ -11,6 +11,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -36,14 +39,161 @@ int placementerror::stringNumber(int code) {
 
 namespace {
 
-// Object data 8 "flags" bits (STR# 0x8E).
-constexpr int16_t kAllowObjectIntersection = 0x02, kAllowObjectAndPerson = 0x04, kAllowPerson = 0x10;
-// Exclusive placement layers (STR# 0xFB).
-constexpr int16_t kLayerFloor = 0x01, kLayerWall = 0x02, kLayerCeiling = 0x08;
+int normDir(int d);
 
-int16_t layers(const Object& o) {
-    const int16_t l = o.data[objdata::ExclusivePlacementFlags] & (kLayerFloor | kLayerWall | kLayerCeiling);
-    return l ? l : kLayerFloor;
+using Rects = std::vector<std::array<float, 4>>;
+
+// Object data 8 "flags" (STR# 0x8E): CanIntersectObjects (cTSObject vtable
+// 0x238, BV 0xaf56b8) is 0x02 | 0x04, CanIntersectPeople (0x1d8, 0xaf56f0)
+// 0x04 | 0x10, HidesFloorOnPlace (0x220, 0xaff238) 0x4000 "Hide Floor".
+bool canIntersectObjects(const Object& o) { return o.data[objdata::Flags] & 0x06; }
+bool canIntersectPeople(const Object& o) { return o.data[objdata::Flags] & 0x14; }
+bool hidesFloorOnPlace(const Object& o) { return o.data[objdata::Flags] & 0x4000; }
+// FootprintBlocksCeiling (0x23c, BV 0xaf5768): od 42 bit 0x1000 "attached to
+// ceiling"; FootprintBlocksFloor (0x240) the bit clear.
+bool footprintBlocksCeiling(const Object& o) { return o.data[objdata::PlacementFlags] & 0x1000; }
+// IsDiagonalDoor (base 1.0 FUN_00fffc88): a door (type 8) whose wall
+// placement flags (od 13, vtable 0x204 / BV 0x25c) have 0x50.
+bool isDiagonalDoor(const Object& o) {
+    return o.definition && o.definition->objectType() == kObjectTypeDoor &&
+           (o.data[objdata::WallPlacementFlags] & 0x50);
+}
+
+// FUN_0191f43c / FUN_0191f914 (BV): two footprints cross when a non-empty
+// rectangle of one overlaps a non-empty one of the other, strictly (the
+// tolerance is 0 in the placement calls: TSObjectCanSetPosition is called
+// with 0.0 by the buy tool and Create New Object Instance).
+bool footprintsCross(const Rects& a, const Rects& b) {
+    for (const auto& r : a)
+        for (const auto& q : b)
+            if (r[0] < r[2] && r[1] < r[3] && q[0] < q[2] && q[1] < q[3] && q[0] < r[2] && r[0] < q[2] && q[1] < r[3] &&
+                r[1] < q[3])
+                return true;
+    return false;
+}
+
+// FUN_015b2090 / FUN_015b2448 (BV): a circle of radius r about (px, py)
+// reaches a non-empty rectangle of the footprint: within r of it on both
+// axes, and in a corner's region nearer than r to the corner.
+bool circleReaches(float r, const Rects& fp, float px, float py) {
+    if (!(r > 0))
+        return false;
+    for (const auto& q : fp) {
+        if (!(q[0] < q[2] && q[1] < q[3]))
+            continue;
+        if (!(px - r <= q[2] && q[0] <= px + r && py - r <= q[3] && q[1] <= py + r))
+            continue;
+        const bool outX = px < q[0] || q[2] < px, outY = py < q[1] || q[3] < py;
+        if (!(outX && outY))
+            return true;
+        const float dx = px < q[0] ? px - q[0] : px - q[2], dy = py < q[1] ? py - q[1] : py - q[3];
+        if (dx * dx + dy * dy < r * r)
+            return true;
+    }
+    return false;
+}
+
+// FUN_0142e734 (base 1.0): two places are the same when they are on one
+// level and x and y are within 32 units in the last place of each other.
+bool samePlace(const Position& a, const Position& b) {
+    if (a.level != b.level)
+        return false;
+    auto close = [](float u, float v) {
+        auto key = [](float f) {
+            int32_t i;
+            std::memcpy(&i, &f, sizeof i);
+            return i < 0 ? int64_t(int32_t(0x80000000u)) - int64_t(i) : int64_t(i);
+        };
+        return std::llabs(key(u) - key(v)) < 32;
+    };
+    return close(a.x, b.x) && close(a.y, b.y);
+}
+
+// cTSObject::RelativeWallOrFenceRequired (BV 0xaf61b8, the n-th of the bits
+// NumWallOrFenceRequiredFlags counts, 0xaf50dc: 1, 2, 4, 8, 0x10, 0x40 of
+// od 13) as walls of the object's tile in the world: 0-3 the edge toward
+// directionStep(2 k), 4 / 5 the diagonal across the tile along grid slope -1
+// / +1 (the 0x40 diagonal along direction + 1, the 0x10 one along
+// direction + 7, as the wall test below reads them). FUN_00ffb62c compares
+// each with the other's and with its OppositeWallLocator: on one tile, the
+// same wall either way.
+std::vector<int> requiredWalls(const Object& o, int direction) {
+    std::vector<int> out;
+    const int16_t wp = o.data[objdata::WallPlacementFlags];
+    for (int side = 0; side < 4; ++side)
+        if (wp & (1 << side)) {
+            const auto s = sideStep(direction, side);
+            for (int k = 0; k < 4; ++k)
+                if (directionStep(2 * k) == s)
+                    out.push_back(k);
+        }
+    for (int k = 0; k < 2; ++k)
+        if (wp & (k ? 0x40 : 0x10)) {
+            const auto c = directionStep(direction + (k ? 1 : 7));
+            out.push_back(c[0] == c[1] ? 5 : 4);
+        }
+    return out;
+}
+
+// The catalog definition's GUID (cTSObject::GetSelector, vtable 0xf0 / base
+// 0xd8, and its 0x70 / 0x6c): a multi-tile part's master's (inferred: the
+// selector is the catalog product), 0 without a definition.
+uint32_t productGuid(VM& vm, const Object& o) {
+    if (!o.definition)
+        return 0;
+    if (const uint16_t master = o.definition->masterId())
+        if (auto instance = vm.code().masterDefinition(o.group, master))
+            if (const ObjectDefinition* md = vm.code().definition(o.group, *instance))
+                return md->guid();
+    return o.definition->guid();
+}
+
+// The exclusive placement test of two objects on one tile (base 1.0
+// FUN_00ffb7b0, BV HasEnoughClearanceFromRoof 0x8a74fc, misnamed; od 63
+// "exclusive placement flags", STR# 0xFB: 1 floor, 2 wall, 4 no other object
+// of same type, 8 ceiling): both on the floor or both on the ceiling ->
+// 0x0C; with 4 on either, the other at the same place and height (Elevation,
+// vtable 0xb0) and the same product -> 0x0C; then, when the two need a wall
+// in common (FUN_00ffb62c), both doors or windows
+// (ExclusiveWallPlacementCategory, 0xaf57a4: 1 for types 8 and 9) -> 0x17
+// "Must be against unused wall", else both with 2 -> 0x0C; 0 when they may
+// share the tile. The BV's od 82 tests are the expansion's.
+int exclusiveError(VM& vm, const Object& o, const Position& at, int direction, const Object& x) {
+    const int16_t a = o.data[objdata::ExclusivePlacementFlags], b = x.data[objdata::ExclusivePlacementFlags];
+    if (a & b & 9)
+        return placementerror::Objects;
+    if (((a | b) & 4) && samePlace(x.position, at) && x.position.elevation == 0) {
+        const uint32_t pa = productGuid(vm, o), pb = productGuid(vm, x);
+        if (pa && pb && pa == pb)
+            return placementerror::Objects;
+    }
+    const auto mine = requiredWalls(o, direction), theirs = requiredWalls(x, x.data[objdata::Direction]);
+    bool shared = false;
+    for (int w : mine)
+        shared = shared || std::find(theirs.begin(), theirs.end(), w) != theirs.end();
+    if (!shared)
+        return 0;
+    auto category = [](const Object& y) {
+        const uint16_t t = y.definition ? y.definition->objectType() : 0;
+        return t == kObjectTypeDoor || t == kObjectTypeWindow ? 1 : 0;
+    };
+    if (category(o) && category(o) == category(x))
+        return 0x17;
+    return (a & b & 2) ? placementerror::Objects : 0;
+}
+
+// cTSObject::RunTree(5, the other's ID, no parameters, true, false) (BV
+// 0xafe524): the "allow intersection" tree (OBJf entry 5) with the other as
+// its stack object, run to its end; true lets the two overlap.
+bool allowsIntersection(VM& vm, const Object& o, const Object& other) {
+    if (!vm.functionTree(o, 5))
+        return false;
+    try {
+        const auto t = vm.runFunction(o.id, 5, 1000, {}, other.id);
+        return t && t->status == Thread::Status::Finished && t->result;
+    } catch (const VMError&) {
+        return false;
+    }
 }
 
 int normDir(int d) { return ((d % 8) + 8) % 8; }
@@ -84,6 +234,33 @@ bool flatTile(const Lot& lot, TilePos t) {
     const float z = lot.elevation(li, t.x, t.y);
     return lot.elevation(li, t.x + 1, t.y) == z && lot.elevation(li, t.x, t.y + 1) == z &&
            lot.elevation(li, t.x + 1, t.y + 1) == z;
+}
+
+// nTSWorld::IsPartWater / IsAllWater (BV 0x1660f8): some / every grid
+// point of the tile a water vertex (cWorldDB::IsWaterVertex, 0xd25d8: on the
+// ground only, the water's vtable 0x34; here the lot's water level above the
+// terrain, as the walls' 0x47 reads it: inferred).
+int waterVertices(const Lot& lot, TilePos t) {
+    if (t.level != 1 || lot.elevations.empty() || lot.water.empty() || t.x < 0 || t.y < 0 || t.x >= int(lot.width) ||
+        t.y >= int(lot.height))
+        return 0;
+    int n = 0;
+    for (int dx = 0; dx <= 1; ++dx)
+        for (int dy = 0; dy <= 1; ++dy)
+            n += lot.waterLevel(t.x + dx, t.y + dy) > lot.elevation(0, t.x + dx, t.y + dy) + 1e-4f;
+    return n;
+}
+
+// HasFloorTest(tile, 0xF, any) (cWorldDB vtable 0xb4, BV 0xd29b0 ->
+// FUN_000d2798 with "all" 0: a floored quarter is enough, the visibility not
+// read).
+bool floorSome(const Lot& lot, TilePos t) {
+    if (t.x < 0 || t.y < 0 || !lot.hasLevel(t.level - 1) || t.x >= int(lot.width) || t.y >= int(lot.height))
+        return false;
+    for (uint16_t q : lot.floor(t.level - 1, uint32_t(t.x), uint32_t(t.y)))
+        if (q)
+            return true;
+    return false;
 }
 
 std::vector<const Slots::Slot*> containerSlots(VM& vm, const Object& o);
@@ -195,7 +372,217 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id) {
     return out;
 }
 
-Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots, bool footprints) {
+namespace {
+
+Position placeOf(const Placement::Part& part) {
+    return part.at ? *part.at : Position{float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
+}
+
+// What is tested of a part where the placement puts it: its place and
+// facing, its footprint there (TSObjectWorldSpaceFootprint, vtable 0x100 /
+// base 0xe8: GetFootprint at that place) and, for a diagonal door, its
+// footprints 0 and 2 there (TSObjectIndexedWorldSpaceFootprint).
+struct Held {
+    const Object* o = nullptr;
+    Position at;
+    int direction = 0;
+    Rects fp;
+    std::optional<Rects> door0, door2;
+};
+
+// The parts' footprints where the placement puts them: the group is stood
+// there for the reading only (the binary computes the footprint at the
+// tested place, GetFootprint(location, direction)), then put back. A part
+// already on its tested tile keeps its place there (an object tested where
+// it stands, s2pkg placement-sweep: the modular stairs' steps are a quarter
+// tile apart).
+std::vector<Held> heldParts(VM& vm, const Placement& p) {
+    struct Saved {
+        ObjectId id;
+        Position position;
+        int16_t direction;
+    };
+    std::vector<Saved> saved;
+    std::vector<Position> places;
+    for (const auto& part : p.parts)
+        if (Object* o = vm.object(part.id)) {
+            saved.push_back({part.id, o->position, o->data[objdata::Direction]});
+            const bool there = !part.at && o->position.inWorld() && !o->data[objdata::ContainerId] && VM::tileOf(*o) == part.tile;
+            if (!there)
+                o->position = placeOf(part);
+            o->data[objdata::Direction] = int16_t(p.direction);
+            places.push_back(o->position);
+        }
+    std::vector<Held> out;
+    for (size_t i = 0; i < p.parts.size() && i < places.size(); ++i) {
+        const Object* o = vm.object(p.parts[i].id);
+        if (!o)
+            continue;
+        Held h{o, places[i], p.direction, vm.routingFootprint(*o), std::nullopt, std::nullopt};
+        if (isDiagonalDoor(*o))
+            h.door0 = vm.indexedFootprint(*o, 0), h.door2 = vm.indexedFootprint(*o, 2);
+        out.push_back(std::move(h));
+    }
+    for (const Saved& s : saved)
+        if (Object* o = vm.object(s.id))
+            o->position = s.position, o->data[objdata::Direction] = s.direction;
+    return out;
+}
+
+// DoesFootprintIntersectDoor (BV 0x8a8fdc): a footprint against a door's
+// footprints 0 and 2 (none: no test).
+bool crossesDoor(const Rects& fp, const std::optional<Rects>& door0, const std::optional<Rects>& door2) {
+    return (door0 && footprintsCross(fp, *door0)) || (door2 && footprintsCross(fp, *door2));
+}
+
+std::string nameOf(const Object& x) {
+    return "\"" + (x.definition ? x.definition->fileName : std::string("?")) + "\"";
+}
+
+// TestPlacementWithRespectToObjects as base 1.0 has it (FUN_00ffb990, one
+// function; BV TestPlacementWithRespectToObjects 0x8ace04 calling
+// TestPlacementWithRespectToObject 0x8ac158 per object), with the flags the
+// buy tool (FUN_009eb860) and Create New Object Instance (TryCreateObject
+// 0xe34b2c) pass: 0, no door circle (flag 2) and no person circle (flag 1).
+// A person with person data 68 bit 0x02 passes. Every object on the 3x3
+// tiles round the part (its level, on the lot), not of its own group:
+// on its own tile the exclusive test first (exclusiveError); then a person
+// passes another person or an object that CanIntersectPeople, or when it
+// can itself; an object passes a person when it CanIntersectPeople, and
+// another object when either CanIntersectObjects; then either one's "allow
+// intersection" tree (OBJf 5, asked both ways) lets them; then only two
+// footprints on one layer (both FootprintBlocksCeiling or both
+// FootprintBlocksFloor) are tested: two people closer than 0.283
+// (0x274b968); a held diagonal door, the other's footprint against its
+// door footprints 0 and 2; a person in the way of an object, the circle
+// of 0.3 about the person against the object's footprint, unless the
+// object is a "Low Small Object" (od 40 bit 0x4000: then the person's own
+// box); a diagonal door in the way of an object, the object's footprint
+// against the door's; else the two footprints. Then the diagonal doors two
+// tiles away (the 5x5 ring, for an object): either one a diagonal door,
+// neither CanIntersectObjects, no tree letting them, one layer, the
+// footprint against the door's. A failure is 0x0C.
+int objectsError(VM& vm, const Held& h, const std::set<ObjectId>& mine, std::string& why) {
+    const Object& o = *h.o;
+    const World& w = *vm.world;
+    const bool person = o.person.has_value();
+    if (person && (o.person->data[68] & 0x02))
+        return 0;
+    const TilePos t{int(std::floor(h.at.x)), int(std::floor(h.at.y)), h.at.level};
+    const bool ceiling = footprintBlocksCeiling(o);
+    auto treesLet = [&](const Object& x) { return allowsIntersection(vm, o, x) || allowsIntersection(vm, x, o); };
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            const TilePos u{t.x + dx, t.y + dy, t.level};
+            if (!w.contains(u))
+                continue;
+            for (ObjectId other : vm.objectsOnTile(u)) {
+                if (mine.count(other))
+                    continue;
+                const Object& x = *vm.object(other);
+                if (dx == 0 && dy == 0)
+                    if (const int e = exclusiveError(vm, o, h.at, h.direction, x)) {
+                        why = nameOf(x) + (e == 0x17 ? " uses that wall" : " is in the way (exclusive placement)");
+                        return e;
+                    }
+                if (person) {
+                    if (canIntersectPeople(x) || canIntersectPeople(o))
+                        continue;
+                } else if (x.person) {
+                    if (canIntersectPeople(o))
+                        continue;
+                } else if (canIntersectObjects(o) || canIntersectObjects(x)) {
+                    continue;
+                }
+                if (treesLet(x) || ceiling != footprintBlocksCeiling(x))
+                    continue;
+                bool hit;
+                if (person && x.person)
+                    hit = std::hypot(x.position.x - h.at.x, x.position.y - h.at.y) < 0.283f;
+                else if (isDiagonalDoor(o))
+                    hit = crossesDoor(vm.routingFootprint(x), h.door0, h.door2);
+                else if (x.person && !(o.data[objdata::FlagField2] & 0x4000))
+                    hit = circleReaches(0.3f, h.fp, x.position.x, x.position.y);
+                else if (!person && isDiagonalDoor(x))
+                    hit = crossesDoor(h.fp, vm.indexedFootprint(x, 0), vm.indexedFootprint(x, 2));
+                else
+                    hit = footprintsCross(h.fp, vm.routingFootprint(x));
+                if (hit && std::getenv("OS2_DEBUG_PLACEMENT")) {
+                    std::fprintf(stderr, "  %s at (%.3f,%.3f) dir %d vs %s at (%.3f,%.3f) dir %d\n", nameOf(o).c_str(), h.at.x, h.at.y, h.direction, nameOf(x).c_str(), x.position.x, x.position.y, x.data[objdata::Direction]);
+                    for (const auto& r : h.fp) std::fprintf(stderr, "    me [%.3f %.3f %.3f %.3f]\n", r[0], r[1], r[2], r[3]);
+                    for (const auto& r : vm.routingFootprint(x)) std::fprintf(stderr, "    it [%.3f %.3f %.3f %.3f]\n", r[0], r[1], r[2], r[3]);
+                }
+                if (hit) {
+                    why = x.person ? "a Sim is in the way" : nameOf(x) + " is in the way";
+                    return placementerror::Objects;
+                }
+            }
+        }
+    if (person)
+        return 0;
+    for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -2; dx <= 2; ++dx) {
+            const TilePos u{t.x + dx, t.y + dy, t.level};
+            if ((std::abs(dx) <= 1 && std::abs(dy) <= 1) || !w.contains(u))
+                continue;
+            for (ObjectId other : vm.objectsOnTile(u)) {
+                if (mine.count(other))
+                    continue;
+                const Object& x = *vm.object(other);
+                if (!isDiagonalDoor(o) && !isDiagonalDoor(x))
+                    continue;
+                if (canIntersectObjects(o) || canIntersectObjects(x) || treesLet(x) ||
+                    ceiling != footprintBlocksCeiling(x))
+                    continue;
+                const bool hit = !isDiagonalDoor(x) ? crossesDoor(vm.routingFootprint(x), h.door0, h.door2)
+                                                    : crossesDoor(h.fp, vm.indexedFootprint(x, 0), vm.indexedFootprint(x, 2));
+                if (hit) {
+                    why = nameOf(x) + " is in the way";
+                    return placementerror::Objects;
+                }
+            }
+        }
+    return 0;
+}
+
+// The floors' visibility layer (cWorldDB +0x9c, a byte a quarter;
+// SetFloorVisibility BV 0xd8ed4, FloorVisible 0xd29bc): what the placement
+// test reads of it. The scene graph's object hides the floor of each part's
+// tile that HidesFloorOnPlace (od 8 bit 0x4000 "Hide Floor": the sunken hot
+// tub, the two-storey windows) while the object is not hidden (od 34 &
+// 0x21, nTSSG::cObject::UpdateVisibilityAndRendering BV 0x661e5c ->
+// SetFloorVisibilityForHiddenObjects 0x661c28); the pool tool hides the
+// ground's floor over a pool (ModifyFloorVisibility 0x9adec8), which the
+// test does not read on the ground. Here from the objects in the world.
+bool floorHidden(VM& vm, TilePos t, const std::set<ObjectId>& mine) {
+    for (ObjectId other : vm.objectsOnTile(t))
+        if (const Object* x = vm.object(other);
+            x && !mine.count(other) && hidesFloorOnPlace(*x) && !(x->data[objdata::HiddenFlags] & 0x21))
+            return true;
+    return false;
+}
+
+// A wall on the edge between `t` and its neighbour for the placement tests:
+// the world's (the walk-over fences too) or the wall a door stands in (the
+// VM's world opens it for routing; the game's keeps the wall, the door being
+// a portal in it).
+bool placementWall(const World& w, TilePos t, int dx, int dy) {
+    if (w.wallBetween(t, dx, dy, true))
+        return true;
+    for (const World::Door& d : w.doors()) {
+        if (d.diagonal || d.tile.level != t.level)
+            continue;
+        const auto s = directionStep(d.dir + 4);
+        if ((d.tile == t && s[0] == dx && s[1] == dy) ||
+            (d.tile == TilePos{t.x + dx, t.y + dy, t.level} && s[0] == -dx && s[1] == -dy))
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots) {
     Placement p;
     p.level = tile.level;
     p.direction = normDir(direction);
@@ -264,6 +651,7 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
             return fail(placementerror::Weight, "the surface cannot hold it");
     }
 
+    const std::vector<Held> held = heldParts(vm, p);
     for (const auto& part : p.parts) {
         const Object& o = *vm.object(part.id);
         const TilePos t = part.tile;
@@ -284,14 +672,22 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         if (!w.contains(t))
             return fail(placementerror::LevelOutOfBounds, "level out of the lot");
         // 3: a floor under it, unless in the air (p & 0x200) or p2 & 4:
-        // FUN_0016d518 -> WorldDB 0xb8, the ground always (VM level 1, even
-        // when a pool gives the lot a level under it), above it all four
-        // quarters of the tile floored (HasFloorTest; the floors' visibility
-        // layer is not kept here). Without the lot's geometry (no
-        // VM::placementLot), a floor in some quarter (the world's).
-        if (t.level != 1 && t.level > w.firstLevel() && !(pf & 0x200) && !(pf2 & 0x04) &&
-            !(vm.placementLot ? floorWhole(*vm.placementLot, t) : w.hasFloor(t)))
-            return fail(placementerror::NoFloor, "no floor");
+        // FUN_0016d518 -> WorldDB 0xb8(tile, 0xF, !HidesFloorOnPlace) (base
+        // 1.0 TestPlacementCommon FUN_00ffc9b0: WorldDB 0x90 with the same
+        // arguments), the ground always (VM level 1, even when a pool gives
+        // the lot a level under it), above it all four quarters of the tile
+        // floored (HasFloorTest, FUN_000d2798) and, unless the object hides
+        // the floor itself, all four visible (the visibility layer,
+        // floorHidden: a sunken hot tub's tiles take no other object). The
+        // BV's TileHasFloorFromObject (od 98 bit 0x01, the elevators) is not
+        // in base 1.0. Without the lot's geometry (no VM::placementLot), a
+        // floor in some quarter (the world's).
+        if (t.level != 1 && t.level > w.firstLevel() && !(pf & 0x200) && !(pf2 & 0x04)) {
+            if (!(vm.placementLot ? floorWhole(*vm.placementLot, t) : w.hasFloor(t)))
+                return fail(placementerror::NoFloor, "no floor");
+            if (!hidesFloorOnPlace(o) && floorHidden(vm, t, mine))
+                return fail(placementerror::NoFloor, "the floor is hidden (under a \"Hide Floor\" object)");
+        }
         // ... and, the call's last argument set for objects, the tile a level
         // down without a pool's marker in any quarter (FUN_00164c40: IsPool
         // of each quarter's DeckFoundationStyle; docs/buy-build-mac.md
@@ -302,18 +698,53 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         // lets them is not found).
         if (!(pf & 0x200) && !(pf2 & 0x04) && !(pf & 0x800) && poolUnder(vm, w, t))
             return fail(placementerror::NoFloor, "over a pool");
+        // On a fence post (p & 0x2000 "fence post" with a fence's post at the
+        // place: the partition manager's 0xec and PartitionStyleIsFence; here
+        // the lot's posts, FPL, at the grid point): the tests 4, 5 and 7 do
+        // not apply, and without the post it is 0x79 (below).
+        const Position here = held[size_t(&part - p.parts.data())].at;
+        const bool onPost = (pf & 0x2000) && vm.placementLot &&
+                            std::any_of(vm.placementLot->fencePosts.begin(), vm.placementLot->fencePosts.end(),
+                                        [&](const Lot::FencePost& fp) {
+                                            return fp.level == t.level - 1 && std::fabs(fp.x - here.x) < 0.01f &&
+                                                   std::fabs(fp.y - here.y) < 0.01f;
+                                        });
+        // 4: partly in water (IsPartWater) without p & 4 "under water" or
+        // 0x4000 "water surface" -> 0x90.
+        if (vm.placementLot && !onPost && !(pf & 0x04) && !(pf & 0x4000) && waterVertices(*vm.placementLot, t) > 0)
+            return fail(0x90, "in the water");
         // 5 a pool tile needs p & 0x800 (0x8F); pool objects need no floor there.
         const bool inPool = w.pool(t);
         // (Parts in the air, p & 0x200, or on the water, 0x4000, may hang over it: inferred.)
-        if (inPool && !(pf & (0x800 | 0x200 | 0x4000)))
+        if (inPool && !onPost && !(pf & (0x800 | 0x200 | 0x4000)))
             return fail(0x8F, "not in a pool");
         // 6: the tile flat (nTSWorld::IsFlat, BV 0x165af8: its four grid
         // points at exactly one height), unless p & 0x100 -> 0x12 "Can't
         // place on slope".
         if (vm.placementLot && !(pf & 0x100) && !flatTile(*vm.placementLot, t))
             return fail(0x12, "on a slope");
-        if (pf && !(pf & 0x03) && !(pf & 0x200) && !(inPool && (pf & 0x800)))
+        // 7, with the lot's geometry (TestPlacementCommon BV 0x8aad90, base
+        // 1.0 FUN_00ffc9b0): unless the tile is all water, a pool tile or
+        // over a pool, a floored quarter (vtable 0xb4) without p & 1 -> 0x8C
+        // "not allowed on the floor"; terrain (the ground, vtable 0xb8,
+        // without all four quarters floored and visible, 0xb0) without p & 2
+        // -> 0x8D. Without it, the floor or terrain the world cannot tell
+        // apart: either flag will do.
+        const Lot* lot = vm.placementLot;
+        const int water = lot ? waterVertices(*lot, t) : 0;
+        if (lot && !onPost) {
+            const bool exempt = water == 4 || inPool || poolUnder(vm, w, t);
+            if (!exempt && !(pf & 0x01) && floorSome(*lot, t))
+                return fail(0x8C, "not allowed on the floor");
+            const bool allFloored = t.level != 1 ? floorWhole(*lot, t) : floorWhole(*lot, t) && !floorHidden(vm, t, mine);
+            if (!exempt && !(pf & 0x02) && t.level == 1 && !allFloored)
+                return fail(0x8D, "not allowed on terrain");
+        } else if (!lot && pf && !(pf & 0x03) && !(pf & 0x200) && !(inPool && (pf & 0x800))) {
             return fail(placementerror::NoFloor, inPool || !(pf & 0x800) ? "not allowed on the floor" : "only in a pool");
+        }
+        // 9: p & 0x2000 without a fence's post there -> 0x79.
+        if (lot && (pf & 0x2000) && !onPost)
+            return fail(0x79, "not on a fence post");
         // TestPlacementWithRespectToWalls (§3.3): the wall flags (od 13) on
         // the four sides, and no wall through the object (unless p & 0x400).
         // Doors and windows are wall portals (IsWallPortal, §3.3): the wall
@@ -325,12 +756,14 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         // 0xe1edd8: wall flags & 0x50) stands in the diagonal wall across its
         // tile; the sides below say which diagonal (inferred: the binary's
         // IntersectsWalls tests the footprint against the wall segments).
-        if (w.diagonalWall(t) && !(pf & 0x400) && !(portal && (wp & 0x50)))
+        // IntersectsWalls (BV 0x8a7f1c) is skipped for p & 0x400 "wall" and
+        // p & 0x2000 "fence post".
+        if (w.diagonalWall(t) && !(pf & 0x2400) && !(portal && (wp & 0x50)))
             return fail(placementerror::WallIntersect, "diagonal wall");
-        if (!(pf & 0x400) && !portal)
+        if (!(pf & 0x2400) && !portal)
             for (int k = 0; k < 4; ++k) {
                 const auto s = directionStep(k * 2);
-                if (tiles.count({t.x + s[0], t.y + s[1], t.level}) && w.wallBetween(t, s[0], s[1], true))
+                if (tiles.count({t.x + s[0], t.y + s[1], t.level}) && placementWall(w, t, s[0], s[1]))
                     return fail(placementerror::WallIntersect, "a wall cuts the object");
             }
         static const char* const sides[4] = {"in front", "on the right", "behind", "on the left"};
@@ -339,7 +772,7 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
             // For pool objects (p & 0x800) the pool's edge is a wall (the
             // pool walls stand a level down; "Must be against a pool wall").
             const bool poolEdge = (pf & 0x800) && w.pool(t) != w.pool({t.x + s[0], t.y + s[1], t.level});
-            const bool wall = w.wallBetween(t, s[0], s[1], true) || poolEdge;
+            const bool wall = placementWall(w, t, s[0], s[1]) || poolEdge;
             if ((wp & (1 << side)) && !wall)
                 return fail(placementerror::NeedsWall, std::string("needs a wall ") + sides[side]);
             if ((wp & (0x100 << side)) && wall)
@@ -361,82 +794,19 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
             if (!(wp & allow) && wall)
                 return fail(placementerror::WallIntersect, "no diagonal wall allowed");
         }
-        // TestPlacementWithRespectToObjects / TestPlacementWithRespectToObject
-        // (BV 0x8ace04, 0x8ac158) by footprints: each object on the tiles
-        // round the part (not the object's own parts) whose footprint
-        // (TSObjectWorldSpaceFootprint; a person's box of half width 0.1)
-        // crosses the part's. A person is in the way unless the part lets
-        // people through (CanIntersectPeople: od 8 & 0x14); another object
-        // unless either lets objects through (CanIntersectObjects: od 8 &
-        // 6) or the two are on different layers (FootprintBlocksCeiling, od
-        // 42 bit 0x1000, against FootprintBlocksFloor, the bit clear). Not
-        // done: the "allow intersection" trees (entry 5) both ways, the
-        // doors' circle and footprint tests, the roof clearance.
-        if (footprints) {
-            const auto own = vm.routingFootprint(o);
-            constexpr float kHalf = 0.1f; // TSObjectBaseFootprintWidth / 2
-            const bool letsPeople = o.data[objdata::Flags] & 0x14;
-            const bool letsObjects = o.data[objdata::Flags] & 0x06;
-            const bool ceiling = o.data[objdata::PlacementFlags] & 0x1000;
-            auto crosses = [&](const std::vector<std::array<float, 4>>& other) {
-                for (const auto& a : own)
-                    for (const auto& b : other)
-                        if (a[0] < a[2] && a[1] < a[3] && b[0] < b[2] && b[1] < b[3] && a[0] < b[2] && b[0] < a[2] &&
-                            a[1] < b[3] && b[1] < a[3])
-                            return true;
-                return false;
-            };
-            for (int dx = -1; dx <= 1; ++dx)
-                for (int dy = -1; dy <= 1; ++dy)
-                    for (ObjectId other : vm.objectsOnTile({t.x + dx, t.y + dy, t.level})) {
-                        if (mine.count(other))
-                            continue;
-                        const Object& x = *vm.object(other);
-                        if (x.person) {
-                            if (letsPeople || ceiling)
-                                continue;
-                            const float px = x.position.x, py = x.position.y;
-                            if (crosses({{px - kHalf, py - kHalf, px + kHalf, py + kHalf}}))
-                                return fail(placementerror::Objects, "a Sim is in the way");
-                            continue;
-                        }
-                        if (letsObjects || (x.data[objdata::Flags] & 0x06) ||
-                            ceiling != bool(x.data[objdata::PlacementFlags] & 0x1000))
-                            continue;
-                        if (crosses(vm.routingFootprint(x)))
-                            return fail(placementerror::Objects, "\"" + (x.definition ? x.definition->fileName : std::string("?")) +
-                                                                     "\" is in the way");
-                    }
-            continue;
-        }
-        // TestPlacementWithRespectToObjects (§3.4): objects on the tile in
-        // a common exclusive layer (od 63), unless od 8 lets them through.
-        const int16_t myLayers = layers(o);
-        const bool meLetsPeople = o.data[objdata::Flags] & (kAllowObjectAndPerson | kAllowPerson);
-        for (ObjectId other : vm.objectsOnTile(t)) {
-            if (mine.count(other))
-                continue;
-            const Object& x = *vm.object(other);
-            if (x.person) {
-                if (!meLetsPeople)
-                    return fail(placementerror::Objects, "a Sim is in the way");
-                continue;
-            }
-            const bool sameType = (o.data[objdata::ExclusivePlacementFlags] & 0x04) && x.definition &&
-                                  o.definition && x.definition->objectType() == o.definition->objectType();
-            if (!(layers(x) & myLayers) && !sameType)
-                continue;
-            if (!sameType &&
-                ((x.data[objdata::Flags] | o.data[objdata::Flags]) & (kAllowObjectIntersection | kAllowObjectAndPerson)))
-                continue;
-            return fail(placementerror::Objects,
-                        "\"" + (x.definition ? x.definition->fileName : std::string("?")) + "\" is in the way");
-        }
+        // TestPlacementWithRespectToObjects (objectsError), then the height
+        // test of TestPlaceInWorld (BV 0x8ad754, base 1.0 FUN_00ffd864): od 4
+        // & vtable 0x2c(1) of a 0xFBA4DA53 object made for it, which is 1 <<
+        // (1 - 1) (base 0xbc362c -> 0xbc3650; the slots' heights read the
+        // same) -> bit 0 "on the floor", else 0x19 "Must place in one of
+        // these places". Each part is tested whole (TSMTObjectCanSetPosition
+        // BV 0x8add68: TSObjectCanSetPositionImpl part by part).
+        std::string why;
+        if (const int e = objectsError(vm, held[size_t(&part - p.parts.data())], mine, why))
+            return fail(e, why);
+        if (!(o.data[objdata::AllowedHeightFlags] & 1))
+            return fail(placementerror::PlaceList, "needs a surface");
     }
-    // The height test: on the floor needs bit 0 of od 4; otherwise only a
-    // slot will do ("Must place in one of these places").
-    if (!(lead->data[objdata::AllowedHeightFlags] & 1))
-        return fail(placementerror::PlaceList, "needs a surface");
     p.ok = true;
     return p;
 }
@@ -448,10 +818,10 @@ bool shouldAutoRotate(VM& vm, ObjectId id) {
     return false;
 }
 
-int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction, bool footprints) {
+int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction) {
     int d = normDir(direction);
     for (int k = 0; k < 4; ++k, d = normDir(d + 2))
-        if (checkPlacement(vm, id, tile, d, false, footprints).ok)
+        if (checkPlacement(vm, id, tile, d, false).ok)
             return d;
     return normDir(direction);
 }
@@ -486,13 +856,13 @@ ObjectId createDiagonalTwin(VM& vm, ObjectId id) {
     }
 }
 
-AutoRotation autoRotate(VM& vm, ObjectId id, ObjectId twin, TilePos tile, int direction, bool footprints) {
+AutoRotation autoRotate(VM& vm, ObjectId id, ObjectId twin, TilePos tile, int direction) {
     const int d = normDir(direction);
     for (const ObjectId held : {id, twin}) {
         if (!held || !vm.object(held))
             continue;
         for (int k = 0, at = d; k < 4; ++k, at = normDir(at + 2))
-            if (checkPlacement(vm, held, tile, at, false, footprints).ok)
+            if (checkPlacement(vm, held, tile, at, false).ok)
                 return {held, at};
     }
     return {id, d};

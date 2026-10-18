@@ -1143,6 +1143,37 @@ std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
     return footprintOf(o);
 }
 
+std::optional<std::vector<std::array<float, 4>>> VM::indexedFootprint(const Object& o, int index) {
+    if (o.person || !o.definition)
+        return std::nullopt;
+    const ModelFootprints* mf = modelFootprints(*this, o);
+    if (!mf)
+        return std::nullopt;
+    const auto list = mf->lists.find(std::to_string(index));
+    if (list == mf->lists.end())
+        return std::nullopt;
+    const Object* lead = &o;
+    if (const ObjectId l = multiTileGroup(o); l != o.id)
+        if (const Object* lo = object(l); lo && lo->position.inWorld())
+            lead = lo;
+    const int dir = ((lead->data[objdata::Direction] % 8) + 8) % 8 & 6;
+    const double yaw = (90.0 - 45.0 * dir) * M_PI / 180.0;
+    const float c = float(std::lround(std::cos(yaw))), s = float(std::lround(std::sin(yaw)));
+    std::vector<std::array<float, 4>> out;
+    for (const auto& [tile, rows] : list->second)
+        for (const auto& r : footprintMaskRects(rows, tile.first, tile.second)) {
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const float mx : {r[0], r[2]})
+                for (const float my : {r[1], r[3]}) {
+                    const float px = lead->position.x + mx * c - my * s;
+                    const float py = lead->position.y + mx * s + my * c;
+                    x0 = std::min(x0, px), y0 = std::min(y0, py), x1 = std::max(x1, px), y1 = std::max(y1, py);
+                }
+            out.push_back({x0, y0, x1, y1});
+        }
+    return out;
+}
+
 namespace {
 
 // FUN_0191f6d0 (docs/routing-mac.md §8.4): `p` out of the footprint

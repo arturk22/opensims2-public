@@ -223,14 +223,15 @@ int cmdPlacementSweep(const std::vector<std::string>& args) {
             const vm::Object& o = *machine.object(id);
             const vm::TilePos t = vm::VM::tileOf(o);
             machine.placementLot = nullptr;
-            const vm::Placement p0 = vm::checkPlacement(machine, id, t, o.data[vm::objdata::Direction], false, true);
+            const vm::Placement p0 = vm::checkPlacement(machine, id, t, o.data[vm::objdata::Direction], false);
             machine.placementLot = &lot;
-            const vm::Placement p1 = vm::checkPlacement(machine, id, t, o.data[vm::objdata::Direction], false, true);
+            const vm::Placement p1 = vm::checkPlacement(machine, id, t, o.data[vm::objdata::Direction], false);
             ++objects;
             ++before[p0.ok ? 0 : p0.error];
             ++after[p1.ok ? 0 : p1.error];
             static std::map<int, int> shown;
-            if (std::getenv("S2PKG_SWEEP_WHY") && !p0.ok && shown[p0.error]++ < 3)
+            static const char* why = std::getenv("S2PKG_SWEEP_WHY");
+            if (why && !p0.ok && (std::string(why) == "all" || shown[p0.error]++ < 3))
                 std::printf("  %s: %d \"%s\" od4 %04X od42 %04X od82 %04X at (%d,%d,%d) dir %d: 0x%02X %s\n",
                             lotFile.filename().string().c_str(), id, o.definition->fileName.c_str(),
                             uint16_t(o.data[vm::objdata::AllowedHeightFlags]), uint16_t(o.data[vm::objdata::PlacementFlags]),

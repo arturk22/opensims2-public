@@ -862,7 +862,7 @@ Exit createObjectInstance(Context& c) {
     if (at && !container && c.vm.world && c.vm.checkCreatedPlacement && placed && placed->position.inWorld() &&
         !placed->data[objdata::ContainerId]) {
         const TilePos t = VM::tileOf(*placed);
-        const Placement fit = checkPlacement(c.vm, created, t, placed->data[objdata::Direction], false, true);
+        const Placement fit = checkPlacement(c.vm, created, t, placed->data[objdata::Direction], false);
         if (!fit.ok) {
             if (std::getenv("OS2_LOG_CREATE"))
                 std::fprintf(stderr, "  \"%s\" does not fit at (%d, %d, %d): %s\n", def->fileName.c_str(), t.x, t.y,

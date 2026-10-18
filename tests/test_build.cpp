@@ -1147,7 +1147,104 @@ static void testDeckLevelling() {
     }
 }
 
+// TestPlacementWithRespectToObjects as base 1.0 has it (round n48,
+// docs/buy-build-mac.md §7.26): the exclusive placement flags on one tile,
+// the intersection flags, the layers, the footprints (strict), the doors and
+// windows on one wall (0x17), a "Hide Floor" object's floor, the people.
+static void testObjectsTestN48() {
+    Lot lot = flatLot();
+    lot.levelCount = 2;
+    lot.elevations.assign(2 * 13 * 11, 0.0f);
+    for (size_t i = 13 * 11; i < lot.elevations.size(); ++i)
+        lot.elevations[i] = 3.0f;
+    lot.floors.assign(2 * 12 * 10, {});
+    for (size_t i = 12 * 10; i < lot.floors.size(); ++i)
+        lot.floors[i] = {1, 1, 1, 1}; // level 1 (VM level 2) floored
+    lot.rooms.assign(2 * 12 * 10, {1, 1, 1, 1});
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World::fromLot(lot);
+    vm.placementLot = &lot;
+    // An OBJD box footprint: field 0x43 tile width (16 = 1 tile), 0x4D the
+    // sides pulled in by nibbles of 1/16.
+    auto def = [&](uint16_t instance, uint16_t type, uint16_t width, uint16_t mask, uint32_t guid) {
+        ObjectDefinition d;
+        d.fields.resize(0x100);
+        d.fields[(0x52 - 0x44) / 2] = type;
+        d.fields[(0x5C - 0x44) / 2] = uint16_t(guid), d.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
+        d.fields[(0xC6 - 0x44) / 2] = width;
+        d.fields[(0xDA - 0x44) / 2] = mask;
+        code.add(0x7F7F7F7E, instance, d);
+    };
+    def(1, 4, 16, 0, 0x11110001);      // a full tile
+    def(2, 4, 16, 0x6666, 0x11110002); // a quarter of a tile wide, centred
+    def(3, 9, 16, 0, 0x11110003);      // a window
+    auto make = [&](uint16_t instance) -> Object& {
+        Object& o = vm.instantiate(0x7F7F7F7E, instance);
+        o.data[objdata::PlacementFlags] = 0x3;
+        o.data[objdata::AllowedHeightFlags] = 0x1;
+        return o;
+    };
+    Object& a = make(1);
+    Object& b = make(1);
+    a.position = {3.5f, 3.5f, 1};
+    check(checkPlacement(vm, b.id, {4, 3, 1}, 0, false).ok, "a full tile beside another: the footprints only touch");
+    Placement p = checkPlacement(vm, b.id, {3, 3, 1}, 0, false);
+    check(!p.ok && p.error == placementerror::Objects, "two full tiles on one tile cross (0x0C)");
+    b.data[objdata::Flags] = 0x02;
+    check(checkPlacement(vm, b.id, {3, 3, 1}, 0, false).ok, "allow object intersection (od 8 0x02) lets it");
+    b.data[objdata::Flags] = 0;
+    b.data[objdata::PlacementFlags] = 0x1003;
+    check(checkPlacement(vm, b.id, {3, 3, 1}, 0, false).ok, "one on the ceiling's layer, one on the floor's: no test");
+    b.data[objdata::PlacementFlags] = 0x3;
+    // Two quarter-tile boxes on one tile: at one centre they cross; side by
+    // side they only touch, but both "floor" in od 63 is the exclusive
+    // test's 0x0C.
+    Object& c = make(2);
+    Object& d = make(2);
+    c.position = {6.5f, 3.5f, 1};
+    check(!checkPlacement(vm, d.id, {6, 3, 1}, 0, false).ok, "quarter tiles at one centre cross");
+    c.position = {6.25f, 3.5f, 1};
+    check(checkPlacement(vm, d.id, {6, 3, 1}, 0, false).ok, "side by side on one tile they fit");
+    vm.removeObject(a.id);
+    c.data[objdata::ExclusivePlacementFlags] = 0x1, d.data[objdata::ExclusivePlacementFlags] = 0x1;
+    p = checkPlacement(vm, d.id, {6, 3, 1}, 0, false);
+    check(!p.ok && p.error == placementerror::Objects, "both od 63 floor on one tile: 0x0C");
+    d.data[objdata::ExclusivePlacementFlags] = 0x2;
+    check(checkPlacement(vm, d.id, {6, 3, 1}, 0, false).ok, "floor and wall layers share the tile");
+    // Two windows needing one wall on one tile: 0x17 "Must be against unused wall".
+    vm.world->addWall(1, 9, 5, 10, 5);
+    Object& w1 = make(3);
+    Object& w2 = make(3);
+    w1.data[objdata::WallPlacementFlags] = 0x4, w2.data[objdata::WallPlacementFlags] = 0x4; // wall behind
+    w1.data[objdata::Flags] = 0x02, w2.data[objdata::Flags] = 0x02;
+    w1.position = {9.5f, 4.5f, 1}, w1.data[objdata::Direction] = 6; // facing -y: the wall behind is at y = 5
+    p = checkPlacement(vm, w2.id, {9, 4, 1}, 6, false);
+    check(!p.ok && p.error == 0x17, "two windows on one wall: 0x17");
+    p = checkPlacement(vm, w2.id, {9, 4, 1}, 2, false);
+    check(!p.ok && p.error == placementerror::NeedsWall, "facing the other way it needs a wall behind (7)");
+    // A "Hide Floor" object (od 8 0x4000) above the ground: no floor for another.
+    Object& tub = make(1);
+    tub.position = {2.5f, 7.5f, 2};
+    tub.data[objdata::Flags] = 0x4000 | 0x02;
+    Object& lamp = make(2);
+    p = checkPlacement(vm, lamp.id, {2, 7, 2}, 0, false);
+    check(!p.ok && p.error == placementerror::NoFloor, "on a sunken hot tub's tile the floor is hidden (0x8E)");
+    tub.data[objdata::HiddenFlags] = 0x01;
+    check(checkPlacement(vm, lamp.id, {2, 7, 2}, 0, false).ok, "with the tub hidden its floor shows again");
+    tub.data[objdata::HiddenFlags] = 0;
+    lamp.data[objdata::Flags] = 0x4000;
+    check(checkPlacement(vm, lamp.id, {2, 7, 2}, 0, false).ok, "an object that hides the floor itself does not test it");
+    // The floor / terrain flags on the ground: terrain needs od 42 bit 2.
+    lamp.data[objdata::Flags] = 0;
+    lamp.data[objdata::PlacementFlags] = 0x1;
+    p = checkPlacement(vm, lamp.id, {5, 7, 1}, 0, false);
+    check(!p.ok && p.error == 0x8D, "floor-only on the terrain: 0x8D");
+    vm.placementLot = nullptr;
+}
+
 int main() {
+    testObjectsTestN48();
     testRedoFunds();
     testDeckLevelling();
     testVertexObjects();

@@ -15,11 +15,13 @@ mkdir -p "$out"
 fail=0
 lot="$OS2_DATA/TSData/Res/UserData/Neighborhoods/Tutorial/Lots/Tutorial_Lot14.package"
 # The §615 dining chair (0x8C3FE510): placed at (14, 12) facing 2; then
-# dragged from (15, 12) toward -y (facing 6) and from (16, 12) toward +x
-# (facing 4); the next one dropped with Esc.
+# dragged from (16, 12) toward -y (facing 6) and from (17, 12) toward +x
+# (facing 4); the next one dropped with Esc. (15, 12) and (15, 13) are the
+# two sides of a door, whose parts' footprints take a chair as the game's
+# objects test does.
 "$app" --data "$OS2_DATA" --vm --ui live --lot "$lot" --mode buy --buy 0x8C3FE510 --place 14,12,2 \
-    --buy-drag 15,12,15.5,9 --buy-drag 16,12,19,12.5 --buy-cancel \
-    --grab 43 --buy-cancel --grab-drag 43,13,13 --grab-drag 47,15,12 --screenshot "$out/chairs.png" \
+    --buy-drag 16,12,16.5,9 --buy-drag 17,12,20,12.5 --buy-cancel \
+    --grab 43 --buy-cancel --grab-drag 43,13,13 --grab-drag 47,16,12 --screenshot "$out/chairs.png" \
     -ApplePersistenceIgnoreState YES > "$out/chairs.log" 2>&1
 log="$out/chairs.log"
 grep -q "buy mode: footprint from objectPlacementIconGood/Bad" "$log" || { echo "FAIL: no placement outline models"; fail=1; }
@@ -27,12 +29,12 @@ grep -q "bought Cadeira de Jantar Carvalhosa as object [0-9]* at (14, 12) facing
     { echo "FAIL place: $(grep 'buy mode' "$log" | head -4)"; fail=1; }
 n=$(grep -c "buy mode: holding Cadeira de Jantar Carvalhosa" "$log")
 [ "$n" = 4 ] || { echo "FAIL keep buying: held $n times (want 4: picked, then after each of 3 placements)"; fail=1; }
-grep -q "at (15, 12) facing 6 for §615; funds §1.604" "$log" || { echo "FAIL drag -y: $(grep 'at (15, 12)' "$log")"; fail=1; }
-grep -q "at (16, 12) facing 4 for §615; funds §989" "$log" || { echo "FAIL drag +x: $(grep 'at (16, 12)' "$log")"; fail=1; }
+grep -q "at (16, 12) facing 6 for §615; funds §1.604" "$log" || { echo "FAIL drag -y: $(grep 'at (16, 12)' "$log")"; fail=1; }
+grep -q "at (17, 12) facing 4 for §615; funds §989" "$log" || { echo "FAIL drag +x: $(grep 'at (17, 12)' "$log")"; fail=1; }
 grep -q "buy mode: dropped what was held" "$log" || { echo "FAIL: Esc dropped nothing"; fail=1; }
 grep -q "picked up object 43 (.*); outline on (14, 12)" "$log" || { echo "FAIL: no outline on the grabbed chair"; fail=1; }
 grep -q "buy mode: moved object 43" "$log" || { echo "FAIL: the grab-drag did not move the chair"; fail=1; }
-grep -q "picked up object 47 (.*); outline on (15, 12)" "$log" && ! grep -q "moved object 47" "$log" ||
+grep -q "picked up object 47 (.*); outline on (16, 12)" "$log" && ! grep -q "moved object 47" "$log" ||
     { echo "FAIL: a press-release on a chair should keep it held"; fail=1; }
 [ $fail = 0 ] && echo "buy place: ok"
 exit $fail
