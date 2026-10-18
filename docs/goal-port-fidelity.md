@@ -213,3 +213,11 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
   carga e mostra o **diálogo de boas-vindas do Vida de Apartamento**. Achados enfileirados:
   11 (globais dos EPs), 12 (`0x7D`/`0x7E` em routing aggregates), 13 (TTAB 0x50+). Próximo:
   6 (seguido de 7 / 8 / 10; 5 bloqueado).
+- (18/10 ~02:38) **Item 6, 1º sub-item** — "reset do od 7": já estava feito (o Reset após um
+  erro grava `data[7]` = campo 45 do OBJD, `GetDefaultNicenessMultiplier` vtable `0x578`, desde
+  a rodada 14), mas o comentário do `resetAfterError` ainda dizia que o 7 "fica" e a linha dos
+  Erros do `inventario-binario.md` ainda dava como faltando. Pinado:
+  `testResetAfterError` agora tem campo 45 = 250, semeia `data[7]` = 999 e confere 250 depois do
+  reset (build+ctest **39/39**); comentário e nota corrigidos. Resto do item 6: os slots do
+  Look At (byte 14), depois 164 / evento 4 / `0x214`/`0x2e8` (precisam de RE do binário Mac),
+  NGBH `+0x34`/`+0x38` e os registros `+0x60c`; depois 7 / 8 / 10 (5 bloqueado).

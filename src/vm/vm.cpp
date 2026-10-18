@@ -1133,8 +1133,9 @@ void VM::tick() {
 //   2, object version 58 and look at score 78 := the definition's (labels
 //   49, 13), and with "use default placement flags" (label 12) the height,
 //   wall adjacency, wall placement and placement flags (4, 5, 13, 42) := the
-//   definition's defaults (labels 6, 3, 5, 4); the niceness score 7 (a
-//   virtual not followed) stays. The attributes stay. Its Init runs (not
+//   definition's defaults (labels 6, 3, 5, 4); the niceness score 7 := OBJD
+//   field 45 (the GetDefaultNicenessMultiplier virtual, vtable 0x578).
+//   The attributes stay. Its Init runs (not
 //   for a multi-tile part: its group's lead handles it), then the Main
 //   starts over.
 // The game also writes an ObjectError log. The Main starts from its first

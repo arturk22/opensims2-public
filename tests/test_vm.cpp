@@ -1979,7 +1979,9 @@ static void testSetToNextWhereVersion() {
 // Reset): it starts over next tick, and the VM keeps what failed.
 static void testResetAfterError() {
     Fixture fx;
-    fx.code.add(kObjGroup, 0x80, definition(0x0E0E0E0E));
+    ObjectDefinition d = definition(0x0E0E0E0E);
+    d.fields[(0x40 + 2 * 45 - 0x44) / 2] = 250; // 45 "Niceness Multiplier"
+    fx.code.add(kObjGroup, 0x80, d);
     ObjectFunctions f;
     f.functions = {{0, 0}, {0, 0x1001}};
     fx.code.add(kObjGroup, 0x80, f);
@@ -1995,14 +1997,17 @@ static void testResetAfterError() {
               fx.vm.threads.at(o.id).status == Thread::Status::Running,
           "a failed Main is reset and runs again next tick");
     // Without a cleanup tree, Reset zeroes the object data but its list
-    // (direction, room, ...), sets the render colours to 255 and runs Init.
+    // (direction, room, ...), sets the niceness score 7 to OBJD field 45
+    // (GetDefaultNicenessMultiplier) and the render colours to 255, and runs
+    // Init.
     o.data[objdata::Direction] = 4;
     o.data[objdata::Room] = 3;
     o.data[30] = 77;
     o.data[objdata::Flags] = 0x40;
+    o.data[7] = 999; // "Niceness Score": the reset takes it from field 45
     fx.vm.tick();
     check(o.data[objdata::Direction] == 4 && o.data[objdata::Room] == 3 && o.data[30] == 0 &&
-              o.data[objdata::Flags] == 0 && o.data[72] == 0xFF && o.data[23] == 2 && o.data[objdata::ObjectId] == o.id &&
+              o.data[objdata::Flags] == 0 && o.data[7] == 250 && o.data[72] == 0xFF && o.data[23] == 2 && o.data[objdata::ObjectId] == o.id &&
               o.attributes[0] == 3,
           "the reset after an error zeroes the object data but its list, and keeps the attributes");
     fx.vm.resetOnError = false;
