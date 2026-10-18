@@ -23,6 +23,11 @@ using namespace build_edit_internal;
 
 namespace {
 
+// DAT_0277a578 / DAT_0277a57c (BV): a pond's water under its rim and the
+// most a point may stand over the water and still be in the pond; how far
+// under its ground a dry point's water is.
+constexpr float kPondDepth = 0.25f, kDryWaterDepth = 1.0f;
+
 // deckfoundations.txt products 0-2: the edge style, its pattern, the floor.
 struct DeckProduct {
     uint32_t style;
@@ -236,8 +241,8 @@ void BuildEditor::moveDeckFloor(int li, int ax, int ay, int bx, int by, float to
     // level down goes to the height - 3, a deck's or foundation's (the
     // terrain under it) only comes down, to the height - 0.75, when higher;
     // the point goes to the height with the stories above
-    // (ChangeFloorAndWaterElevationCoupled).
-    std::set<std::pair<int, int>> ground; // the dry ground points moved: their water follows
+    // (ChangeFloorAndWaterElevationCoupled). The ground's water follows each
+    // point it moves (moveGroundWithWater).
     for (int x = ax - 1; x <= bx + 2; ++x)
         for (int y = ay - 1; y <= by + 2; ++y) {
             if (x < 0 || y < 0 || x > int(lot_.width) || y > int(lot_.height))
@@ -257,43 +262,32 @@ void BuildEditor::moveDeckFloor(int li, int ax, int ay, int bx, int by, float to
                 if (pool) {
                     below = h - kStandardLevelHeight;
                 } else if (below > h - 4 * kFloorElevationUnit) {
-                    if (li - 1 == 0 && lot_.waterLevel(x, y) <= below + 1e-4f)
-                        ground.insert({x, y});
-                    below = h - 4 * kFloorElevationUnit;
+                    if (li - 1 == 0) {
+                        // ChangeFloorAndWaterElevation on the terrain under it.
+                        const bool wasPond = !lot_.water.empty() && below - lot_.waterLevel(x, y) <= kPondDepth;
+                        below = h - 4 * kFloorElevationUnit;
+                        updateWaterElevations({{x, y}}, true, wasPond);
+                    } else {
+                        below = h - 4 * kFloorElevationUnit;
+                    }
                 }
             }
-            if (li == 0 && std::fabs(lot_.elevation(0, x, y) - h) > 1e-6f &&
-                lot_.waterLevel(x, y) <= lot_.elevation(0, x, y) + 1e-4f)
-                ground.insert({x, y});
-            moveVertexCoupled(li, x, y, h);
+            if (li == 0 && std::fabs(lot_.elevation(0, x, y) - h) > 1e-6f)
+                moveGroundWithWater(x, y, h);
+            else
+                moveVertexCoupled(li, x, y, h);
         }
-    dryWater(ground);
 }
 
-void BuildEditor::dryWater(const std::set<std::pair<int, int>>& points) {
-    // ChangeFloorAndWaterElevation(Coupled) (BV 0x419274, 0x419324) ends
-    // with UpdateWaterElevation (0x419000): cWorldTerrain::UpdateWater
-    // Elevations (0x8b185c) over the point with its floor flag, which does
-    // not make the point a pond (only the water tool's points are "dug") and
-    // gives each point that is no pond its water as AdjustWaterElevationsAt
-    // NonPondVertices does: 1 under the ground, or a pond beside it less 0.1.
-    // Here the points that were dry (the connected water's own update,
-    // FUN_008b02d4, is not read: water already there stays as it is).
-    if (lot_.water.empty() || points.empty())
-        return;
-    const int W = int(lot_.width), H = int(lot_.height);
-    const size_t rowW = size_t(W + 1);
-    for (const auto& [x, y] : points) {
-        float w = lot_.elevation(0, x, y) - 1.0f;
-        for (int dx = -1; dx <= 1; ++dx)
-            for (int dy = -1; dy <= 1; ++dy) {
-                const int nx = x + dx, ny = y + dy;
-                if ((dx || dy) && nx >= 0 && ny >= 0 && nx <= W && ny <= H &&
-                    lot_.waterLevel(nx, ny) > lot_.elevation(0, nx, ny) + 1e-4f && w == lot_.elevation(0, x, y) - 1.0f)
-                    w = lot_.waterLevel(nx, ny) - 0.1f;
-            }
-        lot_.water[size_t(y) * rowW + size_t(x)] = w;
-    }
+void BuildEditor::moveGroundWithWater(int x, int y, float height) {
+    // ChangeFloorAndWaterElevation(Coupled) (BV 0x419274, 0x419324): a point
+    // whose height changes moves, then UpdateWaterElevation (0x419000) on the
+    // ground: UpdateWaterElevations over it alone with the floor flag, its
+    // pond flag the one from before the move (UpdatePondFlag's: the water no
+    // more than 0.25 under the ground).
+    const bool wasPond = !lot_.water.empty() && lot_.elevation(0, x, y) - lot_.waterLevel(x, y) <= kPondDepth;
+    moveVertexCoupled(0, x, y, height);
+    updateWaterElevations({{x, y}}, true, wasPond);
 }
 
 BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, int product) {
@@ -351,16 +345,13 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
         return fail(e, "the ground cannot be levelled");
     }
     // A foundation: each object of its tiles that may not be in one
-    // (ObjectMayBeInFoundation, BV 0x34e380: three kinds of the selector
-    // service, not identified, or a support that ConformsToCeiling; here a
-    // support or an object in the air, od 42 0x200, inferred) -> 0x83;
+    // (ObjectMayBeInFoundation, BV 0x34e380: the object folder's come-and-see,
+    // go-here and grave markers, or a support that ConformsToCeiling) -> 0x83;
     // a deck tests none (the vertex test's 0x60 catches them).
     if (product == 0)
         for (const auto& [x, y] : tiles)
             for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
-                if (const Object* o = vm_.object(id);
-                    o && (o->person || !((o->definition && o->definition->objectType() == kObjectTypeSupport) ||
-                                         (o->data[objdata::PlacementFlags] & 0x200)))) {
+                if (const Object* o = vm_.object(id); o && !objectMayBeInFoundation(vm_, *o)) {
                     restore(before);
                     return fail(0x83, "something is in the way at " + point(x, y));
                 }
@@ -675,15 +666,12 @@ int BuildEditor::vertexObjectsError(int li, int x, int y, float height) const {
                 if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x100)))
                     return refuse(0x61, *o);
             // HasNonCeilingConformingObjects (0x16c7a8) on the tile a level
-            // down: an object that is none of three kinds of the selector
-            // service and does not ConformsToCeiling (a property of its
-            // model's parts, interface 0xaae90adb, not read) -> 0x60. Here
-            // every object but a support (OBJD type 5, the deck columns)
-            // fails it (inferred).
+            // down: an object that is none of the object folder's markers
+            // and does not ConformsToCeiling (its model's "post_trans": the
+            // columns) -> 0x60.
             if (lowCeiling)
                 for (ObjectId id : below[k])
-                    if (const Object* o = vm_.object(id);
-                        o && !(o->definition && o->definition->objectType() == kObjectTypeSupport))
+                    if (const Object* o = vm_.object(id); o && nonCeilingConforming(vm_, *o))
                         return refuse(0x60, *o);
             // An object with od 42 bit 0x80 that the floor would rise over
             // -> 0x68 "Can't raise terrain above stairs": a modular step
@@ -768,17 +756,15 @@ bool BuildEditor::levelForWall(int li, const std::vector<std::array<int, 2>>& po
             }
         }
     }
-    std::set<std::pair<int, int>> ground;
+    // ChangeFloorAndWaterElevationCoupled: the ground's water follows each
+    // point whose height changed (the call returns at once when it does not).
     for (const auto& m : moves) {
         const int x = int(m[1]), y = int(m[2]);
-        if (int(m[0]) == 0 && std::fabs(lot_.elevation(0, x, y) - m[3]) > 1e-6f &&
-            lot_.waterLevel(x, y) <= lot_.elevation(0, x, y) + 1e-4f)
-            ground.insert({x, y});
-        moveVertexCoupled(int(m[0]), x, y, m[3]);
+        if (int(m[0]) == 0 && std::fabs(lot_.elevation(0, x, y) - m[3]) > 1e-6f)
+            moveGroundWithWater(x, y, m[3]);
+        else
+            moveVertexCoupled(int(m[0]), x, y, m[3]);
     }
-    // ChangeFloorAndWaterElevationCoupled: the dry ground's water follows
-    // where the height changed (the call returns at once when it does not).
-    dryWater(ground);
     return true;
 }
 
@@ -932,10 +918,19 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
 }
 
 void BuildEditor::adjustWater(const std::set<std::pair<int, int>>& dug) {
+    updateWaterElevations(std::vector<std::pair<int, int>>(dug.begin(), dug.end()), false, false);
+}
+
+void BuildEditor::updateWaterElevations(const std::vector<std::pair<int, int>>& points, bool floor, bool wasPond) {
+    // cWorldTerrain::UpdateWaterElevations (BV 0x8b185c). The change array
+    // (+0xb4): an entry a grid point with its terrain, its water before and
+    // after and two flags (1 done, 2 pond); GetWaterHtChangeEntry (0x8b1098).
     const int W = int(lot_.width), H = int(lot_.height);
     const size_t rowW = size_t(W + 1);
     auto ground = [&](int x, int y) { return lot_.elevation(0, x, y); };
     if (lot_.water.size() != rowW * size_t(H + 1)) {
+        if (floor)
+            return; // a lot without its water array: none to follow (inferred)
         lot_.water.assign(rowW * size_t(H + 1), 0.0f);
         for (int y = 0; y <= H; ++y)
             for (int x = 0; x <= W; ++x)
@@ -943,63 +938,115 @@ void BuildEditor::adjustWater(const std::set<std::pair<int, int>>& dug) {
     }
     auto water = [&](int x, int y) -> float& { return lot_.water[size_t(y) * rowW + size_t(x)]; };
     auto inside = [&](int x, int y) { return x >= 0 && y >= 0 && x <= W && y <= H; };
+    // IsPondVertex (0x8af560): the water no more than 0.25 under the ground.
+    auto isPond = [&](int x, int y) { return ground(x, y) - water(x, y) <= kPondDepth; };
+    // The eight neighbours in the binary's order (DAT_02737e20 / 02737e00).
     static const int nx[8] = {1, 1, 0, -1, -1, -1, 0, 1}, ny[8] = {0, -1, -1, -1, 0, 1, 1, 1};
-    // The change array: the dug points and the water connected to them
-    // (ExpandWaterHtChangeArrayToIncludeConnectedPreExistingWater).
-    std::set<std::pair<int, int>> change(dug.begin(), dug.end());
-    std::vector<std::pair<int, int>> todo(dug.begin(), dug.end());
-    while (!todo.empty()) {
-        const auto [x, y] = todo.back();
-        todo.pop_back();
-        for (int k = 0; k < 8; ++k) {
-            const int ax = x + nx[k], ay = y + ny[k];
-            if (inside(ax, ay) && !change.count({ax, ay}) && water(ax, ay) > ground(ax, ay))
-                change.insert({ax, ay}), todo.push_back({ax, ay});
-        }
+    struct Entry {
+        int x, y;
+        float terrain, before, after;
+        unsigned flags;
+    };
+    std::vector<Entry> e;
+    std::map<std::pair<int, int>, size_t> at;
+    auto entry = [&](int x, int y) {
+        const auto [it, made] = at.try_emplace({x, y}, e.size());
+        if (made)
+            e.push_back({x, y, ground(x, y), water(x, y), water(x, y), 0});
+        return it->second;
+    };
+    // The points; the water tool's are ponds (flag 2).
+    for (const auto& [x, y] : points) {
+        const size_t k = entry(x, y);
+        if (!floor)
+            e[k].flags |= 2;
     }
-    // ChooseWaterElevationsForPondWithVertex: each 8-connected group, its
-    // water 0.25 under the lowest ground round it.
-    std::set<std::pair<int, int>> seen, pond;
-    for (const auto& start : change) {
-        if (seen.count(start))
-            continue;
-        std::vector<std::pair<int, int>> group{start};
-        seen.insert(start);
-        float rim = std::numeric_limits<float>::max();
-        for (size_t i = 0; i < group.size(); ++i)
+    // With the floor flag (a floor's height change, FUN_008b02d4): a point
+    // that was no pond (the pond flag of +0xd8 from before, UpdatePondFlag's)
+    // goes 1 under its ground; one whose water is then no more than 0.25
+    // under it is a pond.
+    if (floor)
+        for (Entry& v : e) {
+            if (!wasPond) {
+                v.after = v.terrain - kDryWaterDepth;
+                water(v.x, v.y) = v.after;
+            }
+            if (v.terrain - v.after <= kPondDepth)
+                v.flags |= 2;
+        }
+    // ExpandWaterHtChangeArrayToIncludeConnectedPreExistingWater (0x8b16cc):
+    // the ponds round the entries, again round the new ones
+    // (AddPondNeighborsOfVertsToChangeArray 0x8b150c), as ponds.
+    std::vector<std::pair<int, int>> frontier;
+    for (const Entry& v : e)
+        frontier.push_back({v.x, v.y});
+    while (!frontier.empty()) {
+        std::vector<std::pair<int, int>> next;
+        for (const auto& [x, y] : frontier)
             for (int k = 0; k < 8; ++k) {
-                const int ax = group[i].first + nx[k], ay = group[i].second + ny[k];
-                if (!inside(ax, ay))
-                    continue;
-                if (change.count({ax, ay})) {
-                    if (seen.insert({ax, ay}).second)
-                        group.push_back({ax, ay});
-                } else {
-                    rim = std::min(rim, ground(ax, ay));
+                const int ax = x + nx[k], ay = y + ny[k];
+                if (inside(ax, ay) && !at.count({ax, ay}) && isPond(ax, ay)) {
+                    e[entry(ax, ay)].flags |= 2;
+                    next.push_back({ax, ay});
                 }
             }
-        if (rim == std::numeric_limits<float>::max())
+        frontier = std::move(next);
+    }
+    // Each entry of the array as it is now: no pond, done; a pond,
+    // ChooseWaterElevationsForPondWithVertex (0x8b11ec): its group of
+    // ponds (8 neighbours, each neighbour an entry), the water 0.25 under
+    // the lowest ground of the neighbours that are no pond, a point more than
+    // 0.25 over it dry (1 under its ground).
+    const size_t count = e.size();
+    for (size_t i = 0; i < count; ++i) {
+        if (e[i].flags & 1)
             continue;
-        const float level = rim - 0.25f;
-        for (const auto& [x, y] : group) {
-            water(x, y) = ground(x, y) - level > 0.25f ? ground(x, y) - 1.0f : level;
-            if (water(x, y) > ground(x, y))
-                pond.insert({x, y});
+        if (!(e[i].flags & 2)) {
+            e[i].flags |= 1;
+            continue;
+        }
+        e[i].flags |= 1;
+        std::vector<size_t> group{i};
+        float rim = std::numeric_limits<float>::max();
+        for (size_t g = 0; g < group.size(); ++g) {
+            const int x = e[group[g]].x, y = e[group[g]].y;
+            for (int k = 0; k < 8; ++k) {
+                const int ax = x + nx[k], ay = y + ny[k];
+                if (!inside(ax, ay))
+                    continue;
+                const size_t j = entry(ax, ay);
+                if (!(e[j].flags & 2))
+                    rim = std::min(rim, ground(ax, ay));
+                else if (!(e[j].flags & 1))
+                    e[j].flags |= 1, group.push_back(j);
+            }
+        }
+        const float level = rim - kPondDepth;
+        for (size_t j : group) {
+            Entry& v = e[j];
+            v.after = v.terrain - level > kPondDepth ? v.terrain - kDryWaterDepth : level;
+            if (v.after != v.before)
+                water(v.x, v.y) = v.after;
         }
     }
-    // AdjustWaterElevationsAtNonPondVertices.
-    for (const auto& [x, y] : change) {
-        if (pond.count({x, y}))
+    // AdjustWaterElevationsAtNonPondVertices (0x8afbe4): every entry that is
+    // no pond takes the water of its first pond neighbour less 0.1, or 1
+    // under its ground.
+    for (Entry& v : e) {
+        if (isPond(v.x, v.y))
             continue;
-        float w = ground(x, y) - 1.0f;
+        float w = v.terrain - kDryWaterDepth;
         for (int k = 0; k < 8; ++k) {
-            const int ax = x + nx[k], ay = y + ny[k];
-            if (inside(ax, ay) && pond.count({ax, ay})) {
+            const int ax = v.x + nx[k], ay = v.y + ny[k];
+            if (inside(ax, ay) && isPond(ax, ay)) {
                 w = water(ax, ay) - 0.1f;
                 break;
             }
         }
-        water(x, y) = w;
+        if (w != v.after) {
+            v.after = w;
+            water(v.x, v.y) = w;
+        }
     }
 }
 

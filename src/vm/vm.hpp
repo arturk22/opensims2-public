@@ -1114,6 +1114,12 @@ public:
     // routingFootprint's); nothing when the model has no such list (the
     // binary's false: no test). The doors' 0 and 2 (DoesFootprintIntersectDoor).
     std::optional<std::vector<std::array<float, 4>>> indexedFootprint(const Object& o, int index);
+    // cTSObject::ConformsToCeiling (vtable 0x1f0 -> AggregateConformsToCeiling,
+    // BV 0xafdd94: the first part of its scene graph with interface
+    // 0xaae90adb, nTSSG::cObject::AttachedToCeiling 0x6542f0): its model has
+    // a transform node named "post_trans" (the columns that reach the
+    // ceiling). Read once per OBJD.
+    bool conformsToCeiling(const Object& o);
     // A tile is in the world, has a floor and nothing that blocks stands on it.
     bool tileFree(TilePos t, std::span<const ObjectId> ignore = {});
     // A person's footprint box (0.2 tile) at (x, y) on `level` meets no

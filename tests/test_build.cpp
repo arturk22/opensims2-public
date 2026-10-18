@@ -619,15 +619,36 @@ static void testRoundN20() {
     check(!r.ok && r.error == 0x5A && lot.walls.empty() && lot.elevations == slope,
           "a floor round a point to level refuses the room (0x5A), nothing built");
     lot.floors[size_t(3) * 10 + 3] = {};
-    // A point under water (IsWaterVertex) refuses, even at the height.
-    lot.water.assign(13 * 11, -10.0f);
-    lot.water[size_t(4) * 13 + 4] = 5.0f; // grid point (4, 4)
+    // A point under water (IsWaterVertex) refuses, even at the height: a
+    // pond in a dip at grid point (4, 4) as UpdateWaterElevations leaves one
+    // (its water 0.25 under its lowest rim, 0.75; its neighbours' 0.1 under
+    // that; the others' 1 under the ground). The run's first section moves
+    // (3, 4), the pond's rim: its water follows, 0.25 under the new rim.
+    std::vector<float> dipped = slope;
+    dipped[size_t(4) * 11 + 4] = 0.0f;
+    lot.elevations = dipped;
+    lot.water.assign(13 * 11, 0.0f);
+    for (int y = 0; y <= 10; ++y)
+        for (int x = 0; x <= 12; ++x)
+            lot.water[size_t(y) * 13 + size_t(x)] =
+                std::abs(x - 4) <= 1 && std::abs(y - 4) <= 1 ? 0.4f : lot.elevation(0, x, y) - 1.0f;
+    lot.water[size_t(4) * 13 + 4] = 0.5f;
+    const std::vector<float> pond = lot.water;
     r = ed.drawRoom(1, 4, 2, 6, 6);
     check(!r.ok && r.error == 0x47 && lot.walls.empty(), "a point under water refuses the room (0x47)");
     r = ed.drawWalls(1, 2, 4, 6, 4);
-    check(!r.ok && r.error == 0x47 && lot.walls.empty() && lot.elevations == slope,
+    check(!r.ok && r.error == 0x47 && lot.walls.empty() && lot.elevations == dipped && lot.water == pond,
           "a wall over water is refused whole: the sections before it are not built either");
+    // A wall that lowers a point of the pond's rim (3, 5) to 0.5: the pond's
+    // water goes 0.25 under it (ChooseWaterElevationsForPondWithVertex), the
+    // rim's points 0.1 under the pond's (AdjustWaterElevationsAtNonPondVertices).
+    r = ed.drawWalls(1, 2, 5, 3, 5);
+    check(r.ok && lot.elevation(0, 3, 5) == 0.5f && lot.waterLevel(4, 4) == 0.25f && lot.waterLevel(3, 5) == 0.25f - 0.1f &&
+              lot.waterLevel(5, 3) == 0.25f - 0.1f && lot.waterLevel(8, 8) == lot.elevation(0, 8, 8) - 1.0f,
+          "the ground's water follows a moved point (UpdateWaterElevations with the floor flag)");
+    check(ed.undo() && lot.water == pond && lot.elevations == dipped, "undo gives the pond back");
     lot.water.clear();
+    lot.elevations = slope;
     // A wall whose end meets a wall on another height: that wall's point
     // cannot move (0x5B); the drag builds nothing.
     r = ed.drawWalls(1, 8, 1, 8, 3);
@@ -1172,6 +1193,35 @@ static void testDeckLevelling() {
 // docs/buy-build-mac.md §7.26): the exclusive placement flags on one tile,
 // the intersection flags, the layers, the footprints (strict), the doors and
 // windows on one wall (0x17), a "Hide Floor" object's floor, the people.
+// The object folder's markers and ConformsToCeiling (ObjectMayBeInFoundation,
+// HasNonCeilingConformingObjects; docs/buy-build-mac.md §7.26).
+static void testFolderMarkersN48() {
+    CodeLibrary code;
+    VM vm(code);
+    auto def = [&](uint16_t instance, uint16_t type, uint32_t guid) {
+        ObjectDefinition d;
+        d.fields.resize(0x100);
+        d.fields[(0x52 - 0x44) / 2] = type;
+        d.fields[(0x5C - 0x44) / 2] = uint16_t(guid), d.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
+        code.add(0x7F7F7F7D, instance, d);
+    };
+    def(1, 4, 0x4C859106); // come and see
+    def(2, 4, 0x000007C4); // go here
+    def(3, 4, 0x6CD4A8BC); // grave marker
+    def(4, 5, 0x11110005); // a column without a model ("post_trans")
+    def(5, 4, 0x11110006);
+    for (uint16_t i = 1; i <= 3; ++i) {
+        const Object& o = vm.instantiate(0x7F7F7F7D, i);
+        check(isFolderMarker(o) && objectMayBeInFoundation(vm, o) && !nonCeilingConforming(vm, o),
+              "a come-and-see, go-here or grave marker may be in a foundation and under a low ceiling");
+    }
+    const Object& column = vm.instantiate(0x7F7F7F7D, 4);
+    check(!vm.conformsToCeiling(column) && !objectMayBeInFoundation(vm, column) && nonCeilingConforming(vm, column),
+          "a support whose model has no post_trans does not conform to the ceiling");
+    const Object& other = vm.instantiate(0x7F7F7F7D, 5);
+    check(!isFolderMarker(other) && !objectMayBeInFoundation(vm, other), "another object may not be in a foundation");
+}
+
 static void testObjectsTestN48() {
     Lot lot = flatLot();
     lot.levelCount = 2;
@@ -1266,6 +1316,7 @@ static void testObjectsTestN48() {
 
 int main() {
     testObjectsTestN48();
+    testFolderMarkersN48();
     testPoolOverFloor();
     testRedoFunds();
     testDeckLevelling();

@@ -1153,6 +1153,24 @@ int sell(VM& vm, ObjectId id) {
     return value;
 }
 
+bool isFolderMarker(const Object& o) {
+    switch (o.guid()) {
+    case 0x4C859106: case 0xACC53DFF: case 0xEC85F0F3: // come and see
+    case 0x000007C4: case 0xECFEDB37:                  // go here
+    case 0x6CD4A8BC:                                   // grave marker
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool objectMayBeInFoundation(VM& vm, const Object& o) {
+    return isFolderMarker(o) ||
+           (!o.person && o.definition && o.definition->objectType() == kObjectTypeSupport && vm.conformsToCeiling(o));
+}
+
+bool nonCeilingConforming(VM& vm, const Object& o) { return !isFolderMarker(o) && !vm.conformsToCeiling(o); }
+
 std::optional<FireplaceLinks> fireplaceLinks(VM& vm, ObjectId id) {
     Object* o = vm.object(id);
     if (!o)

@@ -271,6 +271,20 @@ void setRailingModel(VM& vm, ObjectId id, int model);
 // object's facing).
 bool railingSide(VM& vm, ObjectId id, float x, float y);
 
+// The object folder's markers (cTSObjectFolder, BV 0x4e474c-0x4e4a74, base
+// 1.0 0xb14a34-0xb14ca8: IsSelectorComeAndSee, IsSelectorGoHere,
+// IsSelectorGraveMarker, the selectors of these GUIDs): the come-and-see
+// objects (0x4C859106 standard, 0xACC53DFF deleted, 0xEC85F0F3 decorate),
+// the go-here markers (0x000007C4, 0xECFEDB37 the pool's) and the grave
+// marker (0x6CD4A8BC). The three kinds of the vertex and foundation tests.
+bool isFolderMarker(const Object& o);
+// ObjectMayBeInFoundation (BV 0x34e380): a folder marker, or a support (OBJD
+// type 5, IsSupport) that ConformsToCeiling (VM::conformsToCeiling).
+bool objectMayBeInFoundation(VM& vm, const Object& o);
+// The object test of HasNonCeilingConformingObjects (BV 0x16c7a8): neither a
+// folder marker nor ConformsToCeiling.
+bool nonCeilingConforming(VM& vm, const Object& o);
+
 // The fireplaces' links (cTSUserToolFireplace, docs/buy-build-mac.md §7.26):
 // a mantle and the chimney pieces behind and over it are a chain, each
 // knowing the one below it and the one above it.

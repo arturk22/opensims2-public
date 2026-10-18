@@ -558,10 +558,16 @@ private:
     };
     // UpdateWaterElevations over the grid points the water tool dug.
     void adjustWater(const std::set<std::pair<int, int>>& dug);
-    // The water of dry ground points whose height a floor change moved
-    // (UpdateWaterElevation with the floor flag): 1 under the ground, or a
-    // pond beside it less 0.1.
-    void dryWater(const std::set<std::pair<int, int>>& points);
+    // cWorldTerrain::UpdateWaterElevations (BV 0x8b185c) over `points`: the
+    // water tool's (`floor` false: they are ponds) or one ground point a
+    // floor change moved (`floor`: FUN_008b02d4, `wasPond` its pond flag from
+    // before the move), the ponds connected to them, each pond group's water
+    // 0.25 under its lowest rim, the points that are no pond the water of a
+    // pond beside them less 0.1 or 1 under the ground.
+    void updateWaterElevations(const std::vector<std::pair<int, int>>& points, bool floor, bool wasPond);
+    // A ground grid point moved with the stories over it, its water after it
+    // (ChangeFloorAndWaterElevationCoupled -> UpdateWaterElevation).
+    void moveGroundWithWater(int x, int y, float height);
     std::optional<Stroke> stroke_;
     // The flight a modular stair object belongs to: its objects (steps first,
     // top to bottom).

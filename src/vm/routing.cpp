@@ -1143,6 +1143,31 @@ std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
     return footprintOf(o);
 }
 
+bool VM::conformsToCeiling(const Object& o) {
+    constexpr uint32_t kTypeCresId = 0xE519C933, kTypeObjdId = 0x4F424A44;
+    if (o.person || !o.definition)
+        return false;
+    static std::map<std::pair<uint32_t, uint16_t>, bool> cache;
+    const auto key = std::pair{o.group, o.definitionInstance};
+    if (const auto it = cache.find(key); it != cache.end())
+        return it->second;
+    bool attached = false;
+    try {
+        if (ResourceIndex* index = code().index()) {
+            const std::string cres = objectCresName(*index, Tgi{kTypeObjdId, o.group, o.definitionInstance, 0});
+            if (auto loc = cres.empty() ? std::nullopt : index->findByName(cres + "_cres", kTypeCresId)) {
+                const Rcol rcol(index->read(*loc));
+                for (const Rcol::Block& b : rcol.blocks)
+                    if (b.className == "cTransformNode" && TransformNode::parse(b.body).name() == "post_trans")
+                        attached = true;
+            }
+        }
+    } catch (const std::exception& e) {
+        logOnce("conformsToCeiling", o.definition->fileName, e);
+    }
+    return cache[key] = attached;
+}
+
 std::optional<std::vector<std::array<float, 4>>> VM::indexedFootprint(const Object& o, int index) {
     if (o.person || !o.definition)
         return std::nullopt;
