@@ -41,8 +41,34 @@ bool under(const fs::path& path, const fs::path& dir) {
 
 } // namespace
 
-std::vector<std::string> copySessionCharacters(vm::VM& vm, const fs::path& sessionDir, const fs::path& chars,
-                                               const std::string& prefix) {
+namespace {
+
+// A file written under a temporary name, put in place when the whole save
+// is written (commitAll).
+struct Staged {
+    fs::path tmp, dest;
+};
+
+// Puts every staged file in place, in the order given (the game commits its
+// segment list in order: the neighborhood's, the lot's, the characters',
+// TS::BuildSegmentList, docs/save-mac.md §9.2).
+void commitAll(std::vector<Staged>& staged) {
+    for (const auto& f : staged)
+        os2::replaceFile(f.tmp, f.dest);
+    staged.clear();
+}
+
+// Removes the staged files of a save that failed: the old ones stay, as the
+// game's DiscardChangesOnSegmentList leaves them.
+void discardAll(std::vector<Staged>& staged) {
+    std::error_code ec;
+    for (const auto& f : staged)
+        fs::remove(f.tmp, ec);
+    staged.clear();
+}
+
+std::vector<std::string> stageSessionCharacters(vm::VM& vm, const fs::path& sessionDir, const fs::path& chars,
+                                                const std::string& prefix, std::vector<Staged>& staged) {
     // Character files written in play (a Sim grown up, a baby born, an
     // NPC made from a template: the session's NPCs folder) go to the
     // neighborhood's, with the neighbors saveNeighborhood writes (the
@@ -82,16 +108,36 @@ std::vector<std::string> copySessionCharacters(vm::VM& vm, const fs::path& sessi
             }
             const fs::path tmp = chars / (name + ".saving");
             fs::copy_file(f.path(), tmp, fs::copy_options::overwrite_existing);
-            os2::replaceFile(tmp, chars / name);
+            staged.push_back({tmp, chars / name});
             lines.push_back("character " + name + (dir == sessionDir ? " (grown up or born)" : " (NPC)"));
         }
     }
     return lines;
 }
 
+} // namespace
+
+std::vector<std::string> copySessionCharacters(vm::VM& vm, const fs::path& sessionDir, const fs::path& chars,
+                                               const std::string& prefix) {
+    std::vector<Staged> staged;
+    try {
+        auto lines = stageSessionCharacters(vm, sessionDir, chars, prefix, staged);
+        commitAll(staged);
+        return lines;
+    } catch (...) {
+        discardAll(staged);
+        throw;
+    }
+}
+
 GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gameDir, const fs::path& sessionDir,
                         const std::optional<LotUiState>& ui) {
     GameSaveResult out;
+    // Every file goes under a temporary name first and all are put in place
+    // at the end, as the game checkpoints the save's packages and commits
+    // the list (SetCheckpointOnSegmentList / CommitChangesOnSegmentList,
+    // docs/save-mac.md §9.2): a save that fails leaves all the old files.
+    std::vector<Staged> lotStaged, charStaged, hoodStaged;
     try {
         if (under(lotFile, gameDir))
             throw std::runtime_error("refusing to save into the game's data (" + lotFile.string() + ")");
@@ -150,15 +196,16 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             for (const auto& w : records.warnings)
                 out.lines.push_back("warning: " + w);
         }
-        os2::replaceFile(tmpLot, lotFile);
+        lotStaged.push_back({tmpLot, lotFile});
         if (const fs::path chars = lotFile.parent_path().parent_path() / "Characters"; fs::is_directory(chars))
-            for (auto& l : copySessionCharacters(vm, sessionDir, chars, lotFile.filename().string().substr(0, 4)))
+            for (auto& l : stageSessionCharacters(vm, sessionDir, chars, lotFile.filename().string().substr(0, 4),
+                                                  charStaged))
                 out.lines.push_back(std::move(l));
         if (const fs::path hoodPackage = vm::neighborhoodPackageOf(lotFile); !hoodPackage.empty()) {
             const fs::path tmpHood = hoodPackage.parent_path() / (hoodPackage.filename().string() + ".saving");
             const hood::Neighborhood hood = hood::Neighborhood::load(hoodPackage, true);
             const vm::HoodSaveResult h = vm::saveNeighborhood(vm, hood, hoodPackage, tmpHood);
-            os2::replaceFile(tmpHood, hoodPackage);
+            hoodStaged.push_back({tmpHood, hoodPackage});
             char buf[512];
             std::snprintf(buf, sizeof buf,
                           "neighborhood %s: %zu families, %zu Sim descriptions, relationships %zu changed, %zu new%s, "
@@ -169,9 +216,15 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             for (const auto& w : h.warnings)
                 out.lines.push_back("warning: " + w);
         }
+        commitAll(hoodStaged);
+        commitAll(lotStaged);
+        commitAll(charStaged);
         out.ok = true;
     } catch (const std::exception& e) {
         out.error = e.what();
+        discardAll(hoodStaged);
+        discardAll(lotStaged);
+        discardAll(charStaged);
     }
     return out;
 }

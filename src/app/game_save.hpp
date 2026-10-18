@@ -9,8 +9,11 @@
 // the lot changes in the neighborhood (FAMI, SDSC, SREL, NGBH) to the
 // neighborhood package beside it, through the same writers as `s2pkg
 // lot-save`/`hood-save` (vm/lot_save.hpp, vm/lot_records.hpp,
-// vm/hood_save.hpp). Each file is written under a temporary name and renamed
-// over the old one, so an interrupted save leaves the previous one.
+// vm/hood_save.hpp). Every file is written under a temporary name first and
+// all are renamed over the old ones at the end (the neighborhood's, the
+// lot's, then the characters'), as the game checkpoints the save's packages
+// and commits the list (docs/save-mac.md §9.2): a save that fails leaves all
+// the previous files.
 //
 // Only files in the user's folder are written (app/user_data.hpp): a lot
 // inside the game's data is refused. Plain C++.
