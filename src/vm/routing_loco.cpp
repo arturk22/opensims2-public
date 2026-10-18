@@ -250,9 +250,20 @@ namespace routing_internal {
 //   directions 1, 2, 6 and 7, 1 to 3 tiles, optimal 1, spacing 0.25,
 //   gradient 0.625, random scoring, no stationary bonus; type 2 (MoveOutOfWay
 //   without an asker): 1 to 6 tiles, rooms and walls ignored. Their
-//   directions are taken relative to the asker's (the destination's
-//   direction: inferred), their facing any (inferred: the 0x28 mode is not
-//   decoded), and AllowOtherDirectionsAtLowerScore (0x70) is not done.
+//   directions are relative to the destination's own direction: the
+//   binary puts it where the mover stands with SetPosition (vtable 0x2a4,
+//   BV 0xafd048), which does not turn it (round n49; the VM turned it to
+//   the asker's, inferred), so `destinationDirection` is -1 for them: keep
+//   the direction the destination is made with. Their facing is the 0x28
+//   mode, -3 (BV 0x4aeb14).
+// The setters' other flags (round n49, BV 0x4aed14..0x4aef0c; no SLOT of the
+// base game has any of them): every type 0x8c(1) (RS 0x8000) and 0x84(0)
+// (0x4000 off), types 1 and 2 0x70(1) (0x100000,
+// AllowOtherDirectionsAtLowerScore), type 2 0x94(1) (0x1000000, drop to
+// floor below: the scan takes a point without a floor down to the first
+// level below with one, +10). Kept on the slot; the scan here reads none of
+// them (not done: the 0x100000 other directions, the drop, the VM never
+// makes a type 2).
 // The slot's standing multiplier is 1 (0xDC(0, 1)).
 std::optional<Slots::Slot> moveOutOfWaySlot(const Object& mover, const Object& asker, int type, int& destinationDirection) {
     auto unit = [](int d) {
@@ -263,7 +274,7 @@ std::optional<Slots::Slot> moveOutOfWaySlot(const Object& mover, const Object& a
     Slots::Slot slot;
     slot.type = 3;
     slot.standing = 1;
-    slot.flags = 0x40000; // HasStationaryBonus false
+    slot.flags = 0x40000 | 0x8000; // HasStationaryBonus false; 0x8c(1), 0x84(0)
     const int d = ((asker.data[objdata::Direction] % 8) + 8) % 8;
     if (type == 0) {
         if (std::hypot(mover.position.x - asker.position.x, mover.position.y - asker.position.y) > 4)
@@ -282,13 +293,13 @@ std::optional<Slots::Slot> moveOutOfWaySlot(const Object& mover, const Object& a
             slot.facing = -3;
         return slot;
     }
-    slot.flags |= 0x02 | 0x04 | 0x40 | 0x80 | 0x2000;
+    slot.flags |= 0x02 | 0x04 | 0x40 | 0x80 | 0x2000 | 0x100000;
     if (type == 2)
-        slot.flags |= 0x800 | 0x80000;
+        slot.flags |= 0x800 | 0x80000 | 0x1000000;
     slot.minDistance = 1, slot.maxDistance = type == 2 ? 6.0f : 3.0f, slot.optimalDistance = 1;
     slot.resolutionTiles = 0.25f, slot.gradient = 0.625f;
     slot.facing = -3;
-    destinationDirection = d;
+    destinationDirection = -1; // the destination's own
     return slot;
 }
 
@@ -351,7 +362,8 @@ bool askBlockerToMove(VM& vm, Object& me, Object::Route& r, Object& blocker) {
     const ObjectId destId = dest->id;
     auto place = [&](Object& x) {
         moveTo(vm, x, blocker.position.x, blocker.position.y, blocker.position.level);
-        x.data[objdata::Direction] = int16_t(direction);
+        if (direction >= 0) // type 0's absolute directions; SetPosition turns nothing
+            x.data[objdata::Direction] = int16_t(direction);
         x.syntheticSlot = *slot;
         vm.noteDestination(x);
     };

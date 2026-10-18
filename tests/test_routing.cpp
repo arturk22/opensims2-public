@@ -1224,6 +1224,13 @@ static void testMoveOutOfWaySlot() {
           "move-out-of-way slot: six places, the cheapest 0.3 out at 45 degrees");
     check(!g.facings.empty() && g.facings[best] == directionOf(asker.position.x - g.points[best][0], asker.position.y - g.points[best][1]),
           "move-out-of-way slot: facing the asker");
+    // Type 1 (round n49): directions 1, 2, 6 and 7 relative to the
+    // destination's own direction (SetPosition does not turn it: -1, keep
+    // it), facing -3 (0x28), RS 0x100000 (0x70(1)) and 0x8000 (0x8c(1)).
+    const auto one = routing_internal::moveOutOfWaySlot(mover, asker, 1, direction);
+    check(one && (one->flags & 0xFF) == 0xC6 && direction == -1 && one->facing == -3 && (one->flags & 0x108000) == 0x108000 &&
+              !(one->flags & 0x1000000),
+          "move-out-of-way slot: type 1 relative to the destination's own direction");
     mover.position = {9.5f, 9.5f, 1};
     check(!routing_internal::moveOutOfWaySlot(mover, asker, 0, direction), "move-out-of-way slot: none past 4 tiles");
 }
