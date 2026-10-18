@@ -603,6 +603,106 @@ luz" = a primeira luz do estado (o `sun`); à noite o brilho do `sun` da
 noite fica grande e branco nesta vista, como a conta manda. **Falta**: as
 cáusticas. Antes e depois: `docs/screenshots/n06-piscina-antes-depois.jpg`.
 
+### 3.3 Cáusticas, bump da água e o relógio dos shaders (rodada n50)
+
+Lido no texto dos `.matShad` (`water.matShad`, `floor.matShad`,
+`PixelShaderFloors.matShad`, `wall.matShad`, `PixelShaderWalls.matShad`,
+`terrain.matShad`) e no binário com o Ghidra MCP (só leitura).
+
+**A piscina não tem passada de bump no Mac.** A superfície no caminho DX8
+é o `RegularWavesHLSL` (§3.2): as ondas inclinam a normal no vertex
+program, sem textura de relevo (o `HighEndWaterSurface`, com a sua normal
+por pixel, não é chamado por nenhum material). O "bump" que faltava na
+linha do inventário é a passada 2 da água do **terreno** (abaixo). O que a
+piscina tinha a mais e não estava feito são as **cáusticas**.
+
+**Quem liga as cáusticas.** `causticsEnabled` é uma propriedade de
+configuração registrada pelo `cTSConfigMaterialSettings` com padrão
+**verdadeiro** (base 1.0 `FUN_001ab11c`, a lista `specHighlights`,
+`useShaders`, ..., `bumpMapping`, `causticsEnabled` = 1, `useLODs`; o
+setter `FUN_001ac268` escreve `"true"`/`"false"` na variável de matShad
+pela vtable `0xd8`). O `Graphics Rules.sgr` só a desliga nas placas fracas
+(GeForce2/4 integradas, Radeon VE/7x00/IGP, Intel 845–865, o caminho por
+software): num Mac de hoje fica ligada (como o reflexo, inferido pela
+classe da placa).
+
+**O gerador** (`poolWaterLayer-0` = `CausticsGeneratorMaterial`). O
+`cPoolGeometryNode` desenha uma parte com esse material (BV
+`CreatePoolLayers` `0x741b14`, nome do symxfer "near": um quad em z −2,75
+com uv (0,0)–(1,1); a geometria não importa, o passe é
+`renderClipSpaceRect`). O passe (só com `causticsEnabled` e fora do
+FF/SWVS, camada +9999) desenha no alvo **`causticsTile` de 64 × 64** (sem
+z, sem mip) o quadro atual da textura **`causticsTiled`**
+(`causticstiled_txtr`, `Sims3D/Textures.package`: DXT1 512 × 256 = 8 × 4
+quadros de 64 × 64, cinza com linhas claras, média 0,49), com o
+`TiledTextureAnimShaderProgram(8 4 1)`: f = frac(1 · tempo); linha =
+floor(4f), coluna = floor(8 · frac(4f)), ou seja o quadro floor(32f): **32
+quadros por segundo, a volta inteira em 1 s**; uv = (uv do quad + (coluna,
+linha)) / (8, 4).
+
+**O tempo dos shaders** (`frameInfo`/`frameTimeInfo`, ID de binding 20 na
+tabela `0x285de80`; BV
+`cApplyShaderProgramConstants::ApplyDynamicShaderConstantBinding<cVector4f>`
+`0x1b25c0c`, caso `0x14`): `frameInfo = (0, frac(t'), quadro mod 900, t')`
+com t' = t mod **30** (`frameTimeModulus` = 30,0 em `0x2ad6838`,
+`frameNumberModulus` = 900 em `0x2ad6840`; 900 quadros = 30 s a 30 por
+segundo: t em segundos). É o `frameInfo.w` das ondas da piscina e o das
+cáusticas: as ondas dão um salto a cada 30 s (3 · 30 = 90 rad não é
+múltiplo de 2π), como no jogo.
+
+**Quem recebe as cáusticas.**
+
+- **Pisos**: o tipo `FloorPool` com `floorCausticsPass 1` (só os dois TXMT
+  `floor_poolroundedlipblue` e `floor_poolsquarelipgreen`, o fundo da
+  piscina). `PixelShaderFloors` com `$floorCausticsPass and
+  $causticsEnabled`: o vertex program projeta a posição **global** × 0,3
+  pelas linhas (1, −1, 0), (1, 1, 1), (−1, −1, 1): **u = 0,3·(x − y),
+  v = 0,3·(x + y + z)** (o terceiro componente não é lido); o pixel:
+  `cor = 2·base·lightmap·difusa + causticsTile(u, v)` (×
+  `allTextureLights` quando há luz de textura; o `def c2, 1,1,1,1` do
+  ps_1_1 apaga o `causticsStrength` que o `bindConstants 2` punha; sem
+  normal map nesse caminho). Tiles: `textureAddressing tile`.
+- **Paredes**: o tipo `WallpaperPool` com `tsCausticsPass 1` (os dois TXMT
+  `wall_poolroundedlipblue` e `wall_poolsquarelipgreen`). O motor junta
+  papel e máscara no `WallpaperAndMask` e **copia o `tsCausticsPass` do
+  papel** para o material combinado (BV `0x6c18a8` lê pela vtable `0x5c`
+  os nomes da tabela `0x27e1ba8`: `tsMirrorWallMask`,
+  `stdMatBaseTextureParam`, `tsRenderStyle`, `tsCausticsPass`, ...;
+  `0x6c1c40` o grava pela `0x30`; base 1.0 `0xad7f08` lê e `0xad8240`
+  grava o mesmo); o `strcmp` com `wall-poolroundedlipblue-base` do
+  `WallpaperAndMask` é a mais. As paredes não testam `causticsEnabled` (só
+  `tsCausticsPass`, sem destaque e com pixel shader). No
+  `PS1BasicWallRendering` com light map: `cor = 2·papel·lightmap +
+  causticsTile(u, v) · v₀`, com o mesmo u, v e **v₀ = o v da coordenada de
+  textura 0 do papel** (`mov oD0, v2.y`; "wall height, so caustics can
+  fade off in a pool": 0 no topo, 1 um andar abaixo), × `allTextureLights`
+  quando há; sem light map, `2·papel + cáustica` (sem v₀). O
+  `PS1BumpMapWallRendering` não as soma (o papel da piscina não tem normal
+  map).
+
+**A passada 2 da água do terreno** (`TerrainWaterShader(true)`, só quando
+`maxPixelProgramVersionMajor` ≠ 0: o Mac tem 1, §1.1 de
+`shaders-mac.md`): função fixa, `srcAlpha/invSrcAlpha`, sem luzes;
+estágio 1 `water-1-bump` (uv 0, `tile`), matriz animada `-aorigin (0,0)
+-atrans sine 0.04 0 (0,0) (1,0) -ascale sawtooth 1 0 (4,4)`; estágio 2
+`water-2-bump` com a translação de (1,0) a (0,0), `multiply(texture
+outRegister)`; estágio 3 `multiply(outRegister colorScalar)
+select(colorScalar)`: **cor = bump1 · bump2 · (1,1,1) × luz de textura,
+alfa constante 0,3** (não o alfa da profundidade). As duas texturas são
+`Raw8` de 128 × 128, alturas 245–255 (`cImageData::PixelFormat` BV
+`0xc97358`: o formato 6 é luminância 8 bits). **Inferido:** que chegam à
+placa já convertidas em normal map, como os outros `-bump` (o base 1.0 tem
+a conversão no serviço de imagem, vtable `0x158ac00` entrada `0x34`
+`0x10a410`, com o bump scale; o compositor de pele converte o formato 6
+antes de usar, `FUN_0020c3a8`; quem a chama para as texturas de material
+não foi achado): a cor da passada é então a do normal map (≈ (0,5, 0,5,
+1) cada, (0,25, 0,25, 1) o produto: um véu azul a 30%); se não fossem
+convertidas seria um véu branco. A escala do `-ascale` com um vetor só é
+lida como constante 4 (inferido), a ordem da matriz é a das outras
+animações de textura do app (escala na origem, depois a translação), e o
+uv da malha da água é o nosso (x/4, y/4; o do `cWaterGeometryBuilder` não
+foi achado).
+
 ## 4. Sombras de objetos
 
 As sombras dos objetos são os planos GUOB do próprio modelo (seis
