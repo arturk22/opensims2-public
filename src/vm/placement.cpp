@@ -748,6 +748,31 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         } else if (!lot && pf && !(pf & 0x03) && !(pf & 0x200) && !(inPool && (pf & 0x800))) {
             return fail(placementerror::NoFloor, inPool || !(pf & 0x800) ? "not allowed on the floor" : "only in a pool");
         }
+        // 8: od 30 "room placement" (base 1.0 FUN_00ffc9b0: the partition
+        // manager's room of definition 0 at the place, 0xe4(place, 0, 0),
+        // outside when it is 0, FUN_0154dda4): 1 outside only -> 0x0A
+        // inside, 2 inside only -> 0x0B outside. Definition 0 is the rooms of
+        // the light-blocking walls (3ARY 0x0B: a fenced yard is outdoors), at
+        // the place's quarter (FUN_0015d2f0; a tile's centre is the north
+        // one); with the lot's geometry only (the world's rooms are 3ARY
+        // 0x09's). (The BV asks definition 1 for "inside only".)
+        if (const int16_t rp = o.data[objdata::RoomPlacement]; lot && (rp == 1 || rp == 2)) {
+            const auto layer = lot->roomLayers.find(0x0B);
+            const int li = t.level - 1;
+            if (layer != lot->roomLayers.end() && lot->hasLevel(li) && t.x >= 0 && t.y >= 0 && t.x < int(lot->width) &&
+                t.y < int(lot->height)) {
+                const size_t i = (size_t(li - lot->minLevel) * lot->width + size_t(t.x)) * lot->height + size_t(t.y);
+                if (i < layer->second.size()) {
+                    const float fx = here.x - std::floor(here.x), fy = here.y - std::floor(here.y);
+                    const int q = fx <= fy ? (1.0f - fx <= fy ? 1 : 0) : (1.0f - fx <= fy ? 2 : 3); // west, north, east, south
+                    const bool outside = layer->second[i][size_t(q)] == 0;
+                    if (rp == 1 && !outside)
+                        return fail(0x0A, "must be outside");
+                    if (rp == 2 && outside)
+                        return fail(0x0B, "must be inside");
+                }
+            }
+        }
         // 9: p & 0x2000 without a fence's post there -> 0x79.
         if (lot && (pf & 0x2000) && !onPost)
             return fail(0x79, "not on a fence post");

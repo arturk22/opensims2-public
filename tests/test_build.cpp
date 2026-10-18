@@ -1341,7 +1341,21 @@ static void testObjectsTestN48() {
     lamp.data[objdata::PlacementFlags] = 0x1;
     p = checkPlacement(vm, lamp.id, {5, 7, 1}, 0, false);
     check(!p.ok && p.error == 0x8D, "floor-only on the terrain: 0x8D");
+    // od 30 "room placement" by the rooms of definition 0 (3ARY 0x0B): tile
+    // (8, 7) in room 1, the rest outdoors.
+    lot.roomLayers[0x0B].assign(2 * 12 * 10, {0, 0, 0, 0});
+    lot.roomLayers[0x0B][size_t(8) * 10 + 7] = {1, 1, 1, 1};
+    lamp.data[objdata::PlacementFlags] = 0x3;
+    lamp.data[objdata::RoomPlacement] = 1;
+    check(checkPlacement(vm, lamp.id, {7, 7, 1}, 0, false).ok, "outside only, outdoors");
+    p = checkPlacement(vm, lamp.id, {8, 7, 1}, 0, false);
+    check(!p.ok && p.error == 0x0A, "outside only, in a room: 0x0A");
+    lamp.data[objdata::RoomPlacement] = 2;
+    p = checkPlacement(vm, lamp.id, {7, 7, 1}, 0, false);
+    check(!p.ok && p.error == 0x0B, "inside only, outdoors: 0x0B");
+    check(checkPlacement(vm, lamp.id, {8, 7, 1}, 0, false).ok, "inside only, in a room");
     vm.placementLot = nullptr;
+    check(checkPlacement(vm, lamp.id, {7, 7, 1}, 0, false).ok, "without the lot's geometry, not tested");
 }
 
 int main() {

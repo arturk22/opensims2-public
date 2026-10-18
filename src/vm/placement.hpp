@@ -39,8 +39,8 @@
 // Inferred or left out (TODO.md): od 4 compared with the slot's height bit
 // (FreeSO's rule for The Sims 1, the slots' 1 << (height - 1) as the binary's
 // height object gives) and the weight against the support strength; pool
-// objects over a pool; ceilings, room placement (od 30); TryPlace snapping a
-// post lamp to a fence's post.
+// objects over a pool; ceilings; TryPlace snapping a post lamp to a fence's
+// post.
 
 #include "vm.hpp"
 
@@ -56,6 +56,7 @@ constexpr int16_t WallAdjacencyFlags = 5;
 constexpr int16_t WallPlacementFlags = 13;
 constexpr int16_t Weight = 27;
 constexpr int16_t SupportStrength = 28;
+constexpr int16_t RoomPlacement = 30; // "room placement": 1 outside only, 2 inside only (TestPlacementCommon's 0x0A / 0x0B)
 constexpr int16_t HiddenFlags = 34; // bits 0x21: hidden (the floor under a "Hide Floor" object shows again)
 constexpr int16_t CurrentValue = 41;
 constexpr int16_t FlagField2 = 40; // bit 0x200: the user placement tree runs
