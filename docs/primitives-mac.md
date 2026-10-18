@@ -4476,8 +4476,16 @@ os mesmos que ele gravaria).
   entrada **esperando** de prioridade menor que a nova. Não aninhada: mais de
   6 esperando (vtable `0x1f4`, sem a corrente) e nenhuma menor → resultado 3;
   com uma menor o push entra (e o `AddAction` pula as menores). Aninhada:
-  mais de 4 na sub-fila → 4. O VM conta a fila com a interação que roda
-  (as do `activeInteraction` para trás) e não troca.
+  mais de 4 na sub-fila → 4.
+
+**No VM** (n46): o `ActionSkipped` roda a entrada 4 (`actionSkipped`, também
+no `DeleteTopAction` do reset); o `entryAvailable` (o `TestInteraction` antes
+da check tree) recusa o objeto pegando fogo, com as interações desligadas e,
+com o controle dos pais, a entrada `0x20000`; a fila cheia conta só as que
+esperam e dá lugar quando há uma menor (era: contava as que rodavam e não
+dava lugar). Nas 14 sementes do `N001_Lot68` e do `N001_Lot11` a saída do
+`s2pkg autonomy` é a mesma. **Inferido:** o menu de pie não aplica esses
+testes do objeto (só a idade, como antes).
 
 ### `cTSGlobals` e `cTSDataTables`
 

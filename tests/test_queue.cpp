@@ -990,6 +990,59 @@ static void testInteractionGuidAndJoinable() {
           "109: the empty interaction's new GUID once the action ended");
 }
 
+// Round n46: a full queue gives way to a push when an entry waiting has a
+// lower priority (AnyLowerPriorityInteractions, the person's vtable 0x1FC):
+// the push goes in and AddAction skips the lower ones; the running
+// interaction does not count. TestInteraction refuses an entry whose object
+// burns (data 8 bit 0x200) or has its interactions disabled (data 87, data
+// 82 bit 0x04; the lockout count, data 25, only for an autonomous test), and
+// with global 35 "Parental Control" on one with the TTAB flag 0x20000.
+static void testFullQueueGivesWayAndObjectTests() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x1013,
+                tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E), push(1, 0, 3, 0x00, T, F)}, 2, 1));
+    for (int i = 0; i < 7; ++i) {
+        auto x = fx.make(0);
+        x.priority = kPriorityAutonomous;
+        enqueue(fx.vm, fx.s(), x);
+    }
+    const int16_t args[] = {int16_t(fx.fridge), 0};
+    Thread a = fx.vm.start(fx.fridge, 0x1013, args);
+    fx.vm.run(a);
+    check(a.status == Thread::Status::Finished && a.result && fx.s().queue.size() == 1 &&
+              fx.s().queue[0].priority == kPriorityUserDriven,
+          "a full queue with lower entries waiting takes the push; the lower ones are skipped");
+    fx.s().queue.clear();
+    syncQueueData(fx.s());
+
+    auto refused = [&](int16_t& field, int16_t value) {
+        const int16_t old = field;
+        field = value;
+        Thread t = fx.vm.start(fx.fridge, 0x1013, args);
+        fx.vm.run(t);
+        field = old;
+        const bool r = t.status == Thread::Status::Finished && !t.result && fx.o().data[kObjdataPrimitiveResult] == 2;
+        fx.s().queue.clear();
+        syncQueueData(fx.s());
+        return r;
+    };
+    check(refused(fx.o().data[objdata::Flags], 0x200), "a burning object's entry is refused (result 2)");
+    check(refused(fx.o().data[87], 1), "data 87 disables its interactions");
+    check(refused(fx.o().data[82], 0x04), "so does data 82 bit 0x04");
+    check(!refused(fx.o().data[25], 1), "the lockout count only for an autonomous test");
+    fx.vm.globals[35] = 1;
+    check(!refused(fx.o().data[25], 0), "parental control: an entry without the flag goes in");
+    InteractionTable t;
+    t.version = 0x4D;
+    auto e = entry(0x1001, 0, 0);
+    auto clean = entry(0x1002, 0, 1);
+    clean.flags2 = 0x0002;
+    t.interactions = {e, clean};
+    fx.code.add(kObjGroup, 1, std::move(t));
+    check(refused(fx.o().data[25], 0), "parental control: one with the flag 0x20000 is refused");
+    fx.vm.globals[35] = 0;
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -1013,6 +1066,7 @@ int main() {
     testContinuationAfterReturn();
     testObjectRecords();
     testInteractionGuidAndJoinable();
+    testFullQueueGivesWayAndObjectTests();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

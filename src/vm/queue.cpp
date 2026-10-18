@@ -95,13 +95,23 @@ uint16_t enqueueSub(VM& vm, Object& sim, QueuedInteraction q) {
 // refused out of the game's debug mode, always in a push), and it is for
 // the Sim's age and, for a visitor, has "allow visitors" (availableToAge:
 // the person's age bits, vtable 0xd0, against the entry's, 0x48; IsVisitor
-// and TestFlags(1)). Not read, not done: the object's vtable 0x214 and
-// 0x2e8(autonomous) and the sim system flag 0x23 with the entry's 0x20000.
-bool entryAvailable(VM& vm, const Object& sim, const QueuedInteraction& q) {
+// and TestFlags(1)); the object is not burning (vtable 0x214, IsBurning:
+// object data 8 bit 0x200) and its interactions are not disabled (0x2e8,
+// AreInteractionsDisabled(autonomous) BV 0xb01634: when autonomous a
+// "lockout count" (data 25) of 1 or more, else data 87 of 1 or more or data
+// 82 bit 0x04); with global 35 "Parental Control" on, no entry with the
+// flag 0x20000 (flags2 bit 1, vtable 0x84; GetGlobal(35) of the simulator).
+bool entryAvailable(VM& vm, const Object& sim, const QueuedInteraction& q, bool autonomous) {
     const Object* o = vm.object(q.object);
     if (!o)
         return false;
     if (q.ttabFlags & 0x80)
+        return false;
+    if (o->data[objdata::Flags] & 0x200)
+        return false;
+    if ((autonomous && o->data[25] >= 1) || o->data[87] >= 1 || (o->data[82] & 0x04))
+        return false;
+    if (vm.globals.size() > 35 && vm.globals[35] != 0 && (q.ttabFlags & 0x20000))
         return false;
     if (const auto ref = interactionTable(vm, *o))
         for (const auto& e : ref->table->interactions)
@@ -115,7 +125,7 @@ bool entryAvailable(VM& vm, const Object& sim, const QueuedInteraction& q) {
 // with parameter 0 = `autonomous`.
 bool testInteraction(VM& vm, ObjectId simId, const QueuedInteraction& q, bool autonomous) {
     const Object* sim = vm.object(simId);
-    if (!sim || !entryAvailable(vm, *sim, q))
+    if (!sim || !entryAvailable(vm, *sim, q, autonomous))
         return false;
     const CheckResult r = checkInteraction(vm, simId, q, nullptr, autonomous);
     return r == CheckResult::NoGuard || r == CheckResult::True;
@@ -318,7 +328,7 @@ Exit pushInteraction(Context& c) {
     // byte 14 bit 0x02): the entry's age and visitor flags and the debug
     // flag (entryAvailable), and the check tree only with "force run check
     // tree" (byte 3 0x20). Refused: result 2.
-    if (const Object* t = c.vm.object(targetId); !t || !entryAvailable(c.vm, *t, *q))
+    if (const Object* t = c.vm.object(targetId); !t || !entryAvailable(c.vm, *t, *q, flags2 & 0x02))
         return failed(2);
     if (flags & 0x20) {
         const CheckResult r = checkInteraction(c.vm, targetId, *q, nullptr, flags2 & 0x02);
@@ -330,8 +340,18 @@ Exit pushInteraction(Context& c) {
         throw gameError(err::NoStackObject, "Push Interaction");
     if (nested && !continuation && target->subQueue.size() > kMaxSubQueue)
         return failed(4);
+    // More than 6 waiting (CountActions, vtable 0x1f4: the queue without the
+    // current action) and none of a lower priority to give way
+    // (AnyLowerPriorityInteractions, vtable 0x1FC, BV 0xad65b0; AddAction
+    // then skips those): result 3 (TryPushAction BV 0xe33de0). Was: the
+    // queue with the running ones counted, and no giving way.
     constexpr size_t kMaxQueue = 6;
-    if (!continuation && !nested && target->queue.size() > kMaxQueue)
+    const size_t running = size_t(std::max(target->activeInteraction + 1, 0));
+    const size_t waiting = target->queue.size() > running ? target->queue.size() - running : 0;
+    const bool lower = std::any_of(target->queue.begin() + std::ptrdiff_t(std::min(running, target->queue.size())),
+                                   target->queue.end(),
+                                   [&](const QueuedInteraction& x) { return x.priority < q->priority; });
+    if (!continuation && !nested && waiting > kMaxQueue && !lower)
         return failed(3);
     // Flag 0x01: the object in the local of byte 4 is the interaction's
     // target (and icon; TryPushAction sets it with cTSInteraction's
