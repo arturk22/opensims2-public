@@ -1169,9 +1169,12 @@ void VM::resetObject(ObjectId id, Thread& t, bool cascade) {
         o->activeInteraction = -1;
         o->subAction.reset();
         o->subQueue.clear();
-        // SetCurrentAction(the empty interaction): its priority, 0.
+        // SetCurrentAction(the empty interaction): its priority, 0, and a
+        // GUID for it (person data 109).
         o->person->data[persondata::Priority] = kPriorityIdle;
+        becomeEmptyAction(*this, *o);
         syncQueueData(*o);
+        setInteractionData(*o);
         for (const auto& q : running)
             unlinkInteraction(*this, id, q);
         for (const auto& q : waiting)

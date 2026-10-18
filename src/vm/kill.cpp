@@ -82,7 +82,9 @@ bool unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
         if (me->activeInteraction >= 0 && size_t(me->activeInteraction) < me->queue.size())
             me->queue.erase(me->queue.begin() + me->activeInteraction);
         me->activeInteraction = -1;
+        becomeEmptyAction(vm, *me);
         syncQueueData(*me);
+        setInteractionData(*me);
     }
     t = vm.start(owner, main);
     t.instructions = done;

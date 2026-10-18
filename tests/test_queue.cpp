@@ -947,6 +947,49 @@ static void testObjectRecords() {
           "a skipped entry runs its object's 'queue skipped' tree with the person as stack object");
 }
 
+// Round n46: person data 109 "ci: Current Interaction GUID" is the current
+// action's GUID (SetInteractionData) and, while a sub-action runs, the
+// sub-action's (SetCurrentSubAction), which stays after it ends until the
+// next SetInteractionData; once the action ends, the empty interaction's
+// new GUID. 164 "Current Interaction Joinable" is the action's TTAB flag
+// 0x02.
+static void testInteractionGuidAndJoinable() {
+    Fixture fx;
+    constexpr uint32_t kTvGroup = 0x7F000030;
+    fx.code.add(kTvGroup, 0x80, definition(4, 1, 0x0B1E0002));
+    InteractionTable t;
+    t.version = 0x4D;
+    auto watch = entry(0x1001, 0, 0), react = entry(0x1002, 0, 1);
+    watch.flags = 0x4000 | 0x02; // nests, joinable
+    react.flags = 0x8000;
+    t.interactions = {watch, react};
+    fx.code.add(kTvGroup, 1, std::move(t));
+    fx.code.addInteractionStrings(kTvGroup, 1, ttas({"Watch", "React"}, {"Assistir", "Reagir"}));
+    // Watch: handles the sub-queue, then waits for the sub-action to have run
+    // (stack object attribute 2 = 5) and ends.
+    fx.code.add(kTvGroup, 0x1001, tree({instr(0x11, go(1), go(1), {0, 0, 0, 0, 1}),
+                                        expr(Param, 0, Assign, Lit, 1, go(2), E), idle(0, false, go(3)),
+                                        expr(SAttr, 2, Eq, Lit, 5, T, go(0))},
+                                       4));
+    fx.code.add(kTvGroup, 0x1002, tree({expr(SAttr, 2, Assign, Lit, 5, T, E)}));
+    const ObjectId tv = fx.vm.instantiate(kTvGroup, 0x80).id;
+    Object& s = fx.s();
+    const uint16_t action = enqueue(fx.vm, s, *makeInteraction(fx.vm, tv, 0));
+    fx.vm.tick();
+    check(s.activeInteraction == 0 && s.person->data[109] == int16_t(action), "109: the action's GUID");
+    check(s.person->data[164] == 1, "164: the action's TTAB entry is joinable (flag 0x02)");
+    const uint16_t sub = enqueue(fx.vm, s, *makeInteraction(fx.vm, tv, 1));
+    check(s.person->data[109] == int16_t(action), "an added entry: SetInteractionData, the action's");
+    fx.vm.tick();
+    check(!s.subAction && s.person->data[109] == int16_t(sub),
+          "109: the sub-action's GUID, which stays after it ended");
+    for (int i = 0; i < 3; ++i)
+        fx.vm.tick();
+    check(s.activeInteraction == -1 && s.person->data[164] == 0, "164: 0 without an action");
+    check(s.person->data[109] != 0 && s.person->data[109] != int16_t(action) && s.person->data[109] != int16_t(sub),
+          "109: the empty interaction's new GUID once the action ended");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -969,6 +1012,7 @@ int main() {
     testPushTestsTheEntry();
     testContinuationAfterReturn();
     testObjectRecords();
+    testInteractionGuidAndJoinable();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

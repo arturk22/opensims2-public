@@ -4413,6 +4413,16 @@ BV `0xadc6d8`/`0xadae58`/`0xada7b0`; base 1.0 `0xb83f54` e seguintes.
   `0x30` no base, bit 1 das flags `+0x30`/`+0x88`), senão 0 (ação vazia: 0).
   Lê: "Joinable - Are Sim X and Y in same joinable Obj?".
 
+**No VM** (n46): o 109 deixou de ser o da ação a cada `syncQueueData`: é
+gravado pelo `setInteractionData` (o `AddAction`, o `RemoveAction`, o
+`SetCurrentAction`, o fim da ação e o reset) e pela sub-ação nova, que
+fica no 109 até o próximo; quando a ação acaba sem outra, a interação vazia
+ganha um GUID (o global 36) e o 109 é ele. O 164 é a flag 0x02 da ação
+corrente (`syncQueueData`; antes ficava 0). **Inferido:** o GUID da
+interação vazia não é salvo, e um Sim que entra no lote fica com 109 = 0
+até a primeira ação. Nas 14 sementes do `N001_Lot68` e do `N001_Lot11` a
+saída do `s2pkg autonomy` é a mesma de antes.
+
 ### `UpdatePersonDataFields` (base 1.0 `FUN_00c64a70`, BV `0x570674`): 37, 38, 40, 55
 
 Da rota corrente do roteador (vtable `0xb0` do agregado; o BV pula a rota

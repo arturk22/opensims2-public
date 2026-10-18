@@ -85,6 +85,7 @@ uint16_t enqueueSub(VM& vm, Object& sim, QueuedInteraction q) {
     const uint16_t uid = q.uid;
     sim.subQueue.push_back(std::move(q));
     syncQueueData(sim);
+    setInteractionData(sim); // AddAction
     return uid;
 }
 
@@ -445,6 +446,10 @@ Exit handleSubQueue(Context& c) {
             sim->person->data[k] = 0;
     updateObjectOwnership(c.vm, c.thread.me, item.object);
     syncQueueData(*sim);
+    // ... and 109 := the sub-action's GUID (vtable 0xec in base 1.0, 0x110
+    // in the BV: GetGUID), which stays when it ends (was the action's).
+    if (Object* s = c.vm.object(c.thread.me); s && s->person)
+        s->person->data[109] = int16_t(item.uid);
     return Exit::Call;
 }
 
@@ -793,6 +798,7 @@ uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
     queue.insert(queue.begin() + std::ptrdiff_t(std::min(at, queue.size())), std::move(q));
     evaluatePriorities(vm, sim);
     syncQueueData(sim);
+    setInteractionData(sim); // AddAction
     return uid;
 }
 
@@ -806,9 +812,10 @@ bool cancelInteraction(VM& vm, Object& sim, uint16_t uid) {
         // first waiting one when a Sim is cleaned up).
         auto& sq = sim.subQueue;
         auto st = std::find_if(sq.begin(), sq.end(), [&](const QueuedInteraction& x) { return x.uid == uid; });
-        if (st != sq.end())
+        if (st != sq.end()) {
             sq.erase(st);
-        else if (sim.subAction && sim.subAction->uid == uid)
+            setInteractionData(sim); // RemoveAction
+        } else if (sim.subAction && sim.subAction->uid == uid)
             sim.subAction->cancelled = true;
         else
             return false;
@@ -819,6 +826,7 @@ bool cancelInteraction(VM& vm, Object& sim, uint16_t uid) {
     if (index > sim.activeInteraction) {
         const QueuedInteraction gone = *it;
         q.erase(it);
+        setInteractionData(sim); // RemoveAction
         unlinkInteraction(vm, sim.id, gone);
     } else {
         it->cancelled = true;
@@ -847,6 +855,7 @@ void cancelInteractionsWith(VM& vm, ObjectId object) {
         }
         std::erase_if(sim.subQueue, [&](const QueuedInteraction& x) { return x.object == object; });
         syncQueueData(sim);
+        setInteractionData(sim); // RemoveAction
     }
 }
 
@@ -1004,7 +1013,17 @@ void endInteraction(VM& vm, Thread& t) {
         sim->person->data[persondata::NonInterruptible] = 0; // FreeSO: "verified in ts1"
     setPriority(*sim, sim->activeInteraction >= 0 ? q[size_t(sim->activeInteraction)].priority : kPriorityIdle);
     evaluatePriorities(vm, *sim);
+    // The action's end in StackJustPopped: SetCurrentAction of the
+    // interrupted action (BV; the VM keeps it, see endInteraction's header)
+    // or of the empty interaction, then SetInteractionData.
+    if (sim->person) {
+        if (sim->activeInteraction >= 0)
+            sim->person->recordsAtAction = uint16_t(sim->person->objectRecords.size());
+        else
+            becomeEmptyAction(vm, *sim);
+    }
     syncQueueData(*sim);
+    setInteractionData(*sim);
 }
 
 void setCurrentAction(VM& vm, Object& sim) {
@@ -1019,6 +1038,7 @@ void setCurrentAction(VM& vm, Object& sim) {
     }
     clearSubActions(vm, sim);
     syncQueueData(sim);
+    setInteractionData(sim);
 }
 
 void clearSubActions(VM& vm, Object& sim) {
@@ -1064,9 +1084,11 @@ void syncQueueData(Object& sim) {
     // 166: the running interaction's autonomous bit (cTSInteraction vtable
     // 0xbc, which SetCurrentAction copies; BV 0xadc6d8). Was "priority 20".
     d[persondata::InteractionAutonomous] = a && a->autonomous;
-    // 109 "ci: Current Interaction GUID": the running interaction's ID, which
-    // trees hand to Push Interaction's link (flag 0x40; "Interaction - Read to").
-    d[109] = a ? int16_t(a->uid) : 0;
+    // 164 "Current Interaction Joinable" (SetCurrentAction BV 0xadc6d8 /
+    // base 0xb83f54): the current action's TTAB entry has flag 0x02
+    // (cTSTreeTableEntry vtable 0x38 / base 0x30); "Joinable - Are Sim X
+    // and Y in same joinable Obj?" reads it. Was never written.
+    d[164] = a && (a->ttabFlags & 0x02) ? 1 : 0;
     const size_t next = size_t(sim.activeInteraction + 1);
     d[persondata::NextInteractionIndex] = next < q.size() ? int16_t(q[next].interaction) : 0;
     d[persondata::NextInteractionObject] = next < q.size() ? q[next].object : 0;
@@ -1096,6 +1118,21 @@ void syncQueueData(Object& sim) {
     const QueuedInteraction* current = sim.subAction ? &*sim.subAction : a;
     d[persondata::CurrentRunningInteractionIndex] = current ? int16_t(current->interaction) : 0;
     d[persondata::CurrentRunningObject] = current ? current->object : 0;
+}
+
+void setInteractionData(Object& sim) {
+    if (!sim.person)
+        return;
+    const bool running = sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < sim.queue.size();
+    sim.person->data[109] =
+        int16_t(running ? sim.queue[size_t(sim.activeInteraction)].uid : sim.person->emptyActionGuid);
+}
+
+void becomeEmptyAction(VM& vm, Object& sim) {
+    if (!sim.person)
+        return;
+    sim.person->emptyActionGuid = newInteractionId(vm, sim);
+    sim.person->recordsAtAction = 1;
 }
 
 std::vector<std::string> splitPiePath(const std::string& name) {

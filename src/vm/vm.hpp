@@ -523,6 +523,10 @@ struct Person {
     // ends when its record goes (one fewer), the sub-action when the count
     // is back to it. Saved in the PERS.
     uint16_t recordsAtAction = 1, recordsAtSubAction = 0;
+    // The GUID the empty interaction got when it became the current action
+    // (SetCurrentAction gives one to an interaction without: the action
+    // ended, the reset), which person data 109 then holds. Not saved.
+    uint16_t emptyActionGuid = 0;
 };
 
 // Where an object is in the lot, as the lot's saved state has it: the tile

@@ -139,10 +139,10 @@ void cancelInteractionsWith(VM& vm, ObjectId object);
 void clearSubActions(VM& vm, Object& sim);
 // cTSPerson::SetCurrentAction (Mac BV 0xadc6d8), once the Sim's running
 // interaction is set (Idle for Input's next entry, Gosub Found Action):
-// besides the queue's person data (syncQueueData) it zeroes person data 39,
-// 71 (non-interruptible), 73 (the footprint's trim) and 110 (the "notified"
-// flag "Wait For Notify" reads) and clears the sub-actions. Not done: 164
-// (a flag of the interaction's object, not read).
+// besides the queue's person data (syncQueueData, 164 "joinable" among
+// them) it zeroes person data 39, 71 (non-interruptible), 73 (the
+// footprint's trim) and 110 (the "notified" flag "Wait For Notify" reads),
+// clears the sub-actions and writes 109 (setInteractionData).
 void setCurrentAction(VM& vm, Object& sim);
 
 // Whether the interaction a Sim is running was cancelled (for primitives
@@ -189,6 +189,16 @@ bool inInteraction(const Thread& t);
 
 // Refreshes the person data that mirrors the queue.
 void syncQueueData(Object& sim);
+// cTSPerson::SetInteractionData's person data 109 "ci: Current Interaction
+// GUID" (BV 0xada7b0, base 1.0 the same): the current action's GUID (the
+// empty interaction's when there is none). Written when an entry is added
+// or removed, the action changes and on a reset; SetCurrentSubAction writes
+// the sub-action's instead, which stays until the next of these.
+void setInteractionData(Object& sim);
+// The current action became the empty interaction (its action ended, the
+// reset): SetCurrentAction gives it a GUID (global 36, AssignUniqueGUID)
+// and the records' count +0x646 is 1.
+void becomeEmptyAction(VM& vm, Object& sim);
 
 // cTSPerson::ActionSkipped (Mac BV 0xaca0cc): an entry leaves the queue
 // unrun: its links are undone and, when its object is there, the object's

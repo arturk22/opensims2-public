@@ -450,6 +450,7 @@ ResetLotResult runResetLot(VM& vm, const std::vector<std::filesystem::path>& cha
             // the rest) as the queue has it: the neighbor's copy holds the
             // last ID it ran with (as a load resumes them, lot_resume.cpp).
             syncQueueData(*vm.object(id));
+            setInteractionData(*vm.object(id));
             out.sims.push_back(id);
             std::filesystem::path file;
             for (const auto& c : characters)
