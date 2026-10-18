@@ -36,7 +36,7 @@ s2pkg ls|stats|verify|decode-all <file.package>
 s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>   # decoded dump (RCOL, STR#, OBJD, BHAV, ...)
 s2pkg texture <file.package> <tgi> out.png                        # TXTR (+LIFO) -> PNG
 s2pkg mesh <file.package> <tgi> out.obj                           # GMDC -> OBJ
-s2pkg repack <in.package> <out.package> [--recompress|--decompress]  # rewrites as DBPF 1.1/index 7.1 (keeps the bytes, recompresses or decompresses)
+s2pkg repack <in.package> <out.package> [--recompress|--decompress]  # rewrites as DBPF 1.1, index 7.1 only with high instances, as the game (keeps the bytes, recompresses or decompresses)
 s2pkg compare <a.package> <b.package>                             # same TGIs with the same decompressed bytes
 s2pkg object <Res-dir> <cres|0xGUID|name> <out-dir>               # full object -> OBJ + MTL + PNG
 s2pkg find <Res-dir> <name> <type-hex>                            # resolves a scenegraph name
