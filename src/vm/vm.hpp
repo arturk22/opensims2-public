@@ -894,6 +894,11 @@ struct Object {
         int32_t durationMs = -1;
         bool spine = false, noEarlyExit = false;
         uint32_t serial = 0;
+        // The look point (byte 14, index byte 8): 0 the target's box at
+        // three quarters of its height; 1 targeting, 2 routing, 3
+        // containment = the target's SLOT entries of type 4, 3 and 0 (the
+        // content's "CT - Teach - Look Object" trees; view.cpp).
+        uint8_t slotKind = 0, slotIndex = 0;
     };
     std::optional<LookAt> lookAt;
     uint32_t lookAtSerial = 0; // Look Ats so far (LookAt::serial)

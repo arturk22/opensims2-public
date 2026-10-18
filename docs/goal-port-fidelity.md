@@ -248,3 +248,28 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
   0x72/0x3C/0xE7 fora (build+ctest **39/39**). Achado enfileirado: **14** (NGBH 0xCB / FAMI
   0x55 / SDSC 0x36 / NID +20 / lot info de apartamento). Próximo: os slots do Look At (byte
   14); depois 7 / 8 / 10 (5 bloqueado).
+- (18/10 ~07:45) **Item 6, sub-item dos slots do Look At (byte 14)** — o byte 14 escolhe a
+  família de slots do alvo e o byte 8 o índice dentro dela: **1 → tipo 4, 2 → tipo 3, 3 →
+  tipo 0** (o `SlotID` do pedido `cAnimRequest` empacota os dois, `slot | tipo << 12`); passou
+  da contagem daquele tipo, erro **0x1B** (antes o port mirava a caixa do alvo nos três
+  casos). Medido com a sonda nas varreduras do AL (8 Look Ats), do base (7) e no N001_Lot11
+  (2): **nenhum índice fora da contagem** — e o censo dos **17 `objects.package`** do UC
+  (**4.121 SLOTs distintos**, 35.426 leituras — os pacotes dos EPs/SPs repetem: um objeto só
+  usa os tipos 0/3/4; o 1 só aparece em **quatro objetos** — Baby Bottle 7FBA6191, Baby
+  Bottle - Smart Milk 7F228D60, Toy - Paper Airplane 7F385F33 e Newspaper 7F08E23C — e o 2 em
+  nenhum). O censo estático (a passada do sweep, sem executar) conta **316 leituras com tipo**
+  no AL (157 de tipo 1, 124 de tipo 3, **nenhuma de tipo 2**) e **200** no base: o maior
+  índice de tipo 3 é **37** e só os dois tabuleiros de xadrez (**67** entradas de tipo 0) o
+  cabem. O avião de papel tem Look Ats próprios com índice 0 nos dois tipos, dentro das
+  contagens; o tipo 1 (o "location" do nome Sims 1) fica **fora** da mira — aberto: se a mira o
+  incluísse, o ponto do avião seria o `(0,0,1)` do entry em vez do osso. Verificação com o
+  código final: AL sweep 46.880 árvores /
+  13.054.928 instruções com o resumo de falhas **idêntico** ao run das contagens (nenhuma
+  árvore de Look At nas falhas; a sonda removida), N001_Lot11 627 objetos / 0 falhas em 60
+  ticks, `testLookAtSlots` (6 casos: os três tipos, os dois erros 0x1B e o byte 14 = 0) —
+  build+ctest **39/39**. No app o ponto do slot vai por `objectSlotPoint` (osso por nome, STR#
+  `0x90`, os desenhados de um Sim inclusive; senão o deslocamento). Achado enfileirado: o
+  **`RayTrace` (0x78)** usa a mesma convenção de slot (o port ainda aproxima a linha de tile;
+  as 35 leituras tipadas do AL estão no censo). Próximo: 164 / evento 4 / `0x214`/`0x2e8` (RE
+  do binário Mac), NGBH u32 `+0x34`/`+0x38` e os registros `+0x60c`; depois 7 / 8 / 10 (5
+  bloqueado).

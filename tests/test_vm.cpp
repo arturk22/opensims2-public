@@ -1671,6 +1671,62 @@ static void testSlots() {
           "unknown room values fail");
 }
 
+// Look At's slots (byte 14: 1 targeting, 2 routing, 3 containment = the
+// target's SLOT entries of type 4, 3 and 0): the index is checked against
+// that type's count (past it error 0x1B) and the request keeps the slot
+// (view.cpp; the app aims at the entry's bone or its stored offset).
+static void testLookAtSlots() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x80, definition(0x0C0C0C01, true)); // the Sim
+    ObjectDefinition shelf = definition(0x0C0C0C02);
+    shelf.fields[(0x68 - 0x44) / 2] = 0x81; // slots id
+    fx.code.add(kObjGroup, 0x81, std::move(shelf));
+    Slots sl;
+    sl.slots.resize(5);
+    sl.slots[1].type = 3; // one routing slot
+    sl.slots[3].type = 4; // two targeting slots
+    sl.slots[4].type = 4; // (the rest are containers)
+    fx.code.add(kObjGroup, 0x81, std::move(sl));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x80);     // id 1, the Sim
+    Object& target = fx.vm.instantiate(kObjGroup, 0x81); // id 2
+    fx.vm.setContainer(target, me.id, 0);                // somewhere to be looked at
+    // Look At: the target from the stack object, 90/2 degrees a second,
+    // byte 8 the slot index and byte 14 its kind.
+    auto lookAt = [](uint8_t index, uint8_t kind) {
+        return instr(0x6E, T, F, {0, StackId, 2, 0, 90, 0, 0, 0, index, 0, 0, 0, 0, 0, kind, 0});
+    };
+    fx.code.add(kObjGroup, 0x1000, tree({lookAt(1, 1)}));
+    Thread t = fx.vm.start(me.id, 0x1000, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && me.lookAt.has_value() &&
+              me.lookAt->target == target.id && me.lookAt->slotKind == 1 && me.lookAt->slotIndex == 1,
+          "a targeting slot of the target is kept");
+    fx.code.add(kObjGroup, 0x1001, tree({lookAt(0, 3)}));
+    t = fx.vm.start(me.id, 0x1001, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && me.lookAt->slotKind == 3 && me.lookAt->slotIndex == 0,
+          "a containment slot");
+    fx.code.add(kObjGroup, 0x1002, tree({lookAt(0, 2)}));
+    t = fx.vm.start(me.id, 0x1002, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && me.lookAt->slotKind == 2, "a routing slot");
+    fx.code.add(kObjGroup, 0x1003, tree({lookAt(2, 3)}));
+    t = fx.vm.start(me.id, 0x1003, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("Slot number out of range") != std::string::npos &&
+              t.error.find("slot 2 of object 2") != std::string::npos,
+          "past the containment slots is error 0x1B");
+    fx.code.add(kObjGroup, 0x1004, tree({lookAt(2, 1)}));
+    t = fx.vm.start(me.id, 0x1004, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("Slot number out of range") != std::string::npos,
+          "past the targeting slots too");
+    fx.code.add(kObjGroup, 0x1005, tree({lookAt(0, 0)}));
+    t = fx.vm.start(me.id, 0x1005, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && me.lookAt->slotKind == 0, "no slot: the default point");
+}
+
 // Scheduler: Init runs to completion (its sleeps do not wait for ticks), Main
 // gets a turn per tick and starts again when it returns; objects created while
 // running are initialized; the clock keeps the time globals.
@@ -2224,6 +2280,7 @@ int main() {
     testVisibleObjects();
     testResumeSavedLot();
     testSlots();
+    testLookAtSlots();
     testScheduler();
     testRunTreeByNameNow();
     testClockGlobals();
