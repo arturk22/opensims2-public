@@ -1124,14 +1124,11 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
             ++fresh;
             if (foundationTile(x, y)) // a deck or foundation there: 0x86 (IsDeckFoundationOfType)
                 return fail(0x86, "pools only go in the terrain");
-            for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
-                if (q)
-                    // A ground floor: its corners cannot be dug, and
-                    // MayPlaceQuadrilateral reports every vertex that
-                    // FUN_009e9550 refuses as 0x81 "Can't level terrain"
-                    // (0x8A is SelectionIsDegenerate's pool above the
-                    // ground). Which of the vertex tests refuses is inferred.
-                    return fail(0x81, "a floor is on the ground there");
+            // (A ground floor does not refuse the pool: MayPlaceQuadrilateral
+            // tests a floor only through the vertex test of the grid points
+            // not at the tool's height, deckLevelError above; on flat ground
+            // the pool goes over it and ModifyFloorVisibility hides it,
+            // drawPool. Was: refused, 0x81, inferred.)
             for (int cx = x; cx <= x + 1; ++cx)
                 for (int cy = y; cy <= y + 1; ++cy)
                     if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
@@ -1232,7 +1229,15 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
     const uint16_t lip = patternRef(lot_.floorPatterns, "floor_poolroundedlipblue", 1);
     for (const auto& [x, y] : fresh)
         for (int q = 0; q < 4; ++q)
-            setFloor(lot_, -1, x, y, q, lip), setFloorRotation(lot_, -1, x, y, q, 1);
+            setFloor(lot_, -1, x, y, q, lip), setFloorVisibility(lot_, -1, x, y, q, true);
+    // ModifyFloorVisibility (BV 0x9adec8, from UserPlaceDeckFoundation with
+    // 1: the floor visibility undoable 0x4c16786f sets !1): every quarter of
+    // the drag's tiles on the ground hidden (3ARY 0x15), so a ground floor
+    // under the water is kept but not drawn and holds nothing.
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y)
+            for (int q = 0; q < 4; ++q)
+                setFloorVisibility(lot_, 0, x, y, q, false);
     // The POOL entries as cWorldPool keeps them: the drag's rectangle is a
     // pool of its own (cTSUserToolUndoablePool::TryAddPool only calls
     // AddPool, vtable 0x30: one entry per rectangle; Save, 0xc21154, writes
@@ -1339,7 +1344,7 @@ BuildEditor::Result BuildEditor::erasePool(int x0, int y0, int x1, int y1) {
             if (!poolTile(tx, ty) && lot_.hasLevel(-1) && lot_.floor(-1, uint32_t(tx), uint32_t(ty))[0]) {
                 ++r.changed;
                 for (int qq = 0; qq < 4; ++qq)
-                    setFloor(lot_, -1, tx, ty, qq, 0);
+                    setFloor(lot_, -1, tx, ty, qq, 0), setFloorVisibility(lot_, 0, tx, ty, qq, true);
                 setMarkers(-1, tx, ty, tx, ty, -1);
             }
     poolWalls();
@@ -1412,8 +1417,10 @@ BuildEditor::Result BuildEditor::deletePool(int x, int y) {
                 for (int ty = qy; ty < qy + int(q.height); ++ty)
                     if (!poolTile(tx, ty)) {
                         ++r.changed;
+                        // UserRemoveDeckFoundation's ModifyFloorVisibility(0):
+                        // the ground over it shows again.
                         for (int qq = 0; qq < 4; ++qq)
-                            setFloor(lot_, -1, tx, ty, qq, 0);
+                            setFloor(lot_, -1, tx, ty, qq, 0), setFloorVisibility(lot_, 0, tx, ty, qq, true);
                         setMarkers(-1, tx, ty, tx, ty, -1);
                     }
         }

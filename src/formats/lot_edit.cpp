@@ -549,8 +549,11 @@ void addUpperLevel(Lot& lot) {
 bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation) {
     if (!lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height) || q < 0 || q > 3)
         return false;
-    if (lot.floorRotations.empty())
+    if (lot.floorRotations.empty()) {
+        if (rotation == 1) // what a lot without the array reads already
+            return true;
         lot.floorRotations.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), uint16_t(0x1111));
+    }
     uint16_t& v = lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)];
     v = uint16_t((v & ~(0xF << (4 * q))) | ((rotation & 0xF) << (4 * q)));
     return true;

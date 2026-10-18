@@ -730,6 +730,24 @@ static void testAutoRoofRects() {
     check(r.size() == 1 && r[0] == std::array<int, 4>({1, 1, 4, 4}), "a square room is one rectangle");
 }
 
+static void testPoolOverFloor() {
+    // A pool on flat floored ground: MayPlaceQuadrilateral tests the floor
+    // only through the vertex test of grid points off the tool's height, so
+    // the pool goes over it and the floor is hidden; deleting the pool shows
+    // it again.
+    Lot lot = flatLot();
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    for (int q = 0; q < 4; ++q)
+        setFloor(lot, 0, 4, 4, q, 1);
+    auto r = ed.drawPool(3, 3, 5, 5);
+    check(r.ok && lot.floor(0, 4, 4)[0] == 1 && !floorVisible(lot, 0, 4, 4, 2), "a pool over a ground floor keeps it hidden");
+    r = ed.deletePool(4, 4);
+    check(r.ok && lot.pools.empty() && floorVisible(lot, 0, 4, 4, 2), "the deleted pool's ground shows again");
+}
+
 static void testPool() {
     Lot lot = flatLot();
     CodeLibrary code;
@@ -751,6 +769,9 @@ static void testPool() {
         walls += w.type == Lot::Pool && w.a.level == -1;
     check(walls == 10, "pool walls round it");
     check(vm.world->pool({4, 3, 1}) && !vm.world->walkable({4, 3, 1}), "nobody walks over the water");
+    check(!floorVisible(lot, 0, 4, 3, 0) && !floorVisible(lot, 0, 5, 4, 3) && floorVisible(lot, 0, 6, 4, 0) &&
+              floorVisible(lot, -1, 4, 3, 0),
+          "ModifyFloorVisibility: the ground over the pool hidden (3ARY 0x15), the bottom seen");
     // cWorldPool::AreExpansionBoundsLegal: a drag over the pool, or beside
     // it without making one rectangle with it, is refused; one along a
     // whole side extends it (a POOL entry of its own); 900 tiles at most.
@@ -1245,6 +1266,7 @@ static void testObjectsTestN48() {
 
 int main() {
     testObjectsTestN48();
+    testPoolOverFloor();
     testRedoFunds();
     testDeckLevelling();
     testVertexObjects();
