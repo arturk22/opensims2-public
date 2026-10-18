@@ -355,8 +355,11 @@ Flags do byte 5 (disassembler + código): 0x01 não duplica (falso se já há
 um objeto do mesmo tipo no tile), 0x02 passa IDs ao Main (parâmetro 0 = meu
 ID, 1 = ID do stack object), 0x04 Sim a partir do **vizinho no stack
 object**, 0x08 falso se o tile não está vazio, 0x10 passa o temp 0 ao Main
-(parâmetro 0), **0x20 (sem texto no editor) põe o objeto novo no mesmo nível
-(andar) do stack object**, **0x40 GUID do token temporário de inventário**,
+(parâmetro 0), **0x20 (sem texto no editor) vira o objeto novo para onde o
+stack object olha** (`Orient`, vtable base `0x234` / BV `0x2a0`, quando as
+direções diferem; rodada n48: lido no base 1.0 `0xb56320` e no BV `0xe34b2c`;
+antes lido como "o nível do stack object", inferido), **0x40 GUID do token
+temporário de inventário**,
 0x80 GUID nos temps 0 (baixo) e 1 (alto). 0x02 junto com 0x10 → erro 0x36
 "More than one passing value specified". Flags do byte 10: 0x01 "Moving in a
 new Sim" (vai para a criação), 0x02 copia os materiais de design do objeto
@@ -376,6 +379,30 @@ Falso (sem erro): GUID sem definição; definição "morta" (tipo 0x11); posiç�
 inválida ou tile ocupado (flags acima); a criação falha; o objeto não cabe
 (`TSObjectCanSetPosition`/`CanPlaceInSlot`: o objeto criado é apagado; no VM
 desde a rodada 15, §4g "Rodada 15 (planejador)").
+
+**A ordem do `TryCreateObject`** (rodada n48, base 1.0 `0xb56320`, BV
+`0xe34b2c`): o lugar é o **FTilePt do âncora** (`cTSObject +0x1c0`, vtable
+`0x88`: x e y em ponto fixo 16.16, a posição exata, não o centro do tile;
+`SetLocation` o grava no `SetPosition`), mais um tile na direção dele para 0 e
+3 (as oito direções) e para 9 (`local` + a minha, só N/L/S/O); o nível é o do
+âncora. Testes antes de criar: 0x01 (um objeto da mesma definição no tile,
+vtable `0xd8`), 0x08 (algum objeto no tile), fora do lote (`WorldDB 0xc8`), a
+sala (3, 4 e 10: a sala do lugar, definição 2, igual à do âncora, vtable
+`0x1cc` base / `0x204` BV `GetRoomID`), e no 9 uma parede entre o lugar e mim
+(`FUN_00b49108`: as paredes do tile do lugar viradas para a direção de volta,
+bit 0; o laço do binário começa no segundo lado, então a parede do lado −Y
+do tile nunca conta). Depois: **cria fora do mundo** (o gerente de objetos,
+vtable `0x40`: o Init roda aí), o 0x20 vira o objeto, e **só então** testa
+(`TSObjectCanSetPosition(objeto, lugar, 0, 0, flags 0)` com a direção do
+próprio objeto, ou `TSObjectCanPlaceInSlot`) e põe (`SetPosition`, vtable
+`0x2a4` / base `0x238`: tira e põe no mundo, a parede adjacente, a árvore
+"placement" OBJf 9, a sala; ou `PlaceInSlot`); nada vira o objeto para o
+âncora. Por fim os parâmetros do Main (0x02/0x10) e os materiais (byte 10
+0x02). **No VM** (n48): assim, salvo as mãos de uma pessoa (slots 0 e 1, que
+aqui não estão num SLOT: sem teste) e o 0x08, que não conta a mim (inferido).
+Antes: o lugar no centro do tile, o objeto virado para o âncora (9: para mim),
+a posição posta antes do Init, só a parte líder de um multi-tile posta, sem
+teste de slot, sala nem parede.
 Definição de template (tipo 0x10) → erro 0x90. No fim, **o stack object
 passa a ser o objeto novo** e devolve verdadeiro.
 
@@ -3293,9 +3320,11 @@ tiles em volta): pessoa no caminho, salvo `CanIntersectPeople` do objeto (od
 8 & `0x06`), camadas diferentes (`FootprintBlocksCeiling` = od 42 bit
 `0x1000`, `FootprintBlocksFloor` = o bit apagado) ou a árvore "allow
 intersection" (entrada 5) de um dos dois; portas têm testes de círculo e de
-pegada próprios. **No VM** (rodada 15): o teste roda depois do Init (o VM põe o
-lugar antes do Init; o binário depois), com as pegadas de `routingFootprint` e
-sem a árvore 5 nem os testes de porta (`checkPlacement(…, footprints)`).
+pegada próprios. **No VM** (rodada 15; rodada n48: o objeto só é posto depois
+do Init e do teste, como no binário, e o teste é o do base inteiro, com a
+árvore 5, o teste exclusivo do od 63 e as portas, `docs/buy-build-mac.md`
+§7.26 e o "A ordem do `TryCreateObject`" acima): com as pegadas de
+`routingFootprint` (`checkPlacement`).
 Efeito: Fires que se espalham para tiles sem piso, cinzas em cima de portas,
 `_Coordinate`/emissores em cima de cadeiras deixam de ser criados. Os fogos
 mudam de tamanho de semente para semente (N002_Lot22, 3 sementes: 125/0/0
