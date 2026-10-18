@@ -684,8 +684,9 @@ Lido com o Ghidra MCP no BV (`sims2_bv.ppc`, só leitura) e no texto dos
 - **Altura → normal**: o `-bump` é um mapa de altura cinza
   (`fireplacehearthvalue-bump`: branco com rebites pretos). A conversão
   (`ConvertHeightMapToNormalMapFast`/`GenerateBumpMap_L8_to_A8R8G8B8` com o
-  bump scale 10 do TXTR) não está no BV (o `_D3DXComputeNormalMap` da Aspyr
-  no `baserom.sym` tem 12 bytes, um stub); a fórmula segue inferida.
+  bump scale 10 do TXTR) não foi achada no BV (o `_D3DXComputeNormalMap` da
+  Aspyr no `baserom.sym` tem 12 bytes, um stub), mas está no base 1.0:
+  §13.5 (rodada n50).
 - **No app** (rodada n22, `shaders.metal`): o passe de bump do DX8 como
   acima, com as tangentes do Mac (nenhuma): `n·L1 = sat(n_z · N·L1)` para a
   1ª direcional, a 1ª ponto/spot fora do vértice e somando
@@ -773,3 +774,49 @@ mais antes da parte (faces de trás, posição empurrada `csOutlineWidth` ao
 longo da normal, `z += 0,005·w`, cor e alfa do contorno). O app ainda não
 desenha esses ícones 3D (os painéis de desejos e memórias usam as imagens
 2D), então a prova é o teste `render` (a linha e a coluna da rampa).
+
+### 13.5 A conversão de altura em normal map, achada no base 1.0 (rodada n50)
+
+Lido com o Ghidra MCP no base 1.0 (`sims2_base_1.0.ppc`, só leitura; o BV
+não tem os nomes, e as funções não foram achadas lá). A conversão **está no
+binário de Mac** (o §12 e o §13.2 diziam que não):
+
+- **Quem converte**: a criação de uma textura a partir de um `cImageData`
+  (`FUN_003218ac`: formato 6 ou 7 marca a textura como convertida e cria o
+  descritor, `FUN_00324978`) e o envio (`FUN_00322058`): numa textura 2D
+  (tipo 4) com a imagem no **formato 6** (`Raw8`, luminância de 8 bits,
+  `cImageData::PixelFormat` BV `0xc97358`) **ou 7**, chama a entrada `0x34`
+  do serviço de imagem (`FUN_00251020`, vtable `0x158ac00`: `0x10a410`)
+  com o **bump scale da imagem** (vtable `0x90`); as outras vão pela `0x1c`
+  (cópia). Os cubos (tipo 6) não convertem. Ou seja: **toda** TXTR `Raw8`
+  vai para a placa como normal map, seja qual for o uso (o compositor de
+  pele, `FUN_0020c3a8`, também converte o formato 6 antes de compor).
+- **Por nível** (`FUN_00103c40`): cada nível de mip convertido a partir do
+  seu próprio nível de altura, por `FUN_0010379c`
+  (`GenerateBumpMap_L8_to_A8R8G8B8`):
+  - `f = 1020 / bump scale` (constante `1020` em `0x15816c8`; 102 com o 10
+    de todas as TXTR do jogo base), tabela de 16384 entradas
+    `T[i] = 127,5 / sqrt(64 i + f²)` pela raiz inversa rápida (constante
+    mágica `0x5f400000`, um passo de Newton `y·(1,5 − 0,5·x·y²)`, em
+    precisão simples: o valor sai ~1,2% abaixo do exato);
+  - por texel, com as alturas `H` dos quatro vizinhos diagonais (as bordas
+    dão a volta): `a = H(x−1,y−1) + H(x−1,y+1) − H(x+1,y−1) − H(x+1,y+1)`,
+    `b = H(x−1,y−1) + H(x+1,y−1) − H(x−1,y+1) − H(x+1,y+1)`,
+    `s = T[(a² + b²) >> 6]`;
+  - `R = 128 + round(a·s)`, `G = 128 + round(b·s)`, `B = 128 + round(f·s)`
+    (o truque de 1,5·2²³: arredonda para o mais próximo), cada um preso em
+    0–255, `A = 255`. Uma altura plana dá (128, 128, 254).
+  Em altura de 0 a 1, a normal é ∝ (−10·∂h/∂x, −10·∂h/∂y, 1) com o bump
+  scale 10: cinco vezes a força 2 por texel que o app usava (inferida).
+
+**No app**: `heightMapToNormalMap` (`formats/image.*`) faz a mesma conta
+(a tabela com a mesma raiz rápida) e o `Renderer::texture` a aplica a toda
+TXTR `Raw8` 2D antes de enviar; o bump scale vem da TXTR
+(`ImageData::Texture::bumpScale`, que o leitor chamava `unknown`). O pixel
+shader lê o normal map como o `_bx2` do ps_1_1 (`2t − 1`), sem a derivada
+de altura de antes (`kBumpStrength` saiu). Testes: `test_formats` (plano,
+rampa, a volta na borda, um nível pequeno), `test_render` (o passe de bump
+com o normal map plano do jogo). Os objetos com bump mudam pouco no
+caminho DX8 do Mac (o relevo só entra pelo `n_z` e pelo `−(nx+ny+nz)` da
+2ª luz, §13.2): N002_Lot10, os telhados até 3 de um canal; N001_Lot11, 60
+pixels.

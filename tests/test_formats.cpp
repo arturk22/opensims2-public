@@ -111,6 +111,39 @@ static void testRaw() {
     check(threw, "size mismatch throws");
 }
 
+// The game's height map to normal map conversion (GenerateBumpMap_L8_to_A8R8G8B8,
+// base 1.0 FUN_0010379c; docs/shaders-mac.md 13.5) with the bump scale 10.
+static void testHeightMapToNormalMap() {
+    TextureLevels flat;
+    flat.format = TexFormat::Raw8;
+    flat.levels.push_back({4, 4, std::vector<uint8_t>(16, 200)});
+    const TextureLevels fn = heightMapToNormalMap(flat);
+    const RgbaImage f = decodeTexture(fn.format, 4, 4, fn.levels[0].data);
+    // f = 1020 / 10 = 102, s = the table's 127.5 / sqrt(102^2) (1.2351 by the fast
+    // inverse square root): blue 128 + round(102 s) = 254.
+    check(fn.format == TexFormat::Raw32 && pixelIs(f, 1, 2, 128, 128, 254, 255), "height map: flat");
+    // Heights rising 10 a texel to the right (wrapping at the edge): a = -40,
+    // s = 127.5 / sqrt(64 x 25 + 102^2) (1.1508): red 128 - 46, blue 128 + 117.
+    TextureLevels ramp;
+    ramp.format = TexFormat::Raw8;
+    std::vector<uint8_t> h;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            h.push_back(uint8_t(100 + 10 * x));
+    ramp.levels.push_back({8, 8, h});
+    ramp.levels.push_back({1, 1, {9}}); // every level on its own
+    const TextureLevels rn = heightMapToNormalMap(ramp);
+    const RgbaImage r = decodeTexture(rn.format, 8, 8, rn.levels[0].data);
+    check(rn.levels.size() == 2 && pixelIs(r, 3, 5, 82, 128, 245, 255), "height map: ramp to the right");
+    // At the left edge x - 1 wraps to the right edge (170): a = 2 x (170 - 110) = 120.
+    check(r.pixels[(5 * 8 + 0) * 4] > 200, "height map: wraps");
+    check(pixelIs(decodeTexture(rn.format, 1, 1, rn.levels[1].data), 0, 0, 128, 128, 254, 255), "height map: small level");
+    // Other formats pass through.
+    TextureLevels dxt;
+    dxt.format = TexFormat::Dxt1;
+    check(heightMapToNormalMap(dxt).format == TexFormat::Dxt1, "height map: only Raw8");
+}
+
 static void testPng() {
     RgbaImage img;
     img.width = 3;
@@ -2429,6 +2462,7 @@ int main() {
     testLogOnce();
     testLotUiState();
     testDxt1();
+    testHeightMapToNormalMap();
     testDxt3And5();
     testRaw();
     testPng();

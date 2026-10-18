@@ -51,7 +51,7 @@ struct Draw {
     float4 env;      // env cube coefficient rgb, mip bias in w
     float4 uv0;      // base uv: u' = dot(uv0.xyz, (u, v, 1))
     float4 uv1;      //          v' = dot(uv1.xyz, (u, v, 1))
-    float4 misc;     // x: cel edge offset, y: bump strength, z: detail uv scale, w: water speed
+    float4 misc;     // x: cel edge offset, z: detail uv scale, w: water speed
     float4 maskV;    // kWallMask: mask u = dot(mask.xyz, p) + mask.w, v = dot(maskV.xyz, p) + maskV.w (model space)
     float alphaRef;
     uint flags;
@@ -159,15 +159,10 @@ vertex VertexOutClip vertex_main(uint vid [[vertex_id]],
     return out;
 }
 
-// The normal map the game makes of a "-bump" height map when it loads it
-// (ConvertHeightMapToNormalMapFast, not in the Mac binary): the height's
-// slope per texel times `strength`, in texture space (inferred).
-float3 heightNormal(float2 uv, texture2d<float> height, sampler smp, float strength) {
-    const float2 size = float2(height.get_width(), height.get_height());
-    const float h = height.sample(smp, uv).r;
-    const float hu = height.sample(smp, uv + float2(1.0 / size.x, 0)).r;
-    const float hv = height.sample(smp, uv + float2(0, 1.0 / size.y)).r;
-    return normalize(float3((h - hu) * strength, (h - hv) * strength, 1.0));
+// A normal map (the "-bump" height maps arrive converted as the game
+// converts them, heightMapToNormalMap) as ps_1_1's _bx2 reads it: 2 t - 1.
+float3 normalMapNormal(float2 uv, texture2d<float> normals, sampler smp) {
+    return normals.sample(smp, uv).rgb * 2.0 - 1.0;
 }
 
 // A Sim's shadow as the floors see it (nTSSG::cShadow, docs/lighting-mac.md 9).
@@ -425,7 +420,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
             // n.z x N.L1; L2 is read from the unwritten t2, (-1, -1, -1), and
             // c3 is the third light's colour (both inferred from the
             // registers' defaults).
-            const float3 bn = heightNormal(in.baseUv, height, smp, draw.misc.y);
+            const float3 bn = normalMapNormal(in.baseUv, height, smp);
             int first = -1, firstPoint = -1;
             for (uint i = 0; i < count; ++i) {
                 if (set.lights[i].params.z < 0.5 && first < 0)

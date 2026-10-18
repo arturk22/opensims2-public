@@ -49,7 +49,10 @@ struct ImageData {
     struct Texture {
         std::vector<Mip> mips;
         uint32_t creator = 0;
-        float unknown = 0; // version >= 8
+        // version >= 8: the bump scale (cImageData::BumpScale, BV 0xc97768;
+        // 10 in every TXTR of the base game), what the height map to normal
+        // map conversion is given (heightMapToNormalMap).
+        float bumpScale = 10;
     };
 
     uint32_t version = 0;
@@ -93,8 +96,21 @@ struct TextureLevels {
         std::vector<uint8_t> data;
     };
     std::vector<Level> levels;
+    float bumpScale = 10; // ImageData::Texture::bumpScale
 };
 TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index);
+// What the game uploads for an 8-bit luminance (Raw8: the "-bump" height
+// maps) 2D texture: every level turned into a normal map, A8R8G8B8 (here
+// Raw32, B,G,R,A), by ConvertHeightMapToNormalMapFast with the TXTR's bump
+// scale (base 1.0: the upload FUN_00322058 converts formats 6 and 7, the
+// per-level FUN_00103c40 -> FUN_0010379c; docs/shaders-mac.md 13.5): from
+// the height H (0-255) of the four diagonal neighbours (wrapping),
+// a = H(x-1,y-1) + H(x-1,y+1) - H(x+1,y-1) - H(x+1,y+1) and b = H(x-1,y-1) +
+// H(x+1,y-1) - H(x-1,y+1) - H(x+1,y+1), f = 1020 / scale, s = 127.5 /
+// sqrt(64 floor((a^2 + b^2) / 64) + f^2) (a fast inverse square root and one
+// Newton step, as the game's table), R, G, B = 128 + round(a s, b s, f s)
+// clamped, A = 255. Other formats are returned unchanged.
+TextureLevels heightMapToNormalMap(const TextureLevels& levels);
 // Every texture of a TXTR (six for an env cube: +X, -X, +Y, -Y, +Z, -Z in
 // Direct3D order), each loaded like loadTextureLevels.
 std::vector<TextureLevels> loadAllTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index);

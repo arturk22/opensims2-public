@@ -115,11 +115,6 @@ enum : uint32_t {
     kCelOutlinePass = 16 // the outline: back faces pushed out along the normal, its colour
 };
 
-// Height map to normal: height difference per texel times this (inferred:
-// the game's ConvertHeightMapToNormalMapFast, with the TXTR's bump scale 10,
-// is not in the Mac binary; docs/shaders-mac.md 13.2).
-constexpr float kBumpStrength = 2.0f;
-
 constexpr size_t kMaxLights = 16;
 
 struct Light {
@@ -275,7 +270,7 @@ struct Renderer::Material {
     simd_float4 emissive{0, 0, 0, 0};
     simd_float4 maskTransform{0, 0, 0, 0}; // model xy -> mask uv: xy scale, zw offset
     simd_float4 env{0, 0, 0, 0};           // coefficient rgb, mip bias
-    simd_float4 misc{0, 0, 0, 0};          // cel edge offset, bump strength, detail uv scale
+    simd_float4 misc{0, 0, 0, 0};          // cel edge offset, -, detail uv scale, water speed / options
     simd_float4 maskV{0, 0, 0, 0};         // kWallMask: model xyz -> mask v (maskTransform: -> u)
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
@@ -602,7 +597,9 @@ MTL::Texture* Renderer::texture(const std::string& name, ResourceIndex& index, b
                 throw std::runtime_error("not a cube map (" + std::to_string(faces.size()) + " textures)");
             tex = uploadCubeTexture(device_, faces);
         } else {
-            tex = uploadTexture(device_, loadTextureLevels(index.read(*loc), &index));
+            // An 8-bit luminance TXTR (the "-bump" height maps) goes to the
+            // card as the normal map the game makes of it (heightMapToNormalMap).
+            tex = uploadTexture(device_, heightMapToNormalMap(loadTextureLevels(index.read(*loc), &index)));
         }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: texture %s: %s\n", name.c_str(), e.what());
@@ -688,7 +685,6 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     if (!sm.normalMap.empty() && graphicsOptions().bumpMapping)
         if (MTL::Texture* t = texture(sm.normalMap, index)) {
             mat.height = t;
-            mat.misc.y = kBumpStrength;
             mat.flags |= kNormalMap;
         }
     if (sm.shading == StandardMaterial::Shading::CelShaded) {

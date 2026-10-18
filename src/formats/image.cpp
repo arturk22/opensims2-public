@@ -3,6 +3,8 @@
 #include "resindex.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <fstream>
 #include <zlib.h>
 
@@ -206,7 +208,7 @@ ImageData ImageData::read(BinReader& r) {
         }
         tex.creator = r.u32();
         if (d.version >= 8)
-            tex.unknown = r.f32();
+            tex.bumpScale = r.f32();
         d.textures.push_back(std::move(tex));
     }
 
@@ -261,6 +263,7 @@ ImageData parseImageData(std::span<const uint8_t> txtrResource) {
 TextureLevels levelsOf(const ImageData& img, size_t texture, ResourceIndex* index) {
     TextureLevels out;
     out.format = img.format;
+    out.bumpScale = img.textures[texture].bumpScale;
     const auto& mips = img.textures[texture].mips;
     std::string missing;
     for (size_t i = mips.size(); i-- > 0;) {
@@ -300,6 +303,59 @@ TextureLevels levelsOf(const ImageData& img, size_t texture, ResourceIndex* inde
 
 TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
     return levelsOf(parseImageData(txtrResource), 0, index);
+}
+
+TextureLevels heightMapToNormalMap(const TextureLevels& in) {
+    if (in.format != TexFormat::Raw8)
+        return in;
+    // GenerateBumpMap_L8_to_A8R8G8B8 (base 1.0 FUN_0010379c): the table of
+    // 127.5 / sqrt(64 i + f^2), 16384 entries, by the fast inverse square
+    // root (magic 0x5f400000) and one Newton step, in single precision.
+    const float f = 1020.0f / in.bumpScale;
+    const float f2 = f * f;
+    static thread_local std::vector<float> table;
+    static thread_local float tableF2 = -1;
+    if (tableF2 != f2) {
+        table.resize(16384);
+        for (size_t i = 0; i < table.size(); ++i) {
+            const float x = float(i) * 64.0f + f2;
+            uint32_t bits;
+            std::memcpy(&bits, &x, 4);
+            const uint32_t ybits = 0x5f400000u - (bits >> 1);
+            float y;
+            std::memcpy(&y, &ybits, 4);
+            table[i] = y * -(x * 0.5f * y * y - 1.5f) * 127.5f;
+        }
+        tableF2 = f2;
+    }
+    auto channel = [](float v) {
+        const long r = std::lrint(v) + 128; // round to nearest (the 1.5 x 2^23 trick)
+        return uint8_t(std::clamp(r, 0L, 255L));
+    };
+    TextureLevels out;
+    out.format = TexFormat::Raw32;
+    out.bumpScale = in.bumpScale;
+    for (const auto& l : in.levels) {
+        TextureLevels::Level o{l.width, l.height, std::vector<uint8_t>(size_t(l.width) * l.height * 4)};
+        const int w = int(l.width), h = int(l.height);
+        auto H = [&](int x, int y) {
+            x = (x + w) % w, y = (y + h) % h;
+            return int(l.data[size_t(y) * size_t(w) + size_t(x)]);
+        };
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const int d1 = H(x - 1, y - 1) - H(x + 1, y + 1), d2 = H(x + 1, y - 1) - H(x - 1, y + 1);
+                const int a = d1 - d2, b = d1 + d2;
+                const float s = table[size_t(std::min((a * a + b * b) >> 6, 16383))];
+                uint8_t* p = &o.data[(size_t(y) * size_t(w) + size_t(x)) * 4];
+                p[0] = channel(f * s);        // B
+                p[1] = channel(float(b) * s); // G
+                p[2] = channel(float(a) * s); // R
+                p[3] = 255;
+            }
+        out.levels.push_back(std::move(o));
+    }
+    return out;
 }
 
 std::vector<TextureLevels> loadAllTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
