@@ -174,6 +174,33 @@ World World::fromLot(const Lot& lot) {
                     const float rise = hi - lo;
                     if (rise >= 1.0f || water)
                         w.setWalkable(t, false);
+                    // Base 1.0's state 5 (FUN_01038900(tile, 1); BV 7,
+                    // FUN_00165c88; docs/routing-mac.md §9.5): a quarter of
+                    // the terrain whose quarter on the level above has a
+                    // visible floor (WorldDB 0x88 with "all" and "visible":
+                    // its pattern and the 3ARY 0x15 layer) standing less than
+                    // StandardLevelHeight (3.0) over the terrain at some
+                    // corner of the tile (+ 0.001): the ground under a deck
+                    // or a low foundation. Impassable for the planner; not
+                    // with water (the binary tests water first).
+                    if (!water && lot.hasLevel(lotLevel + 1) && !lot.floors.empty()) {
+                        bool low = false;
+                        for (int cx = 0; cx < 2; ++cx)
+                            for (int cy = 0; cy < 2; ++cy)
+                                low |= lot.elevation(lotLevel + 1, int(x) + cx, int(y) + cy) -
+                                           lot.elevation(lotLevel, int(x) + cx, int(y) + cy) + 0.001f <
+                                       3.0f;
+                        if (low) {
+                            const size_t above = (size_t(li + 1) * lot.width + x) * lot.height + y;
+                            uint8_t closed = 0;
+                            for (size_t q = 0; q < 4; ++q)
+                                if (lot.floors[above][q] != 0 &&
+                                    (lot.floorVisibility.size() != lot.floors.size() || lot.floorVisibility[above][q] != 0))
+                                    closed |= uint8_t(1u << q);
+                            if (closed)
+                                w.setBlockedQuarters(t, closed);
+                        }
+                    }
                     else if (rise > 0.5f) {
                         for (float& c : quarters)
                             c = std::max(c, (rise - 0.5f) * 20.0f);
@@ -378,6 +405,24 @@ void World::setQuarterCosts(TilePos t, const std::array<float, 4>& costs) {
     ++revision_;
     if (contains(t))
         costs_[cell(t)] = costs;
+}
+
+void World::setBlockedQuarters(TilePos t, uint8_t quarters) {
+    if (!contains(t))
+        return;
+    ++revision_;
+    if (blocked_.empty())
+        blocked_.assign(walkable_.size(), 0);
+    blocked_[cell(t)] = quarters & 0x0F;
+}
+
+bool World::quarterBlocked(TilePos t, float x, float y) const {
+    const uint8_t q = blockedQuarters(t);
+    if (!q)
+        return false;
+    const float fx = x - float(t.x), fy = y - float(t.y);
+    const std::array<float, 4> d{fx, 1 - fy, 1 - fx, fy};
+    return q & (1u << size_t(std::min_element(d.begin(), d.end()) - d.begin()));
 }
 
 bool World::diagonalWall(TilePos t) const { return contains(t) && diagonals_[cell(t)] != 0; }

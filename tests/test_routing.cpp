@@ -2255,6 +2255,47 @@ static void testFloorCosts() {
     check(plain.cost({1, 0, 1}) == 1 && plain.cost({0, 0, 1}) == 2, "floor costs: without the catalog floors 1, terrain 2");
 }
 
+// The terrain under a low floor (round n49; base 1.0's
+// WorkOutTileCostAndPassability state 5, FUN_01038900): a quarter of the
+// ground whose quarter on the level above has a visible floor standing less
+// than 3.0 over it at a corner is closed to the planner; a floor at a full
+// level's height (3.0) is not, nor a hidden one.
+static void testLowFloorTerrain() {
+    Lot lot;
+    lot.width = 8, lot.height = 3;
+    lot.minLevel = 0, lot.levelCount = 2;
+    lot.elevations.assign(size_t(2) * 9 * 4, 0.0f);
+    for (int x = 0; x <= 8; ++x)
+        for (int y = 0; y <= 3; ++y)
+            lot.elevations[(size_t(1) * 9 + size_t(x)) * 4 + size_t(y)] = x <= 4 ? 1.0f : 3.0f; // a deck at 1.0, then 3.0
+    lot.floors.assign(size_t(2) * 24, {0, 0, 0, 0});
+    lot.floorVisibility.assign(size_t(2) * 24, {1, 1, 1, 1});
+    auto above = [&](uint32_t x, uint32_t y) -> std::array<uint16_t, 4>& { return lot.floors[24 + x * 3 + y]; };
+    above(2, 1) = {1, 1, 1, 1};  // the deck over (2, 1): 1.0 over the ground
+    above(3, 1) = {1, 1, 0, 0};  // its west and north quarters only
+    above(6, 1) = {1, 1, 1, 1};  // a floor 3.0 up: a full level
+    above(1, 1) = {1, 1, 1, 1};  // 1.0 up but hidden (3ARY 0x15)
+    lot.floorVisibility[24 + 1 * 3 + 1] = {0, 0, 0, 0};
+    World w = World::fromLot(lot);
+    check(w.blockedQuarters({2, 1, 1}) == 0x0F && w.blockedQuarters({3, 1, 1}) == 0x03,
+          "low floor: the ground under a deck closed, quarter by quarter");
+    check(w.blockedQuarters({6, 1, 1}) == 0 && w.blockedQuarters({1, 1, 1}) == 0 && w.blockedQuarters({2, 1, 2}) == 0,
+          "low floor: not under a full level, nor under a hidden floor, nor the deck itself");
+    PathPlanner planner(w);
+    check(!planner.free(1, {2.5f, 1.5f}) && !planner.free(1, {3.1f, 1.5f}) && planner.free(1, {3.9f, 1.5f}),
+          "low floor: the planner's cells in the closed quarters");
+    PlannedPath path;
+    RouteFail why;
+    check(planner.plan({0.5f, 1.5f}, 1, 1, {{7.5f, 1.5f, 0}}, path, why), "low floor: a way around");
+    bool under = false;
+    Point2 a{0.5f, 1.5f};
+    for (const auto& q : path.points) {
+        under |= !planner.clear(1, a, {q.x, q.y});
+        a = {q.x, q.y};
+    }
+    check(!under, "low floor: not under the deck");
+}
+
 // A pool's rooms: the floor (the level below the pool's) is a room of its own
 // and is a pool ("Swim Here?" of the go-here destination); the water over it
 // takes the same room; a lawn is not a pool.
@@ -2330,6 +2371,7 @@ int main() {
     testGoHere();
     testPoolRoom();
     testFloorCosts();
+    testLowFloorTerrain();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

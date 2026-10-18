@@ -66,6 +66,15 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
                     for (int j = 0; j < K; ++j)
                         cost[cellIndex(x * K + i, y * K + j)] =
                             world.cost(t, float(x) + (float(i) + 0.5f) / K, float(y) + (float(j) + 0.5f) / K);
+                // The quarters whose floor state blocks (World::blockedQuarters:
+                // the terrain under a low floor), cell by cell as the costs,
+                // not inflated (floors are not objects: AddObjectRectangle's
+                // inflation is the objects' and walls').
+                if (world.blockedQuarters(t))
+                    for (int i = 0; i < K; ++i)
+                        for (int j = 0; j < K; ++j)
+                            if (world.quarterBlocked(t, float(x) + (float(i) + 0.5f) / K, float(y) + (float(j) + 0.5f) / K))
+                                grid[cellIndex(x * K + i, y * K + j)] |= kNoFloor;
                 const int stair = world.stairOver(t);
                 if (!world.hasFloor(t) && !(stair >= 0 && stairObjects[size_t(stair)]))
                     stamp(grid, float(x) - e, float(y) - e, float(x + 1) + e, float(y + 1) + e, kNoFloor);

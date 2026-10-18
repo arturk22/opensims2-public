@@ -198,6 +198,19 @@ public:
     float cost(TilePos t, float x, float y) const;
     void setCost(TilePos t, float cost);
     void setQuarterCosts(TilePos t, const std::array<float, 4>& costs);
+    // The quarter tiles the path planner closes by their floor, a bit each
+    // (1 west, 2 north, 4 east, 8 south, as the costs): base 1.0's
+    // WorkOutTileCostAndPassability state 5 (BV 7; FUN_01038900, BV
+    // FUN_00165c88), the terrain under a floor on the level above that
+    // stands less than StandardLevelHeight (3.0) over it at a corner
+    // (World::fromLot). They are passed through no further: the planner
+    // marks the cells whose centre is in such a quarter (docs/routing-mac.md
+    // §9.5).
+    uint8_t blockedQuarters(TilePos t) const { return contains(t) && !blocked_.empty() ? blocked_[cell(t)] : 0; }
+    void setBlockedQuarters(TilePos t, uint8_t quarters);
+    // Whether the quarter of `t` under the point (x, y) is closed
+    // (blockedQuarters; the quarter as cost(t, x, y) picks it).
+    bool quarterBlocked(TilePos t, float x, float y) const;
 
     // Index of a tile within one level's grid (x * height + y).
     size_t index(int x, int y) const { return size_t(x) * height_ + size_t(y); }
@@ -217,6 +230,7 @@ private:
     std::vector<Stair> stairs_;
     std::vector<uint8_t> diagonals_;  // [level][x][y]: 1 a diagonal wall crosses it, 2 a door opens it
     std::vector<std::array<float, 4>> costs_; // [level][x][y], per quarter (west, north, east, south)
+    std::vector<uint8_t> blocked_;    // [level][x][y], the closed quarters (blockedQuarters); empty = none
     std::vector<Door> doors_;
     std::vector<Segment> diagonalWalls_;
     size_t cell(TilePos t) const;
