@@ -273,3 +273,6 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
   as 35 leituras tipadas do AL estão no censo). Próximo: 164 / evento 4 / `0x214`/`0x2e8` (RE
   do binário Mac), NGBH u32 `+0x34`/`+0x38` e os registros `+0x60c`; depois 7 / 8 / 10 (5
   bloqueado).
+- (18/10) **Fila de fechamento aberta em `goal-fechar-pendencias.md`**: item 13 (TTAB;
+  0x4F..0x51 prontos para portar e o modelo 0x53+ medido até `X×(4+6Y)`), depois 8 / 14 /
+  7 / 10 / RayTrace / 12; 5 e 6-resto seguem bloqueados.
