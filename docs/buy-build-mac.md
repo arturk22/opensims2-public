@@ -2766,6 +2766,154 @@ bit 4 (o andar de cima teria de subir junto e tem piso em volta, `0x69`).
   aplainada; antes a borda da piscina saía do morro e o chão rebaixado ficava
   sob a água velha, desenhado como fundo de lagoa).
 
+### 7.26 Colocação, resto: objetos, piso visível, altura, água e moirão (rodada n48, Ghidra MCP)
+
+Leitura com o Ghidra MCP (só leitura), no base 1.0 (sem nomes; achado pelo
+`0,283` em `0x1581c68`) e no BV (nomes do symxfer). O base vale.
+
+**`TestPlaceInWorld`** (base `FUN_00ffd864`, BV `0x8ad754`): `TestPlacementCommon`
+(base `FUN_00ffc9b0`), `TestPlacementWithRespectToWalls` (não para pessoa,
+base `FUN_00ffb528`), `TestPlacementWithRespectToObjects` (base
+`FUN_00ffb990`) e o teste de altura. Os multi-tile passam parte por parte
+(`TSMTObjectCanSetPosition` BV `0x8add68` → `TSObjectCanSetPositionImpl` de
+cada parte no seu deslocamento). A ferramenta de compra (`FUN_009eb860`) e o
+Create New Object Instance (`TryCreateObject` BV `0xe34b2c`, em `0xe353f0`)
+chamam `TSObjectCanSetPosition` com **flags 0** e os dois floats 0 (pelo ABI
+do Darwin os floats ocupam r5/r6; as flags vão em r7 = 0): sem o círculo das
+portas (flag 2) e sem o círculo da pessoa (flag 1), tolerância 0 nas pegadas.
+
+**O teste de altura.** O objeto `0xFBA4DA53` (CLSID; interface `0xFBA4DA4D`,
+fábrica do base em `0xbc3550`) tem a vtable da interface em `0x15dab60`
+(thunks `this − 0x20`); o slot `0x2c` → `0xbc362c` → `0xbc3650`:
+**`1 << (altura − 1)`**. O `0x2c(1)` do `TestPlaceInWorld` é **1**: o od 4
+precisa do bit 0 "chão", senão `0x19` (lista de lugares). O app já fazia
+isso; agora confirmado.
+
+**`TestPlacementWithRespectToObjects`, base 1.0 `FUN_00ffb990`** (o BV
+separa em `TestPlacementWithRespectToObjects` `0x8ace04` e
+`TestPlacementWithRespectToObject` `0x8ac158`, mesma lógica; o BV junta os
+objetos num conjunto e, com pegada estendida, olha os tiles da pegada):
+
+1. pessoa com o dado de pessoa 68 bit `0x02` → passa tudo;
+2. a pegada do objeto no lugar e na direção testados (`GetFootprint`,
+   vtable base `0xe8` / BV `0x100`);
+3. para cada objeto nos 3×3 tiles em volta (o nível do lugar, no lote,
+   `ObjectOnTileAtIndex`), que não seja parte dele (`IsPartOfMe`):
+   - **no tile do próprio lugar**, o teste exclusivo (`FUN_00ffb7b0`; BV
+     `0x8a74fc`, com o nome errado `HasEnoughClearanceFromRoof`) com os od
+     63 (STR# `0xFB`: 1 chão, 2 parede, 4 "no other object of same type", 8
+     teto) `a` e `b`: `a & b & 9` → `0x0C`; com 4 em algum, o outro **no
+     mesmo lugar** (x e y a menos de 32 ULPs, mesmo nível: `FUN_0142e734`),
+     com a mesma `Elevation` (vtable `0xb0`) e o mesmo produto (base `0xd8` →
+     `0x6c`; BV `GetSelector` `+0x224` → `0x70`) → `0x0C`; se os dois exigem
+     uma parede em comum (`FUN_00ffb62c`: cada `RelativeWallOrFenceRequired`
+     — a n-ésima das flags 1, 2, 4, 8, `0x10`, `0x40` do od 13, BV
+     `0xaf61b8`/`NumWallOrFenceRequiredFlags` `0xaf50dc` — virada pela
+     direção, e o `OppositeWallLocator` dela, contra as do outro): os dois
+     portas ou janelas (`ExclusiveWallPlacementCategory` BV `0xaf57a4`: 1
+     para os tipos 8 e 9) → **`0x17` "Must be against unused wall"**, senão os
+     dois com 2 → `0x0C`. O BV acrescenta testes do od 82 (expansão);
+   - objeto pessoa: passa se o outro ou ele `CanIntersectPeople` (od 8 &
+     `0x14`, BV `0xaf56f0`); objeto contra pessoa: passa se ele
+     `CanIntersectPeople`; objeto contra objeto: passa se um dos dois
+     `CanIntersectObjects` (od 8 & `0x06`, BV `0xaf56b8`; o BV tira as
+     janelas de sacada, expansão);
+   - a árvore **"allow intersection"**: `RunTree(5, ID do outro, nenhum
+     parâmetro, true, false)` (BV `0xafe524` → `0xb02278`: o outro é o stack
+     object, sem parâmetros, rodada até o fim), primeiro a do objeto, depois
+     a do outro; verdadeiro → passa;
+   - camadas: só testa se os dois `FootprintBlocksCeiling` (od 42 `0x1000`)
+     ou os dois `FootprintBlocksFloor` (o bit apagado);
+   - duas pessoas: centros a menos de `0,283` → `0x0C`; senão, se o objeto é
+     porta diagonal (`FUN_00fffc88`: tipo 8 com od 13 & `0x50`): a pegada do
+     outro contra as pegadas **0 e 2** da porta (`DoesFootprintIntersectDoor`
+     BV `0x8a8fdc` → `TSObjectIndexedWorldSpaceFootprint` `0x8a8c64`: a lista
+     "footprint" de nome "0" / "2" do modelo, todos os tiles, vtable `0x2cc`;
+     sem a lista, não testa); senão, o outro pessoa e o objeto sem o od 40
+     `0x4000` ("Low Small Object"): **o círculo de raio 0,3** em volta da
+     pessoa contra a pegada do objeto (`FUN_0154da9c` / BV `0x15b2448` →
+     `0x15b2090`: dentro de 0,3 nos dois eixos e, no canto, a menos de 0,3 do
+     canto); senão (flags 0), o objeto não pessoa contra uma porta diagonal:
+     a pegada dele contra as 0 e 2 da porta; senão **as duas pegadas**
+     (`FUN_0154d88c` / BV `0x191f914` → `0x191f43c`: algum retângulo não vazio
+     de uma cruza, estrito, um não vazio da outra) → `0x0C`;
+4. objeto que não é pessoa (ou com a flag 2): o anel 5×5 em volta do 3×3,
+   **só portas diagonais**: o objeto ou o outro porta diagonal, nenhum dos
+   dois `CanIntersectObjects`, nenhuma árvore 5 deixa, uma camada; a pegada
+   contra as 0 e 2 da porta → `0x0C`.
+
+**A camada de visibilidade do piso** (`cWorldDB +0x9c`, um byte por quarto;
+`SetFloorVisibility` BV `0xd8ed4`, slot `0x48`; `FloorVisible` `0xd29bc`).
+Quem a escreve: o objeto do grafo de cena, em
+`nTSSG::cObject::UpdateVisibilityAndRendering` (BV `0x661e5c`), quando o od 34
+& `0x25` muda: `SetFloorVisibilityForHiddenObjects(visível = od 34 & 0x21 ==
+0)` (`0x661c28`) põe, para cada parte do grupo que `HidesFloorOnPlace`
+(vtable `0x220`, `+0xaa` bit 14 = **od 8 bit `0x4000` "Hide Floor"**, STR#
+`0x8E` #14), os quatro quartos do tile dela **invisíveis** enquanto o objeto
+está visível (e visíveis quando ele se esconde). No jogo base: a banheira
+de hidromassagem embutida (as 9 partes) e as janelas de dois andares. A
+piscina: `ModifyFloorVisibility` (`0x9adec8`; undoable `0x4c16786f`,
+`cTSUserToolUndoableFloorVisibility`) põe invisíveis os tiles do retângulo no
+andar dos cantos ao pôr (`UserPlaceDeckFoundation`, `b = 1` → `!b`) e visíveis
+ao apagar. Há também uma ferramenta `cTSUserToolFloorVisibility` (BV
+`0x3644cc`). Quem a lê na colocação: `HasFloorTest(tile, máscara, todos,
+visível)` (`FUN_000d2798`): com "todos", cada quarto da máscara com piso **e**
+visível; com "algum", o primeiro quarto com piso basta (a visibilidade nem é
+lida). Os slots do `cWorldDB` (vtable `0x27a326c`): `0xb0` = (todos,
+visível do argumento), `0xb4` = (algum), `0xb8` = no nível 0 sempre sim, senão
+(todos), `0xbc` = no nível 0 sempre sim, senão (algum). O piso do
+`TestPlacementCommon` é `0xb8(tile, 0xF, !HidesFloorOnPlace)` (base `0x90`):
+fora do térreo, um tile sob um objeto "Hide Floor" não tem piso para outro
+objeto (`0x8E`). Os outros bits do od 8: `0x1000` "Remove Floor"
+(`RemovesFloorOnPlace`, vtable `0x224`: as partes de cima das escadarias) e
+`0x2000` "Add Floor if Required" (portas e portões).
+
+**`TestPlacementCommon`, base 1.0 `FUN_00ffc9b0`** (os códigos do base são
+os do BV com 4 a menos de `0x88` em diante: base `0x8A` = BV `0x8E`, `0x88/0x89`
+= `0x8C/0x8D`, `0x8B` = `0x8F`, `0x8C` = `0x90`, `0x75` = `0x79`; o app usa os
+do BV): 1 `WorldDB 0xc4(x, y)` (no mundo) → 2; 2 nível do lote → 3; 3 pessoa:
+piso (`0x90(tile, quarto, 1)`) salvo p&`0x200`, e não sobre piscina; objeto:
+salvo p&`0x200`, `0x90(tile, 0xF, !HidesFloorOnPlace)` e não sobre piscina
+(`FUN_01036c90`, o andar de baixo com marcador de piscina) → `0x8E` (o
+`TileHasFloorFromObject` do BV, od 98 bit 1 dos elevadores, e o p2&4 não
+existem no base); com p&`0x2000` e um moirão de cerca no lugar, os testes 4,
+5 e 7 não se aplicam; 4 parte na água (`IsPartWater`: algum vértice
+`IsWaterVertex`, só no térreo, BV `0xd25d8`) sem p&4 nem p&`0x4000` →
+`0x90`; 5 tile de piscina sem p&`0x800` → `0x8F`; 6 `IsFlat` sem p&`0x100` →
+`0x12`; 7, salvo tile todo na água (`IsAllWater`), de piscina ou sobre
+piscina: algum quarto com piso (`0xb4`) sem p&1 → `0x8C`, terreno (`0xb8` e
+não `0xb0(tile, 0xF, visível)`: no térreo, sem os quatro quartos com piso e
+visíveis) sem p&2 → `0x8D` (sem a exceção de p&`0x200` que o app tinha); 8 od
+30 (1 só fora → `0x0A`, 2 só dentro → `0x0B`; a sala de `0xe4(lugar)`, não
+feito); 9 tile travado → 2; 10 p&`0x2000` sem moirão de cerca no lugar (o
+`0xec` do gerente de partições e `PartitionStyleIsFence`) → `0x79`; 11
+altura livre e teto (`0x2F`, `0x30`, não feitos salvo a escadaria). O
+`IntersectsWalls` das paredes é pulado com p&`0x400` ou p&`0x2000`.
+
+**No código (rodada n48).** `vm::checkPlacement` faz o
+`TestPlacementWithRespectToObjects` do base para a compra **e** para o Create
+New Object Instance (antes a compra usava camadas por tile, inferido): as
+pegadas de cada parte são tiradas no lugar testado (o grupo é posto lá só
+para a leitura; uma parte já no tile testado fica onde está),
+`VM::indexedFootprint` dá as listas 0 e 2 das portas; o piso visível vem dos
+objetos "Hide Floor" no mundo (`floorHidden`); a água, o piso/terreno e o
+moirão (as `fencePosts` do lote) com a geometria do lote
+(`VM::placementLot`); uma parede com porta conta como parede (o mundo do VM
+a abre para as rotas). `s2pkg placement-sweep` (os 12.930 objetos dos 62
+lotes testados onde estão, com a geometria; `S2PKG_SWEEP_WHY=all` lista cada
+recusa): **antes** cabiam 11.362 (`0x02` 571, `0x07` 781 — as portas,
+`0x08` 19, `0x0C` 122, `0x12` 14, `0x8E` 61); **depois** 12.266 (`0x02` 571 —
+os portais, a caixa de correio e o lixo da faixa da rua, que o jogo põe sem
+teste —, `0x07` 1, `0x08` 12, `0x0C` 39 — flores e arbustos no mesmo tile,
+postos pelos autores dos lotes —, `0x12` 14, `0x8C` 15 — flores sobre piso —,
+`0x8D` 10, `0x8E` 2). As plantas de lago passaram (o tile todo na água), as
+lâmpadas de moirão também. No `tests/buy_place.sh` a cadeira não vai mais no
+tile da porta do tutorial (as pegadas das partes da porta tomam os dois
+tiles, como no jogo). Bateria (14 sementes × 12.000 ticks, `s2pkg autonomy`):
+N001_Lot68 autônomas terminadas verdadeiras 638 → 641, falsas 19 → 19;
+N001_Lot11 a mesma saída. A diferença vem dos `ReserveTile (Passable)` que o
+Create New Object Instance agora põe sob um Sim (a árvore 5 deixa).
+
 ---
 
 ## 8. Base vs BV
