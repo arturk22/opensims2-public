@@ -2900,8 +2900,10 @@ existem no base); com p&`0x2000` e um moirão de cerca no lugar, os testes 4,
 piscina: algum quarto com piso (`0xb4`) sem p&1 → `0x8C`, terreno (`0xb8` e
 não `0xb0(tile, 0xF, visível)`: no térreo, sem os quatro quartos com piso e
 visíveis) sem p&2 → `0x8D` (sem a exceção de p&`0x200` que o app tinha); 8 od
-30 (1 só fora → `0x0A`, 2 só dentro → `0x0B`; a sala de `0xe4(lugar)`, não
-feito); 9 tile travado → 2; 10 p&`0x2000` sem moirão de cerca no lugar (o
+30 (1 só fora → `0x0A`, 2 só dentro → `0x0B`: a sala de definição 0 do
+gerente de partições no lugar, `0xe4(lugar, 0, 0)`, fora quando é 0,
+`FUN_0154dda4`; o BV usa a definição 1 para o "só dentro", `0x13c(lugar, 1,
+0)`; feito na n48 com o 3ARY `0x0B` no quarto do lugar); 9 tile travado → 2; 10 p&`0x2000` sem moirão de cerca no lugar (o
 `0xec` do gerente de partições e `PartitionStyleIsFence`) → `0x79`; 11
 altura livre e teto (`0x2F`, `0x30`, não feitos salvo a escadaria). O
 `IntersectsWalls` das paredes é pulado com p&`0x400` ou p&`0x2000`.
@@ -2923,7 +2925,12 @@ os portais, a caixa de correio e o lixo da faixa da rua, que o jogo põe sem
 teste —, `0x07` 1, `0x08` 12, `0x0C` 39 — flores e arbustos no mesmo tile,
 postos pelos autores dos lotes —, `0x12` 14, `0x8C` 15 — flores sobre piso —,
 `0x8D` 10, `0x8E` 2). As plantas de lago passaram (o tile todo na água), as
-lâmpadas de moirão também. No `tests/buy_place.sh` a cadeira não vai mais no
+lâmpadas de moirão também. Com o od 30 (a sala de definição 0, 3ARY `0x0B`, em
+que o quintal cercado é fora): 12.231, os 35 novos `0x0B` são luminárias de
+teto e plantas penduradas "só dentro" em varandas sem paredes (as três salas
+do lote dão 0 ali), postas pelos autores dos lotes; pela sala do 3ARY `0x09` (o
+quintal cercado é sala) 604 árvores e arbustos davam `0x0A`. Sem a geometria
+do lote o teste não é feito. No `tests/buy_place.sh` a cadeira não vai mais no
 tile da porta do tutorial (as pegadas das partes da porta tomam os dois
 tiles, como no jogo). Bateria (14 sementes × 12.000 ticks, `s2pkg autonomy`):
 N001_Lot68 autônomas terminadas verdadeiras 638 → 641, falsas 19 → 19;
