@@ -942,8 +942,8 @@ Footprint doorFootprint(const Object& o, int index) {
 struct ModelFootprints {
     // list name -> tile -> 8 rows of 8 cells
     std::map<std::string, std::map<std::pair<int, int>, std::array<uint8_t, 8>>> lists;
-    // Without a list: the model's box in its xy plane (model space, tiles),
-    // the shadow planes left out; box[0] > box[2] when the model has none.
+    // Without a list: the model's box in its xy plane (model space, tiles):
+    // its shapes' bounds; box[0] > box[2] when the model has none.
     std::array<float, 4> box{1, 1, 0, 0};
 };
 
@@ -1026,15 +1026,21 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
                     break;
                 }
                 // No "footprint" list: the cObject's box of the model (BV
-                // 0x658ab8: the model's bounds, cut to the tile below).
+                // 0x658ab8 -> FUN_00a45e54 with -1, every node: the union of
+                // the boxes of the nodes with flag 4, the cShapeRefNodes (the
+                // bit cShapeRefNodeT's constructor sets, BV 0x1b1ab78), not
+                // hidden (0x114) and bounded (0x180), in the object's space:
+                // the shapes' bounds, the GMDCs' bounding meshes,
+                // ObjectModel::bounds; docs/routing-mac.md §9.5), cut to the
+                // tile below.
                 if (!fp) {
                     fp = std::make_shared<ModelFootprints>();
                     const ObjectModel model = loadObjectModel(*index, cres);
                     auto& b = fp->box;
                     b = {1e9f, 1e9f, -1e9f, -1e9f};
-                    for (const ObjectModel::Part& part : model.parts)
-                        if (!part.shadowPlane)
-                            for (const auto& v : part.mesh.positions)
+                    for (const ObjectModel::Bound& bound : model.bounds)
+                        if (!bound.hidden)
+                            for (const auto& v : bound.points)
                                 b = {std::min(b[0], v[0]), std::min(b[1], v[1]), std::max(b[2], v[0]), std::max(b[3], v[1])};
                 }
             }
@@ -1062,9 +1068,8 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
 // binary's FUN_0191fa14 turns by direction & 6). A list without the part's
 // tile gives no rectangle (the bench of a piano has a tile with part of a
 // row). A model without a footprint list gives its box (the xy bounds of
-// its meshes, the shadow planes left out: inferred) cut to the part's tile,
-// as the scene graph's cObject does (BV 0x658ab8); without a model, the OBJD
-// box.
+// its shapes' bounds, round n49) cut to the part's tile, as the scene
+// graph's cObject does (BV 0x658ab8); without a model, the OBJD box.
 namespace {
 
 // The part's tile in the model: cEdithMTObject::GetLocalOffsetFromLeader
