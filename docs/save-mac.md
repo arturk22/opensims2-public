@@ -641,11 +641,11 @@ supunha está confirmada. O nosso save já grava os inventários no NGBH desde a
 rodada 16 (`vm/hood_save.cpp`): a linha "faltando" do inventário estava
 desatualizada.
 
-O que continua sem nome: o
-`cTSObject::Read` que, para um objeto com a flag +0x180 bit 0 no lote dele,
-lê e descarta 6 u32 + u16 depois dos timers (nunca acontece nos lotes do
-jogo), e o que o jogo faz com os campos 4–7 do token temporário fora da
-leitura de um token (só cópias; escrever neles não muda o token).
+O que continua sem nome: quem são os dois campos do `cTSObject::Read` que,
+quando batem, fazem ler e descartar 6 u32 + u16 depois dos timers (§9.5;
+nunca acontece nos lotes do jogo), e o que o jogo faz com os campos 4–7 do
+token temporário fora da leitura de um token (só cópias; escrever neles não
+muda o token).
 
 **No código (rodada n09).** `LotObjects::State` dá nome a tudo isso
 (`stepOverPortal`, `tempTokenFields` 0–7, `arrayIterators`, `Timer::{id,
@@ -780,7 +780,7 @@ números batem: lotes 26/26, 11/11, 26/26, 6/6; famílias 11/11, 10/10, 10/10
 (o Tutorial, 5 de 7); vizinhos 175/175, 184/184, 186/186, 39/39; as três
 listas sempre em ordem crescente.
 
-### 9.4 Os campos do NGBH
+### 9.4 Os campos do NGBH e o dono 0x22
 
 `+0x34`/`+0x38` (base `+0x30`/`+0x34`) são `cTSNeighborhood::TileCountX`/
 `TileCountY` (BV `0x4d6a98`/`0x4d6aa0`), postos por `SetSize`
@@ -801,3 +801,53 @@ de erro dos dois binários) e lê pelo getter do bairro (vtable 0x44 no base,
 o dono 0x22 aparece uma vez só, lido (o dado 2, "Main - Process - Do
 Generate", grupo `0x7F17187C`). No app (rodada n47) o dono é só de leitura,
 1–15.
+
+### 9.5 As sobras do `cTSObject` (rodada n47)
+
+- **Os 6 u32 + u16 depois dos timers** (`cTSObject::Read`, base `0xb34e10`,
+  BV `0xb14cb0`): lidos e descartados quando o contexto do stream (vtable
+  0x90 no base, 0x94 no BV) devolve o mesmo valor do campo `+0x1F0` (base;
+  `+0x224` no BV) do objeto **e** o bit 0 de `+0x150` (base; `+0x180` no BV)
+  está ligado; nos outros casos o `Read` grava o **dado de objeto 19** (lead
+  tile) = o próprio ID (`+0x18C` base, `+0x1BC` BV), que o XMTO depois troca
+  pelo líder, como o app já faz (`instantiatePart`, `vm/lot.cpp`). Quem são o
+  `+0x1F0` e o bit 0 não foi lido (**inferido**: o objeto "deste lote" com
+  alguma marca); não acontece nos 69 lotes do jogo.
+- **`PersonalInventoryRead`/`Write`** (BV `0xb15d40`/`0xb0c208`, vtable
+  0x46C/0x468 do `cTSObject`): o estado do objeto (`Read`/`Write`), um
+  bloco da vtable 0x4BC → 0x90 e, se pedido, o `cObject` (`0xFA1C39F7`,
+  vtable 0x190/0x194), para os objetos guardados no inventário pessoal de um
+  Sim. É de expansão: as árvores "CT - Can Be Put In Personal Inventory" e
+  companhia só existem no BV (no base só a string "Personal Inventory for
+  Person"), e o base não tem os slots. Nada a portar.
+
+### 9.6 No código (rodada n47)
+
+- **`DbpfWriter`** (`formats/dbpf.*`): o tipo de chave do `DetermineKeyType`
+  (sem instância alta: entradas de 20 bytes, 1 em 0x3C e DIR de 16 bytes;
+  os pacotes de bairro gravados pelo app agora são como os do jogo) e a
+  compressão da regra do pacote (≥ 50, ≤ 16.000.000, < 0,8, nunca o DIR);
+  os gravadores do save oferecem à compressão tudo o que gravam, como o
+  "comprimir todos" do jogo. Cabeçalho 1.1 com datas 0, como já era.
+- **`saveGame`** (`app/game_save.*`): lote, personagens e bairro em
+  temporários e trocados no fim (o do bairro, o do lote, os personagens),
+  como o commit da lista; uma falha deixa todos os velhos.
+- **`saveNeighborhood`** (`vm/hood_save.cpp`): o NGBH sempre regravado, com o
+  `SanifyInventories` (`hood::NeighborhoodInventories::sanify`) e as listas
+  por ID; `tilesX`/`tilesY` e `flagFD` com nome.
+- **Dono 0x22** (`vm/vm.cpp`): só leitura, 1–15, erros 0x3C e 0x13.
+- **Diferente de propósito**: o app reescreve o arquivo inteiro, como uma
+  compactação do jogo (sem buracos; a ordem dos dados, do índice e do DIR é
+  a de gravação, que nenhum leitor usa), e o nosso QFS comprime um pouco
+  menos (recursos entre ~0,75 e 0,8 ficam sem compressão).
+- **Não portado**: as duas marcas do salvar forçado (os vizinhos dos
+  objetos `0x2ED43D0D` do lote e o pedido dos LotInfo, vtable 0x6C, que faz
+  regravar os personagens de todas as famílias: o app grava os SDSC que a VM
+  mudou e os personagens da sessão); o inventário zerado de um vizinho cuja
+  definição é um modelo (o pacote do bairro não diz quem é modelo).
+
+Provas: `ctest` 61 de 61; `hood-save --ticks 300 --check`: N001 26/26, N002
+10/10, N003 26/26, Tutorial 5/6 (o quadro 111 vs 110 do piano no
+Tutorial_Lot19 é o mesmo antes da mudança); `play-loop` N001 lote 11, 3.000
+ticks e um nascimento: igual depois de recarregar; os NGBH gravados com uma
+entrada por lote, família e vizinho, em ordem.
