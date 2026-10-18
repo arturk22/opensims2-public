@@ -562,12 +562,16 @@ Os nomes do symxfer nesta classe também erram; o que foi lido:
 **No código** (`src/formats/lot_water.*`, `addWater` e a lista de pinturas
 em `lot_model.cpp`, o tipo `TerrainWater` em `model.cpp`/`renderer.cpp`):
 a curva e as três pinturas são as do binário, com o `Terrain.ini` lido; a
-água é só o reflexo com o alfa do vértice. **Inferido**: os quads da água
-sem o vértice do centro (o terreno nosso também é de 2 triângulos por
-tile), a ordem das três pinturas (depois das do lote), a grade da pintura
-quando o lote não tem pintura (4 pontos por tile). **Falta**: a passada 2
-(as duas texturas de bump animadas multiplicadas). Antes e depois:
-`docs/screenshots/n06-agua-lago-antes-depois.jpg` (N001_Lot79).
+passada 1 é o reflexo com o alfa do vértice e a passada 2 (rodada n50,
+§3.3) os dois normal maps multiplicados por cima, juntadas numa só mistura
+no shader (`kWaterBump`: a = 0,3 + 0,7·a₁, cor = (0,3·bump + 0,7·a₁·reflexo)
+/ a). **Inferido**: os quads da água sem o vértice do centro (o terreno
+nosso também é de 2 triângulos por tile), a ordem das três pinturas
+(depois das do lote), a grade da pintura quando o lote não tem pintura (4
+pontos por tile), o uv da malha e a escala/ordem da animação da passada 2
+(§3.3). Antes e depois: `docs/screenshots/n06-agua-lago-antes-depois.jpg`
+(N001_Lot79, a rodada n06), `docs/screenshots/n50-agua-lago-antes-depois.jpg`
+(a passada 2: o lago vai do cinza ao azul-lilás).
 
 ### 3.2 Piscina (`nTSSG::cPoolGeometryNode`)
 
@@ -597,11 +601,23 @@ médios, na altura do `SampledFloorElevation`):
 
 **No código** (`addWater`, materiais `PoolWaterSurface`/`PoolWaterLayer`,
 modo `kPoolWater` do shader): superfície e camadas como acima (grade 3 × 3
-por tile). **Inferido**: as coordenadas das camadas (parede = canto
-transparente, resto = centro), o tempo das ondas em segundos, a "primeira
-luz" = a primeira luz do estado (o `sun`); à noite o brilho do `sun` da
-noite fica grande e branco nesta vista, como a conta manda. **Falta**: as
-cáusticas. Antes e depois: `docs/screenshots/n06-piscina-antes-depois.jpg`.
+por tile); as ondas pelo `frameInfo.w` do jogo, o tempo em segundos módulo
+30 (`Frame::params.w`, §3.3); as cáusticas (rodada n50, §3.3): os 32
+quadros do `causticsTiled` como texturas de 64 × 64
+(`Renderer::loadCaustics`, o quadro floor(32·frac(t)) na textura 22), somados
+nos pisos `FloorPool` e nas paredes da piscina azul vezes o v do papel
+(`kCausticsFloor`/`kCausticsWall` do `Draw::flags2`, com
+`GraphicsOptions::caustics`). **Inferido**: as coordenadas das camadas
+(parede = canto transparente, resto = centro; os valores em
+`0x2c1f584..0x2c1f594` são escritos em tempo de execução e quem os escreve
+não foi achado), a "primeira luz" = a primeira luz do estado (o `sun`; à
+noite o brilho do `sun` da noite fica grande e branco nesta vista, como a
+conta manda), o espaço global = o do lote (um deslocamento só mudaria a
+fase das cáusticas), o quadro copiado em vez de amostrado (o alvo de 64 ×
+64 do jogo com o meio texel do D3D9). Antes e depois:
+`docs/screenshots/n06-piscina-antes-depois.jpg`,
+`docs/screenshots/n50-agua-piscina-antes-depois.jpg` (N001_Lot68: as
+cáusticas no fundo e nas paredes).
 
 ### 3.3 Cáusticas, bump da água e o relógio dos shaders (rodada n50)
 
@@ -662,16 +678,20 @@ múltiplo de 2π), como no jogo.
   `allTextureLights` quando há luz de textura; o `def c2, 1,1,1,1` do
   ps_1_1 apaga o `causticsStrength` que o `bindConstants 2` punha; sem
   normal map nesse caminho). Tiles: `textureAddressing tile`.
-- **Paredes**: o tipo `WallpaperPool` com `tsCausticsPass 1` (os dois TXMT
-  `wall_poolroundedlipblue` e `wall_poolsquarelipgreen`). O motor junta
-  papel e máscara no `WallpaperAndMask` e **copia o `tsCausticsPass` do
-  papel** para o material combinado (BV `0x6c18a8` lê pela vtable `0x5c`
-  os nomes da tabela `0x27e1ba8`: `tsMirrorWallMask`,
-  `stdMatBaseTextureParam`, `tsRenderStyle`, `tsCausticsPass`, ...;
-  `0x6c1c40` o grava pela `0x30`; base 1.0 `0xad7f08` lê e `0xad8240`
-  grava o mesmo); o `strcmp` com `wall-poolroundedlipblue-base` do
-  `WallpaperAndMask` é a mais. As paredes não testam `causticsEnabled` (só
-  `tsCausticsPass`, sem destaque e com pixel shader). No
+- **Paredes**: o motor junta papel e máscara no `WallpaperAndMask` e
+  **copia o `tsCausticsPass` do papel** para o material combinado (BV
+  `0x6c18a8` lê pela vtable `0x5c` os nomes da tabela `0x27e1ba8`:
+  `tsMirrorWallMask`, `stdMatBaseTextureParam`, `tsRenderStyle`,
+  `tsCausticsPass`, ...; `0x6c1c40` o grava pela `0x30`; base 1.0 `0xad7f08`
+  lê e `0xad8240` grava o mesmo); o `WallpaperAndMask` também o liga quando
+  o papel é `wall-poolroundedlipblue-base` (`strcmp`). Só os dois TXMT
+  `WallpaperPool` (`wall_poolroundedlipblue`, `wall_poolsquarelipgreen`) têm
+  a flag, mas as paredes das piscinas dos lotes são os TXMT `_base`
+  (`wall_poolroundedlipblue_base`, `wall_poolsquarelipgreen_base`, tipo
+  `Wallpaper`, sem a flag): **só a piscina azul recebe cáusticas nas
+  paredes**, pelo `strcmp`; a verde só no fundo. As paredes não testam
+  `causticsEnabled` (só `tsCausticsPass`, sem destaque e com pixel
+  shader). No
   `PS1BasicWallRendering` com light map: `cor = 2·papel·lightmap +
   causticsTile(u, v) · v₀`, com o mesmo u, v e **v₀ = o v da coordenada de
   textura 0 do papel** (`mov oD0, v2.y`; "wall height, so caustics can
@@ -690,18 +710,14 @@ outRegister)`; estágio 3 `multiply(outRegister colorScalar)
 select(colorScalar)`: **cor = bump1 · bump2 · (1,1,1) × luz de textura,
 alfa constante 0,3** (não o alfa da profundidade). As duas texturas são
 `Raw8` de 128 × 128, alturas 245–255 (`cImageData::PixelFormat` BV
-`0xc97358`: o formato 6 é luminância 8 bits). **Inferido:** que chegam à
-placa já convertidas em normal map, como os outros `-bump` (o base 1.0 tem
-a conversão no serviço de imagem, vtable `0x158ac00` entrada `0x34`
-`0x10a410`, com o bump scale; o compositor de pele converte o formato 6
-antes de usar, `FUN_0020c3a8`; quem a chama para as texturas de material
-não foi achado): a cor da passada é então a do normal map (≈ (0,5, 0,5,
-1) cada, (0,25, 0,25, 1) o produto: um véu azul a 30%); se não fossem
-convertidas seria um véu branco. A escala do `-ascale` com um vetor só é
-lida como constante 4 (inferido), a ordem da matriz é a das outras
-animações de textura do app (escala na origem, depois a translação), e o
-uv da malha da água é o nosso (x/4, y/4; o do `cWaterGeometryBuilder` não
-foi achado).
+`0xc97358`: o formato 6 é luminância 8 bits), e o envio de textura do base
+1.0 converte **toda** TXTR de formato 6 em normal map com o bump scale
+(`FUN_00322058`, `shaders-mac.md` §13.5): a cor da passada é a do normal
+map (≈ (128, 128, 254) cada, o produto ≈ (0,25, 0,25, 1): um véu azul a
+30% com um relevo quase plano). **Inferido:** a escala do `-ascale` com um
+vetor só, lida como constante 4; a ordem da matriz, a das outras animações
+de textura do app (escala na origem, depois a translação); o uv da malha
+da água, o nosso (x/4, y/4: o do `cWaterGeometryBuilder` não foi achado).
 
 ## 4. Sombras de objetos
 

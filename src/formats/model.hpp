@@ -218,6 +218,15 @@ struct StandardMaterial {
     // PoolWater: water.matShad's wave constants (wmXRepeat, wmYRepeat,
     // wmXWaveHeight, wmXSpeed; the Y height and speed are the X ones here).
     std::array<float, 4> poolWaves{1, 1.8f, 0.1f, 3};
+    // The pool's caustics (docs/roof-fence-water-mac.md 3.3): the
+    // causticsTile added over a FloorPool floor (floorCausticsPass), or over
+    // a WallpaperPool wall (tsCausticsPass) times its paper's v.
+    enum class Caustics { None, Floor, Wall };
+    Caustics caustics = Caustics::None;
+    // TerrainWater's second pass (TerrainWaterShader(true), on hardware with
+    // pixel shaders: the Mac's): these two textures multiplied, animated
+    // (sine translation at 0.04 Hz, scale 4), alpha 0.3; empty: none.
+    std::array<std::string, 2> waterBump;
 };
 StandardMaterial standardMaterial(const MaterialDefinition& m);
 

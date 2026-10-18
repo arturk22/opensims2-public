@@ -313,6 +313,12 @@ private:
     MTL::SamplerState* pointSampler_ = nullptr; // clamped, nearest (cel shading ramps)
     MTL::Texture* white_ = nullptr;
     MTL::Texture* whiteCube_ = nullptr;
+    // The pool's caustics (docs/roof-fence-water-mac.md 3.3): the 32 frames
+    // of causticsTiled (8 x 4 of 64 x 64), the causticsTile the game's
+    // generator draws frame by frame; owned, loaded with the first material
+    // that shows them.
+    std::array<MTL::Texture*, 32> causticFrames_{};
+    void loadCaustics(ResourceIndex& index);
     std::map<std::string, MTL::Texture*> textures_; // by TXTR name; null if it failed to load
     std::vector<std::unique_ptr<Model>> models_;
     struct Instance {

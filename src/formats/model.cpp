@@ -375,6 +375,17 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         normalEnabled = false;
         if (type.rfind("Wallpaper", 0) == 0)
             diffuse = {1, 1, 1, 1};
+        // The pool's caustics (docs/roof-fence-water-mac.md 3.3): FloorPool's
+        // floorCausticsPass; on walls tsCausticsPass (WallpaperPool's, which
+        // the engine copies into the combined WallpaperAndMask material) or
+        // WallpaperAndMask's own test of the paper "wall-poolroundedlipblue-base"
+        // (the lots' pool walls are the "_base" Wallpaper TXMTs, without the flag:
+        // only the blue pool's get them).
+        if (type.rfind("Floor", 0) == 0 && flag("floorCausticsPass", false))
+            out.caustics = StandardMaterial::Caustics::Floor;
+        if (type.rfind("Wallpaper", 0) == 0 &&
+            (flag("tsCausticsPass", false) || m.property("stdMatBaseTextureName") == "wall-poolroundedlipblue-base"))
+            out.caustics = StandardMaterial::Caustics::Wall;
         if (type == "Terrain") {
             out.textureScale = number("osTextureScale", 1);
             if (auto d = m.property("osDetailTextureName"); !d.empty())
@@ -461,6 +472,10 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         out.specularPower = 0;
         diffuse = {0, 0, 0, 1};
         out.untexturedAlpha = 1;
+        // TerrainWater() creates TerrainWaterShader(true) first when the
+        // device has pixel shaders (maxPixelProgramVersionMajor 1 on the Mac):
+        // its second pass multiplies these two (docs/roof-fence-water-mac.md 3.3).
+        out.waterBump = {"water-1-bump_txtr", "water-2-bump_txtr"};
     } else if (type == "PoolWaterSurface") {
         // water.matShad poolWater-1 (PoolWaterSurfaceMaterial): the Mac's DX8
         // path is RegularWavesHLSL (docs/shaders-mac.md 1.2): one + one, the

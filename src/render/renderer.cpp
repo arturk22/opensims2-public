@@ -104,6 +104,14 @@ struct Draw {
     float alphaRef;
     uint32_t flags;
     uint32_t lightSet;
+    uint32_t flags2; // more flags (below)
+};
+
+// Draw::flags2 (must match shaders.metal).
+enum : uint32_t {
+    kCausticsFloor = 1, // + the causticsTile (texture 22) at 0.3 x (x - y, x + y + z) of the world
+    kCausticsWall = 2,  // ...times the paper's v (uv 0)
+    kWaterBump = 4,     // TerrainWater's pass 2: textures 5 x 12 (animated), alpha 0.3, over pass 1
 };
 
 // CelShaded's options, a bit field in misc.w (must match shaders.metal).
@@ -274,6 +282,7 @@ struct Renderer::Material {
     simd_float4 maskV{0, 0, 0, 0};         // kWallMask: model xyz -> mask v (maskTransform: -> u)
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
+    uint32_t flags2 = 0; // Draw::flags2
     StandardMaterial::Blend blend = StandardMaterial::Blend::None;
     bool depthWrite = true;
     bool clamp = false; // base texture clamped instead of tiled
@@ -503,6 +512,9 @@ Renderer::~Renderer() {
     for (int i = 0; i < kFramesInFlight; ++i)
         dispatch_semaphore_signal(sema(inFlight_));
     models_.clear();
+    for (auto* t : causticFrames_)
+        if (t)
+            t->release();
     if (shadowAtlas_)
         shadowAtlas_->release();
     if (shadowDepth_)
@@ -687,6 +699,24 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
             mat.height = t;
             mat.flags |= kNormalMap;
         }
+    // The pool's caustics (docs/roof-fence-water-mac.md 3.3): the
+    // causticsTile exists while causticsEnabled holds (its generator's
+    // condition); the floors also ask for it, the walls only for
+    // tsCausticsPass.
+    if (sm.caustics != StandardMaterial::Caustics::None && graphicsOptions().caustics) {
+        loadCaustics(index);
+        if (causticFrames_[0])
+            mat.flags2 |= sm.caustics == StandardMaterial::Caustics::Floor ? kCausticsFloor : kCausticsWall;
+    }
+    // TerrainWater's second pass: the two bump textures at 5 and 12 (the
+    // height map and detail slots, unused by this material).
+    if (!sm.waterBump[0].empty())
+        if (MTL::Texture* a = texture(sm.waterBump[0], index))
+            if (MTL::Texture* b = texture(sm.waterBump[1], index)) {
+                mat.height = a;
+                mat.detail = b;
+                mat.flags2 |= kWaterBump;
+            }
     if (sm.shading == StandardMaterial::Shading::CelShaded) {
         // celShading.matShad (docs/shaders-mac.md 13.4): misc = (edge
         // offset, edge light damping, shininess, options).
@@ -905,6 +935,37 @@ void Renderer::setDynamicTexture(const std::string& name, const RgbaImage& image
                        size_t(image.width) * 4);
 }
 
+void Renderer::loadCaustics(ResourceIndex& index) {
+    if (causticFrames_[0])
+        return;
+    try {
+        auto loc = index.findByName("causticstiled_txtr", kTypeTxtr);
+        if (!loc)
+            throw std::runtime_error("not found");
+        const TextureLevels levels = loadTextureLevels(index.read(*loc), &index);
+        const auto& top = levels.levels.front();
+        const RgbaImage atlas = decodeTexture(levels.format, top.width, top.height, top.data);
+        const uint32_t w = atlas.width / 8, h = atlas.height / 4;
+        if (!w || !h)
+            throw std::runtime_error("too small");
+        std::vector<uint8_t> frame(size_t(w) * h * 4);
+        for (size_t k = 0; k < causticFrames_.size(); ++k) {
+            const uint32_t x0 = uint32_t(k % 8) * w, y0 = uint32_t(k / 8) * h;
+            for (uint32_t y = 0; y < h; ++y)
+                std::memcpy(&frame[size_t(y) * w * 4], &atlas.pixels[(size_t(y0 + y) * atlas.width + x0) * 4],
+                            size_t(w) * 4);
+            causticFrames_[k] = rgbaTexture({w, h, frame});
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: causticstiled_txtr: %s\n", e.what());
+        for (auto*& t : causticFrames_)
+            if (t) {
+                t->release();
+                t = nullptr;
+            }
+    }
+}
+
 MTL::Texture* Renderer::rgbaTexture(const RgbaImage& image) {
     MTL::TextureDescriptor* d = MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm, image.width,
                                                                             image.height, false);
@@ -1100,7 +1161,10 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         }
     }
     const double now = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
-    f->params = simd_make_float4(std::clamp(lightMapMix_, 0.0f, 1.0f), float(std::fmod(now, 3600.0)), 0, 0);
+    // w: the shaders' frameInfo.w, the time modulo frameTimeModulus (30 s;
+    // BV ApplyDynamicShaderConstantBinding 0x1b25c0c, docs/roof-fence-water-mac.md 3.3).
+    f->params = simd_make_float4(std::clamp(lightMapMix_, 0.0f, 1.0f), float(std::fmod(now, 3600.0)), 0,
+                                 float(std::fmod(now, 30.0)));
     f->environment = simd_make_float4(environment_, 1);
     // Light maps replaced a few frames ago are no longer read.
     for (auto& r : retired_)
@@ -1372,6 +1436,11 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     f->params.z = float(shadowCount);
 
     const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+    // The causticsTile's frame: TiledTextureAnimShaderProgram(8 4 1) of
+    // water.matShad, f = frac(frameInfo.w), row floor(4f), column
+    // floor(8 frac(4f)): frame floor(32f), 32 a second.
+    const double tw = std::fmod(t, 30.0);
+    const size_t causticFrame = std::min<size_t>(31, size_t(std::floor((tw - std::floor(tw)) * 32.0)));
     // What every draw of a pass reads: the Frame of `frameSlot`, lights,
     // samplers, light maps, the reflection (only in the view) and shadows.
     auto bindPass = [&](MTL::RenderCommandEncoder* enc, bool reflected, size_t frameSlot) {
@@ -1386,6 +1455,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentTexture(lightMap1, 11);
         enc->setFragmentTexture(!mirrors.empty() && !reflected ? reflectionColor_ : white_, 18);
         enc->setFragmentTexture(shadowCount ? shadowAtlas_ : white_, 19);
+        enc->setFragmentTexture(causticFrames_[causticFrame] ? causticFrames_[causticFrame] : white_, 22);
         enc->setFragmentBuffer(shadowCount ? shadowBuffers_[size_t(frame_)] : lightBuffers_[size_t(frame_)], 0, 4);
     };
     // One item's draw (its material's textures and Draw), `flags` for its own.
@@ -1399,7 +1469,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         color.w *= item.inst->alpha;
         const simd_float4 misc = item.outline ? simd_make_float4(m.outlineWidth, 0, 0, float(kCelOutlinePass)) : m.misc;
         Draw d{item.inst->transform, color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, misc,
-               m.maskV, m.alphaRef, flags, uint32_t(set)};
+               m.maskV, m.alphaRef, flags, uint32_t(set), item.outline ? 0u : m.flags2};
         enc->setVertexBytes(&d, sizeof d, 1);
         enc->setFragmentBytes(&d, sizeof d, 1);
         enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);

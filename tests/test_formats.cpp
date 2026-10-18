@@ -524,6 +524,31 @@ static void testStandardMaterial() {
     wallpaper.properties = {{"stdMatDiffCoef", "0.5,0.5,0.5,1"}};
     const auto wp = standardMaterial(wallpaper);
     check(wp.lightMapped && wp.diffuse[0] == 1, "walls are light-mapped and ignore the diffuse");
+    check(wp.caustics == StandardMaterial::Caustics::None && wp.waterBump[0].empty(), "no caustics on a plain wall");
+
+    // The pool's caustics (docs/roof-fence-water-mac.md 3.3): FloorPool's
+    // floorCausticsPass, a wall's tsCausticsPass or WallpaperAndMask's own
+    // test of the blue pool's paper (the lots' "_base" TXMTs have no flag).
+    MaterialDefinition poolFloor;
+    poolFloor.materialType = "FloorPool";
+    poolFloor.properties = {{"stdMatBaseTextureName", "floor-poolroundedlipblue"}, {"floorCausticsPass", "1"}};
+    check(standardMaterial(poolFloor).caustics == StandardMaterial::Caustics::Floor, "caustics: pool floor");
+    poolFloor.properties.pop_back();
+    check(standardMaterial(poolFloor).caustics == StandardMaterial::Caustics::None, "caustics: only with the flag");
+    MaterialDefinition poolWall;
+    poolWall.materialType = "Wallpaper";
+    poolWall.properties = {{"stdMatBaseTextureName", "wall-poolroundedlipblue-base"}};
+    check(standardMaterial(poolWall).caustics == StandardMaterial::Caustics::Wall, "caustics: the blue pool's wall");
+    poolWall.properties = {{"stdMatBaseTextureName", "wall-poolsquarelipgreen-base"}};
+    check(standardMaterial(poolWall).caustics == StandardMaterial::Caustics::None, "caustics: not the green pool's");
+    poolWall.materialType = "WallpaperPool";
+    poolWall.properties.push_back({"tsCausticsPass", "1"});
+    check(standardMaterial(poolWall).caustics == StandardMaterial::Caustics::Wall, "caustics: tsCausticsPass");
+    MaterialDefinition terrainWater;
+    terrainWater.materialType = "TerrainWater";
+    const auto ws = standardMaterial(terrainWater);
+    check(ws.waterBump[0] == "water-1-bump_txtr" && ws.waterBump[1] == "water-2-bump_txtr",
+          "terrain water: the second pass's bump textures");
 
     // standard.matShad defaults: no specular without a power; blended parts
     // go 7 layers up and stop writing depth.

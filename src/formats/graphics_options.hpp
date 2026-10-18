@@ -25,6 +25,10 @@ struct GraphicsOptions {
     bool nhoodWaterReflection = true;
     bool specHighlights = true;
     bool bumpMapping = true; // MaterialDetail $High (not in the options window yet)
+    // causticsEnabled: registered by cTSConfigMaterialSettings with true
+    // (base 1.0 FUN_001ab11c); Graphics Rules.sgr turns it off only on the
+    // weakest cards (docs/roof-fence-water-mac.md 3.3). The pool's caustics.
+    bool caustics = true;
 };
 
 inline GraphicsOptions& graphicsOptions() {

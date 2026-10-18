@@ -56,6 +56,14 @@ struct Draw {
     float alphaRef;
     uint flags;
     uint lightSet;   // index into the light sets (buffer 3)
+    uint flags2;     // more flags (below)
+};
+
+// Draw::flags2.
+enum : uint {
+    kCausticsFloor = 1, // + the causticsTile (texture 22) at 0.3 x (x - y, x + y + z) of the world
+    kCausticsWall = 2,  // ...times the paper's v (uv 0)
+    kWaterBump = 4,     // TerrainWater's pass 2: textures 5 x 12 (animated), alpha 0.3, over pass 1
 };
 
 constant uint kMaxLights = 16;
@@ -99,7 +107,7 @@ struct Frame {
     float4x4 viewProj;
     float4x4 view;
     float4 eye;      // xyz: camera position
-    float4 params;      // x: mix of light map 1 over light map 0, y: time in seconds
+    float4 params;      // x: mix of light map 1 over light map 0, y: time in seconds, z: shadows, w: time mod 30 (frameInfo.w)
     float4 environment; // rgb: the environment light, scaling env cube reflections
     float4 clip;        // a plane (xyz normal, w offset): what is behind it is clipped when viewport.z is 1
     float4 viewport;    // xy: the target's size in pixels, z: clip on, w: ground clip height (world z)
@@ -230,6 +238,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texture2d<float> shadowAtlas [[texture(19)]],
                               texture2d<float> cutout [[texture(20)]],
                               texture2d<float> specRamp [[texture(21)]],
+                              texture2d<float> caustics [[texture(22)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
@@ -351,7 +360,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         // position, z x height and time x speed) tilt the normal; one + one:
         // the env cube along R x (1 - N.V) x the texture lights x 0.5, plus
         // the highlight (saturate(R.L) + 0.1)^15 of the first light.
-        const float t = frame.params.y;
+        const float t = frame.params.w; // frameInfo.w: the time modulo 30 s
         const float tx = in.world.x * draw.misc.x + in.world.z * draw.misc.z + t * draw.misc.w;
         const float ty = in.world.y * draw.misc.y + in.world.z * draw.misc.z + t * draw.misc.w;
         const float3 wn = normalize(float3(cos(tx) * -draw.misc.x * draw.misc.z + n.x,
@@ -377,6 +386,18 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         const float3 lm = mix(lightMap0.sample(maskSmp, in.lightUv).rgb, lightMap1.sample(maskSmp, in.lightUv).rgb,
                               frame.params.x);
         color.rgb = saturate(2.0 * albedo * lm * draw.color.rgb);
+        // The pool's caustics (PixelShaderFloors / PS1BasicWallRendering,
+        // docs/roof-fence-water-mac.md 3.3): the causticsTile projected from
+        // the global position x 0.3 by the rows (1, -1, 0), (1, 1, 1), added
+        // (x the texture lights); on the pool's walls times the paper's v
+        // (oD0 = v of uv 0: 0 at the top, 1 a story down).
+        if (draw.flags2 & (kCausticsFloor | kCausticsWall)) {
+            const float3 g = in.world * 0.3;
+            float3 c = caustics.sample(smp, float2(g.x - g.y, g.x + g.y + g.z)).rgb * frame.environment.rgb;
+            if (draw.flags2 & kCausticsWall)
+                c *= saturate(in.uv.y);
+            color.rgb = saturate(color.rgb + c);
+        }
         // The Sims' shadows fall on floors and terrain (not on walls).
         if (frame.params.z > 0.5 && n.z > 0.7)
             color.rgb *= simShadows(in.world, uint(frame.params.z), shadows, shadowAtlas, maskSmp, false);
@@ -476,6 +497,22 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         }
         if (cut)
             color.a = cutAlpha;
+    }
+    if (draw.flags2 & kWaterBump) {
+        // TerrainWaterShader(true)'s second pass (terrain.matShad,
+        // docs/roof-fence-water-mac.md 3.3), folded into this one's blend:
+        // water-1-bump x water-2-bump at uv x 4 (waterbumpMapScale),
+        // translated along u by a 0.04 Hz sine from 0 to 1 and from 1 to 0,
+        // x the texture lights, alpha 0.3 (srcAlpha / invSrcAlpha after pass
+        // 1). The two "-bump" textures are on the card as the normal maps the
+        // game makes of them (the upload converts every 8-bit luminance TXTR):
+        // this fixed-function pass shows their colour.
+        const float k = 0.5 - 0.5 * cos(frame.params.y * 0.04 * 2.0 * M_PI_F);
+        const float2 uv = in.uv * 4.0;
+        const float3 b = height.sample(smp, uv + float2(k, 0)).rgb * detail.sample(smp, uv + float2(1.0 - k, 0)).rgb *
+                         frame.environment.rgb;
+        const float a = 0.3 + 0.7 * color.a;
+        color = float4((0.3 * b + 0.7 * color.a * color.rgb) / a, a);
     }
     return color;
 }
