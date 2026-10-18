@@ -342,6 +342,21 @@ static void testBhav() {
         threw = true;
     }
     check(threw, "BHAV rejects out-of-range branches");
+
+    // 0x8009 (Apartment Life and later) adds one header byte after the tree
+    // version: 0 in 28,988 of the AL package's 29,014 trees. Same tree parses.
+    std::vector<uint8_t> e(64, 0);
+    e.insert(e.end(), {0x09, 0x80, 2, 0, 0, 1, 2, 0, 0x0A, 0x80, 0xFF, 0xFF, 0x00});
+    auto push = [&](uint16_t op, uint16_t t, uint16_t f) {
+        e.insert(e.end(), {uint8_t(op), uint8_t(op >> 8), uint8_t(t), uint8_t(t >> 8), uint8_t(f), uint8_t(f >> 8), 0});
+        e.insert(e.end(), 16, 0);
+    };
+    push(0x0002, 1, 0xFFFE);      // Expression: true -> 1, false -> return false
+    push(0x2010, 0xFFFD, 0xFFFC); // semi-global call: true -> return true, false -> error
+    const auto b9 = Behavior::parse(e);
+    check(b9.instructions.size() == 2 && b9.instructions[0].onTrue.index == 1 &&
+              b9.instructions[1].onFalse.kind == Behavior::TargetKind::Error && (b9.treeVersion & 0xFFFF) == 0x800A,
+          "BHAV 0x8009 header byte");
 }
 
 static void testCameraConfig() {

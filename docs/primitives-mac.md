@@ -23,6 +23,15 @@ do jogo conta a partir de 1: o operando é a entrada **a partir de 0**.
 
 ## 1. Como o jogo guarda e lê os operandos
 
+- **Cabeçalho da árvore**: 64 bytes de nome, u16 assinatura (0x8000–0x8009), u16 nº de
+  instruções, u8 tipo, u8 nº de argumentos, u8 nº de locais, u8 flags, u32 *tree version*.
+  A assinatura **0x8009** (Apartment Life em diante) põe **1 byte a mais** logo depois do
+  *tree version* (0 nas 28.988 das 29.014 árvores 0x8009 do `objects.package` do AL; as 26
+  restantes valem 0x01/0x07/0x08/0x0C e todas têm a flag 0x10 do cabeçalho) — desconhecido,
+  a VM não lê; pulado, todas as 29.014 caem nos alvos (medido na varredura do pacote: alvo
+  < contagem ou ≥ 0xFFFC), sem ele nenhuma cai — e as 0x8007/0x8008 do mesmo pacote só caem
+  sem o byte. Era o que derrubava a carga com as 17 árvores (item 9 do
+  `goal-port-fidelity.md`).
 - **`XPrimParam`** (16 bytes de operandos em `+4`, a "node version" em
   `+0x14`). `XPrimParam::Read` lê a versão de nó (só se o formato do BHAV é
   ≥ 0x8005; senão 0), 8 bytes e mais 8 (formatos < 0x8003 só têm 8: o resto

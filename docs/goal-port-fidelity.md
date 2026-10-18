@@ -4,7 +4,7 @@
   verificados; log no fim. Segue até o Artur mandar parar.
 - **Mandato:** Artur — "Faça um goal para gente portar com fidelidade, fique rodando em
   looping para gente fazer história, vamos pra cima." (17/10/2026)
-- **Branch:** `windows-x64-ghidra-pc` (16 commits à frente de `origin/main`). Um commit por
+- **Branch:** `windows-x64-ghidra-pc` (17 commits à frente de `origin/main`). Um commit por
   item; mensagem única em inglês (padrão do repo para código) / pt-BR sem acentos (padrão dos
   commits de docs), prefixo de área.
 - **Fonte de verdade:** docs de RE deste repo (`re-pc-ghidra.md`, `buy-build-mac.md`,
@@ -94,14 +94,39 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 - [ ] **8. Rapas pequenas**: `soak-report` (1 load error recorrente N002_Lot32), `audio.md`
       (SFX que soam como ruído — "sem nome para conferir"), itens corrigíveis do
       `live-qa-report.md`.
-- [ ] **9. Regressão `1020fd3` — BHAV 288**: `src/formats/bhav.cpp` (L110-114) rejeita
-      o BHAV 288 do lote do Double Deluxe ("branch to instruction N of count") e derruba
-      o VM na carga; decidir o que o original faz com o alvo fora da contagem (alvo =
-      fim/sentinela? base 0 vs 1 do contador?) e consertar — hoje o lote só roda com a
-      junction `Res` → árvore base.
+- [x] **9. Regressão `1020fd3` — BHAV 288**: **FECHADO 18/10 ~02:30** — não era alvo fora da
+      contagem: o cabeçalho **0x8009** (Apartment Life em diante) tem **1 byte a mais** depois
+      do *tree version*, e lido como 0x8007 o port desalinhava todas as instruções (o 288 =
+      `0x0120` era a primeira palavra lida como alvo). Medido no `objects.package` do AL
+      (46.832 BHAVs): **29.014** são 0x8009 e **todas** caem nos alvos com o byte pulado
+      (nenhuma com o layout antigo; as 0x8007/0x8008 do mesmo pacote só caem com o layout
+      antigo). Conserto em `src/formats/bhav.cpp` (+ teste em `test_formats.cpp`, comentário
+      do cabeçalho em `bhav.hpp` e o achado na §1 do `primitives-mac.md`); o `bhav-sweep` do
+      AL roda as **46.880 árvores / 11,4 M de instruções** sem nenhum erro de carga e o lote
+      com as 17 árvores passa da carga — e mostra o **diálogo de boas-vindas do Pacote de
+      Expansão (Vida de Apartamento)**, que antes nem carregava. Os irmãos `JobDataGlobals`
+      0x1000/0x1001/0x1002 listam primitivas reais (`Manage Inventory`, `Random Number`,
+      `Want Satisfy`). Aberto por isso (fila): 11, 12 e 13.
 - [ ] **10. Painel do Build vs capturas 30-34** (`orig2/`): comparar o painel do Build
       mode com as capturas `30_build_top`..`34_build_pisos` como no item 4 (pode ter as
       mesmas sobras de alinhamento).
+- [ ] **11. Globais dos EPs** (achado do item 9): com as 17 árvores, semi-globais dos EPs
+      leem globais além da tabela carregada — `global 54 out of range (54)` em
+      `0x7FD46CD0/0x03E7` ("Lot - Is College Lot? - EP1"), `0x7FD46CD0/0x05DA` ("Neighborhood
+      - Is Vacation? - EP6") e `0x7FA903B8/0x1000` (Function - Main do Controller - Ninja),
+      cada um resetando o objeto no lote; 456 casos no `bhav-sweep` do AL. Decidir como o
+      original junta as tabelas GLOB das 17 árvores (grupo/ordem) e carregar todas.
+- [ ] **12. Primitivas `0x7E` (Run Script) e `0x7D` (Follow Sim)** (achado do item 9): o port
+      registra as duas como "sem handler" (erro 0x05), mas o AL usa `0x7E` em controladores —
+      no lote resetam `Controller - Fish Pond Effects` (`Sub - Remove All Effects` #6),
+      `- Business - Customer Loyalty` e `- Employee Management` (`Function - Main`); 2.213
+      casos no sweep. A §2 do `primitives-mac.md` dá os handlers **de routing aggregate**
+      (`TryRunScript`/`TryFollowSim`, "só BV") — implementar com o gate de tipo de objeto do
+      original.
+- [ ] **13. TTAB 0x50/0x51/0x54/0x55 dos EPs** (achado do item 9): `interactions (TTAB) …:
+      unsupported version 0x50/0x51/0x54/0x55` — as interações desses objetos ficam de fora
+      (20 recursos só no `objects.package` do AL). Estender o leitor de TTAB às versões
+      novas.
 
 ## Critérios de sucesso
 
@@ -177,3 +202,14 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
   Comfort (o jogo desenha o frame 1 azul como o port). Fica de polimento: as bevels do knob e
   o raio das placas (as artes do jogo divergem ±1 px nas colunas extremas). build+ctest
   39/39. Próximo: item 9 (regressão `1020fd3`), depois 5 (bloqueado) / 6 / 7 / 8 / 10.
+- (18/10 ~02:30) **Item 9 FECHADO** — a regressão da carga com as 17 árvores não era alvo
+  fora da contagem: o cabeçalho **0x8009** tem 1 byte a mais depois do *tree version* e o
+  leitor (que já lia 0x8007) desalinhava todas as instruções. Varredura do `objects.package`
+  do AL: 29.014 de 46.832 árvores são 0x8009, todas caem nos alvos com o byte pulado e
+  nenhuma com o layout antigo; conserto em `bhav.cpp` + teste em `test_formats.cpp`
+  (build+ctest **39/39**). Verificação: `bhav-sweep` do AL = 46.880 árvores / 11.379.667
+  instruções, zero erro de carga (17.589 verdadeiros, 15.531 falhas de semântica, 8.733
+  falsos, 5.027 yields); o lote com o Double Deluxe + as 17 árvores (sem junction) passa da
+  carga e mostra o **diálogo de boas-vindas do Vida de Apartamento**. Achados enfileirados:
+  11 (globais dos EPs), 12 (`0x7D`/`0x7E` em routing aggregates), 13 (TTAB 0x50+). Próximo:
+  6 (seguido de 7 / 8 / 10; 5 bloqueado).
