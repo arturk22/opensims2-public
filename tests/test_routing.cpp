@@ -2255,6 +2255,42 @@ static void testFloorCosts() {
     check(plain.cost({1, 0, 1}) == 1 && plain.cost({0, 0, 1}) == 2, "floor costs: without the catalog floors 1, terrain 2");
 }
 
+// GetFootprint snaps every rectangle to the 1/8 grid (round n49; BV
+// FUN_0191fa14, base FUN_00b43bfc): a bound less than half a cell into a
+// cell goes back to its line + 0.01, a side under 1/16 grows to 0.105. The
+// Sim's 0.2 box too: a step a little into the cell beside a footprint
+// (a start's turn next to a table's corner, N001_Lot68 seed 7 of round n31b)
+// does not reach it, half a cell in it does.
+static void testSnappedFootprints() {
+    auto near = [](const std::array<float, 4>& a, std::array<float, 4> b) {
+        for (size_t i = 0; i < 4; ++i)
+            if (std::fabs(a[i] - b[i]) > 1e-4f)
+                return false;
+        return true;
+    };
+    check(near(snapFootprintRect({3.0f, 3.0f, 4.0f, 4.0f}), {3.01f, 3.01f, 3.99f, 3.99f}) &&
+              near(snapFootprintRect({2.2f, 2.13f, 2.8f, 2.86f}), {2.26f, 2.135f, 2.74f, 2.86f}) &&
+              near(snapFootprintRect({1.01f, 1.0f, 1.24f, 2.0f}), {1.01f, 1.01f, 1.24f, 1.99f}),
+          "snapped footprint: bounds back to the 1/8 lines, mask rectangles unchanged");
+    check(near(snapFootprintRect({5.02f, 5.0f, 5.05f, 5.5f}), {5.02f, 5.01f, 5.125f, 5.49f}),
+          "snapped footprint: a side under 1/16 grows to 0.105");
+    check(near(VM::personFootprintAt(nullptr, 4.105f, 3.5f), {4.01f, 3.4f, 4.205f, 3.6f}),
+          "snapped footprint: a Sim's box");
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(8, 8);
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& table = place(vm, 3, 3); // the OBJD box: [3.01, 3.99] once snapped
+    check(near(vm.routingFootprint(table)[0], {3.01f, 3.01f, 3.99f, 3.99f}), "snapped footprint: an object's");
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {4.105f, 3.5f, 1}; // 0.015 off the table's side
+    Object::Route r;
+    check(routing_internal::stepBlocker(vm, sim, r, 4.07f, 3.5f, 1) == 0,
+          "snapped footprint: a step 0.03 into the table's last cell goes");
+    check(routing_internal::stepBlocker(vm, sim, r, 3.98f, 3.5f, 1) == table.id,
+          "snapped footprint: half a cell into it does not");
+}
+
 // The terrain under a low floor (round n49; base 1.0's
 // WorkOutTileCostAndPassability state 5, FUN_01038900): a quarter of the
 // ground whose quarter on the level above has a visible floor standing less
@@ -2372,6 +2408,7 @@ int main() {
     testPoolRoom();
     testFloorCosts();
     testLowFloorTerrain();
+    testSnappedFootprints();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -1205,7 +1205,11 @@ ObjectId footprintBlocker(VM& vm, const Object& me, const Object::Route& r, floa
         skip.insert(multiTileGroup(*target));
     static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
     const TilePos at{int(std::floor(x)), int(std::floor(y)), level};
-    constexpr float kHalf = 0.1f;
+    // The walker's footprint there: its 0.2 box snapped to the 1/8 grid, as
+    // cTSPerson::GetFootprint gives it (BV 0xaca7d4 -> FUN_00af9e40;
+    // docs/routing-mac.md §9.5): a start's turn a little into a cell beside
+    // a footprint does not reach it.
+    const auto box = VM::personFootprintAt(&me, x, y);
     // The 3x3 tiles' objects in one walk; once an object's "allow
     // intersection" tree has run (it could move something), the next tiles'
     // are taken again, as before.
@@ -1229,7 +1233,7 @@ ObjectId footprintBlocker(VM& vm, const Object& me, const Object::Route& r, floa
                 if (wholeTiles)
                     return id;
                 for (const auto& f : vm.routingFootprint(*o))
-                    if (f[0] < x + kHalf && x - kHalf < f[2] && f[1] < y + kHalf && y - kHalf < f[3])
+                    if (f[0] < box[2] && box[0] < f[2] && f[1] < box[3] && box[1] < f[3])
                         return id;
             }
         }

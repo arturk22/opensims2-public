@@ -100,6 +100,11 @@ constexpr size_t kMaxAttributes = 256;
 // about the tile (tx, ty)'s centre, shrunk by 0.01 (BV 0x656cc0).
 std::array<uint8_t, 8> halveFootprintMask(std::span<const uint8_t> mask);
 std::vector<std::array<float, 4>> footprintMaskRects(const std::array<uint8_t, 8>& rows, int tx, int ty);
+// GetFootprint's snapping of a world rectangle (x0, y0, x1, y1) to the 1/8
+// tile grid (BV FUN_0191fa14, base FUN_00b43bfc): x0' = max(x0, floor(8 x0
+// + 0.5) / 8 + 0.01), x1' = min(x1, ceil(8 x1 - 0.5) / 8 - 0.01), y alike;
+// a non-empty side left under 1/16 grows to 0.105 from its low end.
+std::array<float, 4> snapFootprintRect(const std::array<float, 4>& r);
 
 namespace objdata {
 constexpr int16_t Direction = 1;
@@ -1107,7 +1112,15 @@ public:
     // planner: its model's footprint for its tile, the model's box cut to
     // the tile when the model has no footprint list, or the OBJD box
     // (routing.cpp, cTSObject::AddThisToPathPlanner).
+    // They are GetFootprint's (BV 0x100 FUN_00af9e40, base 0xe8 FUN_00b43bfc;
+    // docs/routing-mac.md §9.5): each rectangle snapped to the 1/8 grid
+    // (snapFootprintRect); worldFootprint is the same unsnapped.
     std::vector<std::array<float, 4>> routingFootprint(const Object& o);
+    std::vector<std::array<float, 4>> worldFootprint(const Object& o);
+    // A person's GetFootprint at (x, y): its box (0.2 tile, person data 73
+    // as TSObjectWorldSpaceFootprint has it; a plain one without a person)
+    // there, snapped.
+    static std::array<float, 4> personFootprintAt(const Object* person, float x, float y);
     // TSObjectIndexedWorldSpaceFootprint(o, its place, its facing, index,
     // true) (BV 0x8a8c64): the model's footprint list named `index` (vtable
     // 0x2cc), every tile of it, where `o` stands (turned with its lead as

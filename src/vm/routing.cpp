@@ -123,7 +123,9 @@ bool VM::pointFree(float x, float y, int level, std::span<const ObjectId> ignore
     for (ObjectId id : ignore)
         if (const Object* o = object(id))
             skip.insert(multiTileGroup(*o));
-    constexpr float kHalf = 0.1f; // TSObjectBaseFootprintWidth of a person / 2
+    // A person's footprint at the point (TSObjectBaseFootprintWidth 0.2,
+    // snapped to the 1/8 grid as GetFootprint does; docs/routing-mac.md §9.5).
+    const auto box = personFootprintAt(nullptr, x, y);
     for (int dx = -1; dx <= 1; ++dx)
         for (int dy = -1; dy <= 1; ++dy)
             for (ObjectId id : objectsOnTile({t.x + dx, t.y + dy, level})) {
@@ -131,7 +133,7 @@ bool VM::pointFree(float x, float y, int level, std::span<const ObjectId> ignore
                 if (!o || !blocksRouting(*o) || skip.count(multiTileGroup(*o)))
                     continue;
                 for (const auto& f : routingFootprint(*o))
-                    if (f[0] < x + kHalf && x - kHalf < f[2] && f[1] < y + kHalf && y - kHalf < f[3])
+                    if (f[0] < box[2] && box[0] < f[2] && f[1] < box[3] && box[1] < f[3])
                         return false;
             }
     return true;
@@ -266,7 +268,9 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
     // on the floor takes only its model's box.
     const ObjectId group = multiTileGroup(target);
     const Object* walker = vm.object(router);
-    constexpr float kHalf = 0.1f; // TSObjectBaseFootprintWidth of a person / 2
+    // The router's footprint at the point, as GetFootprint gives it (the
+    // 0.2 box snapped to the 1/8 grid, docs/routing-mac.md §9.5).
+    const auto box = VM::personFootprintAt(walker, px, py);
     for (int dx = -1; dx <= 1; ++dx)
         for (int dy = -1; dy <= 1; ++dy)
             for (ObjectId id : vm.objectsOnTile({t.x + dx, t.y + dy, level})) {
@@ -275,7 +279,7 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
                     continue;
                 bool overlaps = false;
                 for (const auto& f : vm.routingFootprint(*o))
-                    overlaps |= f[0] < px + kHalf && px - kHalf < f[2] && f[1] < py + kHalf && py - kHalf < f[3];
+                    overlaps |= f[0] < box[2] && box[0] < f[2] && f[1] < box[3] && box[1] < f[3];
                 if (overlaps && !(walker && intersectionAllowed(vm, *o, *walker)))
                     return 1;
             }
@@ -875,24 +879,29 @@ int objectType(const Object& o) { return o.person ? kTypePerson : int(objdField(
 // TSObjectWorldSpaceFootprint's box (BV 0x8aa40c): a square of half side
 // 0.5 * the base width (a person 0.2, else OBJD field 0x43 / 16, 1 when 0)
 // about the object's position, each side moved in by a nibble of OBJD
-// field 0x4D / 16 (out by person data 73 for a person facing an even
-// direction), the nibbles turned with the facing: (8 - direction) / 2
-// picks which nibble each side takes. Inferred: the direction index is
-// object data 1, and the model's aggregate footprint (AggregateFootprint,
-// used before this box when there is one) is not read: the box stands in.
-Footprint footprintOf(const Object& o) {
+// field 0x4D / 16 (out by person data 73 for a person), the nibbles turned
+// with the facing: (8 - direction) / 2 picks which nibble each side takes.
+// GetFootprint works it out at direction 0 (with the person's nibbles) and
+// turns it by the direction & 6 (BV FUN_0191fa14, base FUN_00b43bfc;
+// docs/routing-mac.md §9.5): an odd direction turns as the even one below
+// it. Inferred: the direction index is object data 1. The model's aggregate
+// footprint comes first (routingFootprint); this box stands in without one.
+// `at` puts it at another point (GetFootprint's location; the object's own
+// when null).
+Footprint footprintOf(const Object& o, const std::array<float, 2>* at = nullptr) {
     const float half = 0.5f * (o.person ? 0.2f : (objdField(o, kObjdTileWidth) ? float(objdField(o, kObjdTileWidth)) / 16 : 1.0f));
     std::array<float, 4> c{0, 0, 0, 0};
-    const int dir = ((o.data[objdata::Direction] % 8) + 8) % 8;
+    const int dir = ((o.data[objdata::Direction] % 8) + 8) % 8 & 6;
     if (const uint16_t m = objdField(o, kObjdFootprintMask); m && !o.person)
         for (int k = 0; k < 4; ++k)
             c[size_t(k)] = float((m >> (4 * k)) & 0xF) / 16;
-    if (o.person && o.person->data.size() > 73 && (dir & 1) == 0)
+    if (o.person && o.person->data.size() > 73)
         if (const uint16_t m = uint16_t(o.person->data[73]))
             for (int k = 0; k < 4; ++k)
                 c[size_t(k)] -= float((m >> (4 * k)) & 0xF) / 16;
     const int u = (8 - dir) / 2;
-    float x0 = o.position.x - half, y0 = o.position.y - half, x1 = o.position.x + half, y1 = o.position.y + half;
+    const float px = at ? (*at)[0] : o.position.x, py = at ? (*at)[1] : o.position.y;
+    float x0 = px - half, y0 = py - half, x1 = px + half, y1 = py + half;
     x0 += c[size_t(u % 4)];
     y1 -= c[size_t((u + 1) % 4)];
     x1 -= c[size_t((u + 2) % 4)];
@@ -1074,7 +1083,39 @@ std::pair<int, int> partTileInModel(const Object& part, const Object& lead, floa
 
 } // namespace
 
+std::array<float, 4> snapFootprintRect(const std::array<float, 4>& r) {
+    // As the binary computes it: in doubles from the floats, each bound back
+    // to a float.
+    auto low = [](float v) {
+        const float s = float(double(std::floor(float(double(v) * 8.0 + 0.5))) * 0.125 + double(0.01f));
+        return double(s) <= double(v) ? v : s;
+    };
+    auto high = [](float v) {
+        const float s = float(double(std::ceil(float(double(v) * 8.0 - 0.5))) * 0.125 - double(0.01f));
+        return double(v) <= double(s) ? v : s;
+    };
+    std::array<float, 4> out{low(r[0]), low(r[1]), high(r[2]), high(r[3])};
+    for (size_t a = 0; a < 2; ++a)
+        if (r[a] < r[a + 2] && float(double(out[a + 2]) - double(out[a])) < 0.0625f)
+            out[a + 2] = float(double(float(double(out[a]) + 0.125)) - double(0.02f));
+    return out;
+}
+
+std::array<float, 4> VM::personFootprintAt(const Object* person, float x, float y) {
+    const std::array<float, 2> at{x, y};
+    if (person && person->person)
+        return snapFootprintRect(footprintOf(*person, &at)[0]);
+    return snapFootprintRect({x - 0.1f, y - 0.1f, x + 0.1f, y + 0.1f});
+}
+
 std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
+    std::vector<std::array<float, 4>> out = worldFootprint(o);
+    for (auto& r : out)
+        r = snapFootprintRect(r);
+    return out;
+}
+
+std::vector<std::array<float, 4>> VM::worldFootprint(const Object& o) {
     if (!o.person && !(o.data[objdata::Flags] & 0x80) && o.definition) {
         const ModelFootprints* mf = modelFootprints(*this, o);
         if (mf && mf->lists.empty() && o.data[9] == 0 && mf->box[0] <= mf->box[2]) {
