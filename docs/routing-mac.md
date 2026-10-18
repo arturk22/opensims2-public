@@ -2629,8 +2629,10 @@ fica no andar de cima com a escada reta trancada para ela (o "Portal - TEST"
 `0x7F0C60C8` `0x2003` tranca enquanto o semi-atributo 4 do stack object é >
 0, e o "Portal" `0x2002` só o desconta no fim da subida: um contador que
 ficou alto; os visitantes saíram do lote e o Alexander foi reiniciado logo
-antes), "Comer Refeição" falha com 2 até o fim. O mesmo acontece no main em
-outras sementes (com o + 1000 só: 2 e 3). `stair_top`, `deck_stairs` e
+antes), "Comer Refeição" falha com 2 até o fim. Com as partes 1–8 sem a 9 o
+mesmo aparece nas sementes 2 e 3; não no main das sementes 1–12. Nas
+sementes 13–28 do `N001_Lot11` (3 dias): main 2.752 / 137 ações verdadeiras /
+falsas, n49 2.756 / 75 (a escada presa só na 18, 21 falsas). `stair_top`, `deck_stairs` e
 `front_door` passam; o alpendre (28 sementes × 3.000 ticks) fica sem Sim
 preso antes e depois; `lot-run` 3.000 ticks dos 103 lotes: os mesmos
 números salvo `N001_Lot11` e `N002_Lot22` (objetos criados e mortos).
