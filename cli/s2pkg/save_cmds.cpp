@@ -827,6 +827,7 @@ const char* saveUsage() {
            "              [--stairs product,x,y,level,dir[,endx,endy[,whole]]] [--delete-stairs part-id] (modular stairs)\n"
            "              [--railing part-id,side 0|1[,delete]] (the Railing Tool: 1 = left of the steps' facing; Ctrl deletes)\n"
            "              [--dormer product 6-11,x,y,dir[,level]] (dormers)\n"
+           "              [--fireplace product 0-4,x,y,dir[,level]] [--delete-fireplace piece-id] (the fireplace tool; the sledgehammer)\n"
            "              [--fence-arch|--delete-fence-arch x0,y0,x1,y1[,level]] [--build-funds n]\n"
            "              [--check-build 1] (each roof and upper floor tile against IsRoofValid / IsFloorable)\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"

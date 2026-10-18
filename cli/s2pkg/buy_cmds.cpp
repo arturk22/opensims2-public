@@ -1,8 +1,10 @@
 // s2pkg catalog: the Buy-mode catalog (formats/catalog.hpp).
 
 #include "buy_cmds.hpp"
+#include "build_cmds.hpp"
 #include "budget.hpp"
 
+#include "formats/build_catalog.hpp"
 #include "formats/catalog.hpp"
 #include "formats/image.hpp"
 #include "formats/dbpf.hpp"
@@ -16,10 +18,12 @@
 #include "vm/lot_resume.hpp"
 #include "vm/placement.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <set>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -261,6 +265,52 @@ int cmdPlacementSweep(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Every saved fireplace against the chimney the fireplace tool would make
+// for its mantle where it stands (checkFireplaces, build_cmds.hpp).
+int cmdFireplaceSweep(const std::vector<std::string>& args) {
+    if (args.empty())
+        throw std::runtime_error("usage: s2pkg fireplace-sweep <lot.package>...");
+    int lots = 0;
+    FireplaceCheck total;
+    for (const auto& a : args) {
+        const fs::path lotFile = a;
+        ResourceIndex index(resRootOf(lotFile));
+        vm::CodeLibrary code(&index);
+        DbpfPackage pkg(lotFile);
+        Lot lot;
+        try {
+            lot = Lot::load(pkg);
+        } catch (const std::exception& ex) {
+            std::printf("%s: skipped (%s)\n", lotFile.filename().string().c_str(), ex.what());
+            continue;
+        }
+        const LotObjects saved = LotObjects::load(pkg);
+        vm::VM machine(code);
+        machine.initCreatedObjects = true;
+        machine.instructionsPerTurn = s2pkgBudget();
+        machine.setClockGlobals();
+        machine.placementLot = &lot;
+        const bool hood = vm::loadLotNeighborhood(machine, lotFile);
+        const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+        if (hood)
+            vm::bindLotSims(machine);
+        vm::startSavedLot(machine, load, saved);
+        ++lots;
+        static std::unique_ptr<BuildCatalog> catalog;
+        if (!catalog)
+            catalog = std::make_unique<BuildCatalog>(BuildCatalog::load(index));
+        Lot edited = lot;
+        vm::BuildEditor editor(machine, edited, catalog.get());
+        const FireplaceCheck c = checkFireplaces(machine, editor, *catalog, lotFile.filename().string(),
+                                                 std::getenv("S2PKG_SWEEP_WHY") != nullptr);
+        total.chains += c.chains, total.same += c.same, total.stacked += c.stacked, total.stackedSame += c.stackedSame;
+    }
+    std::printf("fireplace-sweep: %d lots, %d fireplaces, %d the tool's chimney (%d of them in a chain with other mantles, "
+                "%d of those the tool's without them)\n",
+                lots, total.chains, total.same, total.stacked, total.stackedSame);
+    return 0;
+}
+
 } // namespace
 
 bool applyBuyEdits(vm::VM& vm, ResourceIndex& index, const std::vector<std::pair<std::string, std::string>>& edits) {
@@ -332,6 +382,8 @@ int buyCommand(const std::string& cmd, int argc, char** argv) {
         return cmdBuy({argv + 2, argv + argc});
     if (cmd == "placement-sweep")
         return cmdPlacementSweep({argv + 2, argv + argc});
+    if (cmd == "fireplace-sweep")
+        return cmdFireplaceSweep({argv + 2, argv + argc});
     return -1;
 }
 
@@ -339,7 +391,8 @@ const char* buyUsage() {
     return "       s2pkg catalog <Res-dir> [--function bit [--sub bit] | --room bit [--sub function-bit]] [-v]\n"
            "       s2pkg catalog <Res-dir> --thumb <guid|name> <out.png>\n"
            "       s2pkg buy <lot.package> [--buy|--check <guid|name>@x,y[,dir[,level]]] [--sell id] [--move id@x,y[,dir[,level]]]...\n"
-           "       s2pkg placement-sweep <lot.package>...   (each saved object tested where it stands, with and without the lot's heights)\n";
+           "       s2pkg placement-sweep <lot.package>...   (each saved object tested where it stands, with and without the lot's heights)\n"
+           "       s2pkg fireplace-sweep <lot.package>...   (each saved fireplace's chain against the fireplace tool's)\n";
 }
 
 } // namespace os2

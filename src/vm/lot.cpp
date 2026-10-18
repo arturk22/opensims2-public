@@ -268,6 +268,10 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             }
             Object& o = vm.instantiatePart(def->first, def->second, s.id);
             o.position = {s.x, s.y, s.level};
+            // Its elevation (cTSObject +0x20c, ReadHeader; vtable 0xb0): a
+            // chimney cap's height over the story, a modular step's. The
+            // height stays the floor's (kNoHeight).
+            o.position.elevation = s.elevation;
             // Its model's bones as the lot saved them (a dining chair pushed in).
             if (c != cObjects.end() && !s.person)
                 o.pose = c->second->nodes;

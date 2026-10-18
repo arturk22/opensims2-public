@@ -651,6 +651,9 @@ bool BuildEditor::undo() {
         pickUp(vm_, x.id);
     for (const auto& m : op.models)
         setRailingModel(vm_, ObjectId(m[0]), m[1]);
+    for (const auto& l : op.links)
+        for (ObjectId part : groupOf(vm_, ObjectId(l[0])))
+            linkFireplaceObject(vm_, part, ObjectId(l[1]), ObjectId(l[2]));
     chargeFunds(vm_, op.cost); // the price back, or the refund paid back
     syncWorld();
     redo_.push_back(std::move(op));
@@ -673,6 +676,9 @@ bool BuildEditor::redo() {
         applyPlacement(vm_, x.id, x.where);
     for (const auto& m : op.models)
         setRailingModel(vm_, ObjectId(m[0]), m[2]);
+    for (const auto& l : op.links)
+        for (ObjectId part : groupOf(vm_, ObjectId(l[0])))
+            linkFireplaceObject(vm_, part, ObjectId(l[3]), ObjectId(l[4]));
     chargeFunds(vm_, -op.cost);
     syncWorld();
     undo_.push_back(std::move(op));

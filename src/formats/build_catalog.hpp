@@ -110,6 +110,19 @@ struct BuildFenceArch {
     int price = 0;
 };
 
+// A fireplace (fireplaces.txt "fireplace N", cTSProductFireplace BV
+// 0xf21070): the OBJD file names of its mantle (the object the tool holds),
+// the hearth piece of each story behind it, the chimney cap pieces stacked
+// over the top story, the cap with the footprint (the lowest of them) and,
+// for some, the piece on a foundation; the name, text and price from the
+// catalog text "build" 144 (3i, 3i + 1, 3i + 2 of its catalogTextIndex).
+struct BuildFireplace {
+    int id = 0;
+    std::string mantle, hearth, top, topWithFootprint, foundation;
+    std::string name, description;
+    int price = 0;
+};
+
 // Build-mode prices that are not in the data (docs/buy-build-mac.md §7).
 // A wall costs §70 a section (the game's catalog text; the binary's wall
 // cost path is not traced: inferred), and selling back what was built in
@@ -165,6 +178,7 @@ public:
     const std::vector<BuildRoofProduct>& roofProducts() const { return roofProducts_; }
     const BuildRoofProduct* roofProduct(int id) const;
     const std::vector<BuildFenceArch>& fenceArches() const { return arches_; }
+    const std::vector<BuildFireplace>& fireplaces() const { return fireplaces_; }
     // The Railing Tool's price (product 0x2C7BF690, catalog text "build" 139
     // entry 0: 3), 0 when the script is missing.
     int railingPrice() const { return railingPrice_; }
@@ -184,6 +198,7 @@ private:
     std::vector<BuildStairs> stairs_;
     std::vector<BuildRoofProduct> roofProducts_;
     std::vector<BuildFenceArch> arches_;
+    std::vector<BuildFireplace> fireplaces_;
     int railingPrice_ = 0;
 };
 

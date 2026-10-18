@@ -364,6 +364,40 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
             }
             c.arches_.push_back(std::move(a));
         }
+        const auto fireplaceText = buildText(index, 144);
+        for (const auto& block : scriptBlocks(scripts / "fireplaces.txt", "fireplace")) {
+            BuildFireplace f;
+            int text = -1;
+            for (const auto& w : block) {
+                const std::string k = lower(w[0]);
+                std::string v; // the rest of the line: the names are quoted with spaces
+                for (size_t i = 1; i < w.size(); ++i)
+                    v += (i > 1 ? " " : "") + w[i];
+                std::erase(v, '"');
+                if (k == "fireplace")
+                    f.id = std::atoi(v.c_str());
+                else if (k == "catalogtextindex")
+                    text = std::atoi(v.c_str());
+                else if (k == "mantle")
+                    f.mantle = v;
+                else if (k == "chimneyhearth")
+                    f.hearth = v;
+                else if (k == "chimneytop")
+                    f.top = v;
+                else if (k == "chimneytopfp")
+                    f.topWithFootprint = v;
+                else if (k == "chimneyfoundation")
+                    f.foundation = v;
+            }
+            if (fireplaceText && text >= 0) {
+                f.price = priceText(fireplaceText->get(size_t(3 * text)));
+                if (!f.price)
+                    f.price = priceText(fireplaceText->get(size_t(3 * text), lang::EnglishUS));
+                f.name = fireplaceText->get(size_t(3 * text + 1));
+                f.description = fireplaceText->get(size_t(3 * text + 2));
+            }
+            c.fireplaces_.push_back(std::move(f));
+        }
         const auto roofText = buildText(index, 140);
         for (const auto& block : scriptBlocks(scripts / "roofs.txt", "roof")) {
             BuildRoofProduct r;

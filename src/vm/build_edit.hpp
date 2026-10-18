@@ -82,6 +82,60 @@ public:
     // fenceArchBlocked (0x45, 0x4F, 0x0C: another arch at an end), its catalog price; Ctrl takes it off
     // (int(price x 0.8) back). Deleting the fence takes its arch with it.
     Result placeFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch& arch);
+
+    // The fireplace tool (cTSUserToolFireplace::TryPlace, BV 0x27a38c;
+    // docs/buy-build-mac.md §7.26). After the mantle fits (the object tool's
+    // TryPlace) the chimney: on the tile behind the mantle (a stove, type 4
+    // of its "CT - Get Link Data": its own tile), from the top story T --
+    // the highest from the mantle's up where the mantle's tile HasSupport --
+    // down. Over T a stack of caps a unit apart, floor(max(2, the roof over
+    // the chimney (RoofHeightAt) - T's floor there + 2)) down to 0, the
+    // lowest the cap with the footprint; on a one-story fireplace the cap
+    // with the footprint on the level over T (made when the lot has none,
+    // up to level 4), or a cap at T at the story's height, and the story
+    // must be a full one (StandardLevelHeight). Under them a hearth piece on
+    // each story down to the ground (a stove: none), stopping under the
+    // mantle's story where the tile is in a load-bearing room or under a
+    // roof, the ground's on a foundation or a raised floor the foundation
+    // piece. Each piece is linked to the one below and above it, the
+    // mantle's story's piece to the mantle.
+    struct ChimneyPiece {
+        enum Kind { Hearth, Top, TopWithFootprint, Foundation };
+        Kind kind = Hearth;
+        Position at;         // its lead's place (VM level) and its elevation over the floor
+        int below = -1, above = -1; // the pieces it links to: indices, kMantleLink the mantle, -1 none
+    };
+    static constexpr int kMantleLink = -2;
+    struct ChimneyPlan {
+        int error = 0; // 0 fits
+        std::string why;
+        bool newLevel = false; // the cap needs a level over the lot's top (SetLevelRange)
+        std::vector<ChimneyPiece> pieces; // in TryPlace's order: the caps from the top, then the hearths down
+        int mantleBelow = -1, mantleAbove = -1;
+    };
+    ChimneyPlan chimneyPlan(ObjectId mantle, const Position& at, int direction) const;
+    // The fireplace placed (TryPlace, then SubmitUndoableForPlace: LinkObjects
+    // with every part, the pieces' undoables after the mantle's): the mantle
+    // at `tile` facing `direction`, each piece made from the product's OBJD,
+    // tested where it goes (TryPlaceObject: the position test at its
+    // elevation; FUN_0027664c: on the ground not over a pool, and nothing
+    // on its tile without od 42 bit 0x01) and put there, then the links, the
+    // price of all (the objects' prices), the Mains. A piece that does not
+    // fit takes everything back (RevertChanges). Returns the objects placed
+    // (the mantle first) in `placed`.
+    // A multi-tile mantle with a hearth or a cap piece behind one of its
+    // parts goes in front of that chimney instead (IsChimneyBehindHeldMantle,
+    // IsValidChimneyBehindHeldMantle, OnRelease): under the hearth piece of
+    // its story (error 6 when a mantle is under it already, 5 when the
+    // pieces behind do not fit), or, before the cap at the story's height
+    // (a story built over a chimney's top), with the chimney's top made
+    // again behind it (CreateUndoableListBehindObjectHeld).
+    Result placeFireplace(const BuildFireplace& product, ObjectId mantle, TilePos tile, int direction,
+                          std::vector<ObjectId>* placed = nullptr);
+    // The sledgehammer on a fireplace (cTSUserToolSledgeHammer::
+    // DeleteFireplaces -> EraseLinkedFireplace, BV 0x306454): the pieces up
+    // the chain from `part`'s, then down it, then its own, each sold.
+    Result deleteFireplace(ObjectId part);
     Result deleteFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch* arch = nullptr);
     Result deleteFences(int level, int x0, int y0, int x1, int y1);
     // UserMayPlaceFenceArch (BV 0x9a92fc) on the unit edge (lot level `li`):
@@ -461,6 +515,9 @@ private:
         std::vector<Sold> sold;
         std::vector<Sold> created; // objects the change put down (deck columns)
         std::vector<std::array<int, 3>> models; // railing swaps: object, model before, after
+        // Fireplace links changed (a mantle put in front of a chimney):
+        // object, below and above before, below and above after.
+        std::vector<std::array<int, 5>> links;
     };
     Geometry capture() const;
     void restore(const Geometry& g);

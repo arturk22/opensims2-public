@@ -13,8 +13,10 @@ const char* buildUsage();
 
 struct Lot;
 class ResourceIndex;
+class BuildCatalog;
 namespace vm {
 class VM;
+class BuildEditor;
 }
 
 // Build-mode edits on a lot loaded into a VM, for lot-save (vm/build_edit.hpp;
@@ -36,12 +38,25 @@ class VM;
 //   --wallpaper x0,y0,x1,y1,side,pattern[,level]  side r, l or b (seen from x0,y0)
 //   --wallpaper-room x,y,pattern[,level]
 //   --door <guid|name>@x,y[,dir[,level]]  a door or window (object tool rules)
+//   --fireplace product,x,y,dir[,level]  the fireplace tool; --delete-fireplace piece-id
+//   --check-fireplaces 1   each fireplace's chain against the tool's (checkFireplaces)
 //   --build-undo / --build-redo (value ignored)
 // Patterns are catalog GUIDs (0x...) or names/materials. Prints what
 // happened; false if one failed.
 bool isBuildEdit(const std::string& flag);
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                      const std::vector<std::pair<std::string, std::string>>& edits);
+// Each fireplace of the lot (a mantle or a stove and the chain its links
+// make) against the chimney the fireplace tool would make for the mantle
+// where it stands (BuildEditor::chimneyPlan, docs/buy-build-mac.md §7.26):
+// the pieces from the top down, their kinds, places, levels and
+// elevations; a chain with other mantles in it is compared without them.
+// Prints the differences (all with `verbose`).
+struct FireplaceCheck {
+    int chains = 0, same = 0, stacked = 0, stackedSame = 0;
+};
+FireplaceCheck checkFireplaces(vm::VM& vm, vm::BuildEditor& editor, const BuildCatalog& catalog, const std::string& label,
+                               bool verbose);
 // Differences between the build-mode geometry of two lots (walls, coverings,
 // floors, rooms, pattern names), one line each.
 std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t limit = 20);

@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <sstream>
 #include <stdexcept>
@@ -127,12 +128,131 @@ int num(const std::vector<std::string>& f, size_t i, int fallback) {
 
 } // namespace
 
+FireplaceCheck checkFireplaces(vm::VM& machine, vm::BuildEditor& editor, const BuildCatalog& catalog,
+                               const std::string& label, bool verbose) {
+    FireplaceCheck out;
+    // "<name> - 1,0" -> "<name>".
+    auto baseName = [](std::string n) {
+        const size_t d = n.rfind(" - ");
+        if (d != std::string::npos && n.find(',', d) != std::string::npos &&
+            n.find_first_not_of("0123456789,", d + 3) == std::string::npos)
+            n.resize(d);
+        return n;
+    };
+    struct Node {
+        std::string kind;
+        int level = 0;
+        float x = 0, y = 0, elevation = 0;
+    };
+    auto describe = [](const std::vector<Node>& v) {
+        std::string s;
+        for (const Node& n : v) {
+            char b[96];
+            std::snprintf(b, sizeof b, " %s(%.1f,%.1f,%d)+%g", n.kind.c_str(), n.x, n.y, n.level, n.elevation);
+            s += b;
+        }
+        return s;
+    };
+    std::vector<vm::ObjectId> ids;
+    for (const auto& [id, o] : machine.objects())
+        ids.push_back(id);
+    for (vm::ObjectId id : ids) {
+        const vm::Object* m = machine.object(id);
+        if (!m || !m->definition || !m->position.inWorld() || vm::multiTileGroup(*m) != id ||
+            !vm::isFireplaceObject(machine, id))
+            continue;
+        const std::string mantleName = baseName(m->definition->fileName);
+        const BuildFireplace* product = nullptr;
+        for (const auto& f : catalog.fireplaces())
+            if (f.mantle == mantleName)
+                product = &f;
+        if (!product)
+            continue;
+        ++out.chains;
+        auto kindOf = [&](vm::ObjectId x) -> std::string {
+            const vm::Object* o = machine.object(x);
+            if (!o || !o->definition)
+                return "?";
+            const std::string n = baseName(o->definition->fileName);
+            return n == product->mantle ? "M" : n == product->hearth ? "H" : n == product->top ? "C"
+                 : n == product->topWithFootprint ? "F" : n == product->foundation ? "B" : "?" + n;
+        };
+        auto nodeOf = [&](vm::ObjectId x) {
+            const vm::Object* o = machine.object(x);
+            return Node{kindOf(x), o->position.level, o->position.x, o->position.y, o->position.elevation};
+        };
+        // The chain as it is, from the top down.
+        std::vector<Node> chain;
+        {
+            std::vector<vm::ObjectId> up;
+            std::set<vm::ObjectId> seen{id};
+            for (auto l = vm::fireplaceLinks(machine, id);
+                 l && l->above > 0 && machine.object(l->above) && seen.insert(l->above).second;
+                 l = vm::fireplaceLinks(machine, l->above))
+                up.push_back(l->above);
+            for (auto it = up.rbegin(); it != up.rend(); ++it)
+                chain.push_back(nodeOf(*it));
+            chain.push_back(nodeOf(id));
+            for (auto l = vm::fireplaceLinks(machine, id);
+                 l && l->below > 0 && machine.object(l->below) && seen.insert(l->below).second;
+                 l = vm::fireplaceLinks(machine, l->below))
+                chain.push_back(nodeOf(l->below));
+        }
+        // The tool's.
+        const auto plan = editor.chimneyPlan(id, m->position, m->data[vm::objdata::Direction]);
+        std::vector<Node> planChain;
+        if (!plan.error) {
+            static const char* kinds = "HCFB";
+            int at = -1; // the top: the node nothing is over
+            for (size_t i = 0; i < plan.pieces.size(); ++i)
+                if (plan.pieces[i].above == -1)
+                    at = int(i);
+            if (plan.mantleAbove == -1)
+                at = vm::BuildEditor::kMantleLink;
+            for (int guard = 0; at != -1 && guard < 64; ++guard) {
+                if (at == vm::BuildEditor::kMantleLink) {
+                    planChain.push_back(Node{"M", m->position.level, m->position.x, m->position.y, 0});
+                    at = plan.mantleBelow;
+                } else {
+                    const auto& pc = plan.pieces[size_t(at)];
+                    planChain.push_back(Node{std::string(1, kinds[pc.kind]), pc.at.level, pc.at.x, pc.at.y, pc.at.elevation});
+                    at = pc.below;
+                }
+            }
+        }
+        // A chain with more mantles than this one (a mantle put in front of
+        // a chimney already there: no pieces of its own) is compared
+        // without the others.
+        std::vector<Node> own;
+        for (const Node& n : chain)
+            if (n.kind != "M" || (std::fabs(n.x - m->position.x) < 0.01f && std::fabs(n.y - m->position.y) < 0.01f &&
+                                  n.level == m->position.level))
+                own.push_back(n);
+        bool match = planChain.size() == own.size();
+        for (size_t i = 0; match && i < planChain.size(); ++i) {
+            const Node &p = planChain[i], &s = own[i];
+            match = p.kind == s.kind && p.level == s.level && std::fabs(p.x - s.x) < 0.01f && std::fabs(p.y - s.y) < 0.01f &&
+                    std::fabs(p.elevation - s.elevation) < 0.01f;
+        }
+        const bool stacked = own.size() != chain.size();
+        out.same += match;
+        out.stacked += stacked;
+        out.stackedSame += stacked && match;
+        if (!match || verbose)
+            std::printf("%s: %s %d \"%s\" at (%.1f,%.1f,%d) dir %d:\n  chain%s\n  tool %s%s\n", label.c_str(),
+                        match ? "same" : "DIFFERS", id, mantleName.c_str(), m->position.x, m->position.y,
+                        m->position.level, m->data[vm::objdata::Direction], describe(chain).c_str(),
+                        plan.error ? (" refused: " + plan.why).c_str() : "", describe(planChain).c_str());
+    }
+    return out;
+}
+
 bool isBuildEdit(const std::string& flag) {
     return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--erase-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--railing" || flag == "--build-undo" || flag == "--build-redo" || flag == "--check-build";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--railing" || flag == "--build-undo" || flag == "--build-redo" || flag == "--check-build" || flag == "--fireplace" || flag == "--delete-fireplace" || flag == "--check-fireplaces";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -218,6 +338,39 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                                    f.size() > 7 && f[7] == "whole");
             if (r.ok && vm.world)
                 r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--fireplace") { // product,x,y,direction[,level]
+            if (f.size() < 4)
+                throw std::runtime_error("--fireplace: expected product,x,y,direction[,level]");
+            const BuildFireplace* product = nullptr;
+            for (const auto& fp : catalog.fireplaces())
+                if (fp.id == num(f, 0, -1))
+                    product = &fp;
+            if (!product)
+                throw std::runtime_error("--fireplace: no fireplace " + f[0]);
+            const auto def = vm.code().definitionByName(product->mantle);
+            if (!def)
+                throw std::runtime_error("--fireplace: no object \"" + product->mantle + "\"");
+            const vm::ObjectId mantle = vm::createGhost(vm, def->first, def->second);
+            std::vector<vm::ObjectId> placed;
+            r = editor.placeFireplace(*product, mantle, {num(f, 1, 0), num(f, 2, 0), num(f, 4, 1)}, num(f, 3, 0), &placed);
+            if (!r.ok) {
+                vm::deleteGroup(vm, mantle);
+            } else {
+                r.message += ":";
+                for (vm::ObjectId id : placed)
+                    if (const vm::Object* o = vm.object(id)) {
+                        char b[160];
+                        std::snprintf(b, sizeof b, " %d \"%s\" (%.1f,%.1f,%d)+%g", id, o->definition->fileName.c_str(),
+                                      o->position.x, o->position.y, o->position.level, o->position.elevation);
+                        r.message += b;
+                    }
+            }
+        } else if (flag == "--check-fireplaces") { // each fireplace's chain against the tool's (value ignored)
+            const FireplaceCheck c = checkFireplaces(vm, editor, catalog, "check-fireplaces", true);
+            r.ok = true;
+            r.message = std::to_string(c.chains) + " fireplaces, " + std::to_string(c.same) + " the tool's chimney";
+        } else if (flag == "--delete-fireplace") { // object id of any piece
+            r = editor.deleteFireplace(vm::ObjectId(num(f, 0, 0)));
         } else if (flag == "--fence-arch" || flag == "--delete-fence-arch") { // x0,y0,x1,y1[,level]
             if (f.size() < 4)
                 throw std::runtime_error(flag + ": expected x0,y0,x1,y1[,level]");
@@ -538,6 +691,10 @@ int cmdBuildCatalog(const std::string& res, bool verbose) {
         std::printf("fence arch %d: %s, §%d (%s)\n", a.id, a.name.c_str(), a.price, a.center.c_str());
     for (const auto& r : patterns.roofProducts())
         std::printf("roof %d: %s, §%d (%s)\n", r.id, r.name.c_str(), r.price, r.defaultPattern.c_str());
+    for (const auto& f : patterns.fireplaces())
+        std::printf("fireplace %d: %s, §%d (%s; %s, %s, %s%s%s)\n", f.id, f.name.c_str(), f.price, f.mantle.c_str(),
+                    f.hearth.c_str(), f.top.c_str(), f.topWithFootprint.c_str(), f.foundation.empty() ? "" : ", ",
+                    f.foundation.c_str());
     const Catalog objects = Catalog::load(index, true);
     std::map<std::pair<int, int>, std::vector<const CatalogEntry*>> by;
     for (const auto& e : objects.entries())

@@ -196,7 +196,7 @@ target_include_directories(os2_vm PUBLIC src)
 os2_warnings(os2_vm)
 target_link_libraries(os2_vm PUBLIC os2_formats)
 # vm/routing.cpp and vm/build_edit.cpp split by area (round 26, docs/ideias/DEBITOS-TECNICOS.md 1.2).
-target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp src/vm/build_edit_walls.cpp src/vm/build_edit_ground.cpp src/vm/build_edit_stairs.cpp)
+target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp src/vm/build_edit_walls.cpp src/vm/build_edit_ground.cpp src/vm/build_edit_stairs.cpp src/vm/build_edit_fireplace.cpp)
 # The environment motive, cTSEnvironmentScoreManager (round n33).
 target_sources(os2_vm PRIVATE src/vm/environment.cpp)
 # The lot's light maps without a window, for the environment's light term (round n42).
@@ -584,6 +584,9 @@ set_tests_properties(guob_walls PROPERTIES PASS_REGULAR_EXPRESSION "guob walls: 
 # With the game's data: Build mode's undo and redo give the lot back byte for byte (tests/build_undo.sh, round n20).
 add_test(NAME build_undo COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build_undo.sh $<TARGET_FILE:s2pkg> ${CMAKE_BINARY_DIR}/build_undo)
 set_tests_properties(build_undo PROPERTIES PASS_REGULAR_EXPRESSION "build undo: ok" TIMEOUT 600)
+# With the game's data: the fireplace tool, its chimneys and the sledgehammer (tests/fireplace.sh, round n48).
+add_test(NAME fireplace COMMAND sh ${CMAKE_SOURCE_DIR}/tests/fireplace.sh $<TARGET_FILE:s2pkg> ${CMAKE_BINARY_DIR}/fireplace)
+set_tests_properties(fireplace PROPERTIES PASS_REGULAR_EXPRESSION "fireplace: ok" TIMEOUT 600)
 # With the game's data: objects refused on slopes (IsFlat 0x12) and the saved objects tested where they stand (tests/placement_slope.sh, round n20).
 add_test(NAME placement_slope COMMAND sh ${CMAKE_SOURCE_DIR}/tests/placement_slope.sh $<TARGET_FILE:s2pkg>)
 set_tests_properties(placement_slope PROPERTIES PASS_REGULAR_EXPRESSION "placement slope: ok" TIMEOUT 300)

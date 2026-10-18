@@ -271,6 +271,28 @@ void setRailingModel(VM& vm, ObjectId id, int model);
 // object's facing).
 bool railingSide(VM& vm, ObjectId id, float x, float y);
 
+// The fireplaces' links (cTSUserToolFireplace, docs/buy-build-mac.md §7.26):
+// a mantle and the chimney pieces behind and over it are a chain, each
+// knowing the one below it and the one above it.
+struct FireplaceLinks {
+    ObjectId below = -1, above = -1;
+    int type = 0; // 1 mantle, 2 hearth, 3 cap, 4 stove, 6 stove pipe, 7 foundation piece
+};
+// FUN_002035cc (BV): the object's "CT - Get Link Data" (looked up by name
+// in its code, the fireplace semi-global's 0x2009), run to its end: temps 0,
+// 1 and 2 (semi-attributes 6 and 7 and 0); none without the tree.
+std::optional<FireplaceLinks> fireplaceLinks(VM& vm, ObjectId id);
+// IsFireplaceObject (BV 0x2037c8): a mantle or a stove (types 1, 4); with
+// `anyPart`, any of the chain's types 1-7.
+bool isFireplaceObject(VM& vm, ObjectId id, bool anyPart = false);
+// EraseLinkedFireplace (BV 0x306454): the pieces up the chain from `id`,
+// then down it, then `id`, the order the sledgehammer erases them in.
+std::vector<ObjectId> linkedFireplace(VM& vm, ObjectId id);
+// LinkOneObject (BV 0x2762c0): temps 0 and 1 = the piece below and above,
+// then its OBJf entry 35 with them as parameters 0 and 1 (and itself as the
+// stack object), which keeps them (semi-attributes 6 and 7).
+void linkFireplaceObject(VM& vm, ObjectId id, ObjectId below, ObjectId above);
+
 // A day passed (cTSObject::DayPassed, docs/buy-build-mac.md §2): every
 // object not "self depreciating" (OBJD field 37) loses its "initial
 // depreciation" (field 35) when it has one, else its "daily depreciation"

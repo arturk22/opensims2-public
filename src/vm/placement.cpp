@@ -152,8 +152,9 @@ uint32_t productGuid(VM& vm, const Object& o) {
 // FUN_00ffb7b0, BV HasEnoughClearanceFromRoof 0x8a74fc, misnamed; od 63
 // "exclusive placement flags", STR# 0xFB: 1 floor, 2 wall, 4 no other object
 // of same type, 8 ceiling): both on the floor or both on the ceiling ->
-// 0x0C; with 4 on either, the other at the same place and height (Elevation,
-// vtable 0xb0) and the same product -> 0x0C; then, when the two need a wall
+// 0x0C; with 4 on either, the other at the same place and elevation
+// (Elevation, vtable 0xb0, against the tested one: 0 but for the fireplace
+// tool's stacked caps) and the same product -> 0x0C; then, when the two need a wall
 // in common (FUN_00ffb62c), both doors or windows
 // (ExclusiveWallPlacementCategory, 0xaf57a4: 1 for types 8 and 9) -> 0x17
 // "Must be against unused wall", else both with 2 -> 0x0C; 0 when they may
@@ -162,7 +163,7 @@ int exclusiveError(VM& vm, const Object& o, const Position& at, int direction, c
     const int16_t a = o.data[objdata::ExclusivePlacementFlags], b = x.data[objdata::ExclusivePlacementFlags];
     if (a & b & 9)
         return placementerror::Objects;
-    if (((a | b) & 4) && samePlace(x.position, at) && x.position.elevation == 0) {
+    if (((a | b) & 4) && samePlace(x.position, at) && x.position.elevation == at.elevation) {
         const uint32_t pa = productGuid(vm, o), pb = productGuid(vm, x);
         if (pa && pb && pa == pb)
             return placementerror::Objects;
@@ -611,9 +612,11 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
         const auto off = partOffset(sub, p.direction);
         const int dl = o->definition ? int16_t(o->definition->field(0xB0)) - leadLevel : 0;
         p.parts.push_back({part, {tile.x + off[0] - leadOff[0], tile.y + off[1] - leadOff[1], tile.level + dl}});
-        if (at)
-            p.parts.back().at = Position{at->x + float(off[0] - leadOff[0]), at->y + float(off[1] - leadOff[1]),
-                                         at->level + dl};
+        if (at) {
+            Position& q = *(p.parts.back().at = Position{at->x + float(off[0] - leadOff[0]),
+                                                         at->y + float(off[1] - leadOff[1]), at->level + dl});
+            q.elevation = at->elevation;
+        }
     }
     std::set<std::tuple<int, int, int>> tiles;
     for (const auto& part : p.parts)
@@ -1148,6 +1151,69 @@ int sell(VM& vm, ObjectId id) {
     addFunds(vm, value);
     computeLotData(vm);
     return value;
+}
+
+std::optional<FireplaceLinks> fireplaceLinks(VM& vm, ObjectId id) {
+    Object* o = vm.object(id);
+    if (!o)
+        return std::nullopt;
+    std::optional<uint16_t> tree;
+    for (const uint32_t g : {o->group, o->semiGroup})
+        if (g && !tree)
+            tree = vm.code().behaviorByName(g, "CT - Get Link Data");
+    if (!tree)
+        return std::nullopt;
+    try {
+        Thread t = vm.start(id, *tree, {}, id);
+        for (int turn = 0; t.status == Thread::Status::Running && turn < 4; ++turn)
+            vm.run(t, vm.instructionsPerTurn);
+        if (t.status != Thread::Status::Finished)
+            return std::nullopt;
+        // The tree writes the object's temps (cTSObject vtable 0x4c reads
+        // them back): its thread's are the object's own here.
+        return FireplaceLinks{ObjectId(t.temps[0]), ObjectId(t.temps[1]), t.temps[2]};
+    } catch (const VMError&) {
+        return std::nullopt;
+    }
+}
+
+bool isFireplaceObject(VM& vm, ObjectId id, bool anyPart) {
+    const auto l = fireplaceLinks(vm, id);
+    return l && (l->type == 1 || l->type == 4 || (anyPart && l->type >= 1 && l->type <= 7));
+}
+
+std::vector<ObjectId> linkedFireplace(VM& vm, ObjectId id) {
+    std::vector<ObjectId> out;
+    const auto start = fireplaceLinks(vm, id);
+    if (!start)
+        return {id};
+    std::set<ObjectId> seen{id};
+    for (ObjectId at = start->above; at != -1 && vm.object(at) && seen.insert(at).second;) {
+        out.push_back(at);
+        const auto l = fireplaceLinks(vm, at);
+        at = l ? l->above : -1;
+    }
+    for (ObjectId at = start->below; at != -1 && vm.object(at) && seen.insert(at).second;) {
+        out.push_back(at);
+        const auto l = fireplaceLinks(vm, at);
+        at = l ? l->below : -1;
+    }
+    out.push_back(id);
+    return out;
+}
+
+void linkFireplaceObject(VM& vm, ObjectId id, ObjectId below, ObjectId above) {
+    Object* o = vm.object(id);
+    if (!o)
+        return;
+    const std::array<int16_t, 2> args{int16_t(below), int16_t(above)};
+    try {
+        if (auto t = vm.runFunction(id, 35, 1000, args, id); !t) {
+            // No link tree: nothing keeps the chain (inferred: every piece of
+            // the base game's fireplaces has one).
+        }
+    } catch (const VMError&) {
+    }
 }
 
 int railingObjectModel(VM& vm, ObjectId id) {
