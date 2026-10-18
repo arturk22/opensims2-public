@@ -627,12 +627,13 @@ zero (3.580), as partes ±1 no deslocamento.
 **NGBH e inventários** (`cTSNeighborhood::Write` `0x4dc43c`, `Read`
 `0x4e0d38` (sem função no Ghidra; lido pela listagem), `cTSInventory::Read`
 `0x497040`, `Write` `0x4949a0`): tag, versão, u32 0; se > 0x6A dois u32
-(+0x34, +0x38: 0x80, 0x80 nos bairros do jogo, sentido não lido); se > 0x6D
+(+0x34, +0x38: **o tamanho do bairro em tiles**, X e Y, §9.4); se > 0x6D
 uma string (+0x3C, o tipo de região); **16 i16 de dados do bairro** (+0x14;
 ≤ 0x13 só um): é o "bloco de 32 bytes" que o leitor tratava como uma segunda
 string; se > 0x65 o inventário global e os mapas de lote (+0x84, tipo 1),
 família (+0x9C, tipo 2) e vizinho (+0xB4, tipo 3), cada um u32 n + n × (u32
-ID, inventário); por fim um u8 (+0xFD) e, só no BV, um u32 (+0xDC). Cada
+ID, inventário); por fim um u8 (+0xFD, um bool que só o Read e o Write
+tocam, §9.4) e, só no BV, um u32 (+0xDC). Cada
 inventário: (só se a versão > 0xBD, o BV: u32 0xBE) u32 n + n tokens
 **contados** (+0x20, `CountedTokenCount`/`ClearCountedTokens`), depois u32 n +
 n tokens **singulares** (+0x14, `ClearSingularTokens`): a ordem que o leitor
@@ -640,7 +641,7 @@ supunha está confirmada. O nosso save já grava os inventários no NGBH desde a
 rodada 16 (`vm/hood_save.cpp`): a linha "faltando" do inventário estava
 desatualizada.
 
-O que continua sem nome: os dois u32 +0x34/+0x38 e o u8 +0xFD do NGBH, o
+O que continua sem nome: o
 `cTSObject::Read` que, para um objeto com a flag +0x180 bit 0 no lote dele,
 lê e descarta 6 u32 + u16 depois dos timers (nunca acontece nos lotes do
 jogo), e o que o jogo faz com os campos 4–7 do token temporário fora da
@@ -662,3 +663,129 @@ baixo) e do deslocamento de nível (0xB0), girados pela direção do líder; os
 lot-save --check` nos 69 lotes dá os mesmos 27.325 estados byte a byte iguais
 de antes; `hood-save --ticks 300 --check` nos quatro bairros, 68 de 68 lotes
 iguais; `lot-run` de 3.000 ticks nos 68 lotes, o mesmo resumo.
+
+## 9. Rodada n47: o salvar do bairro e o persist DB **[binário]**
+
+Lido no Ghidra MCP (só leitura) e, para o base 1.0 (quase sem funções no
+projeto) e as funções grandes, no Ghidra headless sobre um clone APFS do
+projeto (`-readOnly -noanalysis`, nada salvo); os slots das vtables pelo RTTI
+(`tools/symxfer/vtables.py`, com o mapa do `run.sh`). O base vale quando
+difere do BV.
+
+### 9.1 `cTSSaveNeighborhoodController`
+
+Base: vtable `0x15c36a0`, `DoMessage` `0x881180`, `TransitionIn` `0x881534`,
+`ContinueIn` `0x8816dc`, `SaveNeighborhood` `0x881920`. BV: `0x891c2c`,
+`0x8916ec`, `0x8918f8`, `0x890990`.
+
+Quem pede é o `cTSGameStateController::SaveNeighborhoodBegin` (BV
+`0x149c84`): posta a mensagem `0x8D0D021C` com as flags. O controlador a
+atende com o `TransitionIn` (guarda as flags e posta `0xAD0D0943` para si); a
+cada `0xAD0D0943` o `ContinueIn` roda um passo do `SaveNeighborhood` e posta
+o próximo; quando o passo devolve 0, avisa quem pediu (vtable 0x40 da
+mensagem, "sucesso" = chegou ao último passo) e solta. As flags que os
+chamadores passam (BV): `TransitionToLot` 1; `TransitionToNeighborhood`,
+`TransitionToQuit`, `TransitionToShell` e o `DoMessage` 3; um caminho do
+`DoMessage` 2 ou 3. Bit 0 = **completo** (lotes, terreno, ocupantes), bit 1 =
+**forçar** (grava mesmo o que não está sujo).
+
+Os passos no base (`+0x14`, de 0 a 5; o BV tem 1 a 6 e trata o bairro
+primário e os sub-bairros):
+
+| passo | o que faz |
+|---|---|
+| 0 | pede ao persist system os segmentos (pacotes) do grupo do bairro (`GetGroupSegmentList`, slot 0xA4 da interface `cITSPersistSystem`) e põe um checkpoint neles (`SetCheckpointOnSegmentList`, 0xA8). Com **forçar**: se há lote aberto, o gerente de vizinhos marca para gravar cada Sim do lote e o vizinho de cada objeto de GUID `0x2ED43D0D` (`FUN_00c1c85c`); se algum LotInfo pede (o menor valor da vtable 0x6C deles ≠ 0, `FUN_00bdd1bc`), marca todos os vizinhos das famílias, grava o arquivo de personagem de quem tem um (`FUN_00c1cb60`) e limpa o pedido nos lotes (`FUN_00bdd274`) |
+| 1 | com completo ou forçar: `SanifyInventories` (`0xbdbd5c`, §9.3), `cTSNeighborhood::Save` (`0xbd85f4`: o `NGBH`, sempre, pelo `SaveResource`) e `cTSFamilyManager::Save` (`0xbf6698`: apaga os recursos das famílias removidas, põe a versão 0x4E em todas e grava as sujas) |
+| 2 | só com completo: os LotInfo (`0xbd9214`: os `0x0BF999E7` do grupo e cada lote do mapa), o terreno (`cTSNHoodTerrain` vtable 0x4C), os ocupantes (`cTSNHoodOccupantManager` 0x14), os atributos de tipo (`cTSObjectTypeAttributeManager` 0x28) e o scene graph (vtable 0x10C com "neighborhood") |
+| 3 | `cTSNeighborManager::Save` (`0xc19afc`), se sujo ou forçar: o registro do gerente e cada vizinho |
+| 4 | a tabela genética (`cTSNeighborGeneticDataTable`) e a árvore da família (`cTSFamilyRelationshipArray`), cada uma se suja ou forçar; os desejos (`cTSWantSimulator::Save(!InCASLot)`) só com forçar ou num lote comunitário |
+| 5 | o contexto de importação/exportação `0xCDCBE0E3` (o mesmo do passo 9 do `SaveLot`, §6) e `CommitChangesOnSegmentList(lista, true)` (slot 0xAC): tudo vai para o disco de uma vez; devolve 0 (fim) |
+
+Com o lote aberto, então, o bairro não lê o lote: só marca os Sims dele para
+o gerente de vizinhos gravar os seus SDSC (o `SaveLot` já gravou o lote e a
+parte dele no bairro, §6).
+
+### 9.2 Persist system e o pacote
+
+**Transação** (`cTSPersistSystem`, BV): `SetCheckpointOnSegmentList`
+(`0x5a553c`) pede a cada segmento a interface de rollback (`0x8CEEC300`) e
+marca o checkpoint (`cTSPersistDBSegmentWithRollbackT`, `0x1545b04`: um
+`Flush` e a marca). Com a marca, o `Flush` não grava índice nem cabeçalho
+(`0x1545cd8`) e a compactação fica pendente (`0x1545a74`); o espaço liberado
+vai para um conjunto de buracos pendentes (flag 0x10 do uso de buracos), então
+os dados velhos não são sobrescritos e o arquivo no disco continua o de
+antes. `CommitChangesOnSegmentList` (`0x5a9964`): com menos de 100 MB livres
+no disco, lê antes cada arquivo inteiro para a memória; para cada segmento,
+o commit (`0x1545b94`: tira a marca, `Flush`, compacta se pendente); se um
+falha, desfaz todos (`DiscardChangesOnSegmentList` `0x5a4618` → `UndoAllChanges`
+`0x5ca728`; um segmento novo que ficou vazio é apagado, `0x154a350`) e regrava
+os arquivos guardados. No save do lote os segmentos são os de
+`TS::BuildSegmentList` (BV `0x891f80`): o grupo do bairro (e os sub-bairros,
+BV), o do lote e os grupos dos vizinhos (arquivos de personagem) sujos.
+
+**O pacote** (`cGZDBSegmentPackedFile`, o motor genérico; base e BV iguais no
+que segue) é um banco de dados no próprio arquivo: cada registro gravado vai
+para espaço livre (o menor buraco que caiba antes do fim do arquivo, senão o
+fim; BV `AllocateSpaceInternal` `0x5c8b5c`) e o espaço velho vira buraco
+(`FreeSpaceInternal` `0x5c7e64`). O `Flush` (base `0x582118`, BV `0x5c94d4`),
+na ordem:
+
+1. o **tipo de chave** (`DetermineKeyType`, base `0x58a2b0`, BV `0x5c457c`):
+   1, ou 2 se algum registro tem instância alta ≠ 0;
+2. o **DIR** (`E86B1EEF`/`E86B1EEF`/`286B1F03`; base `0x589500`, BV
+   `0x5c6c28`): apagado e regravado com os registros comprimidos (chave,
+   tamanho original: 16 bytes com chave 1, 20 com chave 2), se o índice mudou;
+3. a **compactação**, se a flag 1 está ligada (padrão 0x13: 1 compactar, 2
+   usar buracos, 0x10 buracos pendentes) e buracos / (tamanho − buracos) >
+   **0,15** (base `0x58573c`, BV `0x5c5ebc`): o arquivo inteiro é reescrito
+   num temporário `TempDBSegmentPackedFile_` (BV `0x5c846c`, os registros
+   copiados como estão, sem recomprimir) e trocado por rename;
+4. o **índice** (base `0x588640`, BV `0x5c8ecc`): 5 u32 por entrada com chave
+   1 (sem a instância alta), 6 com chave 2; no mesmo lugar se o tamanho não
+   mudou, senão em espaço novo;
+5. os **buracos** (base `0x588a0c`, BV `0x5c91ac`): pares (offset, tamanho);
+   um buraco que chega ao fim do arquivo é cortado;
+6. o **cabeçalho** (base `0x587f80`, BV `0x5c624c`): "DBPF", **1.1** (o BV
+   grava 1.2), a versão de usuário do cache (0), **as datas 0** (o `time()` é
+   chamado e o valor descartado), índice 7, e **o tipo de chave em 0x3C** (1
+   ou 2).
+
+**Compressão** (base `0x587004`, `0x589638`, `0x589748`; BV
+`WriteRecordInternal` `0x5cfcb0`, `0x5c6df0`, `ShouldRecordBeCompressed`
+`0x5c56ec`): o pacote comprime **todos** os registros por padrão (construtor
+base `0x581378` / BV `0x5c7250`: "todos" = 1; há também por tipo e por grupo,
+que nada liga), tenta só quando 50 ≤ tamanho ≤ 16.000.000 e o registro não é
+o DIR, e fica com o comprimido só se ele tiver **menos de 0,8** do original.
+Conferido nos pacotes do jogo (bairros, lotes, personagens; 37 mil
+registros): nenhum comprimido com menos de 50 bytes (o menor tem 52), e todo
+registro de 50 bytes ou mais guardado sem compressão comprime mal (≥ 0,8 com
+o nosso QFS); 51 dos comprimidos ficam ≥ 0,8 com o nosso QFS (o compressor do
+jogo aperta um pouco mais). Os pacotes do jogo seguem a regra do tipo de
+chave: 20 bytes por entrada e 0x3C = 1 nos bairros e nos personagens sem
+instância alta, 24 e 2 nos lotes e nos outros personagens.
+
+### 9.3 Inventários do bairro no save (`SanifyInventories`)
+
+Base `0xbdbd5c` (BV `0x4dfadc`, com mais faxina de dados de arquivo), antes de
+gravar o NGBH: o inventário global é criado se falta; os de lote cujo lote não
+está no mapa de LotInfo saem, e todo LotInfo ganha o seu
+(`GetInventoryByLotID` com o ID da vtable 0x44 do LotInfo, que cria vazio); os
+de família cuja família o gerente não acha saem, e toda família do gerente
+ganha o seu; os de vizinho cujo vizinho não existe saem, e também os do
+vizinho cuja definição é um modelo (tipo 0x10); por fim
+`CreateNewNeighborInventories` (base `0xc1bd34`) dá um a todo vizinho do
+gerente (um modelo volta com o inventário vazio). Os três mapas são
+`std::map` pelo ID: gravados em ordem crescente. Nos bairros do jogo os
+números batem: lotes 26/26, 11/11, 26/26, 6/6; famílias 11/11, 10/10, 10/10
+(o Tutorial, 5 de 7); vizinhos 175/175, 184/184, 186/186, 39/39; as três
+listas sempre em ordem crescente.
+
+### 9.4 Os campos do NGBH
+
+`+0x34`/`+0x38` (base `+0x30`/`+0x34`) são `cTSNeighborhood::TileCountX`/
+`TileCountY` (BV `0x4d6a98`/`0x4d6aa0`), postos por `SetSize`
+(`0x4d6a8c`); o construtor (BV `0x4e16d8`, base `0xbd80d0`) põe 128 × 128,
+"Temperate" e `+0xFD` = 0; `TileWidth` é 10. O u8 `+0xFD` (base `+0xB0`) é um
+bool, lido como (byte ≠ 0) só se a versão > 0x6E; no base e no BV **só o
+construtor, o Read e o Write o tocam** (busca de `lbz`/`stb` no offset nos dois
+programas): é guardado e não usado. Vale 1 nos três bairros e 0 no Tutorial.
