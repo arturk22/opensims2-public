@@ -182,10 +182,10 @@ as pegadas no ponto, não o tile inteiro.
 ```
 custo = custo do material do piso (FloorTileRoutingCost), preso em [0,5, 10];
         sem custo no material → o padrão do gerenciador (+0x34)
-água (IsPartWater): passagem 15; folga baixa até o andar de cima (FUN_00165c88): 7; custo FLT_MAX (§9.1)
+água (IsPartWater): passagem 15; piso no andar de cima a menos de 3,0 (FUN_00165c88): 7; custo FLT_MAX (§9.1, §9.5)
 desnível do tile ≥ 1 → impassável (15); entre 0,5 e 1 → custo = (h − 0,5)·10·2 se for maior
-+10 quando as duas checagens finais do mundo derem verdadeiro (inferido: tile
-    descoberto/fora de sala; não decifrado)
++10 só no BV: tile fora para o tempo com neve (WorldOutsideSupport, Seasons);
+    o base 1.0 não tem (§9.5)
 ```
 
 ## 3. O caminho (binário, `cPathPlanner::CreateResultPath`)
@@ -1229,10 +1229,10 @@ entradas são thunks `this -= 0x20`):
 - `cTSSlotDescriptor::Read` (BV `0x4b08a4`): a ordem é a do nosso parser
   (tipo, x, y, z, 3 multiplicadores, RS flags, snap, mín/máx/ótimo,
   `+0x20`, `+0x24`, gradiente, altura, facing, resolução, os 2 u32 do TS2).
-  Ele escala x,y por 1/16 até a "versão" `0x46` e as proximidades inteiras
-  por 1/16 entre 9 e `0x42`; os SLOT `0x43`–`0x46` do jogo base já têm x,y
-  em tiles (0,7, 0,495…), então a versão comparada ali não é a do
-  cabeçalho que o nosso parser lê (não conferido; o parser fica como está).
+  Ele escala x,y por 1/16 até a versão `0x46` do cabeçalho e as
+  proximidades inteiras por 1/16 entre `0xA` e `0x42`; os SLOT
+  `0x43`–`0x46` do jogo base têm mesmo x,y em dezesseis avos (lido na
+  rodada n49, §9.5: os de 0,7/0,495 são `0x47`).
 
 **Quem entra** (`PortalFillInSlotInfoList`, BV `0xe21a18`, e o do
 multi-tile `0xaf17f4`, que percorre as partes no líder):
@@ -2356,6 +2356,196 @@ resto sobe por uma semente: na 7 a Mary-Sue, a 0,015 da quina da mesa 639
 clipe de partida) entra na pegada da mesa: 15, como no binário com essa
 ordem; antes o passo testado de novo com ela parada passava. Fica no TODO
 (o passo de partida junto de uma quina).
+
+## 9.5 Rodada n49 (rotas, resto): o que foi lido
+
+Leitura de 2026-10-18, **Ghidra MCP** (só leitura, nada renomeado nem
+gravado; as funções que o projeto não tem como função lidas com
+`disassemble_bytes` em `dry_run`), nos dois binários: o **base 1.0** onde
+achei a função (sem nomes: pelas vtables da RTTI, com um script nosso que
+lê as vtables do Mach-O como o `tools/symxfer/vtables.py`, sem o mapa) e o BV.
+Os SLOT, OBJD e BHAV contados com programas de levantamento sobre o
+`objects.package` (fora do repositório).
+
+### O custo do piso no base 1.0 (`WorkOutTileCostAndPassability`)
+
+É o slot `0x58` do `cTSRouteManager` (BV `0x4f3d84`; base `0xc53464`, não
+definido como função no projeto):
+
+```
+estado = 0; custo = 1,0
+FloorTileRoutingCost (base 0x103911c): custo preso em [0,5; 10]; sem: this+0x28 (o 2,0)
+só no nível 0 (cFloorTile +8 = 0):
+    IsPartWater (base 0x1039db4)      → estado 9, custo FLT_MAX
+    senão FUN_01038900(tile, 1)       → estado 5, custo FLT_MAX
+    estado < 9: desnível h ≥ 1 → estado 9, FLT_MAX;
+                estado ≤ 1 e h ≥ 0,5 → custo = 10·(h − 0,5)/0,5 se maior
+```
+
+Os estados do base são 9 e 5 (o BV usa 15 e 7); para o planejador todo
+estado > 1 bloqueia (§9.1). **O base não tem o `+10`**: no BV ele é
+`cWorldDB::WorldOutsideSupport` (a interface `cIWorldDB` em −28, slot
+`0x170` → `+0x8c`, BV `0xd1bdc`), cujo `0x24(tile, 0)` é o
+`IsOutsideForWeather` (BV `0xc3750c`) e o `0x2c(tile)` (BV `0xc371c4`) é
+"fora para o tempo **e** o serviço de tempo (`FUN_000c7fb0` → `0x84`) em
+neve (`0x7c` == 1 e `0x74`)": a neve do Seasons. Ou seja: confirmado que o
+jogo base não soma nada ali.
+
+**O estado 5 do base (7 do BV)** (`FUN_01038900` base / `FUN_00165c88` BV):
+o quarto de tile do terreno (andar 0) cujo **mesmo quarto no andar de cima
+tem piso** (WorldDB `0x88` base / `0xb0` BV = `FUN_000d2798(tile, máscara do
+quarto, todos = 1, visível = 1)`: o padrão do quarto ≠ 0 e, com o último
+argumento, a camada de visibilidade 3ARY `0x15`) e em **algum dos quatro
+cantos do tile** (os dois `IsOnLot` do vértice) a altura do andar de cima
+menos a do terreno, mais 0,001, é **menor que `StandardLevelHeight`** (3,0;
+BV `0xd20e8`): o chão debaixo de um deque, de uma fundação ou de um piso
+baixo. Um segundo andar comum fica a 3,0 e não conta.
+
+### A pegada no mundo: `GetFootprint` encosta cada retângulo na grade de 1/8
+
+`GetFootprint` (vtable `0x100` BV, `FUN_00af9e40`; base vtable `0xe8`,
+`FUN_00b43bfc`) guarda o `TSObjectWorldSpaceFootprint` calculado em (0, 0) e
+direção 0 e, a cada pedido, leva cada retângulo ao lugar pedido girado pela
+direção & 6 (BV `FUN_0191fa14`; no base o mesmo código está dentro da
+função) e **o encosta na grade de 1/8 de tile**:
+
+```
+x0' = max(x0, floor(8·x0 + 0,5)/8 + 0,01)       (y0 igual)
+x1' = min(x1, ceil(8·x1 − 0,5)/8 − 0,01)        (y1 igual)
+se x0 < x1 e x1' − x0' < 0,0625: x1' = x0' + 0,125 − 0,02
+```
+
+Uma borda que entra menos de meia célula numa célula de 1/8 volta para a
+linha da célula + 0,01. A caixa em `+0xc..+0x18` do `cFootprint` é a união
+dos retângulos já encostados, no mundo (`FUN_017a8910`; zerada pelo
+`FUN_017a82dc`). O `cTSPerson::GetFootprint` (BV `0xaca7d4`) é o mesmo
+(refaz a caixa guardada quando o dado de pessoa 73 muda): **a caixa de 0,2
+do Sim também é encostada**. Quem usa: o planejador
+(`AddThisToPathPlanner`), o `TestPlacementWithRespectToObjects` (o teste
+por passo, o `EvalTileForGoal`, o Snap e a colocação) e as escadas abaixo. As
+pegadas das máscaras já caem na grade com os 0,01 (§2) e não mudam; mudam as
+caixas do OBJD, as do modelo sem lista e a do Sim.
+
+### A caixa do modelo sem lista "footprint" (a flag 4 do nó)
+
+O `0xa4(n)` do nó é `+0x24 & (1 << n)` (BV `0x1ae5d94`): um bit das flags
+do nó, que os construtores ligam pelo `FUN_00c13810(impl, bit, 1)`: o
+`cTransformNodeT` liga o 0, o `cBoundedNodeT` o 1 e o 11, o
+`cRenderableNodeT` o 5 e o 10, o `cExplicitBoundNodeT` o 9 e o
+**`cShapeRefNodeT` (BV `0x1b1ab78`) o 4**. A caixa do `FUN_00a45e54`, chamada
+pelo `cObject` (BV `0x658ef0`) com −1 (desce em todos os filhos), é então a
+**união das caixas de todos os `cShapeRefNode`** do modelo não escondidos
+(`0x114`) e com limites (`0x180`), no espaço do objeto (`0x11c`): os limites
+das formas, a malha de limites do GMDC (`cGeometryDataContainer::SetRigidBound`,
+que o app já lê em `ObjectModel::bounds`), não as malhas.
+
+### A parte de um multi-tile: o deslocamento normalizado vem do OBJD
+
+`cEdithMTObject::OnInit` (base `0xb23280`, BV `0xaef22c`) chama
+`SetNormalizedOffset` (base vtable `0x664`, BV `0x5c8`; no base a interface
+`cIEdithMTObject` em −608, slots `0x20`/`0x48`; os campos `+0x26c..+0x274`
+base, `+0x2ec..+0x2f4` BV) com o `GetMultiTileOffsets` do OBJD (base
+`0xbb4834`: o subíndice, campo `0x56`, em `+0x1a` do `cEdithObjectDefinition`;
+**x = o byte alto com sinal, y = o byte baixo sem sinal**) e o z = o campo
+`0x38` (o "level offset", arquivo `0xB0`). O `AssignOffsets` (BV `0xaf389c`)
+põe o outro par (`+0x2f8`, `GetOffset`/`SetOffset` BV `0x5cc`/`0x5d0`) = o
+normalizado menos o do líder, girado pela direção do líder (0: (x, y); 2: (−y,
+x); 4: (−x, −y); 6: (y, −x); as ímpares dão (0, 0)). O
+`GetLocalOffsetFromLeader` (§2) usa os normalizados: é o subíndice, como o VM
+já fazia; só o y passa a sem sinal (nenhum dos 1.907 OBJD de parte do jogo
+base tem o byte baixo ≥ `0x80`: sem efeito).
+
+### Os retângulos de custo 10 das escadas: a caixa é no mundo
+
+A caixa `+0xc..+0x18` que o `PortalAddToPathPlannerImpl` lê do `GetFootprint`
+de cada ponta é a união acima, **no mundo** (fecha o que §9.2 e §9.4 deixaram
+inferido). Com os argumentos do gerente na ordem (y, x) de todo
+`AddObjectRectangle` (o `AddThisToPathPlanner` passa `r1, r0, r3, r2`), os
+retângulos, nas coordenadas da pegada (x0, y0, x1, y1 = a caixa), passagem
+0, custo 10, cada um no andar da sua ponta, são:
+
+| ponta | modelo 2 ou 4 | modelo 3 ou 4 |
+|---|---|---|
+| a de andar maior (`this` ou a outra, trocadas se preciso) | x ∈ [x0 − 0,32499; x0], y ∈ [y0 − 0,32499; y0 + 0,12499] | x ∈ [x0 − 0,32499; x0], y ∈ [y1 − 0,12499; y1 + 0,32499] |
+| a de andar menor | x ∈ [x1; x1 + 0,32499], y ∈ [y0 − 0,32499; y0 + 0,12499] | x ∈ [x1; x1 + 0,32499], y ∈ [y1 − 0,12499; y1 + 0,32499] |
+
+Sempre do lado de x menor em cima e de x maior embaixo, qualquer que seja a
+direção da escada (é o que o código faz). O modelo é o
+`TSObjectGetModelType` (BV `0xe1ec30`: a entrada 48 rodada como teste, o
+temp 0; senão 1) do objeto que roda o `PortalAddToPathPlannerImpl`. A outra
+ponta: no tipo 12 o `PortalGetOtherEndOfStairs` (BV `0xe21144`, §8.6); no
+tipo 10 (a escada reta, um multi-tile; BV `0xaf1570`) **a última parte da
+lista do grupo, fora a própria, que tem uma seguinte** (a penúltima da lista).
+
+### O SLOT: a versão comparada é a do cabeçalho
+
+`cTSSlotLoader::Read` (base `0xbc50c0`, slot `0x10`): lê três u32 (o
+segundo é a versão; fora de 1–`0x47` falha), põe um objeto com a versão no
+contexto do stream (`0x4c`; o `cTSSlotDescriptor::Read` o lê pelo
+`stream→0x50()→0x134()`), a contagem e um descritor por slot. O
+`cTSSlotDescriptor::Read` (base `0xbc3f1c`; BV `0x4b08a4`) por versão `v`:
+
+```
+v ≤ 2: o formato antigo (não seguido)
+tipo u16; x, y f32 — × 1/16 se v < 0x47; z f32
+3 multiplicadores i32, RS flags u32; v ≥ 4: snap target i32
+v ≥ 5: mín./máx./ótima: v < 0xA i32 sem escala; v ≤ 0x42 i32 × 1/16; senão f32
+       depois max size u32 (+0x20) e o u32 +0x24
+v ≥ 7: gradiente f32; v ≥ 8: altura i32
+v ≥ 9: facing i32; senão RS flag 0x200 → facing −3, 0x400 → −1 (a flag sai)
+resolução: v ≥ 0x47 f32; v ≥ 0xA i32 × 1/16; senão o gradiente × 1/16
+v ≥ 0x40: índice do nome; senão 0. v ≥ 0x41: o u32 +0x1c; senão −1
+```
+
+O levantamento do `objects.package`: 666 SLOT na versão `0x47` (resolução
+em float), 994 entre `0x43` e `0x46` e 119 antigos (4, 6, 8, `0xA`). **Nos
+`0x43`–`0x46` o x, y está em dezesseis avos**: o "_Walk Run Test" tem slots
+em (±48, ±48) = 3 tiles, o "Toy - Remote Control Car - Joystick" em (0, −11,2)
+= 0,7 tile, as poças em (32, 32) = 2 tiles, as geladeiras baratas em (−1;
+5,5) e (0, −10). A frase da §8.6 ("os SLOT `0x43`–`0x46` já têm x,y em tiles")
+estava errada: os de 0,7/0,495 são `0x47`. O parser do VM não escalava.
+
+### O sair do caminho: a direção dos tipos 1/2 e os setters
+
+O `CreateMoveOutOfWayDestination` (BV `0x57dcac`) faz o destino e o põe no
+lugar de quem sai com `SetPosition` (vtable `0x2a4`, BV `0xafd048`), que **não
+gira** o objeto: as direções do slot (1, 2, 6 e 7 nos tipos 1/2; d ± 1 no 0)
+são relativas à direção com que o destino é feito (a do objeto novo), não à
+de quem pede. Os setters do slot sintético (interface em −32, thunks
+`this − 0x20`, BV `0x4aeadc..`): `0x28` facing −3, `0x30` −2, `0x38` −1,
+`0x40` facing d; `0x70(v)` liga/desliga a RS flag **`0x100000`**
+(`AllowOtherDirectionsAtLowerScore`, lido pelo `0x6c`), `0x84` a `0x4000`,
+`0x8c` a `0x8000`, `0x94` a **`0x1000000`** (o `0x98` lê: o "drop to floor
+below"). Tipos 1 e 2: `0x70(1)`, `0x8c(1)`, `0x84(0)`, facing `0x28` (−3);
+o 2 ainda `0x94(1)` e salas e paredes ignoradas; o 0: `0x8c(1)`, `0x84(0)`.
+**Nenhum SLOT do jogo base tem as flags `0x4000`, `0x8000`, `0x100000` ou
+`0x1000000`**: só os slots sintéticos do motor.
+
+### "Drop to floor below" (`0x98`)
+
+Na varredura (BV `FUN_004778b4`, `0x477f50..0x478088`), para cada ponto: com
+o slot com `0x98` (RS `0x1000000`) **e** `0x44` (salas ignoradas, `0x800`),
+se o ponto não tem piso no andar do slot (`FUN_00472884`), desce andar a
+andar (do andar − 1 até o mais baixo do WorldDB `0x140` + 1) até o primeiro
+cujo quarto de tile no ponto tem piso (WorldDB `0xbc(tile, quarto, 1)`), e
+se o andar mudou **+10** no placar (`0x274b608`). É o "+10 de outro andar"
+da §8.2. Só o destino de tipo 2 (o `MoveOutOfWay` sem quem peça) liga a
+flag; o VM nunca faz o tipo 2: lido, não feito.
+
+### Dado de pessoa 37 de um slot global: quem o lê
+
+Varredura das BHAV do `objects.package` pelo dado de pessoa 37 (meu ou do
+stack object) numa Expression: "Force - Stand - In Place" (global `0x2D9`,
+grava), três "Function - Goal Check" de objetos (comparam com os seus slots
+locais) e **"Turn toward incoming Sim's target slot"** (semi-global social
+`0x7FD90EDB` `0x2019`): **se o 37 do Sim que chega == 1033** (o slot global
+33 + 1000, o do "Route - Dynamic w/Lead in"), lê o 38 dele e vira para a
+direção absoluta do ponto (global `0x2DF` "Turn toward absolute direction");
+senão vira para o Sim (Turn Body Towards). Ou seja: as árvores contam com o
++ 1000 do `WorkOutSlotIndex`. No VM o 37 era o índice; com o + 1000 o
+`N001_Lot11` (semente 2, 3 dias) refaz por horas a aproximação do Mortimer
+(197) ao Alexander (142) com 13 a cada tick no topo da escada do alpendre
+(8,67; 12,19; 2): §9.5 "o que mudou".
 
 ## 10. O que falta
 
