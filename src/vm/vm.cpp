@@ -1083,6 +1083,28 @@ void VM::tick() {
     // The simulator's tick counts up once every object has run
     // (cTSSimulator::SimulateOneTick, Mac BV 0x49a814).
     ++simulatorTicks;
+    // OS2_DEBUG_RECORDS=1: an object whose data 62 "use count" is not the
+    // number of the persons' object records on it, as it first differs.
+    if (static const bool checkRecords = std::getenv("OS2_DEBUG_RECORDS") != nullptr; checkRecords) {
+        static std::set<std::pair<ObjectId, int>> told;
+        std::map<ObjectId, int> uses;
+        for (const Object* o : objectTable())
+            if (o && o->person)
+                for (const auto& r : o->person->objectRecords)
+                    ++uses[r.object];
+        if (const char* at = std::getenv("OS2_DEBUG_RECORDS_AT"); at && ticks % uint64_t(std::max(1, std::atoi(at))) == 0)
+            for (const Object* o : objectTable())
+                if (o && o->person)
+                    for (const auto& r : o->person->objectRecords) {
+                        const Object* x = object(r.object);
+                        std::fprintf(stderr, "t%llu record: %d -> %d (%s) depth %d\n", (unsigned long long)ticks, o->id,
+                                     r.object, x && x->definition ? x->definition->fileName.c_str() : "?", r.depth);
+                    }
+        for (const Object* o : objectTable())
+            if (o && o->data[62] != uses[o->id] && told.insert({o->id, o->data[62] - uses[o->id]}).second)
+                std::fprintf(stderr, "t%llu records: object %d (%s) data 62 = %d, %d records\n", (unsigned long long)ticks,
+                             o->id, o->definition ? o->definition->fileName.c_str() : "?", o->data[62], uses[o->id]);
+    }
 }
 
 // The object's reset after a SimAntics error (cTSObject::HandleError, BV

@@ -1178,6 +1178,16 @@ public:
 
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) {
+        // A person's object records go with it, each taking 1 off its
+        // object's data 62 (cTSPerson::OnCleanup in the kill queue, flag
+        // 0x1000: no cascade; records.cpp). A visitor leaving left 1 on the
+        // visitor controller each time.
+        if (auto it = objects_.find(id); it != objects_.end() && it->second.person) {
+            for (const auto& r : it->second.person->objectRecords)
+                if (auto x = objects_.find(r.object); x != objects_.end() && r.object != id)
+                    x->second.data[62] = int16_t(x->second.data[62] - 1);
+            it->second.person->objectRecords.clear();
+        }
         if (auto it = objects_.find(id); it != objects_.end()) {
             objectList_.erase(it->second.listOrder);
             if (const uint32_t g = it->second.guid(); g)
