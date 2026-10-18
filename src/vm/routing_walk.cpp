@@ -1085,9 +1085,13 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         throw VMError("Trying to route while out of world.");
     const VM::RouteGoals goals = plan();
     // The route's routing slot (person data 37; WorkOutSlotIndex): Go To
-    // Routing Slot's, + 1000 for a global one; -1 for the other routes.
-    const int16_t slotIndex =
-        c.frame.routeSlot < 0 ? int16_t(-1) : int16_t(c.frame.routeSlot + (c.frame.routeSlotGlobal ? 1000 : 0));
+    // Routing Slot's; -1 for the other routes. The binary's is + 1000 for a
+    // global slot (the saved Sims of N003_Lot52 have 1033); here the index
+    // alone (inferred): with the + 1000 the social approach "Route - Dynamic
+    // w/Lead in" (global slot 33) failed with 13 tick after tick (N001_Lot11
+    // seed 2, three days: 59 -> 1367 failures), so something reads 37 back
+    // as a slot number of the global SLOT in the game; not found.
+    const int16_t slotIndex = c.frame.routeSlot < 0 ? int16_t(-1) : int16_t(c.frame.routeSlot);
     if (goals.goals.empty()) { // the last refused candidate's result (InitRoute: none at all → 6)
         // InitRoute's FindPath failed: UpdatePersonDataFields(0, true), route
         // status 0 (base 1.0 0xc58130), no current goal.
@@ -1192,7 +1196,6 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
         c.frame.preRouteRan = false; // the instruction is done
         c.frame.postRoute = 0;
         c.frame.routeSlot = -1;
-        c.frame.routeSlotGlobal = false;
         c.frame.routeResume = false;
     }
     return e;
@@ -1263,7 +1266,6 @@ Exit goToRoutingSlot(Context& c) {
     if (!starting) // mid-instruction: as read before the route's trees (they change the temps)
         index = c.frame.routeSlot;
     c.frame.routeSlot = int16_t(index);
-    c.frame.routeSlotGlobal = scope == 2;
     const Slots::Slot& slot = routingSlot(c.vm, *target, scope == 2, index);
     const ObjectId id = target->id;
     const bool ignoreFootprint = flags & 0x04;
@@ -1636,13 +1638,10 @@ size_t resumeRoutes(VM& vm, Thread& t) {
         const uint16_t op = f.behavior->instructions[f.pc].opcode;
         if (op != 0x2D && op != 0x1B)
             continue;
-        // The routing slot the route had (person data 37, + 1000 for a
-        // global one), not read again from the temps.
-        if (op == 0x2D && me->person) {
-            const int16_t slot = me->person->data[37];
-            f.routeSlotGlobal = slot >= 1000;
-            f.routeSlot = int16_t(slot >= 1000 ? slot - 1000 : slot);
-        }
+        // The routing slot the route had (person data 37), not read again
+        // from the temps.
+        if (op == 0x2D && me->person)
+            f.routeSlot = me->person->data[37];
         f.preRouteRan = true;
         if (i + 1 == t.stack.size()) { // walking
             f.routeResume = true;

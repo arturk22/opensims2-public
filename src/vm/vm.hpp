@@ -673,8 +673,9 @@ struct Object {
         std::vector<int16_t> multi; // the goals' multi slot indices (person data 38), when any
         // The route's person data (UpdatePersonDataFields): 37 its routing
         // slot (WorkOutSlotIndex: the slot's number among the target's
-        // routing slots, + 1000 for a global slot, -1 none) and 38 the
-        // current goal's multi slot index (-1 without one).
+        // routing slots, -1 none; the binary adds 1000 for a global slot,
+        // not done: routing_walk.cpp walkStep) and 38 the current goal's
+        // multi slot index (-1 without one).
         int16_t slotIndex = -1, goalMulti = -1;
         std::vector<ObjectId> chairs; // the goals' chairs (sitting goals), when any
         ObjectId chair = 0;           // the planned goal's chair: the post-route tree's parameter 0
@@ -960,7 +961,6 @@ struct Frame {
     // temps it came from).
     bool preRouteRan = false;
     int16_t routeSlot = -1;
-    bool routeSlotGlobal = false; // Go To Routing Slot's slot is a global one
     // The walker's post-route tree runs for this frame's routing instruction
     // (1 after an arrival, 2 after a failure; routing_walk.cpp).
     uint8_t postRoute = 0;
