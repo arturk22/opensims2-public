@@ -65,7 +65,9 @@ cobrindo a tela.
 O que `cTSSaveLotController` faz (`docs/save-mac.md` §6), pelos gravadores
 existentes: `captureLot` + `captureLotRecords` gravam o lote no seu próprio
 pacote; `saveNeighborhood` grava FAMI/SDSC/SREL/NGBH no pacote do bairro.
-Cada arquivo vai para `<nome>.saving` e é renomeado por cima. Os textos da
+Cada arquivo vai para `<nome>.saving` e todos são renomeados por cima no
+fim (o do bairro, o do lote, os personagens), como o commit da lista de
+segmentos do jogo (`docs/save-mac.md` §9.2). Os textos da
 pergunta são do jogo (UIText STR# 0x99: 3 "Salvar", 4 a pergunta de sair
 para o bairro, 5/6 a de sair do jogo, 24–26 os botões dela; Sim/Não/Cancelar
 da 0x8E 2/3/1, inferido); a caixa é a dos diálogos da VM (menu de pie),
