@@ -95,10 +95,11 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
 
 Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 commit**.
 
-1. **13a — gate 0x4F..0x51** (o ganho barato): estender a versão aceita em
-   `InteractionTable::parse` com o layout 0x4E; teste sintético por versão (contagens,
-   entradas, nome final); atualizar `docs/data-findings.md`; reverter o TEMP; commitar.
-   *Pronto quando:* o censo do AL cair de 1.177 para **901** falhas (só 0x53+).
+1. **13a — gate 0x4F..0x51** (o ganho barato): ✅ **FECHADO 18/10** — o gate
+   aceita `0x3F..0x51` com o layout 0x4E; `testInteractionTableVersions` cobre
+   0x4E..0x51 (campos, anúncios, nome) e recusa 0x52/0x53/0x55; TEMP revertido.
+   Medição: decode-all do AL com **901** falhas (só 0x53 7 / 0x54 440 / 0x55 454)
+   e **1.208** ok; build+ctest 39/39; `data-findings.md` §17.
 2. **13b — fechar o modelo 0x53+** (investigação; sem commit se não houver mudança de
    código): (a) rodar `ttab_model2.py` com saída em arquivo/exit code; (b) atacar o
    (X=0, Y=8): dump cru do FD9 em 362..736, procurar entrada intermediária não detectada e
@@ -151,3 +152,8 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
 - (18/10) Goal aberto a partir do estado do item 13 (1.177 TTABs; modelo 0x53+ medido até
   `X×(4+6Y)`, 555 arquivos fechando) e da fila restante do `goal-port-fidelity.md`. Primeiro
   passo: reverter o TEMP e fechar 13a.
+- (18/10) **13a FECHADO** — `InteractionTable::parse` aceita 0x4F..0x51 com o layout 0x4E
+  (276 recursos medidos); `testInteractionTableVersions` (0x4E..0x51 ok; 0x52/0x53/0x55
+  recusados); TEMP revertido; decode-all do AL: **901 falhas** (0x53 7 / 0x54 440 / 0x55
+  454) e 1.208 ok; build+ctest **39/39**; `data-findings.md` §17 registra a medição.
+  Próximo: **13b** (fechar o modelo 0x53+ — anomalias (0,8) e os 7 arquivos 0x53).

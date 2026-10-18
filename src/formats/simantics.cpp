@@ -278,7 +278,12 @@ InteractionTable InteractionTable::parse(std::span<const uint8_t> data) {
     }
     t.typeCode = r.i32();
     t.version = r.u32();
-    if (t.version < 0x3F || t.version > 0x4E)
+    // 0x4F..0x51 keep the 0x4E layout byte for byte: the 276 resources the
+    // game refuses in the AL objects.package (149 + 106 + 21) all parse to the
+    // trailing name with the same entry layout. 0x52 never shows up in the UC
+    // content and 0x53+ changed the entry format, so both stay refused
+    // (docs/data-findings.md section 17).
+    if (t.version < 0x3F || t.version > 0x51)
         throw FormatError("TTAB: unsupported version " + hexString(t.version));
     t.unused = r.u32();
     t.interactions.resize(r.u16());

@@ -317,6 +317,54 @@ static void testInteractionTable() {
           "TTAB with zero padding before the name");
 }
 
+static void testInteractionTableVersions() {
+    // 0x4F..0x51 keep the 0x4E entry layout byte for byte: the AL content has
+    // 276 of them (149/106/21) and all parse to the trailing name with the
+    // same fields (docs/data-findings.md section 17). 0x52 never shows up in
+    // the UC content and 0x53+ changed the entry format, so both are refused.
+    auto table = [](uint32_t version) {
+        std::vector<uint8_t> d(64, 0);
+        auto u16 = [&](uint32_t v) { d.insert(d.end(), {uint8_t(v), uint8_t(v >> 8)}); };
+        auto u32 = [&](uint32_t v) { u16(v & 0xFFFF), u16(v >> 16); };
+        u32(0x54544142), u32(version), u32(0), u16(1);
+        u16(0x1002), u16(0x1003); // action, guard
+        u32(2);                   // two advertisements for the first age table
+        for (int i = 0; i < 6; ++i)
+            u32(0);
+        u16(0x0001), u16(0x8000);        // flags, flags2
+        u32(7), u32(1), u32(0x40000000); // string index, attenuation code/value 2.0
+        u32(50), u32(0xFFFFFFFF);        // autonomy, join index
+        u16(3), u32(0), u32(0x3F000000), u32(0), u32(1); // 0x45/0x46/0x4A/0x4C fields
+        u16(10), u16(2), u16(1);                          // advertisements: min, delta, personality
+        u16(20), u16(3), u16(2);
+        const std::string name = "Version Layout Table";
+        d.push_back(uint8_t(name.size()));
+        d.insert(d.end(), name.begin(), name.end());
+        return d;
+    };
+    for (uint32_t v : {0x4E, 0x4F, 0x50, 0x51}) {
+        const auto t = InteractionTable::parse(table(v));
+        const auto& e = t.interactions.at(0);
+        check(t.version == v && t.interactions.size() == 1, "TTAB version from 0x4E to 0x51 accepted");
+        check(e.action == 0x1002 && e.guard == 0x1003 && e.autonomy == 50 && e.joinIndex == -1 &&
+                  e.uiDisplayType == 3 && e.memoryMultiplier == 0.5f && e.modelTableId == 1,
+              "TTAB 0x4E..0x51 entries share the layout");
+        check(e.motives.size() == 7 && e.motives[0].size() == 2 && e.motives[0][1].minimum == 20 &&
+                  e.motives[0][1].delta == 3 && e.motives[0][1].personality == 2,
+              "TTAB 0x4E..0x51 advertisements");
+        check(t.name == "Version Layout Table", "TTAB 0x4E..0x51 trailing name");
+    }
+    for (uint32_t v : {0x52, 0x53, 0x55}) {
+        bool threw = false;
+        try {
+            InteractionTable::parse(table(v));
+        } catch (const FormatError&) {
+            threw = true;
+        }
+        check(threw, "TTAB versions past 0x51 are refused");
+    }
+}
+
 static void testBhav() {
     std::vector<uint8_t> d(64, 0);
     d.insert(d.end(), {0x07, 0x80, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0}); // 0x8007, 2 instructions, 1 arg, 2 locals
@@ -2525,6 +2573,7 @@ int main() {
     testBhav();
     testInteractionTable();
     testSlotVersions();
+    testInteractionTableVersions();
     testCameraConfig();
     testLightingConfig();
     testStandardMaterial();

@@ -607,3 +607,37 @@ motivos salvos nos PERS de `N001_Lot11`.
 motor e a unidade por dia foram confirmados na rodada n17
 (`docs/motives-mac.md`); os vieses do `FBA_ScoreInteraction`
 (posse, memória, relacionamento, clima) ficam em 1.
+
+## 17. Versões novas da TTAB: 0x4F–0x51 iguais ao 0x4E; 0x53+ mudou
+
+**Pergunta.** O `objects.package` do Apartment Life tem 1.177 TTABs recusadas
+pelo port ("unsupported version"): 0x4F (149), 0x50 (106), 0x51 (21), 0x53 (7),
+0x54 (440) e 0x55 (454). Quais mantêm o layout do 0x4E e o que mudou depois?
+
+**Método.** Dump dos 1.177 recursos que falham (harness temporário no
+`s2pkg decode-all`, ambiente `S2PKG_TTAB_RAW`) e releitura em Python com o
+layout do `InteractionTable::parse` (em `%TEMP%\opencode\i6e\ttab\`).
+
+**Achados.**
+
+- **0x4F, 0x50 e 0x51 usam o layout 0x4E byte a byte**: os 276 arquivos
+  (149 + 106 + 21) fecham com contagem, entradas e nome final sem sobra.
+- **0x52 não aparece** em nenhum pacote do UC.
+- **0x53+ mudou a entrada.** Cabeçalho igual (nome 64 B, typeCode, versão,
+  `n` u16 em +76); entrada com **54 bytes fixos** — o miolo +24..+53 tem
+  assinatura medida (joinIndex `-1` em +24, uiDisplayType 0 em +28,
+  memoryMultiplier 0,5f em +34, objectType 0 em +38, modelTableId 1 em +42,
+  X em +46 e Y em +50), e os campos +0..+23 se leem como no layout antigo
+  (action, guard, flags, flags2, stringIndex, attCode, attValue, autonomy) —
+  a semântica disso se confirma quando as interações carregarem. Depois vêm
+  **X grupos** de um header de 4 bytes + Y anúncios de 6 bytes (mín, delta,
+  personalidade): **cauda = X × (4 + 6·Y)**. Medido por par (X, Y) → tamanho
+  da entrada: (5,10)→320, (5,14)→440, (5,7)→230, (1,16)→100, (1,8)→52; no
+  E2F o trio (50,10,0) se repete a cada 4 + 6×10 = 64 bytes. O parse fecha
+  exatamente em **555 arquivos** (255/440 dos 0x54 e 300/454 dos 0x55); os
+  7 arquivos 0x53 e as entradas lidas como (X=0, Y=8) ainda não fecham —
+  investigação no `goal-fechar-pendencias.md` (itens 13b/13c).
+
+**Conclusão.** 0x4F–0x51 implementados em `simantics.cpp` (o teste
+`testInteractionTableVersions` cobre 0x4E..0x51 e recusa 0x52/0x53/0x55);
+0x53–0x55 seguem recusados com erro claro até o formato fechar.
