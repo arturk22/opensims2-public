@@ -4352,7 +4352,8 @@ pessoa recebe `Cleanup(objeto)`) e `objeto->Cleanup(nada)` (vtable `0x320`,
 BV `0xb09838`: o reset do objeto, com a guarda `0x40000`). Um registro cujo
 quadro já não está na pilha sai à mão (od 62 −= 1). Depois vem o resto do
 reset (RemoveFromWorld/lugar livre, dados de pessoa 0 e 59 := 0, **object
-data 34** := 0, o tree sim volta ao Main, a entrada 3 do OBJf, a ação
+data 34** "Hidden Flags" := 0 (no base 1.0 o mesmo, `0xb85f74`–`0xb85fc0`;
+o VM zerava o dado de pessoa 34, corrigido na n46), o tree sim volta ao Main, a entrada 3 do OBJf, a ação
 vazia, a fila e a sub-fila apagadas). Ou seja: **o reset de um Sim reseta os
 objetos que ele usava e as pessoas que os usavam** (um parceiro de social,
 quem estava no mesmo objeto).

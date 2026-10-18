@@ -1089,9 +1089,9 @@ void VM::tick() {
 // 0xb05510, outside the debugger): its interactions are unlinked (vtable
 // 0x534), then Cleanup(nobody) (vtable 0x320, BV 0xb09838):
 // - a person (cTSPerson::OnCleanup, BV 0xadcbcc) drops its stack and queue,
-//   its tree sim is reset to the Main, its cleanup tree (OBJf entry 3) runs
-//   and person data 34 is cleared (the move to a free spot near where it
-//   stood is left out);
+//   its tree sim is reset to the Main, its cleanup tree (OBJf entry 3) runs,
+//   person data 0 and 59 and object data 34 are cleared and the objects of
+//   its object records are reset with their users (records.cpp);
 // - an object with a cleanup tree runs it and its tree sim is reset to the
 //   Main, its data stay;
 // - an object without one is Reset (cTSObject::Reset(1, true, false, false),
@@ -1219,10 +1219,14 @@ void VM::resetObject(ObjectId id, Thread& t, bool cascade) {
             runFunction(id, 0); // Init
     } else if (o->person) {
         // cTSPerson::OnCleanup: out of the world and back in a free place
-        // near, person data 34 zeroed, the cleanup tree.
+        // near; person data 0 "Sitting?" and 59 "Social Menu Obj ID" and
+        // object data 34 "Hidden Flags" := 0 (SetPersonData 0 / 0x3b,
+        // SetObjectData 0x22: BV 0xadcbcc, base 1.0 0xb85f74-0xb85fc0; was
+        // person data 34, inferred); the cleanup tree.
         placeNearFree(*o);
-        if (o->person->data.size() > 34)
-            o->person->data[34] = 0;
+        o->person->data[0] = 0;
+        o->person->data[59] = 0;
+        o->data[34] = 0;
         if (functionTree(*o, 3))
             runFunction(id, 3);
     } else if (functionTree(*o, 3)) {
