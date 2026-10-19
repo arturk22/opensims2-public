@@ -636,13 +636,28 @@ std::vector<const SimPart*> drawable(const std::vector<const SimPart*>& all) {
     return open.empty() ? defaults : open;
 }
 
-const SimPart* drawOne(const std::vector<const SimPart*>& list, std::mt19937& rng) {
-    return list.empty() ? nullptr : list[rng() % list.size()];
+const SimPart* drawOne(const std::vector<const SimPart*>& list, CasRandom& rng) {
+    return list.empty() ? nullptr : list[rng.below(uint32_t(list.size()))];
 }
 } // namespace
 
-void randomizeOutfits(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rng, bool hair) {
+uint32_t CasRandom::below(uint32_t n) {
+    // FUN_00171674 (Mac BV): mulhwu/mullw of the state by 0x41C64E6D, + 0x3039
+    // with the carry, the middle 32 bits, then mulhwu by n.
+    if (n == 0)
+        return 0;
+    const uint64_t full = uint64_t(state_) * 0x41C64E6Du + 0x3039u;
+    state_ = uint32_t(full);
+    const uint32_t v = uint32_t(full >> 16);
+    return uint32_t((uint64_t(n) * v) >> 32);
+}
+
+void randomizeOutfits(const CasCatalog& c, CharacterSpec& spec, CasRandom& rng, bool hair) {
     const auto cats = outfitCategories(spec.age, spec.gender);
+    // A baby takes the first hair of its age without a draw (RandomizeForHumans);
+    // the base game's are the hidden bald heads by skin (buhairbald_sN,
+    // category naked only), left to completeSpec (inferred: which list the
+    // game takes it from was not read).
     if (hair && spec.age != age::Baby) {
         // One everyday style of the hair tone (elders: grey), then per
         // category (but naked) the hat-less one of the same family where
@@ -679,7 +694,7 @@ void randomizeOutfits(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rn
             o.erase(part::Bottom);
             o[part::Body] = b->name();
         };
-        if (rng() % 100 >= 51)
+        if (rng.below(100) >= 51)
             if (const SimPart* b = drawOne(list(part::Body), rng)) {
                 wearBody(b);
                 continue;
@@ -697,16 +712,18 @@ void randomizeOutfits(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rn
     }
 }
 
-void randomizeLook(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rng) {
+void randomizeLook(const CasCatalog& c, CharacterSpec& spec, CasRandom& rng) {
     spec.fitness = 0; // SetFitnessLevel(500)
     const auto arch = c.archetypesFor(spec.age, spec.gender, flag::Hidden | flag::NoRandom);
     if (!arch.empty())
-        spec.face.archetype = family(*arch[rng() % arch.size()]);
+        spec.face.archetype = family(*arch[rng.below(uint32_t(arch.size()))]);
     spec.face.modifiers.clear();
     spec.face.regions.clear();
-    spec.skinTone = int(rng() % 4) + 1;
+    // Skin and hair tone: a draw in the catalog's tone list without the
+    // flags 9 (the base game's four, in their family order; inferred order).
+    spec.skinTone = int(rng.below(4)) + 1;
     spec.skinFamily.clear();
-    spec.hairTone = int(rng() % 4) + 1;
+    spec.hairTone = int(rng.below(4)) + 1;
     spec.overlays.clear();
     if (const SimPart* e = drawOne(drawable(c.overlaysFor(overlay::Eyes, spec.age, spec.gender)), rng))
         spec.eyes = family(*e);
@@ -715,7 +732,7 @@ void randomizeLook(const CasCatalog& c, CharacterSpec& spec, std::mt19937& rng) 
             spec.overlays.push_back(family(*c.recolor(*b, toneFamily(spec.age == age::Elder ? 5 : spec.hairTone))));
     spec.outfits.clear();
     randomizeOutfits(c, spec, rng);
-    completeSpec(c, spec, uint32_t(rng() | 1));
+    completeSpec(c, spec, rng.below(0xFFFFFFFFu) | 1);
 }
 
 CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& catalog, FaceBaker& baker,
@@ -1203,7 +1220,7 @@ void ageSpec(const CasCatalog& c, CharacterSpec& spec, uint32_t newAge, uint32_t
     spec.overlays = std::move(keep);
     // The clothes drawn again (Randomize(4, 0) and Randomize(-1, 9) with only
     // the clothes invalid: randomizeOutfits), the rest as a new Sim's.
-    std::mt19937 rng(seed ? seed : 1);
+    CasRandom rng(seed ? seed : 1);
     randomizeOutfits(c, spec, rng, false);
     completeSpec(c, spec, seed ? seed : 1);
     for (uint32_t cat : outfitCategories(newAge, spec.gender))

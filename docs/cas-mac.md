@@ -1647,3 +1647,45 @@ nem no quaternion: está no eixo para onde o jogo olha (o app olha o +Y local,
 com o +Z para cima) ou na convenção da matriz do efeito (`efeito + 0x28`,
 quem a monta não foi lido). O app segue nos eixos do mundo (inferido, com
 este argumento).
+
+### O gerador de números do CAS e o botão aleatório
+
+`RandomizeForHumans` (BV `0x818734`) sorteia com um gerador estático da
+própria função (`0x2c3629c`, criado sob `__cxa_guard` na primeira chamada e
+semeado por `FUN_0017157c(gerador, FUN_000fcb70())`: `clock() × 1000 / 100`).
+É a mesma classe do gerador do `cTSGeneticsManager` (`+0x08`, o sorteio do
+signo no `SetupPersonData`):
+
+- `FUN_00171508(g, semente)`: semente `0xFFFFFFFF` vira `time(0) ^ (clock()
+  << 16 | clock())`; guarda a semente em `+0` (estado) e `+4`;
+- `FUN_00171674(g, n)` (um número abaixo de n; 0 se n = 0): `full = estado ×
+  0x41C64E6D + 0x3039` em 64 bits (`mulhwu`/`mullw`, `addic`/`addze`), estado
+  = os 32 bits de baixo, `v` = os bits 16–47 de `full`, resultado = `(n × v)
+  >> 32` (um `mulhwu`; não é módulo).
+
+Os sorteios do `RandomizeForHumans` são todos `FUN_00171674` (idade
+`n = 6`, sexo, forma física e a barba/óculos/roupa inteira `n = 100`, e o
+tamanho de cada lista). O `HandleButtonGlobalRandomize` (`0x1bc14c` →
+`FUN_001b7f08`: só `SetFitnessLevel`, `SetDefaultClothing`,
+`GetValidHairColorForAgeGender` e o `Randomize` da roupa) **não mexe na
+personalidade, no signo nem no nome**. Os tons de pele e de cabelo saem de um
+sorteio na lista do catálogo sem as flags 9; no jogo base são as quatro
+famílias `0000000N-…` (a ordem da lista do jogo não foi lida: o app sorteia o
+índice 1–4 na ordem das famílias, inferido). O bebê toma "o primeiro cabelo da
+idade" (rodada n10); no jogo base os cabelos de bebê são só as cabeças
+carecas por pele (`buhairbald_sN`, categoria nu, flags 9), e de qual lista o
+jogo tira esse primeiro não foi lido: o app segue com o `completeSpec`
+(inferido).
+
+**No código** (`formats/character_write`): `cas::CasRandom` é o gerador do
+jogo, usado pelo `randomizeLook`/`randomizeOutfits` no lugar do `mt19937`
+(sorteio `below(n)` como o `FUN_00171674`); o botão aleatório do app
+(`CasMode::randomize`) semeia um gerador só uma vez, como o jogo (ou pelo
+`--cas-random`), e não sorteia mais a personalidade. O envelhecer
+(`ageSpec`, o `MakeNewAge`) usa o mesmo gerador com a semente que recebe.
+Teste `testCasRandom` (as cinco primeiras saídas da semente 12345). A ordem
+dos sorteios dentro do `RandomizeForHumans` é a do app (a do jogo passa pelos
+bits inválidos em ordem e, no botão, pelo `SetDefaultClothing` de **todas** as
+idades × sexos do editor, o que muda quantos números cada parte gasta): não
+reproduzida (inferido). Captura `n51-cas-aleatorio.jpg` (sementes 3 e 42,
+antes e depois).

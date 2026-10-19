@@ -262,6 +262,7 @@ private:
     int cosmeticTab_ = 0; // CB980E85: 0 makeup, 1 costume, 2 glasses, 3 brows, 4 stubble, 5 facial hair
     int clothesCategory_ = 0, clothesPart_ = 0;
     bool separates_ = true; // CB980E84's part tabs (top, bottom, outfit) shown
+    std::optional<cas::CasRandom> random_; // the randomize button's generator, seeded on first use
     std::map<std::string, int> pages_; // grid key -> page
     enum class Focus { None, FirstName, FamilyName, Biography } focus_ = Focus::None;
     // Step 1's "Sim Biography" button (0x8CB7C11F) shows the hidden

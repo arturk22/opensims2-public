@@ -1,4 +1,5 @@
 #include "cas_mode.hpp"
+#include <ctime>
 #include "app/cas_mode_internal.hpp"
 #include "formats/log_once.hpp"
 #include "app/scene_loader.hpp"
@@ -257,18 +258,14 @@ void CasMode::newSim() {
 }
 
 void CasMode::randomize(uint32_t seed) {
-    std::mt19937 rng(seed ? seed : std::random_device{}());
-    // HandleButtonGlobalRandomize (docs/cas-mac.md, round n10).
-    cas::randomizeLook(*catalog_, edit_.spec, rng);
-    // Personality: 25 points at random, then the sign.
-    edit_.personality = cas::Personality{0, 0, 0, 0, 0};
-    for (int i = 0; i < cas::kPersonalityPoints; ++i) {
-        int t = int(rng() % 5);
-        while (edit_.personality[t] >= 10)
-            t = (t + 1) % 5;
-        ++edit_.personality[t];
-    }
-    edit_.zodiac = cas::zodiacSign(edit_.personality);
+    // HandleButtonGlobalRandomize (docs/cas-mac.md, rounds n10 and n51): the
+    // look only (no personality, sign or name), from the CAS's generator,
+    // seeded once like the game's (clock() x 1000 / 100) or by --cas-random.
+    if (seed)
+        random_ = cas::CasRandom(seed);
+    else if (!random_)
+        random_ = cas::CasRandom(uint32_t(uint64_t(std::clock()) * 1000 / 100));
+    cas::randomizeLook(*catalog_, edit_.spec, *random_);
     changed();
 }
 

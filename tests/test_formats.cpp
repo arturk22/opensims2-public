@@ -1313,7 +1313,7 @@ static void testCasRandomize() {
         s.age = cas::age::Adult;
         s.gender = seed % 2 ? cas::gender::Female : cas::gender::Male;
         s.fitness = 2;
-        std::mt19937 rng(seed);
+        cas::CasRandom rng(seed * 2654435761u);
         cas::randomizeLook(catalog, s, rng);
         check(s.fitness == 0, "randomize: the body back to normal (SetFitnessLevel(500))");
         std::string hairFamily;
@@ -1352,6 +1352,19 @@ static void testCasRandomize() {
     check(maternity, "randomize: the maternity outfit is the default one (navyrust, flags 13)");
     check(sameHair, "randomize: one hair family in every category");
     check(hats, "randomize: no hat in swimwear, pajamas, underwear, athletic");
+}
+
+// The CAS's generator (FUN_00171674, Mac BV; docs/cas-mac.md round n51):
+// s = s * 1103515245 + 12345 and a draw below n = n x bits 16..47 / 2^32.
+static void testCasRandom() {
+    cas::CasRandom r(12345);
+    const uint32_t want[5] = {4, 99, 2, 3, 900}, ns[5] = {100, 100, 6, 4, 1000};
+    bool ok = true;
+    for (int i = 0; i < 5; ++i)
+        ok = ok && r.below(ns[i]) == want[i];
+    check(ok, "CasRandom: the game's draws from seed 12345");
+    check(r.state() == 0xC21F1C8Au, "CasRandom: the state after five draws");
+    check(cas::CasRandom(1).below(0) == 0, "CasRandom: a draw below 0 is 0");
 }
 
 // A region taken from another archetype moves the face (the mask weight is
@@ -2514,6 +2527,7 @@ int main() {
     testNextStoryOverGround();
     testFaceSkinMigration();
     testCasRandomize();
+    testCasRandom();
     testFaceRegionMasks();
     testBlendFaces();
     testFaceOverlayLayers();
