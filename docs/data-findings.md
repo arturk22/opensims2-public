@@ -641,3 +641,58 @@ layout do `InteractionTable::parse` (em `%TEMP%\opencode\i6e\ttab\`).
 **Conclusão.** 0x4F–0x51 implementados em `simantics.cpp` (o teste
 `testInteractionTableVersions` cobre 0x4E..0x51 e recusa 0x52/0x53/0x55);
 0x53–0x55 seguem recusados com erro claro até o formato fechar.
+
+## 18. A cauda do 0x54+: dois arrays de grupos de anúncios (RE no exe do PC)
+
+**Pergunta.** A §17 mediu a cauda como "X grupos de 4 bytes + Y anúncios de 6
+bytes" e deixou de fora as entradas lidas como (X=0, Y=8) — 79 ocorrências de
+um mesmo tamanho, com 320 bytes de cauda que o modelo não explica. Qual é a
+unidade real da cauda, e o que o jogo faz com ela?
+
+**Método.** RE do leitor de TTAB no `Sims2EP9RPC.exe` (o build do
+LazyDuchess) com o projeto Ghidra já analisado em `C:\Users\Artur\sims2-re\pcb`
+(o type id `0x54544142` = "TTAB" aparece 15 vezes no binário; o leitor é
+`FUN_0087c720` @ `0x87c720`, na vtable da classe em `0x1222cfc`), mais a
+medição nos 1.177 dumps da §17.
+
+**O que o RE mostra.** `FUN_0087c720` lê a versão do recurso e escolhe o
+layout da entrada:
+
+| versão | layout |
+|---|---|
+| < 0x44 | 1 tabela de motivos |
+| 0x44–0x52 | 7 tabelas de motivos (o layout do 0x4E) |
+| 0x53 | **11** tabelas de motivos |
+| ≥ 0x54 | **46 bytes fixos** (as flags do 0x4E, sem as contagens) e depois **dois arrays** |
+
+No caminho ≥ 0x54 a entrada tem os mesmos campos do 0x4E nos mesmos offsets
+(o RE lê `flags`+`flags2` como um u32 só) e depois:
+
+- **array 1** (`FUN_0087af00`): `[u32 grupos]` e, por grupo, `[u32 m]` + `m`
+  anúncios de 6 bytes;
+- **array 2** (`FUN_0087c610`): `[u32 grupos]` e, por grupo, `[u32 X]` + `X−1`
+  itens de 4 bytes (conteúdo desconhecido) + `[u32 m]` + `m` anúncios de 6
+  bytes.
+
+Os dois arrays usam funções diferentes (`FUN_00879690` e `FUN_00879800`), o
+que explica por que os itens têm formatos diferentes. Os anúncios são lidos
+como 3 u16 — o trio (min, delta, personalidade) do formato antigo.
+
+**Medição no conteúdo.** Com esse layout o leitor fecha **878 dos 894
+arquivos 0x54+** (o modelo da §17 fechava 555 dos 901) e o `decode-all` do
+`objects.package` do Apartment Life passa de **1.208 ok / 901 falhas** para
+**2.090 ok / 19 falhas** nas TTABs. As 19 que restam: 7 são versão **0x53**
+(que tem layout próprio — 11 tabelas — e segue recusado) e 12 têm o `X` do
+array 2 ambíguo (o `X` lido como u32 dá valores absurdos como `0x00050000`,
+mas os bytes são legíveis como `[u16 X][u16 ?]`, o que sugere que o par é
+menor que 4 bytes; os bytes ficam registrados aqui para a próxima rodada).
+
+**Conclusão.** 0x4F–0x51 e 0x54–0x55 implementados em `semantics.cpp` (o
+teste `testInteractionTableVersions` cobre 0x4E..0x51 e 0x54..0x55 e recusa
+0x52/0x53); **0x53** segue recusado com erro claro até o layout de 11
+tabelas fechar.
+
+Ferramentas: `ttab_period.py` (período), `ttab_unit2.py`/`ttab_groups2.py`
+(blocos crus), `ttab_head3.py` (cabeçalho), `ttab_model9.py`/`ttab_model15.py`
+(leitores), `pc_scan_ttab.py`/`pc_dis.py`/`pc_dump_fn.py` (RE no exe do PC) em
+`%TEMP%\opencode\i6e\`.

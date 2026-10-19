@@ -132,10 +132,15 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       casos no sweep. A §2 do `primitives-mac.md` dá os handlers **de routing aggregate**
       (`TryRunScript`/`TryFollowSim`, "só BV") — implementar com o gate de tipo de objeto do
       original.
-- [ ] **13. TTAB 0x50/0x51/0x54/0x55 dos EPs** (achado do item 9): `interactions (TTAB) …:
+- [x] **13. TTAB 0x50/0x51/0x54/0x55 dos EPs** (achado do item 9): `interactions (TTAB) …:
       unsupported version 0x50/0x51/0x54/0x55` — as interações desses objetos ficam de fora
       (20 recursos só no `objects.package` do AL). Estender o leitor de TTAB às versões
-      novas.
+      novas. **FECHADO 19/10** — 0x50/0x51 com o layout do 0x4E (276 recursos medidos) e
+      0x54/0x55 com o layout do RE do exe do PC (46 bytes fixos + dois arrays de grupos de
+      anúncios): o `decode-all` do `objects.package` do AL passa de 1.208 ok / 901 falhas
+      para **2.090 ok / 19 falhas**; as 19 restantes são os 7 arquivos 0x53 (11 tabelas,
+      layout ainda não fechado) e 12 com o `X` do segundo array ambíguo. 0x53 segue recusado
+      com erro claro.
 - [ ] **14. Vizinhanças e lotes do AL** (achado do sub-item das contagens): o lote E001 do AL
       não carrega — `NGBH: unsupported version 0xCB` (o port conhece 0x6F), `FAMI:
       unsupported version 0x55` (conhece 0x4E), `SDSC: unsupported version 0x36` (conhece

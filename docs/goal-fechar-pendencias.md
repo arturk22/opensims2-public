@@ -102,19 +102,22 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    0x4E..0x51 (campos, anúncios, nome) e recusa 0x52/0x53/0x55; TEMP revertido.
    Medição: decode-all do AL com **901** falhas (só 0x53 7 / 0x54 440 / 0x55 454)
    e **1.208** ok; build+ctest 39/39; `data-findings.md` §17.
-2. **13b — fechar o modelo 0x53+** (investigação; sem commit se não houver mudança de
-   código): (a) rodar `ttab_model2.py` com saída em arquivo/exit code; (b) atacar o
-   (X=0, Y=8): dump cru do FD9 em 362..736, procurar entrada intermediária não detectada e
-   testar leituras alternativas dos contadores; (c) explicar o 0x53 "untitled"; (d) validar
-   o parse em **100%** dos 901 (ou documentar cada resíduo com bytes + hipótese); (e)
-   conferir que os anúncios extraídos batem com o trio do formato antigo em amostra grande.
-   *Pronto quando:* o parse fecha em todos os arquivos aceitos e o resíduo (se houver) está
-   documentado — sem aceitar dado desconhecido em silêncio.
-3. **13c — leitor novo no port:** implementar 0x53+ em `InteractionTable::parse` (fixo +
-   cauda por X/Y; anúncios → `motives`), testes sintéticos (0x53/0x54/0x55, cauda vazia e
-   multi-grupo), doc em `data-findings.md`, TEMP fora, commit.
-   *Pronto quando:* decode-all do AL sem falha de versão; um objeto do AL com TTAB 0x54/0x55
-   carrega as interações (`lot-run`/app); ctest 39/39.
+2. **13b — fechar o modelo 0x53+**: **FECHADO 19/10** (o 0x53 em si continua aberto) — o RE
+   do leitor de TTAB no `Sims2EP9RPC.exe` (`FUN_0087c720` @ `0x87c720`, no projeto Ghidra
+   `C:\Users\Artur\sims2-re\pcb`) deu o layout: 0x44–0x52 = 7 tabelas, **0x53 = 11
+   tabelas**, **≥ 0x54 = 46 bytes fixos + dois arrays de grupos de anúncios** (o primeiro,
+   `[u32 grupos]` e por grupo `[u32 m]` + `m` anúncios de 6 bytes; o segundo, por grupo,
+   `[u32 X]` + `X−1` itens de 4 bytes de conteúdo desconhecido + `[u32 m]` + `m` anúncios).
+   Com esse layout o leitor fecha **878 dos 894 arquivos 0x54+** (o modelo anterior fechava
+   555 dos 901). Restam 12 com o `X` do segundo array ambíguo (lido como u32 dá
+   `0x00050000`; os bytes sugerem um par menor que 4 bytes) e os 7 arquivos 0x53, cujo
+   layout (11 tabelas) ainda não fecha nos dados.
+3. **13c — leitor novo no port:** **FECHADO 19/10** para 0x54/0x55 — `InteractionTable::parse`
+   ganhou o caminho novo (46 bytes fixos + os dois arrays, cada grupo virando uma tabela de
+   motivos), o teste `testInteractionTableVersions` cobre 0x54/0x55 com cauda de dois
+   arrays e o 0x53 continua recusado com erro claro. Medido no `objects.package` do
+   Apartment Life: **2.090 ok / 19 falhas** (antes 1.208 ok / 901 falhas) — as 19 são os
+   7 de 0x53 e os 12 do `X` ambíguo. `data-findings.md` §18 registra o RE e os bytes.
 4. **8 — N002_Lot32 / pacote vazio:** `Lot::load` distingue pacote vazio (stub de 96 B) de
    erro; contagem separada no `soak-report`; teste; commit.
 5. **14 — vizinhanças/lotes do AL:** NGBH 0xCB, FAMI 0x55, SDSC 0x36, NID +20 e `lot info`
@@ -179,3 +182,18 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   usa `0xCB`/`0x36`/`0x55`. A fila do upstream agora é 48 (colocação), 49 (rotas),
   50 (água/objetos/cinema), 51 (CAS) e 52 (bairro) —reas de 48/49 tocam colocação e rotas,
   onde o nosso item 7 (performance) mede.
+- (19/10) **13b/13c FECHADOS para 0x54/0x55** — RE do leitor de TTAB no `Sims2EP9RPC.exe`
+  (Ghidra, projeto `C:\Users\Artur\sims2-re\pcb`; o type id `0x54544142` aparece 15 vezes no
+  binário e o leitor é `FUN_0087c720` @ `0x87c720`, na vtable da classe em `0x1222cfc`):
+  a entrada 0x54+ tem **46 bytes fixos** (as flags do 0x4E, sem as contagens de motivo) e
+  depois **dois arrays** de grupos de anúncios — o primeiro `[u32 grupos]` e, por grupo,
+  `[u32 m]` + `m` anúncios de 6 bytes; o segundo, por grupo, `[u32 X]` + `X−1` itens de
+  4 bytes (conteúdo desconhecido) + `[u32 m]` + `m` anúncios. Os dois arrays usam
+  funções diferentes no binário (`FUN_00879690` e `FUN_00879800`), o que explica os
+  formatos diferentes dos itens. O RE também disse que **0x53 tem 11 tabelas** (e não 7).
+  Medido: o leitor fecha **878 dos 894 arquivos 0x54+**; o `decode-all` do
+  `objects.package` do Apartment Life passa de **1.208 ok / 901 falhas** para
+  **2.090 ok / 19 falhas** nas TTABs (as 19: 7 de 0x53, que segue recusado, e 12 com o
+  `X` do segundo array ambíguo). `simantics.cpp` tem o caminho novo, o teste
+  `testInteractionTableVersions` cobre 0x54/0x55, build+ctest **39/39**, e a
+  `data-findings.md` §18 registra o RE, o layout e os bytes do resíduo.
