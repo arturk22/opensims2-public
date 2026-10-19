@@ -1588,6 +1588,11 @@ base 1) e volta ao passo que falta, quando:
 3. **sem primeiro nome**: "Please give your Sim a first name." (#18), passo 1
    com o foco no nome; nome com `\ / : * < > | ? , ;`: #12.
 
+No app (`CasMode::validateSim`) o texto sai na linha de estado e o Sim fica
+no passo; os fluxos sem tela passam a escolher a aspiração antes do PRONTO
+(`--cas-aspiration k`, o botão `0x0CDC000k`: `--cas-name Clara,Moura
+--cas-aspiration 3 --cas-done`).
+
 `SaveFamily` (BV `0x1cb798`) põe 0x40 (Grow Up) no dado 46 dos mais novos
 (índices 5, 0, 1) e copia os dados 22/23 (preferência de sexo), 160/162
 (pontos de aspiração) do Sim editado. O `kDefaultPersonalityTraitValue=500`
