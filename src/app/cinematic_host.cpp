@@ -84,10 +84,12 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
     // Held for the whole scene, the speed buttons waiting (ours: Start and
     // Stop, BV 0x7c3898/0x7c56b4, do not touch the simulator's speed; they
     // save the scene graph's animation timer's (cTSSGSystem +0xB4, a
-    // nTSSG::cCustomAnimTimer2) real-time clamp per frame, +0x24, and set
-    // it to 1 ms, the Stop turning the clamp off and putting it back;
-    // what that does to the scene's speed was not followed:
-    // docs/cinematics-mac.md §9).
+    // nTSSG::cCustomAnimTimer2) real-time clamp per update, +0x24 (200 ms
+    // from its constructor, the clamp on), and set it to 1 ms, the Stop
+    // turning the clamp off, putting it back and turning it on at the end;
+    // so each UpdateFrameTime moves the scene's animations at most 1 ms
+    // times the scale, and who calls it (each frame or each tick) and who
+    // sets the scale were not found: inferred, docs/cinematics-mac.md §10).
     if (gSimulation) {
         auto& g = gSimulation->machine().globals;
         g[os2::vm::global::Speed] = 2;
