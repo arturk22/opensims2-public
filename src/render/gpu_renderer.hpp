@@ -16,7 +16,9 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct SDL_Window;
@@ -24,6 +26,7 @@ struct SDL_Window;
 namespace os2 {
 
 class ResourceIndex;
+struct GuobModelInfo;
 
 // A camera's view and projection (as render/renderer.hpp's).
 struct FrameView {
@@ -74,6 +77,9 @@ public:
             float specular = 1;
             simd_float3 spotDirection{0, 0, -1};
             float cosOuter = -2, cosInner = -1; // cosOuter < -1: a point light
+            // A half-space light (Renderer::LightSet::Point::plane): it lights
+            // only where dot(plane.xyz, p) + plane.w >= 0; all zero: everywhere.
+            simd_float4 plane{0, 0, 0, 0};
         };
         simd_float3 ambient{0, 0, 0};
         std::vector<Directional> lights;
@@ -89,6 +95,13 @@ public:
     const std::vector<LightSet>& lightSets() const;
     static LightSet outdoorLights(const LightingState& state, bool sims);
     int instanceOf(int model) const;
+    // The instance's GUOB parts on, the model's GUOB subsets and the instance's
+    // world box, as Renderer's. The shadow planes themselves are not drawn here
+    // yet: the bits are kept for the app's rules.
+    void setInstanceGuobs(int instance, uint8_t on);
+    uint8_t instanceGuobs(int instance) const;
+    const GuobModelInfo* guobInfo(int model) const;
+    std::optional<std::pair<simd_float3, simd_float3>> instanceBounds(int instance) const;
     // The game's outdoor lights (outdoorLights): set 0 for objects, set 1
     // for Sims. Directions point toward the light.
     void setLighting(const LightingState& state);

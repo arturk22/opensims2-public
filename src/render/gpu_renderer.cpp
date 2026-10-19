@@ -2,6 +2,7 @@
 
 #include "formats/image.hpp"
 #include "formats/lighting_config.hpp"
+#include "formats/object_shadow.hpp"
 #include "formats/resindex.hpp"
 #include "render/particle_system.hpp"
 
@@ -93,12 +94,13 @@ struct GpuLight {
     float color[4]{};
     float params[4]{};
     float spot[4]{0, 0, -1, -2};
+    float plane[4]{}; // a half-space light's plane, all zero: none
 };
 
 static_assert(sizeof(Vertex) == 44, "vertex pitch");
 static_assert(sizeof(DrawUniforms) % 16 == 0, "vertex uniform alignment");
 static_assert(sizeof(FragmentUniforms) == sizeof(DrawUniforms) + 112, "fragment uniform layout");
-static_assert(sizeof(GpuLight) == 64, "light layout");
+static_assert(sizeof(GpuLight) == 80, "light layout");
 
 constexpr size_t kMaxLights = 16;
 
@@ -205,11 +207,17 @@ struct GpuRenderer::Gpu {
     };
     struct Model {
         std::vector<Part> parts;
+        GuobModelInfo guob; // its GUOB subsets and bounds (formats/object_shadow.hpp)
+        // Every visible part's box, the shadow planes too (Renderer's parts'
+        // lo/hi), posed by updateObject; lo > hi: no part.
+        float lo[3]{1e9f, 1e9f, 1e9f};
+        float hi[3]{-1e9f, -1e9f, -1e9f};
     };
     struct Instance {
         int model = -1;
         int lightSet = 0;
         float transform[16]{};
+        uint8_t guobs = kAllGuobs; // GUOB parts on (setInstanceGuobs)
     };
 
     std::vector<Model> models;
@@ -1491,8 +1499,28 @@ GpuRenderer::~GpuRenderer() {
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
+// The model's box as Renderer::addObject keeps it: the parts with triangles and
+// a visible material (or none), the shadow planes too.
+static void fitModelBox(const ObjectModel& model, float lo[3], float hi[3]) {
+    for (int k = 0; k < 3; ++k)
+        lo[k] = 1e9f, hi[k] = -1e9f;
+    for (const auto& part : model.parts) {
+        if (part.mesh.positions.empty() || part.mesh.triangles.empty())
+            continue;
+        if (auto it = model.materials.find(part.material); it != model.materials.end() && !standardMaterial(it->second).visible)
+            continue;
+        for (const auto& p : part.mesh.positions)
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], p[size_t(k)]);
+                hi[k] = std::max(hi[k], p[size_t(k)]);
+            }
+    }
+}
+
 int GpuRenderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic) {
     Gpu::Model stored;
+    stored.guob = guobModelInfo(model);
+    fitModelBox(model, stored.lo, stored.hi);
     for (const auto& part : model.parts) {
         if (part.mesh.positions.empty() || part.mesh.triangles.empty() || part.shadowPlane)
             continue;
@@ -1510,6 +1538,8 @@ void GpuRenderer::replaceObject(int model, const ObjectModel& replacement, Resou
     if (model < 0 || size_t(model) >= gpu_->models.size())
         return;
     Gpu::Model stored;
+    stored.guob = guobModelInfo(replacement);
+    fitModelBox(replacement, stored.lo, stored.hi);
     for (const auto& part : replacement.parts) {
         if (part.mesh.positions.empty() || part.mesh.triangles.empty() || part.shadowPlane)
             continue;
@@ -1535,6 +1565,7 @@ void GpuRenderer::updateObject(int model, const ObjectModel& posed) {
     if (model < 0 || size_t(model) >= gpu_->models.size())
         return;
     auto& stored = gpu_->models[size_t(model)];
+    fitModelBox(posed, stored.lo, stored.hi); // the posed box, as Renderer::updateObject's parts
     size_t slot = 0;
     for (const auto& part : posed.parts) {
         if (part.mesh.positions.empty() || part.mesh.triangles.empty() || part.shadowPlane)
@@ -1657,11 +1688,46 @@ void GpuRenderer::setLightSets(std::vector<LightSet> sets) {
             g.color[0] = p.color.x, g.color[1] = p.color.y, g.color[2] = p.color.z, g.color[3] = p.specular;
             g.params[0] = p.falloff, g.params[1] = p.range, g.params[2] = 1, g.params[3] = p.cosInner;
             g.spot[0] = spot.x, g.spot[1] = spot.y, g.spot[2] = spot.z, g.spot[3] = p.cosOuter;
+            g.plane[0] = p.plane.x, g.plane[1] = p.plane.y, g.plane[2] = p.plane.z, g.plane[3] = p.plane.w;
         }
     }
 }
 
 const std::vector<GpuRenderer::LightSet>& GpuRenderer::lightSets() const { return gpu_->lightSets; }
+
+void GpuRenderer::setInstanceGuobs(int instance, uint8_t on) {
+    if (instance >= 0 && size_t(instance) < gpu_->instances.size())
+        gpu_->instances[size_t(instance)].guobs = on;
+}
+
+uint8_t GpuRenderer::instanceGuobs(int instance) const {
+    return instance >= 0 && size_t(instance) < gpu_->instances.size() ? gpu_->instances[size_t(instance)].guobs : kAllGuobs;
+}
+
+const GuobModelInfo* GpuRenderer::guobInfo(int model) const {
+    return model >= 0 && size_t(model) < gpu_->models.size() ? &gpu_->models[size_t(model)].guob : nullptr;
+}
+
+std::optional<std::pair<simd_float3, simd_float3>> GpuRenderer::instanceBounds(int instance) const {
+    if (instance < 0 || size_t(instance) >= gpu_->instances.size())
+        return std::nullopt;
+    const Gpu::Instance& inst = gpu_->instances[size_t(instance)];
+    if (inst.model < 0 || size_t(inst.model) >= gpu_->models.size())
+        return std::nullopt;
+    const Gpu::Model& m = gpu_->models[size_t(inst.model)];
+    if (m.lo[0] > m.hi[0])
+        return std::nullopt;
+    const float* a = inst.transform;
+    const simd_float4x4 transform = simd_matrix(simd_make_float4(a[0], a[1], a[2], a[3]), simd_make_float4(a[4], a[5], a[6], a[7]),
+                                                simd_make_float4(a[8], a[9], a[10], a[11]), simd_make_float4(a[12], a[13], a[14], a[15]));
+    simd_float3 lo = simd_make_float3(INFINITY, INFINITY, INFINITY), hi = simd_make_float3(-INFINITY, -INFINITY, -INFINITY);
+    for (int k = 0; k < 8; ++k) {
+        const simd_float3 corner = simd_make_float3(k & 1 ? m.hi[0] : m.lo[0], k & 2 ? m.hi[1] : m.lo[1], k & 4 ? m.hi[2] : m.lo[2]);
+        const simd_float3 w = simd_make_float3(simd_mul(transform, simd_make_float4(corner, 1)));
+        lo = simd_min(lo, w), hi = simd_max(hi, w);
+    }
+    return std::pair{lo, hi};
+}
 
 int GpuRenderer::instanceOf(int model) const {
     for (size_t i = 0; i < gpu_->instances.size(); ++i)
