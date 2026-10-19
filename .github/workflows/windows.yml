@@ -2,7 +2,10 @@
 # request, the same `tools/build_windows.cmd` does locally (Visual Studio
 # 2022 Build Tools, Ninja, SDL3 and zlib from vcpkg). The macOS app is not
 # built here: the Windows port's own files (win_main.cpp, gpu_renderer.*)
-# are what this keeps honest against main's shared code.
+# are what this keeps honest against main's shared code (on a Mac,
+# tools/check_windows.sh catches most breaks first). On a release tag
+# (v*), the 64-bit build is zipped with its DLLs, shaders and the MSVC
+# runtime and attached to that release as opensims2-windows-x64.zip.
 name: windows
 on:
   push:
@@ -10,6 +13,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write # the release upload on tags
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies (SDL3 and zlib from vcpkg)
@@ -29,3 +34,32 @@ jobs:
           if errorlevel 1 exit /b 1
           if not exist build-win\opensims2_win.exe exit /b 1
           ctest --test-dir build-win --output-on-failure -j 8
+      - name: Package the 64-bit build
+        shell: pwsh
+        run: |
+          $pkg = "opensims2-windows-x64"
+          New-Item -ItemType Directory $pkg | Out-Null
+          Copy-Item build-win/opensims2_win.exe, build-win/opensims2_win.pdb, build-win/*.dll $pkg
+          Copy-Item build-win/shaders $pkg -Recurse
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($crt) { Copy-Item "$($crt.FullName)\*.dll" $pkg }
+          Get-ChildItem $pkg -Recurse | Select-Object FullName, Length
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opensims2-windows-x64
+          path: opensims2-windows-x64.zip
+          retention-days: 3
+      - name: Attach it to the release (tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for ($i = 0; $i -lt 10; $i++) {
+            gh release upload $env:GITHUB_REF_NAME opensims2-windows-x64.zip --clobber -R $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Start-Sleep -Seconds 30
+          }
+          exit 1
