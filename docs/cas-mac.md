@@ -1605,3 +1605,45 @@ chama esse método (pela vtable) não foi achado. Os dados 47–51 que o
 (Selection Flags 1) não são escritos pelo código do CAS (`SaveFamily`,
 `ProcessCreateSimRequest`, `ValidateSim`): vêm do SimAntics da pessoa e seguem
 copiados dos Sims do jogo (inferido).
+
+### A rotação do zoom da câmera do CAS (lida de novo)
+
+Tudo o que a conta do olho (`Translation`, BV `0x7aa284`, vtable `0xbc` do
+controlador; vtable em `0x27f15e8`) usa foi conferido peça por peça:
+
+- o vetor base é `(0, 1, 0)`: `DAT_02c2fbf8` é escrito no inicializador
+  estático `FUN_02129d2c` (`0x2129f4c`: 0, 1.0, 0);
+- o fator de grau é π/180 (`DAT_02c2fb9c`, o mesmo inicializador, de
+  `0x274b4f8` = `0x3c8efa35`); `SetCameraSpec` (`0x7a8fb8`) guarda
+  `zoomheading·π/180` em `+0x350/+0x354` e **−**`zoomelevation·π/180` em
+  `+0x358/+0x35c`;
+- `FUN_000ea0dc(a, b, c)` monta `Rz(c)·Ry(b)·Rx(a)` por linhas (`M·v`);
+  `FUN_000ea66c` monta `R(q)` padrão por linhas, `q = (x, y, z, w)`;
+  `FUN_00083498(out, A, B)` → `FUN_014cbafc` → `out = B·A` (cada elemento é a
+  linha de B vezes a coluna de A, `FUN_014cb248`); `operator*(cVector,
+  cSqMatrix)` (`0x14cf93c` → `FUN_014cf5f0`) faz `M·v` (cada linha vezes v);
+- `Q` é `Orientation()` (vtable `0xc0` = `0x7a8e94`): o quaternion em
+  `+0x28` do transform do controlador (`+0x08`; a posição em `+0x1c`,
+  `FUN_00c4a40c`), que o `Update` leva para o alvo `+0x330`; o alvo vem da
+  requisição `0xCCB772E6` (`HandleRequest`, `0x7aa87c`, cópia direta), que o
+  efeito de câmera manda (BV `0xf58e94`) com `FUN_000ead54(efeito + 0x28)`:
+  matriz 3×3 → quaternion pela conversão padrão (`x = (m21 − m12)/4w` …,
+  o mesmo `M·v` por linhas). Com curvas no efeito ele manda outra requisição
+  (`0x2C851DF7`, um quaternion de ângulos de Euler); os `CASCam_*_Effect` do
+  `effects.package` são um bloco de câmera sem curvas.
+
+Então a conta é mesmo `direção = R(q)·Rx(e)·Rz(h)·(0, 1, 0)` (eixos da
+própria câmera). Nessa conta o ângulo entre a direção do zoom e o eixo de
+visão (+Y local) não depende de `q`: é `acos(cos h · cos e)`, 36,8° na
+câmera de roupas de adulto, 33,1° na de criança, 34,7° na de adolescente.
+Mas os números do `CASCamera.txt` apontam o zoom das roupas para a câmera do
+rosto: do localizador `camera_clothes_<idade>` ao `camera_face_<idade>` são
+16,0° / 15,0° / 16,4° do eixo de visão, e a conta nos eixos do mundo
+(`Rz(h)·Rx(e)·R(q)·y`, a do app) passa a 1,7° / 3,3° / 4,0° dela e acaba na
+altura do rosto (1,69 m contra 1,71 m no adulto), enquanto a dos eixos da
+câmera fica a 21,4° / 18,3° / 18,7° e sobe acima da cabeça (2,45 m). Como
+nenhuma rotação `q` muda aquele ângulo, a diferença não está na conta do zoom
+nem no quaternion: está no eixo para onde o jogo olha (o app olha o +Y local,
+com o +Z para cima) ou na convenção da matriz do efeito (`efeito + 0x28`,
+quem a monta não foi lido). O app segue nos eixos do mundo (inferido, com
+este argumento).
