@@ -317,6 +317,8 @@ struct SceneState {
     double cinematicPrepared = -1;
     double cinematicLast = 0;
     bool cinematicWholeHouse = false;
+    bool cinematicObjectFade = false;         // the cinematic camera's own fade (flag 0x80, or moveIn: the Prep's +0x165)
+    std::map<int16_t, bool> cinematicHiddenSims; // its whole-or-nothing Sims (cObject +0x108 bit 4)
     double sceneNow = 0;
     std::optional<os2::FrameView> lastFrameView;
 
@@ -554,7 +556,8 @@ std::optional<os2::Xform> cinematicOrigin(int16_t id);
 void cinematicSnapshot(os2::Renderer& renderer, double now);
 os2::LotViewOptions cinematicLotView();
 void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vector<int16_t> actors, int16_t origin,
-                    bool mirror, bool now, double preparedAt, bool guessSims = false, bool wholeHouse = false);
+                    bool mirror, bool now, double preparedAt, bool guessSims = false, bool wholeHouse = false,
+                    bool objectFade = false);
 void cinematicActorAnimates(int16_t id, double at);
 void updateCinematic(os2::Renderer& renderer, double now);
 os2::FrameView cinematicView(const os2::FrameView& normal, double now, float aspect);

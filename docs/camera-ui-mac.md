@@ -593,6 +593,25 @@ eixo de profundidade do viewer é o `y` local (o código usa o segundo
 componente do ponto no espaço do viewer; o viewer olha para +Y como o resto do
 jogo).
 
+**A câmera de cinema no app** (rodada n50): durante uma cena a câmera é a
+"Animated" do `CineCamCamera.txt` (antes nada desbotava): a regra comum com
+distância 1 e queda 2, ou, com a flag `0x80` da primitiva ou na mudança
+(`CinematicRequest::objectFade`, `gScene.cinematicObjectFade`), a regra
+dela (`object_fade.hpp`: `cinematicFadeScene` do `FUN_007b8834`,
+`cinematicFadeAlpha` do `FUN_0065deb0`, `cinematicPersonHidden` do bit 3,
+`cinematicHiddenObject` do bit 1): os atores no mundo e os criados pela
+cena (o táxi) dão a caixa; não desbotam os atores, o que está nos slots
+deles (o dado de objeto 2 de contêiner) nem as portas e janelas; o PlumbBob
+e o Overhead Meter somem; os Sims que não são atores somem inteiros com a
+histerese. O alfa vai na instância desenhada (a do ator de animação quando
+a VM anima o objeto; antes ia na instância parada, escondida). Teste
+`test_camera` ("cinematic fade"). **Inferido:** a caixa do modelo pela
+instância desenhada (o jogo usa a das formas do modelo, `FUN_00a45e54`
+com `0xf`), a posição do objeto pela sua colocação desenhada, o fov da cena
+como o do viewer. Antes e depois: `docs/screenshots/n50-agua-cinema-fade-movein.jpg`
+(`N001_Lot11`, `--run-vm 30 --cinematic moveIn`, o 3º quadro: a árvore da
+direita, a lixeira e os degraus da varanda entre o olho e a casa).
+
 ### 1.11 Teclado, borda da janela, giro e órbita (binário, rodada n39)
 
 Ghidra MCP (`sims2_bv.ppc`, só leitura); as constantes em `.bss` saíram do

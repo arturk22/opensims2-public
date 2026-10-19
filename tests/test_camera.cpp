@@ -594,7 +594,7 @@ end
               "the Live camera's fade params");
         check(!objectFadeParams(*findCamera(cams, "Build")), "the top-down camera fades nothing");
         const CameraDef* cine = findCamera(cams, "Animated");
-        check(cine && objectFadeParams(*cine) && objectFadeParams(*cine)->cineCam, "the cinematic camera has its own fade (not done)");
+        check(cine && objectFadeParams(*cine) && objectFadeParams(*cine)->cineCam, "the cinematic camera has its own fade");
         check(live && near(objectFadeAlpha(*live, 5), 0.0625f) && near(objectFadeAlpha(*live, 8), 0.4096f, 1e-3f),
               "alpha = (depth / 10) ^ 4: 5 tiles away 6%, 8 tiles 41%");
         check(live && near(objectFadeAlpha(*live, 10), 1) && near(objectFadeAlpha(*live, 25), 1), "fully drawn from the distance on");
@@ -603,6 +603,38 @@ end
         ObjectFadeParams all = live ? *live : ObjectFadeParams{};
         all.allObjects = true;
         check(objectFades(all, 0), "objectFadeAllObjects fades every object");
+    }
+    {
+        // The cinematic camera's rule (docs/camera-ui-mac.md 1.10, round n50):
+        // the eye at the origin looking along +Y, a Sim actor 10 tiles ahead.
+        const FadeVec eye{0, 0, 1.5f}, dir{0, 1, 0};
+        CinematicFadeActor sim{{{-0.3f, 9.7f, 0}, {0.3f, 10.3f, 1.8f}}, true};
+        CinematicFadeActor cup{{{2, 9.9f, 1}, {2.1f, 10, 1.1f}}, false}; // a small non-person: left out
+        const CinematicFadeScene sc = cinematicFadeScene({sim, cup}, eye, dir, float(M_PI) / 3);
+        // z cut to 0.54 .. 1.71: the box's centre (0, 10, 1.125), depth 10; half its diagonal 0.7227,
+        // ratio 0.6 x 0.7227 / (tan 30 x 10) = 0.0751.
+        check(near(sc.box.lo[2], 0.54f, 1e-4f) && near(sc.box.hi[2], 1.71f, 1e-4f) && near(sc.box.hi[0], 0.3f),
+              "cinematic fade: the actors' box, the z cut, the small non-person out");
+        check(near(sc.distance, 10, 1e-4f) && near(sc.ratio, 0.6f * 0.7227f / (std::tan(float(M_PI) / 6) * 10), 1e-3f),
+              "cinematic fade: the scene's depth and ratio");
+        // A wardrobe on the line of sight, 5 tiles out: faded; the same off to the side: not.
+        const FadeBox wardrobe{{-0.5f, 4.7f, 0}, {0.5f, 5.3f, 2}};
+        const float inFront = cinematicFadeAlpha(sc, eye, dir, {0, 5, 0}, wardrobe);
+        const FadeBox aside{{4.5f, 4.7f, 0}, {5.5f, 5.3f, 2}};
+        check(inFront < 0.5f && near(cinematicFadeAlpha(sc, eye, dir, {5, 5, 0}, aside), 1),
+              "cinematic fade: in front of the scene faded, to the side not");
+        // Behind the scene (past its box along the view): never faded.
+        const FadeBox behind{{-0.5f, 12, 0}, {0.5f, 12.6f, 2}};
+        check(near(cinematicFadeAlpha(sc, eye, dir, {0, 12.3f, 0}, behind), 1), "cinematic fade: behind the scene not faded");
+        // Farther than the scene's depth + 4: not looked at.
+        check(near(cinematicFadeAlpha(sc, eye, dir, {0, 15, 0}, {{-0.5f, 14.7f, 0}, {0.5f, 15.3f, 2}}), 1),
+              "cinematic fade: past depth + 4");
+        // Persons: hidden at 0.75 or less, back at 1.
+        check(cinematicPersonHidden(false, 0.75f) && !cinematicPersonHidden(false, 0.8f) &&
+                  cinematicPersonHidden(true, 0.99f) && !cinematicPersonHidden(true, 1),
+              "cinematic fade: a Sim hides whole, with hysteresis");
+        check(cinematicHiddenObject(0xF37E5AE0u) && cinematicHiddenObject(0x0CBBE10Eu) && !cinematicHiddenObject(1),
+              "cinematic fade: the PlumbBob and the Overhead Meter hide");
     }
     {
         // Back from the free camera: the Live camera takes the view over (MatchThisControllerWith).

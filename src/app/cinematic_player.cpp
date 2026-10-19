@@ -304,6 +304,13 @@ std::vector<const SimActor*> CinematicPlayer::createdActors() const {
     return out;
 }
 
+std::vector<int> CinematicPlayer::createdInstances() const {
+    std::vector<int> out;
+    for (const auto& c : created_)
+        out.push_back(c.instance);
+    return out;
+}
+
 std::vector<CinematicPlayer::Light> CinematicPlayer::lightsFor(int16_t id) const {
     std::vector<Light> out;
     if (!id)

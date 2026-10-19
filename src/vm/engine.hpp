@@ -77,6 +77,10 @@ struct CinematicRequest {
     // 0x08 "Show Entire House" (PrepCinematicScene's +0x164: the top floor,
     // walls up, no object hiding).
     bool wholeHouse() const { return flags & 0x08; }
+    // 0x80: the cinematic camera's own object fade (TryCinematic passes bit 7
+    // to the Prep, which keeps it in cTSSGSystem +0x165; none of the base
+    // game's 26 uses has it: docs/camera-ui-mac.md 1.10).
+    bool objectFade() const { return flags & 0x80; }
 };
 std::deque<CinematicRequest>& cinematicRequests();
 

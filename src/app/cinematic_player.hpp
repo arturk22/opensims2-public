@@ -77,6 +77,8 @@ public:
     const std::vector<int16_t>& actors() const { return actorIds_; }
     // The created actors (their animations' effect and sound events).
     std::vector<const SimActor*> createdActors() const;
+    // Their renderer instances (-1: not drawn, as the light rig).
+    std::vector<int> createdInstances() const;
 
     struct Light {
         Vec3 position{}, color{};

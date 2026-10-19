@@ -20,6 +20,7 @@ std::optional<double>& gCinematicStartAt = gScene.cinematicStartAt;    // when t
 double& gCinematicPrepared = gScene.cinematicPrepared;             // scene clock when it was prepared (waits for an actor's animation)
 double& gCinematicLast = gScene.cinematicLast;                  // scene clock of the last update
 bool& gCinematicWholeHouse = gScene.cinematicWholeHouse;          // the scene shows the whole house (flag 0x08, moveIn)
+bool& gCinematicObjectFade = gScene.cinematicObjectFade;          // the cinematic camera's own fade (flag 0x80, moveIn)
 std::map<int16_t, double>& gSimAnimationAt = gScene.simAnimationAt;  // each Sim's last Animate Sim start (scene clock)
 double& gCrossfadeAt = gScene.crossfadeAt;        // scene clock of the last snapshot
 double& gSceneNow = gScene.sceneNow;              // the scene clock of the last poseActors
@@ -202,7 +203,7 @@ os2::LotViewOptions cinematicLotView() {
 // the Prep refuses one while a scene is loaded. Taking an actor's start in
 // the same tick as the primitive's is ours (inferred).
 void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vector<int16_t> actors, int16_t origin,
-                    bool mirror, bool now, double preparedAt, bool guessSims, bool wholeHouse) {
+                    bool mirror, bool now, double preparedAt, bool guessSims, bool wholeHouse, bool objectFade) {
     if (gCinematic) {
         std::printf("opensims2: cinematic %s: another cinematic is playing\n", scene.c_str());
         std::fflush(stdout);
@@ -234,6 +235,9 @@ void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vect
         gCinematic = std::move(player);
         gCinematicPrepared = preparedAt;
         gCinematicWholeHouse = wholeHouse || strcasecmp(scene.c_str(), "moveIn") == 0; // PrepCinematicScene forces moveIn's
+        // The Prep's +0x165 (BV 0x7c82ec): the flag 0x80, or movein_cine.
+        gCinematicObjectFade = objectFade || strcasecmp(scene.c_str(), "moveIn") == 0;
+        gScene.cinematicHiddenSims.clear();
         gCinematicStartAt.reset();
         if (now)
             gCinematicStartAt = preparedAt;
@@ -275,7 +279,8 @@ void updateCinematic(os2::Renderer& renderer, double now) {
             continue;
         const double at = gSimulation ? std::min(now, gSimulation->tickTime(r.tick)) : now;
         std::vector<int16_t> actors(r.actors.begin(), r.actors.end());
-        startCinematic(renderer, r.scene, actors, r.me, r.mirrored(), r.startNow(), at, false, r.wholeHouse());
+        startCinematic(renderer, r.scene, actors, r.me, r.mirrored(), r.startNow(), at, false, r.wholeHouse(),
+                       r.objectFade());
     }
     if (gLighting && !gLighting->extraLights)
         gLighting->extraLights = [](int16_t id) {
