@@ -197,3 +197,15 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   `X` do segundo array ambíguo). `simantics.cpp` tem o caminho novo, o teste
   `testInteractionTableVersions` cobre 0x54/0x55, build+ctest **39/39**, e a
   `data-findings.md` §18 registra o RE, o layout e os bytes do resíduo.
+- (19/10) **Rebase sobre o upstream v0.6.0** (`ff4f71a`) — o mantenedor andou **53 commits**
+  desde o v0.5.0 e **implementou o port Windows em paralelo**: o renderer com GUOB/bounds/
+  planos de luz (`34db5be`), o refactor da câmera (`setKeyMove`/`setKeyZoom`/`setKeyRotate`),
+  o host que constrói no macOS também (`ce98217`, com `OS2_WINDOWS_CHECK`) e as releases
+  `opensims2-windows-x64.zip` (o `main` agora anuncia macOS **e** Windows). Por isso os
+  **dois commits nossos** de câmera e renderer foram **omitidos** no rebase (o upstream já os
+  tem, com a mesma medição) e o branch ficou com 21 commits. O que continua só nosso: o
+  catálogo da instalação (448 → 1.666), o Buy mode medido, o BHAV `0x8009`, o Look At com
+  slots, os conjuntos de variáveis, o reset do od 7 e **as TTABs 0x4F..0x55** (o upstream
+  ainda recusa tudo acima de 0x51). Build+ctest **39/39** local e no CI do Windows; o
+  `decode-all` do AL mantém **2.090 ok / 19 falhas** nas TTABs. PR #2 (`windows-x64-fidelity`
+  → `main`) mergeável, com o CI verde.
