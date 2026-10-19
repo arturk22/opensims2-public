@@ -1,6 +1,6 @@
 # opensims2: development
 
-A native reimplementation (C++ + Metal) of The Sims 2 (2004) engine for macOS, using the original CD assets. If you only want to try the game, see the [README](README.md).
+A native reimplementation of The Sims 2 (2004) engine in C++ for 64-bit macOS (Metal) and 64-bit Windows (SDL3 + Direct3D 12), using the original CD assets. If you only want to try the game, see the [README](README.md).
 
 ## Requirements and game data
 Command Line Tools (`xcode-select --install`), `cmake` and `ninja` (`brew install cmake ninja`).
@@ -12,8 +12,8 @@ The app and the tools need a The Sims 2 folder containing `TSData/`. They look f
 - `data/` – content extracted from the CDs (LFS)
 - `src/formats/` – parsers (DBPF, QFS, TXTR, GMDC, ...)
 - `src/vm/` – SimAntics VM
-- `src/render/` – Metal renderer
-- `src/app/` – macOS app
+- `src/render/` – Metal renderer; `gpu_renderer.*` and `shaders/*.hlsl` are the Windows one (SDL_GPU, Direct3D 12)
+- `src/app/` – the app: the macOS host (`*.mm`), the Windows host (`win_main.cpp`) and the modes both share (code for the Windows renderer under `OS2_SDL_GPU`)
 - `cli/s2pkg/` – `.package` inspector
 - `third_party/` – metal-cpp (Apple headers) and libspeex 1.2.1 (BSD, decoder for the SPX voices)
 
@@ -64,6 +64,9 @@ Example: `s2pkg object data/game/TSData/Res 0xEC7618F6 out/` exports the "Chair 
 cmake --build build && open build/opensims2.app
 ```
 An AppKit window + `MTKView` with the Metal renderer (`src/render/`) and the lot camera configured by the game's `LiveCamera.txt` (the `data/game` folder is found by walking up from the executable; `--data <dir>` or `OS2_DATA` change that).
+
+### Windows
+The Windows host (`opensims2_win`, `src/app/win_main.cpp`) is built by the Windows CI on every push (`.github/workflows/windows.yml`, which also attaches `opensims2-windows-x64.zip` to each release) or locally with `tools/build_windows.cmd`. On the Mac, `tools/check_windows.sh` (needs `brew install sdl3`) compiles and links it into `build-wincheck/` with the Windows build's compat `<simd/simd.h>`, so a change to the shared code that breaks Windows shows up before the CI; run it before pushing. Started without arguments, the Windows app looks for the game in `OS2_DATA`, its own folder and the ones above it (each as itself, `game\`, `data\game\` or `opensims2-data\`) and the CD install's folders.
 
 ### Packaging and opening without the command line
 ```
