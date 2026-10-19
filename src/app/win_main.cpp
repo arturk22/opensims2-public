@@ -271,13 +271,14 @@ std::filesystem::path exeDir() {
 
 // The game folder when started without arguments (a double-click), as the Mac
 // host's findGameDir: %OS2_DATA%, the exe's folder or one above it holding the
-// data (itself, game\ or data\game\), then the CD install's folders.
+// data (itself, game\, data\game\ or the testers' opensims2-data\ beside the
+// unzipped app), then the CD install's folders.
 std::optional<std::filesystem::path> findGameDir(const std::filesystem::path& exe) {
     namespace fs = std::filesystem;
     constexpr const char* check = "TSData/Res/UserData/Cameras/cameras.txt"; // the Mac host's kCameraConfig
     std::error_code ec;
     auto in = [&](const fs::path& dir) -> std::optional<fs::path> {
-        for (const char* sub : {"", "game", "data/game"})
+        for (const char* sub : {"", "game", "data/game", "opensims2-data"})
             if (fs::exists(dir / sub / check, ec))
                 return dir / sub;
         return std::nullopt;
