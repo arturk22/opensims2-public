@@ -5,8 +5,8 @@ A native reimplementation of The Sims 2 (2004) engine in C++, for **64-bit macOS
 This repository has only the engine code. No game files are included: you need your own copy of The Sims 2.
 
 ## Requirements
-- **Mac:** Apple Silicon (M1 or newer), macOS 13 or newer (64-bit)
-- **Windows:** 64-bit Windows 10 or 11 (x64) with a graphics card that supports Direct3D 12. The Windows version is new and less tested than the Mac one: please report what you find in an issue.
+- **Mac version:** a Mac with Apple Silicon (M1 or newer), macOS 13 or newer (64-bit)
+- **Windows version:** 64-bit Windows 10 or 11 (x64) with a graphics card that supports Direct3D 12. It is new and less tested than the Mac version: please report what you find in an issue.
 - Your own copy of The Sims 2 (see [Game files](#game-files))
 - To build from source: on the Mac, Command Line Tools and CMake (`xcode-select --install`, `brew install cmake`); on Windows, see [Build and run](#build-and-run)
 
@@ -19,7 +19,7 @@ opensims2 reads the files from your own copy of The Sims 2. Only the base game c
   python3 extract_game.py <folder with disc1..disc4> ~/TheSims2 --lang en
   ```
   `--lang` is the start of the `<lang>_compressed.zip` file name on disc 4 (for example, `pt-br_compressed.zip` means `--lang pt-br`). The game ends up in `~/TheSims2`.
-- **Mac version:** in the folder picker, choose the game's app; opensims2 looks for the game files inside it. This hasn't been tested yet, so please open an issue telling how it went.
+- **The game's own Mac release (The Sims 2 for Mac):** in the folder picker, choose the game's app; opensims2 looks for the game files inside it. This hasn't been tested yet, so please open an issue telling how it went.
 - **Other editions:** not tested yet. If yours has a folder named `TSData`, try it and tell us in an issue.
 
 On the Mac, the first time opensims2 runs, it asks for the game folder. Choose the folder that contains `TSData` (or any folder above it, since it looks a few levels down). It remembers the choice; to pick another folder later, run `defaults delete org.opensims2.opensims2 GameDataPath` in Terminal.
@@ -30,10 +30,15 @@ opensims2_win.exe "D:\Games\The Sims 2\TSData\Res"
 ```
 
 ## Download
-From the [latest release](https://github.com/opensims2/opensims2-public/releases/latest):
+Each [release](https://github.com/opensims2/opensims2-public/releases/latest) has one file per system:
 
-- **Mac:** get `opensims2.zip`, unzip it and open `opensims2.app`. macOS will block it the first time because it isn't notarized: go to **System Settings → Privacy & Security** and click **Open Anyway**.
-- **Windows:** get `opensims2-windows-x64.zip`, unzip it and double-click `opensims2_win.exe` in the `opensims2-windows-x64` folder. Windows may warn that the app comes from an unknown publisher, because it isn't signed: click **More info → Run anyway**. The Windows build is attached to the release a few minutes after it is published.
+| File | What it is |
+|---|---|
+| `opensims2-macos-arm64.zip` | the **Mac version** (Apple Silicon, 64-bit) |
+| `opensims2-windows-x64.zip` | the **Windows version** (x64, 64-bit) |
+
+- **Mac version:** get `opensims2-macos-arm64.zip`, unzip it and open `opensims2.app`. macOS will block it the first time because it isn't notarized: go to **System Settings → Privacy & Security** and click **Open Anyway**.
+- **Windows version:** get `opensims2-windows-x64.zip`, unzip it and double-click `opensims2_win.exe` in the `opensims2-windows-x64` folder. Windows may warn that the app comes from an unknown publisher, because it isn't signed: click **More info → Run anyway**. The Windows build is attached to the release a few minutes after it is published.
 
 You don't need any build tools for this, only to build from source.
 

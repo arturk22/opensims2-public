@@ -295,13 +295,13 @@ if(APPLE AND NOT OS2_WINDOWS_CHECK)
   endif()
   # `cmake --build build --target package-app`: a copy of the bundle without
   # game data, ad-hoc signed (runs on Apple Silicon for the local user; not
-  # notarized), plus opensims2.zip, in build/package/.
+  # notarized), plus opensims2-macos-arm64.zip, in build/package/.
   add_custom_target(package-app
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/package
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/package
     COMMAND ditto $<TARGET_BUNDLE_DIR:opensims2> ${CMAKE_BINARY_DIR}/package/opensims2.app
     COMMAND codesign --force --deep -s - ${CMAKE_BINARY_DIR}/package/opensims2.app
-    COMMAND ditto -c -k --keepParent ${CMAKE_BINARY_DIR}/package/opensims2.app ${CMAKE_BINARY_DIR}/package/opensims2.zip
+    COMMAND ditto -c -k --keepParent ${CMAKE_BINARY_DIR}/package/opensims2.app ${CMAKE_BINARY_DIR}/package/opensims2-macos-arm64.zip
     DEPENDS opensims2
     COMMENT "Packaging build/package/opensims2.app (ad-hoc signed)")
   target_compile_options(opensims2 PRIVATE -fobjc-arc -Wall -Wextra)

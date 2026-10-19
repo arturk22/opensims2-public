@@ -70,7 +70,7 @@ The Windows host (`opensims2_win`, `src/app/win_main.cpp`) is built by the Windo
 
 ### Packaging and opening without the command line
 ```
-cmake --build build --target package-app   # build/package/opensims2.app + opensims2.zip
+cmake --build build --target package-app   # build/package/opensims2.app + opensims2-macos-arm64.zip (the Mac release asset)
 ```
 The `.app` doesn't include the game data and is ad hoc signed (`codesign -s -`; runs on Apple Silicon for the local user, without notarization). When opened without flags, the app looks for the game folder (the one with `TSData/`, or one that contains `game/` or `data/game/`) in this order: `--data`, `OS2_DATA`, `data/game` above the executable, the folder remembered in the user preferences (key `GameDataPath` in the `org.opensims2.opensims2` domain), the folder containing the `.app` and `~/Library/Application Support/opensims2`. If none is found, it opens a folder picker and remembers the choice (to change it: `defaults delete org.opensims2.opensims2 GameDataPath`). All flags still apply.
 
