@@ -10,7 +10,7 @@
 #include "formats/strings.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 #include "render/ui_layer.hpp"
 #endif
 #include "vm/animation.hpp"
@@ -1441,7 +1441,7 @@ void LiveUi::hover(simd_float2 p) {
         dirty_ = true;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void LiveUi::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);

@@ -16,7 +16,7 @@
 #include "formats/ui_resources.hpp"
 #include "render/camera.hpp"
 #include "formats/graphics_options.hpp"
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 #include "render/gpu_renderer.hpp"
 #else
 #include "render/renderer.hpp"
@@ -586,7 +586,7 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size, flo
     return out;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void CasMode::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
@@ -610,7 +610,7 @@ void CasMode::setCanvas(int width, int height) {
     }
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void CasMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || capturing_)
         return;

@@ -92,7 +92,7 @@ public:
     // Poses the Sims (seconds since start).
     void update(double seconds);
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 #else
@@ -300,7 +300,7 @@ private:
     std::vector<std::unique_ptr<RgbaImage>> keep_;
     int canvasW_ = 1024, canvasH_ = 768, laidW_ = 0, laidH_ = 0;
     bool dirty_ = true;
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
 #endif
     size_t layer_ = 0;

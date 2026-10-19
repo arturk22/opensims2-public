@@ -127,7 +127,7 @@ public:
     const std::string& errorTooltip() const { return errorTip_; }
 
     UiScreen screen(int width, int height);
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
     // encode()'s first half: the layout for this frame put in the layer
@@ -219,7 +219,7 @@ private:
     // again (playtest hood-esc).
     bool uploaded_ = false;
     const HoodLot* drawnDialog_ = nullptr;
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
 #endif
     size_t layer_ = 0;

@@ -57,6 +57,9 @@ int main() {
     const simd_float4 qv{1, 2, 3, 4};
     const simd_float3 divided = qv.xyz / qv.w;
     check(near3(divided, simd_float3(0.25f, 0.5f, 0.75f)), ".xyz / .w");
+    const simd_float3 lead = simd_make_float3(qv);
+    const simd_float2 lead2 = simd_make_float2(qv);
+    check(lead.x == 1 && lead.y == 2 && lead.z == 3 && lead2.x == 1 && lead2.y == 2, "simd_make_float3/2 of a float4: its leading lanes");
 
     const simd_float4x4 rows = simd_matrix_from_rows(simd_float4(1, 2, 3, 4), simd_float4(5, 6, 7, 8),
                                                      simd_float4(9, 10, 11, 12), simd_float4(13, 14, 15, 16));

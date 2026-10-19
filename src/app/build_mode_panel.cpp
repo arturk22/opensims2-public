@@ -18,7 +18,7 @@
 #include "formats/resindex.hpp"
 #include "formats/txmt.hpp"
 #include "formats/ui_resources.hpp"
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 #include "render/gpu_renderer.hpp"
 #else
 #include "render/renderer.hpp"
@@ -880,7 +880,7 @@ void BuildMode::hover(simd_float2 p) {
         hovered_ = over, dirty_ = true;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void BuildMode::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);

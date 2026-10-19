@@ -10,7 +10,7 @@
 #include "formats/sim_actor.hpp"
 #include "formats/skeleton.hpp"
 #include "formats/skinning.hpp"
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 #include "render/gpu_renderer.hpp"
 #else
 #include "render/renderer.hpp"

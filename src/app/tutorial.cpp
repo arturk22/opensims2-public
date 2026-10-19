@@ -11,7 +11,7 @@
 #include "formats/resindex.hpp"
 #include "formats/strings.hpp"
 #include "formats/ui_resources.hpp"
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 #include "render/ui_layer.hpp"
 #endif
 #include "vm/vm.hpp"
@@ -557,14 +557,14 @@ UiScreen TutorialOverlay::screen(int width, int height) {
     return out;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void TutorialOverlay::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
 }
 #endif
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void TutorialOverlay::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0)
         return;

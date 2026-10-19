@@ -85,9 +85,12 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
 #include <windows.h>
 #include <dbghelp.h>
+#endif
 
+#ifdef _WIN32
 namespace {
 
 LONG WINAPI crashFilter(EXCEPTION_POINTERS* info) {
@@ -131,6 +134,7 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS* info) {
 }
 
 } // namespace
+#endif
 
 namespace {
 
@@ -256,9 +260,41 @@ struct Camera {
 };
 
 std::filesystem::path exeDir() {
+#ifdef _WIN32
     wchar_t modulePath[MAX_PATH];
     GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
     return std::filesystem::path(modulePath).parent_path();
+#else
+    return SDL_GetBasePath(); // the macOS check build (OS2_WINDOWS_CHECK)
+#endif
+}
+
+// The game folder when started without arguments (a double-click), as the Mac
+// host's findGameDir: %OS2_DATA%, the exe's folder or one above it holding the
+// data (itself, game\ or data\game\), then the CD install's folders.
+std::optional<std::filesystem::path> findGameDir(const std::filesystem::path& exe) {
+    namespace fs = std::filesystem;
+    constexpr const char* check = "TSData/Res/UserData/Cameras/cameras.txt"; // the Mac host's kCameraConfig
+    std::error_code ec;
+    auto in = [&](const fs::path& dir) -> std::optional<fs::path> {
+        for (const char* sub : {"", "game", "data/game"})
+            if (fs::exists(dir / sub / check, ec))
+                return dir / sub;
+        return std::nullopt;
+    };
+    if (const char* env = std::getenv("OS2_DATA"))
+        if (auto found = in(env))
+            return found;
+    for (fs::path dir = exe; !dir.empty(); dir = dir.parent_path()) {
+        if (auto found = in(dir))
+            return found;
+        if (dir == dir.parent_path())
+            break;
+    }
+    for (const char* install : {"C:/Program Files (x86)/EA GAMES/The Sims 2", "C:/Program Files/EA GAMES/The Sims 2"})
+        if (auto found = in(install))
+            return found;
+    return std::nullopt;
 }
 
 // The macOS virtual key codes the shared modes read (CasMode, HoodMode, the bins' text boxes).
@@ -3598,14 +3634,25 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
     SetUnhandledExceptionFilter(crashFilter);
-    if (argc < 2) {
+#endif
+    App app;
+    if (argc >= 2) {
+        app.res = argv[1];
+    } else if (auto game = findGameDir(exeDir())) {
+        app.res = *game / "TSData" / "Res"; // no scene flag: the main menu
+    } else {
         std::fprintf(stderr, "usage: opensims2_win <TSData/Res> [lot.package] [--menu | --hood N001 [--hood-lot id] | --cas] "
                              "[--screenshot file.png]\n");
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "opensims2",
+                                 "The Sims 2 game data was not found.\n\n"
+                                 "Put the opensims2 folder inside your The Sims 2 folder (the one that contains TSData), "
+                                 "or start it with the data's path:\n"
+                                 "opensims2_win.exe \"C:\\...\\The Sims 2\\TSData\\Res\"",
+                                 nullptr);
         return 2;
     }
-    App app;
-    app.res = argv[1];
     app.gameDir = app.res.parent_path().parent_path();
     app.exe = exeDir();
     app.args.push_back(argv[0]);

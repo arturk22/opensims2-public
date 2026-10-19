@@ -173,6 +173,10 @@ inline simd_float3 simd_make_float3(simd_float2 v, float z) { return {v.x, v.y, 
 inline simd_float4 simd_make_float4(float x, float y, float z, float w) { return {x, y, z, w}; }
 inline simd_float4 simd_make_float4(simd_float3 v, float w) { return {v.x, v.y, v.z, w}; }
 inline simd_float4 simd_make_float4(simd_float2 v, float z, float w) { return {v.x, v.y, z, w}; }
+// The leading lanes of a wider vector, as Apple's.
+inline simd_float2 simd_make_float2(simd_float3 v) { return {v.x, v.y}; }
+inline simd_float2 simd_make_float2(simd_float4 v) { return {v.x, v.y}; }
+inline simd_float3 simd_make_float3(simd_float4 v) { return {v.x, v.y, v.z}; }
 inline simd_int2 simd_make_int2(int x, int y) { return {x, y}; }
 
 inline simd_float2 operator+(simd_float2 a, simd_float2 b) { return {a.x + b.x, a.y + b.y}; }

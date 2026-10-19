@@ -160,7 +160,7 @@ public:
     void hover(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
     UiScreen screen(int width, int height);
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 #endif
@@ -258,7 +258,7 @@ private:
     std::vector<std::array<float, 4>> solid_;
     std::optional<simd_float2> mouse_;
     std::vector<std::unique_ptr<RgbaImage>> frameImages_;
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     std::array<std::unique_ptr<UiLayer>, 3> layers_;
     size_t layer_ = 0;
 #endif

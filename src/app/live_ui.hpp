@@ -204,7 +204,7 @@ public:
 
     // --- Drawing -------------------------------------------------------------
     UiScreen screen(int width, int height);
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     // Rebuilds the overlay when what it shows changed (canvas = the drawable
     // size divided by `scale`) and encodes it.
@@ -303,7 +303,7 @@ private:
     std::optional<simd_float2> mouse_;
     std::set<std::pair<vm::ObjectId, uint16_t>> cancelled_; // (Sim, queue uid) cancelled from the panel
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
     size_t layer_ = 0;
 #endif

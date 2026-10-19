@@ -14,7 +14,7 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "render/camera.hpp"
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 #include "render/gpu_renderer.hpp"
 #else
 #include "render/renderer.hpp"

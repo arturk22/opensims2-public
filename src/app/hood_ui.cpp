@@ -11,7 +11,7 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 #include "render/ui_layer.hpp"
 #endif
 
@@ -750,7 +750,7 @@ UiScreen HoodUi::screen(int width, int height) {
     return out;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void HoodUi::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
@@ -773,7 +773,7 @@ void HoodUi::showErrorTooltip(uint32_t index, simd_float2 at) {
     dirty_ = true;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void HoodUi::prepareFrame(uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || !ok_)
         return;

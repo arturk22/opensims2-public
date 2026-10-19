@@ -13,10 +13,22 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
+# OS2_WINDOWS_CHECK builds the Windows host on macOS (tools/check_windows.sh):
+# the SDL3 window, the SDL_GPU renderer and the compat <simd/simd.h>, compiled
+# and linked but not run (its shaders are DXIL), so a change to the shared
+# code that breaks the Windows build shows up on the Mac. Without the Metal app.
+option(OS2_WINDOWS_CHECK "Build the Windows host on macOS to check it compiles" OFF)
+
 # Apple's <simd/simd.h> stays on macOS. Everywhere else, src/port/compat
 # supplies the same names with the same memory layout.
-if(NOT APPLE)
+if(NOT APPLE OR OS2_WINDOWS_CHECK)
   include_directories(BEFORE ${CMAKE_SOURCE_DIR}/src/port/compat)
+endif()
+
+# OS2_SDL_GPU: the app's code for the SDL3 host (render/gpu_renderer) instead
+# of the Metal one; _WIN32 stays for what is the operating system's.
+if(WIN32 OR OS2_WINDOWS_CHECK)
+  add_compile_definitions(OS2_SDL_GPU)
 endif()
 
 function(os2_warnings target)
@@ -232,7 +244,7 @@ target_sources(s2pkg PRIVATE cli/s2pkg/shadow_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio os2_fx os2_port)
 
-if(APPLE)
+if(APPLE AND NOT OS2_WINDOWS_CHECK)
   # Shaders are compiled at runtime (the Command Line Tools have no offline
   # Metal compiler), so the source is embedded as a string.
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/render/shaders.metal)
@@ -297,17 +309,17 @@ if(APPLE)
     "-framework AppKit" "-framework MetalKit")
 endif()
 
-if(WIN32)
+if(WIN32 OR OS2_WINDOWS_CHECK)
   find_package(SDL3 CONFIG QUIET)
   find_program(OS2_DXC dxc)
-  if(NOT OS2_DXC)
+  if(WIN32 AND NOT OS2_DXC)
     file(GLOB sdk_dxc "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64/dxc.exe")
     list(SORT sdk_dxc ORDER DESCENDING)
     if(sdk_dxc)
       list(GET sdk_dxc 0 OS2_DXC)
     endif()
   endif()
-  if(SDL3_FOUND AND OS2_DXC)
+  if(SDL3_FOUND AND OS2_DXC AND WIN32)
     set(os2_shader_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
     set(os2_shader_outputs)
     foreach(shader lot.vert lot.frag ui.vert ui.frag particle.vert particle.frag particle_modulate.frag)
@@ -326,19 +338,26 @@ if(WIN32)
       list(APPEND os2_shader_outputs ${output})
     endforeach()
     add_custom_target(os2_shaders DEPENDS ${os2_shader_outputs})
+  endif()
+  if(SDL3_FOUND AND (TARGET os2_shaders OR OS2_WINDOWS_CHECK))
     add_executable(opensims2_win src/app/win_main.cpp src/app/game_data_caches.cpp src/render/gpu_renderer.cpp src/app/game_cursors.cpp src/app/lot_vm.cpp src/app/seat_module.cpp src/app/look_at.cpp src/app/lot_audio.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/game_save.cpp src/app/vm_objects.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp src/app/lot_lighting.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/lot_effects.cpp
       src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/dialog_window_pickers.cpp src/app/dialog_window_clothes.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_mode_family.cpp src/app/cas_mode_panels.cpp src/app/cas_studio.cpp
       src/render/camera.cpp src/render/cas_camera.cpp
       src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/main_menu.cpp
       src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp
       src/app/movie_host.cpp src/app/loading_screen.cpp src/app/tv_broadcast.cpp)
-    target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_media os2_fx os2_port SDL3::SDL3 dbghelp)
+    target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_media os2_fx os2_port SDL3::SDL3)
     os2_warnings(opensims2_win)
-    add_dependencies(opensims2_win os2_shaders)
-    target_link_options(opensims2_win PRIVATE /STACK:67108864)
-    add_custom_command(TARGET opensims2_win POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_directory ${os2_shader_dir} $<TARGET_FILE_DIR:opensims2_win>/shaders
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:opensims2_win>)
+    if(WIN32)
+      target_link_libraries(opensims2_win PRIVATE dbghelp)
+      add_dependencies(opensims2_win os2_shaders)
+      target_link_options(opensims2_win PRIVATE /STACK:67108864)
+      add_custom_command(TARGET opensims2_win POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${os2_shader_dir} $<TARGET_FILE_DIR:opensims2_win>/shaders
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:opensims2_win>)
+    else()
+      target_link_libraries(opensims2_win PRIVATE "-framework CoreGraphics" "-framework CoreFoundation")
+    endif()
   else()
     message(STATUS "SDL3 or dxc not found: the Windows viewer is not built")
   endif()
@@ -445,7 +464,7 @@ add_executable(test_animation_vm tests/test_animation_vm.cpp)
 target_link_libraries(test_animation_vm PRIVATE os2_vm)
 add_test(NAME animation_vm COMMAND test_animation_vm)
 
-if(APPLE)
+if(TARGET os2_render)
   add_executable(test_camera tests/test_camera.cpp src/app/camera_follow.cpp src/app/camera_input.cpp)
   target_include_directories(test_camera PRIVATE src)
   target_link_libraries(test_camera PRIVATE os2_render os2_vm)
@@ -538,7 +557,7 @@ add_test(NAME tv_program COMMAND test_tv_program)
 
 # The compat <simd/simd.h> (src/port/compat) off Apple; Apple's own vector
 # types have no simd_float4(...) constructor, so the check is not built there.
-if(NOT APPLE)
+if(NOT APPLE OR OS2_WINDOWS_CHECK)
   add_executable(test_simd tests/test_simd.cpp)
   target_include_directories(test_simd PRIVATE src)
   add_test(NAME simd COMMAND test_simd)

@@ -4,7 +4,7 @@
 #include "formats/audio.hpp"
 #include "formats/reia.hpp"
 #include "media/movie_player.hpp"
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 #include "render/movie_layer.hpp"
 
 #include <Metal/Metal.hpp>
@@ -235,7 +235,7 @@ std::unique_ptr<Clip> openClip(const std::filesystem::path& resDir, const std::s
     return std::make_unique<MovieClip>(path, o);
 }
 
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 // MovieLayer's picture on the CPU: black, the frame scaled to fit (bilinear)
 // and centred. The window draws the frame itself (GpuRenderer::drawMovie).
 struct MovieLayer {
@@ -279,7 +279,7 @@ struct MovieLayer {
 #endif
 
 struct Host {
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     MTL::Device* device = nullptr;
 #endif
     std::unique_ptr<MovieLayer> layer;
@@ -409,7 +409,7 @@ std::vector<std::string> introMovies() {
     return {"ealogo_audio", "intro_eng_audio"};
 }
 
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 void movieHostInit(const MovieHostOptions& options) {
     Host& h = host();
     h.options = options;
@@ -429,7 +429,7 @@ void movieHostInit(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     }
 }
 
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 const RgbaImage* movieHostFrame() {
     Host& h = host();
     if (!h.player)
@@ -480,7 +480,7 @@ int movieScreenshots(const std::filesystem::path& resDir, const std::string& nam
         std::fprintf(stderr, "opensims2: movie \"%s\": %s\n", name.c_str(), e.what());
         return 1;
     }
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
     MovieLayer layer;
 #else
     MTL::Device* device = MTL::CreateSystemDefaultDevice();
@@ -537,7 +537,7 @@ int movieScreenshots(const std::filesystem::path& resDir, const std::string& nam
     }
     std::fflush(stdout);
     clip.reset();
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     device->release();
 #endif
     return 0;

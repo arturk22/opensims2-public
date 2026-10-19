@@ -1,5 +1,6 @@
 build/
 build-win/
+build-wincheck/
 .DS_Store
 *.o
 # Regenerable from the CD images via tools/setup_data.sh

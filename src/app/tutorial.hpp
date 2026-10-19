@@ -93,7 +93,7 @@ public:
 
     void setCanvas(int width, int height);
     UiScreen screen(int width, int height); // the panel, the arrow and the shading
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 #endif
@@ -116,7 +116,7 @@ private:
     uint64_t builtState_ = 0;
     int canvasW_ = 1280, canvasH_ = 720, builtW_ = 0, builtH_ = 0;
     UiScreen panel_; // the progress window as last laid out
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     std::array<std::unique_ptr<UiLayer>, 4> layers_;
 #endif
     size_t layer_ = 0;

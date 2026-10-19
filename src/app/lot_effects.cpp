@@ -10,7 +10,7 @@
 #include "formats/resindex.hpp"
 #include "formats/model.hpp"
 #include "formats/sim_actor.hpp"
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 #include "render/gpu_renderer.hpp"
 #else
 #include "render/particle_layer.hpp"
@@ -159,7 +159,7 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
         throw std::runtime_error("no effects resource (Res/Effects/effects.package)");
     library_ = std::make_unique<fx::EffectsLibrary>(fx::EffectsLibrary::parse(*data));
     system_ = std::make_unique<fx::EffectSystem>(*library_);
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     layer_ = std::make_unique<ParticleLayer>(renderer.device(), renderer.colorFormat(), renderer.depthFormat(), &index);
     // The particle groups sort among the blended parts (layer 7 and up), as
     // the game's display list sorts them.
@@ -175,7 +175,7 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
 #endif
 }
 
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 LotEffects::~LotEffects() { renderer_.setParticles({}, nullptr); }
 
 void LotEffects::setImage(const std::string& name, const RgbaImage& image) { renderer_.setParticleImage(name, image); }
@@ -450,7 +450,7 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
     // light, "LM_Environment" (TSCreateLightsFromLightingStateWithAmbient BV
     // 0xd741dc, the lighting state's `environment`: 1 by day, 0.8 at night):
     // StandardParticlesMaterial's colorScalar -applyTextureLightColor stage.
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
     const simd_float3 env = {1.0f, 1.0f, 1.0f}; // the Windows renderer has no environmentLight() yet
 #else
     const simd_float3 env = renderer_.environmentLight();
@@ -459,7 +459,7 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
         if (q.lit)
             for (int k = 0; k < 3; ++k)
                 q.color[size_t(k)] *= env[k];
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
     renderer_.setParticles(quads_, &index_);
 #else
     layer_->setQuads(quads_);

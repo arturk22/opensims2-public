@@ -68,7 +68,7 @@ struct MovieHostOptions {
     std::filesystem::path resDir; // TSData/Res
     bool sound = true;            // open an output device for the sound
 };
-#ifdef _WIN32
+#ifdef OS2_SDL_GPU
 void movieHostInit(const MovieHostOptions& options);
 // Each frame: when a movie is playing, its picture (the host draws it fitted
 // on black, instead of its scene), else null; runs onDone when it ends.

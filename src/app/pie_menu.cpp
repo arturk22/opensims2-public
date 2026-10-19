@@ -8,7 +8,7 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_resources.hpp"
 #include "app/ui_panel_util.hpp"
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 #include "render/ui_layer.hpp"
 #endif
 
@@ -1138,7 +1138,7 @@ UiScreen PieMenuHost::screen(int width, int height) {
     return out;
 }
 
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
 void PieMenuHost::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);

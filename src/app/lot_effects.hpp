@@ -135,7 +135,7 @@ private:
     std::unique_ptr<fx::EffectSystem> system_;
     std::unique_ptr<fx::ColliderWorld> world_;
     const Lot* lotSeen_ = nullptr;
-#ifndef _WIN32
+#ifndef OS2_SDL_GPU
     std::unique_ptr<ParticleLayer> layer_; // Windows: the renderer draws the particles (GpuRenderer::setParticles)
 #endif
     void setImage(const std::string& name, const RgbaImage& image);
