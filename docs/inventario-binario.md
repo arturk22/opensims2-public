@@ -369,6 +369,18 @@ leitura). Ordem por impacto no jogo base: primeiro o que se vê em todo Sim.
 | 50 | ~~**Água, objetos e cinema**: o bump e as cáusticas da piscina, os objetos animados pela malha de repouso (`nTSSG::cObject`), o fade da câmera de cinema (caixa `0x148`, bits `+0x108`), a velocidade da cena (`cCustomAnimTimer2`)~~ **feita** (n50, `roof-fence-water-mac.md` §3.3, `shaders-mac.md` §13.5, `camera-ui-mac.md` §1.10/§2.6, `cinematics-mac.md` §10): as cáusticas da piscina (gerador, fundo e paredes) e a passada 2 da água do terreno (a piscina não tem passada de bump no Mac), a conversão altura→normal do base 1.0 em toda TXTR `Raw8`, o `frameInfo.w` módulo 30, o fade da câmera de cinema inteiro (só na mudança); lidos e não feitos o clique pelas malhas de limite do GMDC (teste da folha não achado) e o efeito do 1 ms do relógio da cena (quem o chama não achado) | 3.12 água, objetos; 3.3 cinemáticas | desenho |
 | 51 | ~~**CAS, resto**: qual aba abre qual painel de rosto, a pose dos traços, a aspiração sugerida, a rotação do zoom (`SetActive`), o gerador de números e os tons 1–4~~ **feita** (n51, `cas-mac.md` "Rodada n51"): aba → painel confirmado, cada passo abre na aba do `Activate` (cabelo; maquiagem ou a primeira com itens; top), abas sem itens desligadas, as partes das roupas pelo `HandleTabCategory`, o PRONTO do `ValidateSim` (o jogo recusa sem aspiração em vez de sugerir), os dados 47–51 do `SetupPersonData`, o gerador do jogo (`FUN_00171674`) no aleatório, que não mexe mais na personalidade; a conta do zoom relida inteira e mantida inferida (os dados só batem nos eixos do mundo) | 3.11 telas, câmera, corpo | CAS |
 | 52 | **Bairro, resto**: a cor do `cTerrainShadeLight` (`terrainShade`), os nomes das flags do FAMI/SREL e as unidades da distância do `hood_bridge` | 3.10 imposters, famílias | bairro |
+| 53 | **Locomoção, resto**: a troca centrada (±b/2), a rampa de velocidade (`CreateVelocityBlendFunction`, seguir os parâmetros), a parada fraca (`anim-mac.md` §8, §13.6) | 3.3 locomoção | animação |
+| 54 | **Clique em objetos e Sims**: o teste da folha do raio nas malhas de limite do GMDC (`cGeometryDataContainer`: a rígida e uma por osso), no lugar dos triângulos desenhados (`camera-ui-mac.md` §2.6) | 3.12 objetos e Sims | desenho |
+| 55 | **Sentar D, resto**: o `stayInWorld` nos pulos da VM (Snap, contenção, fim de escada), o Snap Into `0x04` (`ResetRootBones`) (`seat-mac.md` §D) | 3.4 D | animação |
+| 56 | **Dados do motor, resto**: a sala pelo quarto de tile do ponto, o dado de pessoa 55 pelos slots do contêiner, quem chama o `SetGlobal` no motor (`primitives-mac.md` §4i, §4j) | 3.1 dados | VM |
+| 57 | **Diálogos, resto**: as colunas do livro de vizinhos, o slide da aspiração, o espaçamento do catálogo de desejos, a barra de comida, a grade das células, os tokens de inventário, o ícone nomeado, o fundo sob `transparentbkg=no` (`primitives-mac.md` "Dialog") | 3.13 diálogos | UI |
+| 58 | **Terreno, resto**: as flags de lagoa no começo de cada mudança, `ChangeFloorPatterns`/suportes, `FUN_009dae20` (forma do tile), `RemoveOldWalls` (`buy-build-mac.md` §7.23–7.26) | 3.5 terreno | construção |
+| 59 | **Câmera do CAS**: o eixo de visão do jogo ou a convenção da matriz do efeito de câmera, para decidir a direção do zoom (`cas-mac.md` "Rodada n51") | 3.11 câmera | CAS |
+
+As rodadas 53–59 (pedido do usuário, 2026-10-19: levar o índice ao máximo)
+cobrem as últimas 9 linhas "inferido" de §3. A 54 e a 59 já foram tentadas
+(n50, n51) sem achar a peça que falta; se de novo não acharem, a linha fica
+inferida com o motivo escrito.
 
 Cada rodada marca a sua linha "feita" com uma linha do que foi feito, como no
 histórico, e põe o que sobrar no `TODO.md`.
