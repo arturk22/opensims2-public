@@ -6,7 +6,9 @@
   bloqueados com critério escrito.
 - **Mandato:** Artur — "Faça um goal para resolver próximos passos e pendências"
   (18/10/2026).
-- **Branch:** `windows-x64-ghidra-pc` (último commit `24cfd7d`). Um item = um commit, linha
+- **Branch:** `windows-x64-fidelity` — os 21 commits do nosso trabalho rebased sobre o
+  `origin/main` novo (**v0.5.0**, `244cc68`); o antigo `windows-x64-ghidra-pc` ficou em
+  `backup/ghidra-pc-v040`. Um item = um commit, linha
   única: código em inglês, docs em pt-BR **sem acentos** na mensagem; área como prefixo.
 - **Regras herdadas (valem para todo passo):**
   - Toda mudança aponta a âncora/medida que a justifica; o que não estiver medido fica
@@ -157,3 +159,23 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   recusados); TEMP revertido; decode-all do AL: **901 falhas** (0x53 7 / 0x54 440 / 0x55
   454) e 1.208 ok; build+ctest **39/39**; `data-findings.md` §17 registra a medição.
   Próximo: **13b** (fechar o modelo 0x53+ — anomalias (0,8) e os 7 arquivos 0x53).
+- (18/10) **Reconciliação com o upstream v0.5.0** — o `main` do `opensims2` andou 48 commits
+  desde `fc6694f` (v0.4.0) e já traz o **nosso** port Windows (o `52af245`, PR #1 aplicado
+  pelo mantenedor, que fechou o PR sem merge). Os 21 commits nossos que ficaram de fora
+  (catálogo da instalação, Buy mode medido, câmera, renderer, BHAV `0x8009`, TTAB
+  `0x4F..0x51`, Look At, conjuntos de variáveis, reset do od 7 e os docs dos goals) foram
+  rebased sobre `244cc68` no branch `windows-x64-fidelity`; um único conflito, na linha dos
+  Erros do `inventario-binario.md`, resolvido com o texto novo do upstream + a correção do
+  reset do object data 7. Diff final contra o upstream: **33 arquivos, +1.893/−135**.
+  O que o upstream fechou **para nós** (núcleo compartilhado, o port herda): a rodada n46
+  ("VM, resto") levou os registros da pessoa (`cTSPerson +0x60c`), o 109/164, o
+  `UpdatePersonDataFields` (37/38/40/55), o `cTSGlobals`/`cTSDataTables` e as sobras da fila
+  (evento 4 do `ActionSkipped`, `0x214`/`0x2e8`, a troca da fila cheia `0x1FC`) — ou seja,
+  o **item 6 inteiro** da fila do `goal-port-fidelity.md`; e a n47 ("Salvar, resto") mediu o
+  `NGBH` (`+0x34`/`+0x38` = tiles, `+0xFD` um bool sem uso, o dono `0x22` só de leitura 1–15)
+  e a transação do persist system. O que **continua nosso** (o upstream não tocou):
+  item 5 (bloqueado), 7, 8, 10, 12 (`0x7D`/`0x7E`), 13b, 14 e RayTrace — o item 14 segue
+  exclusivo nosso: o upstream ainda só lê NGBH `0x6F`, SDSC `0x20` e FAMI `0x4E`, e o AL
+  usa `0xCB`/`0x36`/`0x55`. A fila do upstream agora é 48 (colocação), 49 (rotas),
+  50 (água/objetos/cinema), 51 (CAS) e 52 (bairro) —reas de 48/49 tocam colocação e rotas,
+  onde o nosso item 7 (performance) mede.

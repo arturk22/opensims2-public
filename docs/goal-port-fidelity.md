@@ -84,10 +84,18 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
 - [ ] **5. Buy §1.4 — "6 de 53"** (cadeiras B120): `[BLOQUEADO: perguntar ao Artur se a
       captura do original era de instalação limpa, sem Downloads/CC]`; tentar fechar também
       por RE (o que o campo 94 & 1 esconde / a leitura do knob da barra). Não trava a fila.
-- [ ] **6. `inventario-binario.md` §5** — itens portáveis e verificáveis no Windows, em ordem
+- [x] **6. `inventario-binario.md` §5** — itens portáveis e verificáveis no Windows, em ordem
       de facilidade de verificação (ex.: fila — pessoa 164, evento 4 do ActionSkipped, testes
       `0x214`/`0x2e8`; reset do od 7; slots byte 14 do Look At; NGBH u32 `+0x34`/`+0x38`;
       registros `+0x60c` dos objetos da pessoa). Cada um = 1 commit.
+      **FECHADO 18/10 (parte no upstream v0.5.0)** — o reset do od 7 (campo 45 do OBJD) e os
+      slots byte 14 do Look At saíram no nosso branch; a **rodada n46 do upstream** ("VM,
+      resto") levou os registros da pessoa (`cTSPerson +0x60c`), o 109/164, o
+      `UpdatePersonDataFields` (37/38/40/55), o `cTSGlobals`/`cTSDataTables` e as sobras da
+      fila (evento 4 do `ActionSkipped`, `0x214`/`0x2e8`, a troca da fila cheia `0x1FC`) — o
+      núcleo é compartilhado, então o port Windows herda tudo no rebase; a **n47** ("Salvar,
+      resto") mediu o `NGBH` (`+0x34`/`+0x38` = tiles, `+0xFD` um bool sem uso, o dono `0x22`
+      só de leitura 1–15) e a transação do persist system.
 - [ ] **7. `performance.md` "What is left"** — índice por tile, `notifyRoomChanges`/
       `tickOverlayEvents` por tick, "Set to Next" com `std::function`, texturas — com medidor
       antes/depois.
