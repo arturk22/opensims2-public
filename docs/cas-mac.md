@@ -1500,3 +1500,108 @@ parede), enquanto nos eixos do mundo (o app) enquadra o tronco e o rosto. Então
 a rotação que o controlador usa (a do `SetActive`, vtable `0xc0`) não deve ser a
 do localizador como lida (outro quadro, ou o +Z da câmera não é o "para cima"
 do localizador); não achado. O app segue com os eixos do mundo (inferido).
+
+## Rodada n51: telas, câmera e sorteio do CAS (binário, Ghidra MCP)
+
+Lido no BV 1.10 e conferido no base 1.0 pelo Ghidra MCP (só leitura; nada
+renomeado nem salvo). Os nomes do BV vêm do symxfer; as funções sem nome no
+BV foram achadas pelas constantes (`lis 0x6c6e`, `lis 0x4cb8`) e lidas por
+desmontagem.
+
+### As abas do rosto (`cTSUICASComponentGenetics`, `CB980E82`)
+
+`InitComponent` (BV `0x42b3f4`; base 1.0 `0xecf3d8`…) monta o grupo de abas
+(`cTSUITabGroup::Init(…, 0x4CB80000, 7, 0x4CB80000)`) e liga cada aba à
+janela que ela mostra (`AddTabSelectedShowWindow`/`AddTabUnSelectedHideWindow`)
+e ao seu tratador:
+
+| aba | janela | tratador |
+|---|---|---|
+| `0x4CB80000` | `0x6CB8A784` (cabelo) | `HandleTabHair` (`0x42a77c`) |
+| `0x4CB80001` | `0x8CB8A7A5` (sobrancelha) | `HandleTabBrow` |
+| `0x4CB80002` | `0xACB8A7BB` (olhos) | `HandleTabEyes` |
+| `0x4CB80003` | `0x2CB8A844` (nariz) | `HandleTabNose` (`0x42b054`) |
+| `0x4CB80004` | `0x4CB8A856` (boca) | `HandleTabMouth` (`0x42b024`) |
+| `0x4CB80005` | `0x4CB8A868` (queixo) | `HandleTabJaw` (`0x42aff4`) |
+| `0x4CB80006` | `0xED2A53C1` (rosto inteiro) | `HandleTabFace` |
+
+`InitPanel(janela, aba)` (`0x42b0e4`) guarda, por aba, os três componentes
+filhos da janela (o bin de arquétipos `0x4CA50588`, os modificadores
+`0xACB8A9AE`/`0xACB8A9AF`), que o `HandleTabGenericPanel` (`0x42ad48`) ativa
+na aba escolhida e desativa nas outras. É o par que o app já usava
+(`kFaceTabs`/`kFacePanels`): agora confirmado. O `Activate` (BV `0x42a8e8`,
+base `0xecfb80`) **escolhe a aba do cabelo** (`HandleTabSelection(0x4CB80000)`)
+toda vez que o passo 3 abre, antes de mandar `EditSimFace`.
+
+### As abas dos cosméticos (`CB980E85`, componente sem nome no BV)
+
+`InitComponent` (BV `0x44602c`; base `0xebd684`): grupo `0x6C6E0000`, 7 abas
+(6 no base), padrão `0x6C6E0002`; cada aba k mostra a janela `0x6C6E1000 + k`
+se existir, senão `0x6C6E1000` (no base só existem `0x6C6E1000`, o painel dos
+overlays, e `0x6C6E1002`, a maquiagem), e o título `0x0DE60000 + k`. Um
+tratador só para todas (BV `0x4464d0`, tabela de saltos em `0x44657c`) dá ao
+componente de overlays (`0x6CA52066`) a lista de subtipos e de bins:
+
+| aba | o que mostra |
+|---|---|
+| `0x6C6E0000` | subtipo 1 (sobrancelhas) |
+| `0x6C6E0001` | subtipo 5 (óculos) |
+| `0x6C6E0002` | a maquiagem (`0x6C6E1002`, sem o painel de overlays) |
+| `0x6C6E0003` | subtipo 4 (maquiagem de fantasia) |
+| `0x6C6E0004` | subtipo 0, bin 1 (`0x274b70c`: costeleta) |
+| `0x6C6E0005` | subtipo 0, bin 2 (`0x274b708`: barba) |
+
+Também é o que o app fazia (`kCosmeticTabs`): confirmado. O `Activate` (BV
+`0x447e98`, base `0xebdb..`) conta, para a idade e o sexo, os itens de cada
+aba (`FUN_0044515c` / base `0xebe1a0`) e **desliga as abas sem nenhum**; depois
+escolhe a maquiagem se ela está ligada, senão a primeira ligada na ordem
+`0x6C6E0000…0005` (nenhuma: a maquiagem assim mesmo).
+
+### As abas das roupas (`cTSUICASComponentClothing`, `CB980E84`)
+
+`HandleTabCategory` (BV `0x428254`): a aba `0x02000000 + k` é a categoria
+`1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x200, 0x1000` (k = 0…9). Nas três
+primeiras (no base só a 0, o cotidiano) a parte escolhida fica e o grupo de
+partes (`0x01000000…02`: top, calça, roupa inteira) só aparece se a categoria
+tem top, calça **e** roupa inteira (`HasOutfits`); nas outras o jogo escolhe a
+roupa inteira (`0x01000002`) e esconde o grupo. `HandleTabOutfit`
+(`0x427ff0`): `0x01000000` → 4 (top), `…01` → 0x10 (calça), `…02` → 8 (roupa
+inteira). O `Activate` (`0x429234`): a categoria fica a de antes (a primeira
+vez, o cotidiano); a parte volta ao top se a categoria tem tops, senão à roupa
+inteira; cada aba de categoria fica ligada só se há roupa inteira dela
+(`HasOutfits(8, cat)`; o cotidiano, se há qualquer parte: `HasOutfits(0x1c, 1)`).
+
+### PRONTO: o que o jogo confere (`cTSUISimEditor::ValidateSim`)
+
+BV `0x1c7a18`, base 1.0 `0xeeef..` (sem nome; a mesma conta). Recusa o Sim, com
+a caixa de mensagem "Sim Changes" (STR# `0x8C` do `CAS.package`, índice 16 em
+base 1) e volta ao passo que falta, quando:
+
+1. **sem aspiração** num adolescente ou mais velho (dado 46 = 0; o bebê, a
+   criança pequena e a criança passam, índices de idade 5, 0, 1 / máscara
+   `0x23`): "Please choose an Aspiration for your Sim." (#27) e vai ao passo 6.
+   O comentário da string diz: "New Sims default to no aspiration". **O jogo
+   não sugere aspiração pelo signo no CAS.**
+2. **pontos de personalidade sobrando**: soma dos 5 traços menor que
+   `kMinPersonalityTraitsValue` (2500 no `CB980E50`; 0 no script vira 2420):
+   "Your Sim has unused Personality points…" (#11), passo 6.
+3. **sem primeiro nome**: "Please give your Sim a first name." (#18), passo 1
+   com o foco no nome; nome com `\ / : * < > | ? , ;`: #12.
+
+`SaveFamily` (BV `0x1cb798`) põe 0x40 (Grow Up) no dado 46 dos mais novos
+(índices 5, 0, 1) e copia os dados 22/23 (preferência de sexo), 160/162
+(pontos de aspiração) do Sim editado. O `kDefaultPersonalityTraitValue=500`
+do `CB980E50` não é lido pelo código (nenhuma referência à string).
+
+**A aspiração sugerida** (`ComputeAspirations`, BV `0x8cc150`, a coluna da
+tabela do §6) só é chamada por `nTSGenetics::cTSGeneticsManager::SetupPersonData`
+(BV `0x545ae8`, vtable `0x18` do gerenciador): signo (dado 70) = sorteio de 12
++ 1; dado 46 = 0x40 se a idade (dado 58) < 16, senão a do signo; dados 47–51
+("Original Neat/Nice/Active/Outgoing/Playful Personality") = cópias dos traços
+7, 2, 3, 6, 5, nessa ordem; e copia tudo para a descrição do vizinho. Quem
+chama esse método (pela vtable) não foi achado. Os dados 47–51 que o
+`vm/family_write` grava seguem essa ordem (confirmado); os 91 (Age Days Left
+25), 156 (Age Duration 25), 118 (Motives Not Included in Mood 3100) e 158
+(Selection Flags 1) não são escritos pelo código do CAS (`SaveFamily`,
+`ProcessCreateSimRequest`, `ValidateSim`): vêm do SimAntics da pessoa e seguem
+copiados dos Sims do jogo (inferido).
