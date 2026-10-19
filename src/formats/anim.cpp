@@ -366,7 +366,10 @@ std::vector<uint8_t> Animation::write() const {
         w.u8(0);
         return t.size() + 1;
     };
-    writePadding(w, cstr(skeletonTag) + cstr(dataString));
+    // One statement each: the operands of + are unsequenced, and MSVC wrote
+    // the data string first.
+    const size_t tagLength = cstr(skeletonTag);
+    writePadding(w, tagLength + cstr(dataString));
     for (const auto& t : targets) {
         w.u32(m), w.u32(m);
         w.u16(t.animType);
