@@ -364,8 +364,12 @@ void CasMode::stepScreen(LayoutContext& L) {
         break;
     }
     case 3: { // makeup, costume, glasses, brows, stubble, facial hair
-        for (int k = 0; k < 6; ++k)
+        // The Activate turns off the tabs with nothing for the age and gender.
+        for (int k = 0; k < 6; ++k) {
             pressed(find(panel, kCosmeticTabs[k]), k == cosmeticTab_);
+            if (const UiElement* t = find(panel, kCosmeticTabs[k]); t && k != cosmeticTab_ && !cosmeticTabHasItems(k))
+                hk.buttonState[t] = 0;
+        }
         const UiElement* makeup = find(panel, 0x6C6E1002);
         const UiElement* overlays = find(panel, 0x6CA52066);
         if (makeup)
@@ -437,13 +441,23 @@ void CasMode::stepScreen(LayoutContext& L) {
         break;
     }
     case 4: { // clothes
+        // Clothing::Activate: a category tab is on when the category has
+        // whole outfits (everyday: any part); the part tabs show when it has
+        // tops, bottoms and outfits (separates_).
         for (int k = 0; k < 6; ++k) {
-            pressed(find(panel, 0x02000000 + kClothesTabK[k]), k == clothesCategory_);
+            const UiElement* tab = find(panel, 0x02000000 + kClothesTabK[k]);
+            pressed(tab, k == clothesCategory_);
+            if (tab && k != clothesCategory_ && !clothesCategoryOn(k))
+                hk.buttonState[tab] = 0;
             if (const UiElement* t = find(panel, 0x0DE60000 + kClothesTabK[k]))
                 (k == clothesCategory_ ? hk.show : hk.hide).insert(t);
         }
-        for (int k = 0; k < 3; ++k)
-            pressed(find(panel, 0x01000000 + uint32_t(k)), k == clothesPart_);
+        for (int k = 0; k < 3; ++k) {
+            const UiElement* tab = find(panel, 0x01000000 + uint32_t(k));
+            pressed(tab, k == clothesPart_);
+            if (tab && !separates_)
+                hk.hide.insert(tab);
+        }
         if (const UiElement* g = find(panel, 0x0CFD6EC6))
             hk.hide.insert(g);
         const uint32_t cat = kClothesCategory[clothesCategory_];
@@ -607,18 +621,16 @@ void CasMode::stepScreen(LayoutContext& L) {
         break;
     case 3:
         for (int k = 0; k < 6; ++k)
-            target(find(panel, kCosmeticTabs[k]), [this, k](simd_float2) { cosmeticTab_ = k; });
+            if (k == cosmeticTab_ || cosmeticTabHasItems(k))
+                target(find(panel, kCosmeticTabs[k]), [this, k](simd_float2) { cosmeticTab_ = k; });
         break;
     case 4:
         for (int k = 0; k < 6; ++k)
-            target(find(panel, 0x02000000 + kClothesTabK[k]), [this, k](simd_float2) {
-                clothesCategory_ = k;
-                if (k != 0 && clothesPart_ != 2)
-                    clothesPart_ = 2; // only everyday wear has separates (inferred)
-                rebuild();
-            });
-        for (int k = 0; k < 3; ++k)
-            target(find(panel, 0x01000000 + uint32_t(k)), [this, k](simd_float2) { clothesPart_ = k; });
+            if (k == clothesCategory_ || clothesCategoryOn(k))
+                target(find(panel, 0x02000000 + kClothesTabK[k]), [this, k](simd_float2) { chooseClothesCategory(k); });
+        if (separates_)
+            for (int k = 0; k < 3; ++k)
+                target(find(panel, 0x01000000 + uint32_t(k)), [this, k](simd_float2) { clothesPart_ = k; });
         break;
     case 5:
         for (int k = 1; k <= 7; ++k)
@@ -743,6 +755,62 @@ void CasMode::stepScreen(LayoutContext& L) {
         if (g.next)
             target(g.next, [this, key, pages](simd_float2) { pages_[key] = std::min(pages - 1, pages_[key] + 1); });
     }
+}
+
+bool CasMode::cosmeticTabHasItems(int k) const {
+    // The lists the tab shows (stepScreen), counted as the Activate counts
+    // its catalog lists (BV FUN_0044515c / base 0xebe1a0).
+    const cas::CharacterSpec& s = edit_.spec;
+    auto textures = [&](uint32_t subtype, int bin) {
+        for (const SimPart* o : catalog_->overlaysFor(subtype, s.age, s.gender))
+            if (bin < 0 || int(o->number("bin")) == bin)
+                return true;
+        return false;
+    };
+    auto meshes = [&](uint32_t subtype, uint32_t bin) {
+        for (const SimPart* o : catalog_->meshOverlaysFor(s.age, s.gender))
+            if (o->number("subtype") == subtype && o->number("bin") == bin && !(o->number("flags") & 1))
+                return true;
+        return false;
+    };
+    switch (k) {
+    case 0:
+        return textures(cas::overlay::Blush, -1) || textures(cas::overlay::EyeShadow, 6) ||
+               textures(cas::overlay::EyeShadow, 7) || textures(cas::overlay::Lipstick, -1);
+    case 1: return textures(cas::overlay::Costume, -1);
+    case 2: return meshes(5, 15);
+    case 3: return textures(cas::overlay::Brows, -1);
+    case 4: return textures(cas::overlay::FacialHair, 1);
+    case 5: return textures(cas::overlay::FacialHair, 2) || meshes(0, 2);
+    default: return false;
+    }
+}
+
+void CasMode::chooseClothesCategory(int k) {
+    // HandleTabCategory (BV 0x428254): tabs 0x02000000..02 keep the part,
+    // the part tabs shown when the category has all three; the others choose
+    // the whole outfit and hide them (in the base game only everyday is one
+    // of the first three).
+    clothesCategory_ = std::clamp(k, 0, 5);
+    const uint32_t cat = kClothesCategory[clothesCategory_];
+    if (kClothesTabK[clothesCategory_] < 3) {
+        separates_ = clothesHas(cas::part::Top, cat) && clothesHas(cas::part::Bottom, cat) && clothesHas(cas::part::Body, cat);
+    } else {
+        clothesPart_ = 2;
+        separates_ = false;
+    }
+    rebuild();
+}
+
+bool CasMode::clothesHas(uint32_t partBit, uint32_t category) const {
+    return !catalog_->outfitParts(partBit, edit_.spec.age, edit_.spec.gender, category).empty();
+}
+
+bool CasMode::clothesCategoryOn(int k) const {
+    const uint32_t cat = kClothesCategory[k];
+    if (cat == cas::category::Everyday) // HasOutfits(0x1c, 1)
+        return clothesHas(cas::part::Top, cat) || clothesHas(cas::part::Bottom, cat) || clothesHas(cas::part::Body, cat);
+    return clothesHas(cas::part::Body, cat);
 }
 
 } // namespace os2

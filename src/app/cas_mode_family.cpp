@@ -238,17 +238,40 @@ bool CasMode::openCharacter(const fs::path& file, uint32_t group) {
     }
 }
 
+bool CasMode::validateSim() {
+    // cTSUISimEditor::ValidateSim (BV 0x1c7a18, base 1.0 0xeeef..; docs/
+    // cas-mac.md, round n51), in its order: the game shows the text in its
+    // "Sim Changes" box (STR# 0x8C #16) and goes to the step that lacks.
+    const bool young = edit_.spec.age <= cas::age::Child || edit_.spec.age == cas::age::Baby;
+    auto refuse = [this](uint32_t index, int step) {
+        status_ = res_ ? res_->string({packageGroupHash("CAS"), 0x8C, index - 1}).value_or("") : std::string();
+        setStep(step);
+        return false;
+    };
+    // New Sims have no aspiration ("New Sims default to no aspiration"):
+    // teens and up must choose one.
+    if (!young && !edit_.aspiration)
+        return refuse(27, 5); // "Please choose an Aspiration for your Sim."
+    if (edit_.personality.total() * 100 < 2500) // kMinPersonalityTraitsValue (CB980E50)
+        return refuse(11, 5); // "Your Sim has unused Personality points..."
+    if (edit_.spec.firstName.empty()) {
+        refuse(18, 0); // "Please give your Sim a first name."
+        focus_ = Focus::FirstName;
+        return false;
+    }
+    if (edit_.spec.firstName.find_first_of("\\/:*<>|?,;") != std::string::npos)
+        return refuse(12, 0); // "Please remove any of the following characters..."
+    return true;
+}
+
 void CasMode::finishSim() {
-    if (editing_ < 0)
+    if (editing_ < 0 || !validateSim())
         return;
-    if (edit_.spec.firstName.empty())
-        edit_.spec.firstName = edit_.spec.gender == cas::gender::Female ? "Simone" : "Simão";
     if (!edit_.zodiacChosen)
         edit_.zodiac = cas::zodiacSign(edit_.personality);
+    // SaveFamily (BV 0x1cb798): Grow Up for babies, toddlers and children.
     if (edit_.spec.age <= cas::age::Child || edit_.spec.age == cas::age::Baby)
         edit_.aspiration = cas::aspiration::GrowUp;
-    else if (!edit_.aspiration || edit_.aspiration == cas::aspiration::GrowUp)
-        edit_.aspiration = cas::suggestedAspiration(edit_.zodiac); // none chosen: the sign's (inferred)
     if (!edit_.id)
         edit_.id = nextId_++;
     if (!edit_.thumbnail)
@@ -266,8 +289,11 @@ void CasMode::finishSim() {
 }
 
 void CasMode::acceptFamily() {
-    if (editing_ >= 0)
+    if (editing_ >= 0) {
         finishSim();
+        if (editing_ >= 0)
+            return; // ValidateSim refused it
+    }
     if (family_.empty()) {
         status_ = "A família precisa de pelo menos um Sim";
         dirty_ = true;

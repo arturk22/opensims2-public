@@ -489,6 +489,31 @@ void CasMode::setStep(int step) {
     bioOpen_ = false;
     if (focus_ == Focus::Biography)
         focus_ = Focus::None;
+    // The step component's Activate (docs/cas-mac.md, round n51): the face
+    // step opens on the hair tab (Genetics, BV 0x42a8e8 / base 0xecfb80);
+    // the cosmetics on the makeup, or the first tab with items in the tabs'
+    // order 0x6C6E0000..05 (BV 0x447e98 / base 0xebdc78); the clothes keep
+    // the category and go back to the top, or the whole outfit when the
+    // category has no tops, the part tabs shown when it has all three
+    // (Clothing::Activate, BV 0x429234).
+    if (step_ != before) {
+        if (step_ == 2)
+            faceTab_ = 0;
+        else if (step_ == 3) {
+            cosmeticTab_ = 0;
+            if (!cosmeticTabHasItems(0))
+                for (int k : {3, 2, 1, 4, 5}) // brows, glasses, costume, stubble, facial hair
+                    if (cosmeticTabHasItems(k)) {
+                        cosmeticTab_ = k;
+                        break;
+                    }
+        } else if (step_ == 4) {
+            const uint32_t cat = kClothesCategory[clothesCategory_];
+            clothesPart_ = clothesHas(cas::part::Top, cat) ? 0 : 2;
+            separates_ = clothesHas(cas::part::Top, cat) && clothesHas(cas::part::Bottom, cat) &&
+                         clothesHas(cas::part::Body, cat);
+        }
+    }
     // Face steps look at the face.
     zoom_ = (step_ == 1 || step_ == 2 || step_ == 3) ? 2 : 0;
     if (camera_) {
@@ -753,10 +778,8 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             else if (step_ == 3)
                 cosmeticTab_ = std::clamp(std::stoi(v), 0, 5);
             dirty_ = true;
-        } else if (a == "--cas-category") {
-            clothesCategory_ = std::clamp(std::stoi(v), 0, 5);
-            rebuild();
-        } else if (a == "--cas-part") {
+        } else if (a == "--cas-category")
+            chooseClothesCategory(std::stoi(v)); else if (a == "--cas-part") {
             clothesPart_ = std::clamp(std::stoi(v), 0, 2);
             dirty_ = true;
         } else if (a == "--cas-gender") { // m/male or f/female, as the gender buttons
@@ -784,6 +807,13 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             dirty_ = true;
         } else if (a == "--cas-done")
             finishSim();
+        else if (a == "--cas-aspiration") { // k: step 6's aspiration button 0x0CDC000k
+            const int k = std::clamp(std::stoi(v), 1, 7);
+            const bool young = edit_.spec.age == cas::age::Toddler || edit_.spec.age == cas::age::Child;
+            if (young == (k == 7))
+                edit_.aspiration = 1u << (k - 1);
+            dirty_ = true;
+        }
         else if (a == "--cas-new")
             newSim();
         else if (a == "--cas-accept")
