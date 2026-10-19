@@ -12,8 +12,13 @@ constexpr float kDegrees = float(M_PI) / 180.0f;
 
 float lerp(float a, float b, float s) { return a + (b - a) * s; }
 
-// Rotation about Z by `h` then about X by `e`, as FUN_000ea0dc builds them
-// (Rz(h) Rx(e) applied to a column vector).
+// Rotation about X by `e` then about Z by `h`, about the world's axes:
+// Rz(h) Rx(e) v. Inferred: the binary's Translation (BV 0x7aa284) turns the
+// camera's own +Y, R(q) Rx(e) Rz(h) (0,1,0), but that keeps the zoom
+// acos(cos h cos e) off the view axis whatever q is (36.8 degrees for the
+// adult clothes camera), while CASCamera.txt aims the clothes zoom at the
+// face camera 16 degrees off it, which these world axes reach within 2-4
+// degrees (docs/cas-mac.md, round n51).
 simd_float3 turnZX(simd_float3 v, float h, float e) {
     const float ce = std::cos(e), se = std::sin(e);
     v = simd_make_float3(v.x, v.y * ce - v.z * se, v.y * se + v.z * ce);

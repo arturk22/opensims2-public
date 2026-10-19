@@ -11,7 +11,8 @@
 // for the position (0x7a928c), the turn (slerp, 0x7a93c8), the FOV (FOV
 // 0x7a970c), the zoom and its heading and elevation. The zoom moves the eye
 // along the camera's forward (local +Y, DAT_02c2fbf8) turned by
-// zoomheading about Z and -zoomelevation about X (0x7aa284), clamped to
+// zoomheading about Z and -zoomelevation about X (0x7aa284; here about the
+// world's axes, inferred: cas_camera.cpp, turnZX), clamped to
 // [minzoom, maxzoom] (DoMessage 0x7aa0f8: keyboardzoomspeed a step), and
 // smoothed (FUN_008c77d4, 10 steps). Which spec stands at which locator is
 // the CAS - Backdrop object's SimAntics: camera effects CASCam_<spec>_Effect
