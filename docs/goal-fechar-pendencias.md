@@ -102,7 +102,7 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    0x4E..0x51 (campos, anúncios, nome) e recusa 0x52/0x53/0x55; TEMP revertido.
    Medição: decode-all do AL com **901** falhas (só 0x53 7 / 0x54 440 / 0x55 454)
    e **1.208** ok; build+ctest 39/39; `data-findings.md` §17.
-2. **13b — fechar o modelo 0x53+**: **FECHADO 19/10** (o 0x53 em si continua aberto) — o RE
+2. **13b — fechar o modelo 0x53+**: **FECHADO 19/10** (o 0x53 fechou em 20/10, ver a §19) — o RE
    do leitor de TTAB no `Sims2EP9RPC.exe` (`FUN_0087c720` @ `0x87c720`, no projeto Ghidra
    `C:\Users\Artur\sims2-re\pcb`) deu o layout: 0x44–0x52 = 7 tabelas, **0x53 = 11
    tabelas**, **≥ 0x54 = 46 bytes fixos + dois arrays de grupos de anúncios** (o primeiro,
@@ -110,14 +110,16 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    `[u32 X]` + `X−1` itens de 4 bytes de conteúdo desconhecido + `[u32 m]` + `m` anúncios).
    Com esse layout o leitor fecha **878 dos 894 arquivos 0x54+** (o modelo anterior fechava
    555 dos 901). Restam 12 com o `X` do segundo array ambíguo (lido como u32 dá
-   `0x00050000`; os bytes sugerem um par menor que 4 bytes) e os 7 arquivos 0x53, cujo
-   layout (11 tabelas) ainda não fecha nos dados.
-3. **13c — leitor novo no port:** **FECHADO 19/10** para 0x54/0x55 — `InteractionTable::parse`
-   ganhou o caminho novo (46 bytes fixos + os dois arrays, cada grupo virando uma tabela de
-   motivos), o teste `testInteractionTableVersions` cobre 0x54/0x55 com cauda de dois
-   arrays e o 0x53 continua recusado com erro claro. Medido no `objects.package` do
-   Apartment Life: **2.090 ok / 19 falhas** (antes 1.208 ok / 901 falhas) — as 19 são os
-   7 de 0x53 e os 12 do `X` ambíguo. `data-findings.md` §18 registra o RE e os bytes.
+   `0x00050000`; os bytes sugerem um par menor que 4 bytes) — os 7 arquivos 0x53 fecharam
+   em 20/10 (item 1 da fila de 20/10).
+3. **13c — leitor novo no port:** **FECHADO 19/10** para 0x54/0x55 e **20/10** para 0x53 —
+   `InteractionTable::parse` ganhou o caminho novo (46 bytes fixos + os dois arrays, cada
+   grupo virando uma tabela de motivos; no 0x53, o layout do 0x4E com **11** tabelas). O
+   teste `testInteractionTableVersions` cobre 0x4E..0x51, 0x53 (11 tabelas) e 0x54/0x55, e
+   recusa 0x52 e acima de 0x55. Medido no `objects.package` do Apartment Life: **2.097 ok
+   / 12 falhas** (antes 1.208 ok / 901 falhas; 2.090/19 antes do 0x53) — as 12 são o `X`
+   ambíguo (9 + 2) e 1 "693 trailing bytes" (`0x7FB36E92`, grupo `0x80`). `data-findings.md`
+   §18 e §19 registram o RE, os layouts e as medições.
 4. **8 — N002_Lot32 / pacote vazio:** `Lot::load` distingue pacote vazio (stub de 96 B) de
    erro; contagem separada no `soak-report`; teste; commit.
 5. **14 — vizinhanças/lotes do AL:** NGBH 0xCB, FAMI 0x55, SDSC 0x36, NID +20 e `lot info`
@@ -209,3 +211,17 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   ainda recusa tudo acima de 0x51). Build+ctest **39/39** local e no CI do Windows; o
   `decode-all` do AL mantém **2.090 ok / 19 falhas** nas TTABs. PR #2 (`windows-x64-fidelity`
   → `main`) mergeável, com o CI verde.
+- (20/10) **0x53 FECHADO** (item 1 da fila de 20/10) — o 0x53 é o **layout do 0x4E com 11
+  tabelas de motivos**: `action` u16, `guard` u16, **11 contagens u32** e depois os mesmos
+  campos do 0x4E, com as 11 tabelas de anúncios (6 B cada) no fim. Os 7 recursos do AL
+  (todos "untitled tree table", conteúdo idêntico, 2.387 B) fecham exatamente no nome
+  final: entradas de 570 B (contagens `[16,0,0,0,0,0,0,16,16,16,16]` → 80 anúncios) e de
+  1.146 B (11×16 = 176 anúncios na terceira); os anúncios são zero neste recurso, por isso
+  a cauda parecia padding. `InteractionTable::parse` passou a ler o 0x53 no caminho do
+  0x4E (11 contagens) e a recusar 0x52 e > 0x55 (nada acima de 0x55 aparece no conteúdo);
+  `testInteractionTableVersions` cobre 0x4E..0x51 e 0x53 e recusa 0x52/0x56; build+ctest
+  **39/39**; `decode-all` do AL: **2.097 ok / 12 falhas** (antes 2.090/19). As 12 restantes
+  são o `X` do segundo array do 0x54/0x55 (9 "bad TTAB item count" + 2 "bad advertisement
+  count") e 1 "693 trailing bytes" (`0x7FB36E92`, grupo `0x80`). `data-findings.md` §19
+  registra o layout e a medição. Próximo: item 2 da fila (0x53 fechado; segue **14 —
+  vizinhanças/lotes do AL**).

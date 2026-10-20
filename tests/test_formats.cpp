@@ -320,17 +320,20 @@ static void testInteractionTable() {
 static void testInteractionTableVersions() {
     // 0x4F..0x51 keep the 0x4E entry layout byte for byte: the AL content has
     // 276 of them (149/106/21) and all parse to the trailing name with the
-    // same fields (docs/data-findings.md section 17). 0x52 never shows up in
-    // the UC content and 0x53 has a layout of its own (11 motive tables) that
-    // is not closed yet, so both are refused.
+    // same fields (docs/data-findings.md section 17). 0x53 keeps that layout
+    // with 11 motive tables instead of 7 and its 7 AL resources close to the
+    // trailing name too (section 19). 0x52 never shows up in the UC content
+    // and nothing above 0x55 does, so both are refused.
     auto table = [](uint32_t version) {
         std::vector<uint8_t> d(64, 0);
         auto u16 = [&](uint32_t v) { d.insert(d.end(), {uint8_t(v), uint8_t(v >> 8)}); };
         auto u32 = [&](uint32_t v) { u16(v & 0xFFFF), u16(v >> 16); };
         u32(0x54544142), u32(version), u32(0), u16(1);
         u16(0x1002), u16(0x1003); // action, guard
-        u32(2);                   // two advertisements for the first age table
-        for (int i = 0; i < 6; ++i)
+        // 0x53 has 11 motive tables, the older versions 7; the first one holds
+        // two advertisements.
+        u32(2);
+        for (uint32_t i = 1; i < (version == 0x53 ? 11u : 7u); ++i)
             u32(0);
         u16(0x0001), u16(0x8000);        // flags, flags2
         u32(7), u32(1), u32(0x40000000); // string index, attenuation code/value 2.0
@@ -343,26 +346,27 @@ static void testInteractionTableVersions() {
         d.insert(d.end(), name.begin(), name.end());
         return d;
     };
-    for (uint32_t v : {0x4E, 0x4F, 0x50, 0x51}) {
+    for (uint32_t v : {0x4E, 0x4F, 0x50, 0x51, 0x53}) {
         const auto t = InteractionTable::parse(table(v));
         const auto& e = t.interactions.at(0);
-        check(t.version == v && t.interactions.size() == 1, "TTAB version from 0x4E to 0x51 accepted");
+        check(t.version == v && t.interactions.size() == 1, "TTAB version from 0x4E to 0x53 accepted");
         check(e.action == 0x1002 && e.guard == 0x1003 && e.autonomy == 50 && e.joinIndex == -1 &&
                   e.uiDisplayType == 3 && e.memoryMultiplier == 0.5f && e.modelTableId == 1,
-              "TTAB 0x4E..0x51 entries share the layout");
-        check(e.motives.size() == 7 && e.motives[0].size() == 2 && e.motives[0][1].minimum == 20 &&
+              "TTAB 0x4E..0x53 entries share the layout");
+        const size_t tables = v == 0x53 ? 11 : 7;
+        check(e.motives.size() == tables && e.motives[0].size() == 2 && e.motives[0][1].minimum == 20 &&
                   e.motives[0][1].delta == 3 && e.motives[0][1].personality == 2,
-              "TTAB 0x4E..0x51 advertisements");
-        check(t.name == "Version Layout Table", "TTAB 0x4E..0x51 trailing name");
+              "TTAB 0x4E..0x53 advertisements");
+        check(t.name == "Version Layout Table", "TTAB 0x4E..0x53 trailing name");
     }
-    for (uint32_t v : {0x52, 0x53}) {
+    for (uint32_t v : {0x52, 0x56}) {
         bool threw = false;
         try {
             InteractionTable::parse(table(v));
         } catch (const FormatError&) {
             threw = true;
         }
-        check(threw, "TTAB 0x52 and 0x53 are refused");
+        check(threw, "TTAB 0x52 and above 0x55 are refused");
     }
 
     // 0x54 and 0x55 changed the entry again: 46 fixed bytes (the counts of

@@ -280,21 +280,27 @@ InteractionTable InteractionTable::parse(std::span<const uint8_t> data) {
     t.version = r.u32();
     // 0x4F..0x51 keep the 0x4E layout byte for byte: the 276 resources the
     // game refuses in the AL objects.package (149 + 106 + 21) all parse to the
-    // trailing name with the same entry layout. 0x52 never shows up in the UC
-    // content and 0x53 has its own layout (11 motive tables, measured in the
-    // PC binary) that is not closed yet, so it stays refused. 0x54 and 0x55
-    // changed the entry again: 46 fixed bytes and then two arrays of
-    // advertisement groups (docs/data-findings.md sections 17 and 18).
+    // trailing name with the same entry layout. 0x53 keeps the same layout too,
+    // with 11 motive tables instead of 7: the reader selects 7 for 0x44..0x52
+    // and 11 for 0x53 (FUN_0087c720 @ 0x87c880 in the PC binary) and the 7 AL
+    // resources (all "untitled tree table") close to the trailing name with the
+    // 11 counts, the fields and the advertisements in the 0x4E order
+    // (docs/data-findings.md section 19). 0x52 never shows up in the UC content
+    // and nothing above 0x55 does, so both stay refused. 0x54 and 0x55 changed
+    // the entry again: 46 fixed bytes and then two arrays of advertisement
+    // groups (docs/data-findings.md sections 17 and 18).
     const uint32_t v = t.version;
-    if (v < 0x3F || (v > 0x51 && v < 0x54))
+    if (v < 0x3F || v == 0x52 || v > 0x55)
         throw FormatError("TTAB: unsupported version " + hexString(t.version));
     t.unused = r.u32();
     t.interactions.resize(r.u16());
-    if (v <= 0x51) {
+    if (v <= 0x53) {
         for (auto& it : t.interactions) {
             it.action = r.u16();
             it.guard = r.u16();
-            std::vector<uint32_t> counts(v < 0x44 ? 1 : 7);
+            // 0x53 is the 0x4E layout with 11 motive tables (the PC reader's
+            // count: 7 up to 0x52, 11 at 0x53, none from 0x54 on).
+            std::vector<uint32_t> counts(v < 0x44 ? 1 : v == 0x53 ? 11 : 7);
             for (auto& c : counts)
                 c = count(r, "TTAB motive");
             it.flags = r.u16();

@@ -689,10 +689,48 @@ menor que 4 bytes; os bytes ficam registrados aqui para a próxima rodada).
 
 **Conclusão.** 0x4F–0x51 e 0x54–0x55 implementados em `semantics.cpp` (o
 teste `testInteractionTableVersions` cobre 0x4E..0x51 e 0x54..0x55 e recusa
-0x52/0x53); **0x53** segue recusado com erro claro até o layout de 11
-tabelas fechar.
+0x52/0x53); **0x53** fechou depois, com o mesmo layout e **11** tabelas de
+motivos (§19).
 
 Ferramentas: `ttab_period.py` (período), `ttab_unit2.py`/`ttab_groups2.py`
 (blocos crus), `ttab_head3.py` (cabeçalho), `ttab_model9.py`/`ttab_model15.py`
 (leitores), `pc_scan_ttab.py`/`pc_dis.py`/`pc_dump_fn.py` (RE no exe do PC) em
 `%TEMP%\opencode\i6e\`.
+
+## 19. A TTAB 0x53: o layout do 0x4E com 11 tabelas de motivos
+
+**Pergunta.** Os 7 recursos 0x53 do `objects.package` do Apartment Life (todos
+"untitled tree table", TGI distintos e **conteúdo idêntico**, 2.387 B, `n` = 3)
+seguiam recusados porque o "layout de 11 tabelas" não fechava nos dados. Onde
+ficam as 11 contagens, e o que vem antes e depois delas?
+
+**Método.** Reler os 7 dumps de `%TEMP%\opencode\i6e\ttab\` com o leitor do
+0x4E, variando o número de contagens e conferindo onde a assinatura dos campos
+aparece (joinIndex `-1`, `uiDisplayType` 0, `memoryMultiplier` 0,5f, `objectType`
+0, `modelTableId` 1). O RE do `FUN_0087c720` já dava o número: 7 tabelas para
+0x44..0x52, **11** para 0x53, nenhuma a partir do 0x54.
+
+**Achados.**
+
+- O 0x53 é o **layout do 0x4E com 11 contagens no mesmo lugar**: `action` u16,
+  `guard` u16, **11 contagens u32**, e depois os mesmos campos do 0x4E (flags,
+  flags2, stringIndex, attCode, attValue, autonomy, joinIndex, uiDisplayType,
+  facialAnimation, memoryMultiplier, objectType, modelTableId). No fim, as 11
+  tabelas de anúncios na ordem das contagens (cada anúncio com 6 bytes: mínimo,
+  delta, personalidade).
+- Nos 7 arquivos as três entradas fecham exatamente no nome final (23 B,
+  `u32` 19 + "untitled tree table"): entradas de **570 B** (as duas primeiras,
+  contagens `[16,0,0,0,0,0,0,16,16,16,16]`, 80 anúncios) e de **1.146 B** (a
+  terceira, 11×16 = **176** anúncios). Os anúncios são todos zero neste
+  recurso, o que explica por que a cauda parecia padding.
+- `decode-all` do `objects.package` do AL: **2.090 → 2.097 ok** e **19 → 12
+  falhas** nas TTABs (os 7 de 0x53 fecharam). As 12 restantes: 9 "bad TTAB item
+  count" e 2 "bad TTAB advertisement count" (o `X` do segundo array do 0x54/0x55,
+  lido como `0x00050000`) e 1 "693 trailing bytes"
+  (`0x7FB36E92`, grupo `0x80`).
+
+**Conclusão.** O 0x53 entrou em `InteractionTable::parse` com 11 tabelas;
+`testInteractionTableVersions` cobre 0x4E..0x51 e 0x53 (11 tabelas) e recusa
+0x52 e acima de 0x55 (`semantics.cpp` também passou a recusar > 0x55, que não
+aparece no conteúdo). `%TEMP%` revertido: a validação foi fora do repo.
+
