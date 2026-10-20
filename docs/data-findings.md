@@ -734,3 +734,60 @@ aparece (joinIndex `-1`, `uiDisplayType` 0, `memoryMultiplier` 0,5f, `objectType
 0x52 e acima de 0x55 (`semantics.cpp` também passou a recusar > 0x55, que não
 aparece no conteúdo). `%TEMP%` revertido: a validação foi fora do repo.
 
+## 20. As versões das vizinhanças do AL: FAMI 0x55, SDSC 0x36, NGBH 0xCB, NID 10 e lot info 11
+
+**Pergunta.** O `hood-sweep` do bairro E001 (Apartment Life) terminava com 313
+erros e **0 Sims, 0 famílias, 0 lotes**: FAMI 0x55, SDSC 0x36, NGBH 0xCB, NID
+com 20 bytes sobrando e o *lot info* com a versão base 11 (apartamentos) eram
+todos recusados. Quais são os layouts dessas versões, e quais são as de todas
+as vizinhanças do UC?
+
+**Método.** As páginas do SimWiki (FAMI, NGBH/4E474248, DESC/0BF999E7, NID) e o
+`SDescWrapper.cs` do SimPE (a tabela `RelationPosition`, que dá o fim do
+*person data* de cada versão do SDSC), conferidos contra os recursos extraídos
+de 20 pacotes de vizinhança do UC (E001, N001–N003, U001–U003, D001, B001,
+P001, G001, F001/F002, A001, M001, T001, V001, E002), lendo cada arquivo até o
+fim e anotando a versão e o tamanho de cada formato.
+
+**Achados.**
+
+- **FAMI**: 0x4E base; **0x4F** (University) põe um u32 de bairro depois do
+  álbum; **0x50** (Nightlife) põe o lote onde a família foi jogada por último
+  depois do lote (o registro 0x50 do B001 tem esse campo e **não** tem o
+  business funds); **0x51** (OFB) põe o i32 de business funds no fim; **0x55**
+  (BV) põe o lote de férias depois do último lote jogado. As 21 FAMIs do E001
+  (0x55) e o par 0x50/0x51 do B001 fecham byte a byte.
+- **SDSC**: o número de *person data* cresce com os EPs — **170** (0x20), 179
+  (0x22), 195 (0x29), 199 (0x2A), 200 (0x2C), 201 (0x2D, Castaway), 204
+  (0x2E/0x2F, BV), 228 (0x33, FreeTime), **230** (0x35, o template E002) e
+  **231** (0x36, AL); a cauda é `u16 neighborId`, `u32 guid`, `u32 3`, `u32
+  count` + count×u32, `u8 trailer` e, de 0x2E em diante, o `u64` de
+  colecionáveis do BV (`SdscVoyage::UnserializeMem`). A tabela fecha os 234
+  SDSCs do E001 (0x36; 111 do template E002 em 0x36 e 4 em 0x35) e todas as
+  outras vizinhanças do UC.
+- **NGBH**: 0x6F base, **0x70** (Uni) acrescenta o u32 de EP ready marker
+  depois do byte +0xFD; **0xBE** (NL) dá um u32 de versão a cada slot (o global
+  inclusive) e um u32 de número a cada token; **0xC2** (OFB) acrescenta um u16
+  depois das flags do token; **0xCB** (Seasons+) acrescenta outro u16 depois
+  desse número. Os 16 i16 do cabeçalho absorvem o ID do slot global (0); nas
+  versões novas o version word do slot global vem logo depois deles.
+- **NID**: da versão 7 em diante vêm u32 "is downtown" + u32; da 8, outro u32;
+  da 9, as stealth flags u32; da 0x0A, quatro bytes (1, 2, 3, 0 no E001) — os
+  20 bytes que sobravam no E001.
+- **Lot info**: a versão externa 18 envolve a base **11** (AL): depois do campo
+  da versão 8 vêm `u8` número de apartamentos, u32 aluguel alto, u32 aluguel
+  baixo, u32 lot class e `u8` override. A cauda de apartamento (base instance,
+  9 bytes e as listas de sublots, 26 bytes no E001) fica em `rest`.
+
+**Medição.** `hood-sweep` do E001: **234 Sims, 21 famílias, 56 lotes, 1.051
+SREL, 255 ties, 212 characters, 0 erros** (antes 0/0/0/313 erros). N001–N003,
+F001, G001 e os 13 templates do UC decodificam com **0 failed** em todos os
+formatos. `lot-run` do `E001_Lot127` por 60 ticks: 485 objetos salvos, 483 no
+VM, 479 vivos (é um prédio de apartamentos sem família); os únicos erros são os
+já enfileirados 0x7E e Set to Next 38 (item 12), não o carregamento.
+
+**Conclusão.** As versões entraram em `neighborhood.cpp`/`.hpp` e nos writers
+(`neighborhood_write.cpp`), com o teste `test_neighborhood` cobrindo FAMI
+0x50/0x55, SDSC 0x35/0x36, NGBH 0xCB, NID 0x0A e lot info 11 (ida e volta);
+build+ctest **39/39**.
+

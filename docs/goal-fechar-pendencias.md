@@ -122,10 +122,13 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    §18 e §19 registram o RE, os layouts e as medições.
 4. **8 — N002_Lot32 / pacote vazio:** `Lot::load` distingue pacote vazio (stub de 96 B) de
    erro; contagem separada no `soak-report`; teste; commit.
-5. **14 — vizinhanças/lotes do AL:** NGBH 0xCB, FAMI 0x55, SDSC 0x36, NID +20 e `lot info`
-   de apartamento, cada leitor com versão medida nos arquivos do UC; teste por formato;
-   `lot-run` do `E001_Lot127` avançando; commit por formato (ou um commit coeso se forem
-   pequenos).
+5. **14 — vizinhanças/lotes do AL:** ✅ **FECHADO 20/10** — NGBH 0x6F/0x70/0xBE/0xC2/0xCB,
+   FAMI 0x4E..0x55 (gates 0x4F/0x50/0x51/0x55), SDSC 0x20..0x36 (com o 0x35 do template
+   E002) e a cauda BV, NID 3..0x0A e lot info 18/base 11 (cabeçalho de apartamento, cauda
+   em `rest`); teste `test_neighborhood` por formato (ida e volta), `hood-sweep` do E001 em
+   **234 Sims / 21 famílias / 56 lotes / 0 erros** (antes 0/0/0/313) e `lot-run` do
+   `E001_Lot127` por 60 ticks; as versões foram medidas nos 20 pacotes do UC
+   (`data-findings.md` §20).
 6. **7 — performance:** um sub-item por vez (índice por tile, notificações por tick, Set to
    Next, texturas), medidor antes/depois no log; 1 commit por sub-item.
 7. **10 — painel do Build:** comparar com as capturas 30–34 como no item 4; corrigir;
@@ -141,7 +144,7 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
 - [ ] Item 13 completo: 1.177 TTABs do AL lidos (0x4F..0x55) e interações visíveis no app.
 - [ ] Build + ctest 39/39 ao fim de **cada** item (evidência no log).
 - [ ] Item 8 fechado com o soak-report citando o caso; itens 7 e 10 com medição antes/depois.
-- [ ] Item 14: `E001_Lot127` do AL carrega (ou o residual está documentado com bytes).
+- [x] Item 14: `E001_Lot127` do AL carrega (ou o residual está documentado com bytes).
 - [ ] RayTrace e 12 fechados com sweep/teste; 5 e 6-resto explicitamente bloqueados.
 - [ ] Nenhum TEMP no diff final; nenhum untracked pré-existente tocado.
 
@@ -225,3 +228,17 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   count") e 1 "693 trailing bytes" (`0x7FB36E92`, grupo `0x80`). `data-findings.md` §19
   registra o layout e a medição. Próximo: item 2 da fila (0x53 fechado; segue **14 —
   vizinhanças/lotes do AL**).
+- (20/10) **14 FECHADO** — as versões das vizinhanças do AL entraram: **FAMI** 0x4E..0x55
+  (0x4F põe o bairro depois do álbum, 0x50 o último lote jogado, 0x51 o business funds e
+  0x55 o lote de férias; o 0x50 do B001 tem o último lote e não o business), **SDSC**
+  0x20..0x36 com a tabela de *person data* (170/179/195/199/200/201/204/228/**230** no
+  0x35 do E002/231) e a cauda do BV (u64 de colecionáveis), **NGBH** 0x6F/0x70/0xBE/0xC2/
+  0xCB (EP ready marker, versão por slot, flags2, número de inventário e o u16 do Seasons),
+  **NID** 3..0x0A (os 20 bytes do E001) e **lot info** 18/base 11 (cabeçalho de
+  apartamento; a cauda de sublots fica em `rest`). Medido: `hood-sweep` do E001 passa de
+  **0 Sims / 0 famílias / 0 lotes / 313 erros** para **234 Sims / 21 famílias / 56 lotes /
+  0 erros**; N001–N003, F001, G001 e os 13 templates decodificam com 0 failed;
+  `lot-run` do `E001_Lot127` por 60 ticks carrega 485 objetos (483 no VM; prédio de
+  apartamentos sem família) e só esbarra nos 0x7E/Set to Next 38 do item 12; build+ctest
+  **39/39**; `test_neighborhood` cobre as versões novas; `data-findings.md` §20 registra
+  os layouts. Próximo: item 3 da fila (**12 — 0x7D/0x7E**).
