@@ -282,10 +282,14 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
   ticks, `testLookAtSlots` (6 casos: os três tipos, os dois erros 0x1B e o byte 14 = 0) —
   build+ctest **39/39**. No app o ponto do slot vai por `objectSlotPoint` (osso por nome, STR#
   `0x90`, os desenhados de um Sim inclusive; senão o deslocamento). Achado enfileirado: o
-  **`RayTrace` (0x78)** usa a mesma convenção de slot (o port ainda aproxima a linha de tile;
-  as 35 leituras tipadas do AL estão no censo). Próximo: 164 / evento 4 / `0x214`/`0x2e8` (RE
-  do binário Mac), NGBH u32 `+0x34`/`+0x38` e os registros `+0x60c`; depois 7 / 8 / 10 (5
-  bloqueado).
+  **`RayTrace` (0x78)** usa a mesma convenção de slot — **FECHADO 20/10** (o port resolvia o
+  ponto pelo tile do objeto): agora o 0x78 procura o slot do mesmo jeito que o Look At
+  (byte 4 = 1/2/3 → os SLOT de tipo 4/3/0, byte 5 = o índice dentro deles, pasto a
+  contagem erro 0x1B; o alvo nos bytes 11/12), o teste `testRayTraceSlots` cobre o slot, o
+  caso sem slot e o 0x1B, e o sweep do AL passa a dar os 4 erros 0x1B que o jogo dá (as
+  árvores globais que pedem um slot que o objeto não tem). Próximo: 164 / evento 4 /
+  `0x214`/`0x2e8` (RE do binário Mac), NGBH u32 `+0x34`/`+0x38` e os registros `+0x60c`;
+  depois 7 / 8 / 10 (5 bloqueado).
 - (18/10) **Fila de fechamento aberta em `goal-fechar-pendencias.md`**: item 13 (TTAB;
   0x4F..0x51 prontos para portar e o modelo 0x53+ medido até `X×(4+6Y)`), depois 8 / 14 /
   7 / 10 / RayTrace / 12; 5 e 6-resto seguem bloqueados.

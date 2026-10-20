@@ -1727,6 +1727,51 @@ static void testLookAtSlots() {
     check(t.status == Thread::Status::Finished && t.result && me.lookAt->slotKind == 0, "no slot: the default point");
 }
 
+// RayTrace (0x78): the points are the slots of the kind (the Look At's byte
+// 14 convention: 1/2/3 = the SLOT entries of type 4/3/0 and the index inside
+// them; past the count, error 0x1B) and, with no kind, the middle of the
+// object's box (ours: the tile it stands on).
+static void testRayTraceSlots() {
+    Fixture fx;
+    fx.vm.world = World(10, 10);
+    fx.vm.world->addWall(1, 3, 2, 3, 3); // between the tiles (2,2) and (3,2)
+    ObjectDefinition from = definition(0x0C0C0C01);
+    from.fields[(0x68 - 0x44) / 2] = 0x81; // its slots
+    fx.code.add(kObjGroup, 0x80, std::move(from));
+    fx.code.add(kObjGroup, 0x82, definition(0x0C0C0C02));
+    Slots sl;
+    sl.slots.resize(2);
+    sl.slots[0].type = 0;                     // a containment slot
+    sl.slots[0].offset = {1.0f, 0.0f, 0.0f}; // a tile to the right
+    sl.slots[1].type = 3;                     // and a routing slot
+    fx.code.add(kObjGroup, 0x81, std::move(sl));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x80);     // id 1, the source
+    Object& target = fx.vm.instantiate(kObjGroup, 0x82); // id 2
+    me.position = {2.5f, 2.5f, 1};
+    target.position = {3.5f, 2.5f, 1};
+    // RayTrace: the source's point (kind byte 4, index byte 5) to the target's
+    // (bytes 11/12), the result in temp 0.
+    auto ray = [](uint8_t kind, uint8_t index) {
+        return instr(0x78, T, F, {0, 0x07, 1, 0, kind, index, 0, 0, 0x07, 2, 0, 0, 0, 0, 0});
+    };
+    fx.code.add(kObjGroup, 0x1000, tree({ray(3, 0)})); // the containment slot
+    Thread t = fx.vm.start(me.id, 0x1000, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && t.temps[0] == target.id,
+          "the ray starts at the source's containment slot");
+    fx.code.add(kObjGroup, 0x1001, tree({ray(0, 0)})); // no slot: the object's own tile
+    t = fx.vm.start(me.id, 0x1001, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result && t.temps[0] == -1,
+          "without a slot the ray starts at the object's tile, where the wall is");
+    fx.code.add(kObjGroup, 0x1002, tree({ray(3, 1)})); // past the containment slots
+    t = fx.vm.start(me.id, 0x1002, {}, target.id);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("Slot number out of range") != std::string::npos &&
+              t.error.find("slot 1 of object 1") != std::string::npos,
+          "past the slots of the kind is error 0x1B");
+}
+
 // Scheduler: Init runs to completion (its sleeps do not wait for ticks), Main
 // gets a turn per tick and starts again when it returns; objects created while
 // running are initialized; the clock keeps the time globals.
@@ -2281,6 +2326,7 @@ int main() {
     testResumeSavedLot();
     testSlots();
     testLookAtSlots();
+    testRayTraceSlots();
     testScheduler();
     testRunTreeByNameNow();
     testClockGlobals();

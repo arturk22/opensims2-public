@@ -137,7 +137,13 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    Next, texturas), medidor antes/depois no log; 1 commit por sub-item.
 7. **10 — painel do Build:** comparar com as capturas 30–34 como no item 4; corrigir;
    commit.
-8. **RayTrace 0x78:** mesma convenção de slot do Look At; teste + sweep; commit.
+8. **RayTrace 0x78:** ✅ **FECHADO 20/10** — o 0x78 resolve o ponto pelo slot do mesmo
+   jeito que o Look At (byte 4 = 1/2/3 → os SLOT de tipo 4/3/0, byte 5 = o índice dentro
+   deles, pasto a contagem erro 0x1B; o alvo nos bytes 11/12) e, sem kind, pelo tile do
+   objeto; antes o port usava o tile dos dois, o que não batia com o jogo. Teste novo
+   `testRayTraceSlots` (o slot, o caso sem slot e o 0x1B) e sweep do AL medido (4 erros
+   0x1B a mais, as árvores globais que pedem um slot que o objeto não tem — o que o jogo
+   também dá); build+ctest 39/39.
 9. **12 - 0x7D/0x7E:** **RE do PC FEITO 20/10, implementação bloqueada no último passo** — no exe
    do PC (o build do AL) as duas primitivas estão na **classe base** (mesma tabela de despacho
    do RayTrace 0x78 e do Change Outfit 0x79), e não só no routing aggregate como no Mac: o
@@ -159,6 +165,7 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
 - [x] Item 8 fechado com o soak-report citando o caso; itens 7 e 10 com medição antes/depois.
 - [x] Item 14: `E001_Lot127` do AL carrega (ou o residual está documentado com bytes).
 - [ ] RayTrace e 12 fechados com sweep/teste; 5 e 6-resto explicitamente bloqueados.
+  (RayTrace **fechado em 20/10**; o 12 ainda espera o RE do exe do PC.)
 - [ ] Nenhum TEMP no diff final; nenhum untracked pré-existente tocado.
 
 ## Riscos
@@ -272,6 +279,17 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   que o pedido é resolvido (RE de `FUN_00407f8a` e do registro de tipos). Registro completo em
   `docs/re-pc-ghidra.md` §(d) e nota no `primitives-mac.md` §2; o port continua recusando as
   duas (erro 0x05) e as 2.876 chamadas do AL continuam falhando.
+- (20/10) **RayTrace 0x78 FECHADO** — o 0x78 resolvia o ponto pelo tile do objeto (uma
+  aproximação); agora usa a mesma convenção de slot do Look At: byte 4 = 1/2/3 → os SLOT de
+  tipo 4/3/0 (targeting/routing/containment) e byte 5 = o índice dentro deles, pasto a
+  contagem erro **0x1B** (o mesmo do Look At), e o alvo pelos bytes 11/12; sem kind, o meio
+  da caixa (no port, o tile do objeto). Medido no AL (`bhav-sweep`): antes 12.894.214
+  instruções, 18.625 true e 14.126 falhas; depois 12.894.204, 18.622 true e 14.129 falhas —
+  as 4 a mais são **"Slot number out of range"** (0x1B), as árvores globais que pedem um
+  slot que o objeto não tem, que é o que o jogo dá. O censo do AL: 47 instruções 0x78 (o
+  kind da origem em 3/0/1/255 e o do alvo em 3/2/1/0) e 1.052 SLOTs com no máximo 1
+  entrada de cada tipo (2 de contenção), o que confirma o 0x1B nos índices altos. Teste novo
+  `testRayTraceSlots` (o slot, o caso sem slot e o 0x1B); build+ctest **39/39**.
 - (20/10) **Item 8 FECHADO** — o `N002_Lot32` (stub DBPF de 96 bytes, sem recursos) deixava de
   ser erro de carga: `Lot::load` agora lança `EmptyLotPackage` (novo tipo em `formats/lot.hpp`)
   quando o pacote não tem nenhum recurso, o `s2pkg` responde "empty lot package: the lot
