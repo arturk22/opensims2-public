@@ -250,6 +250,63 @@ files*; tudo relativo a `tsdata/`, com o ramo de idioma em `/tsdata/res/locale/`
 - **Conclusão p/ o port**: "EP instalada" = bit do bitmask (com 0x1000 forçado); listar bairros =
   iterar o segmento `Neighborhoods/` do sistema de segmentos.
 
+## (d) Primitivas `0x7D` (Follow Sim) e `0x7E` (Run Script) no exe do PC
+
+**Pergunta.** O Mac base 1.0 e o BV só têm 0x7D/0x7E no *routing aggregate*
+(`docs/primitives-mac.md` §2), e o AL usa 0x7E em 2.876 árvores. O que o exe do
+PC (o build do AL) faz com elas, e qual é o gate de tipo de objeto?
+
+**Método.** As strings do exe (" Follow Sim in ", "defined in objLua file",
+"Semi-Global", "Private", "Global", "Primitive not supported for this type of
+object.") e quem as referencia; a tabela de despacho por opcode; e o censo das
+árvores do AL (`objects.package`).
+
+**Achados.**
+
+- Strings: VA `0x1227D10` (" Follow Sim in ") → `FUN_008b9bd0` @ `0x8b9bd0`;
+  VA `0x1227D3C` ("defined in objLua file") e `0x1227D54` ("Semi-Global") →
+  `FUN_008b9e00` @ `0x8b9e00`; VA `0x1213C48` = "Global"; VA `0x1223684`/
+  `0x122368B` = "Private"; VA `0x122D348` ("Primitive not supported for this
+  type of object.") → `0x8fa8da` (o despacho da classe base).
+- **Despacho por opcode**: uma sequência de thunks (35 B cada) a partir de
+  `0x8ba900`, com a tabela de saltos em `0x8bab34+`; o índice segue o opcode
+  (0x78 RayTrace → `0x8ba93e`, 0x79 Change Outfit → `0x8ba961`, 0x7D Follow Sim
+  → `0x8ba9ed`, 0x7E Run Script → `0x8baa10`). Como o RayTrace (0x78) e o Change
+  Outfit (0x79) são primitivas da classe base (`nTSSG::cObject::TryRayTrace`,
+  `cTSObject::TryChangeOutfit`), **no PC as duas estão na classe base** (no Mac
+  base 1.0 elas não existem) — é o "gate de tipo de objeto" que faltava: no PC
+  qualquer objeto pode chamá-las.
+- **0x7E** (`FUN_008b9e00`, "Run Script"): monta o nome do escopo ("Global" /
+  "Semi-Global" / "Private", conforme os bits da flag) e chama o pedido
+  `FUN_00cd3fe0` (construtor do pedido de execução:
+  `param_1[7] = (param_2 << 16) | (param_3 & 0xffff)`), com o id empacotado
+  `(op0-1 << 16) | op2-3`; se a árvore não existir, o jogo procura um arquivo
+  `.objLua` (o registro de scripts Lua, `FUN_007fd6c0`, que varre
+  `*.globalObjLua` e `*.objLua` e indexa por nome).
+- **0x7D** (`FUN_008b9bd0`, "Follow Sim"): pega o array de objetos (o próprio ou
+  o do stack object, conforme o byte 9) e chama o mesmo pedido com a referência
+  `0x2026960B` (tipo `0x2026`, instância `0x960B`).
+- **Layout dos parâmetros** (medido no código; o struct do handler é o bloco de
+  16 B dos operandos deslocado em -3): op0-1 = id (u16), op2-3 = valor (u16),
+  op4 = flags (bit0 semi-global, bit1 privado, bits 2/3 de cache), e os pares
+  (tipo u8, valor u16) em op6/op7-8, op9/op10-11 e op12/op13-14.
+- **Censo no AL** (`objects.package`): **2.876** instruções 0x7E (em 2.876
+  recursos de 567 grupos) e **21** instruções 0x7D; o id (op0-1) é **sempre
+  304** e op2-3 varia (1, 2, 3, 4, 22, 36, 38, 116, 120, 122, 181, 207).
+  Nenhum dos dois é instância de árvore: no grupo do chamador não existe a
+  árvore 0x130 (só há a global "Family - Relationships - Reset") e nenhum op2-3
+  bate com uma instância de árvore do grupo.
+
+**O que falta.** O id 304 (`0x130`) não é instância de árvore em nenhum escopo
+(global, semi-global ou privado): é um *tipo* de 16 bits. Falta saber a que o
+pedido é resolvido (o nome montado a partir do objeto em `FUN_00407f8a`, o
+registro de tipos do jogo ou o `.objLua`) e o que o jogo faz quando não acha.
+
+**Conclusão p/ o port.** O port recusa 0x7D/0x7E (erro 0x05) como se fossem
+exclusivas do BV; no exe do PC elas são da classe base. Implementar exige
+resolver o alvo do pedido (RE de `FUN_00407f8a` e do registro de tipos) — até
+lá ficam recusadas, e as 2.876 chamadas do AL continuam dando erro 0x05.
+
 ## Cross-check REA (fechado em 17/10, ~22:38)
 
 Critério do goal da noite: o REA (ferramenta independente) confirma ≥1 achado do projeto `pcb`.

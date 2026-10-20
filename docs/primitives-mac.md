@@ -133,6 +133,10 @@ erro 0x05. Binário.
 | 0x7D | Follow Sim (sem rótulo no editor do base) | `cTSRoutingObjectAggregate::TryFollowSim` — **só BV** |
 | 0x7E | Run Script (Lua) | `TryRunScript` — **só BV** |
 
+No **exe do PC** (o build do AL) as duas existem na **classe base**, ao lado do
+RayTrace (0x78) e do Change Outfit (0x79) — o gate de tipo de objeto é
+"qualquer objeto", não só o routing aggregate (`docs/re-pc-ghidra.md` §(d)).
+
 Sem handler (erro 0x05 se aparecer): 0x04–0x06, 0x09, 0x15, 0x18, 0x26–0x29,
 0x2B, 0x2C, 0x2F, 0x34–0x68. Binário. `FollowSimParam` e `RunScriptParam` não
 existem na RTTI do executável base 1.0 (as outras 62 classes de operando

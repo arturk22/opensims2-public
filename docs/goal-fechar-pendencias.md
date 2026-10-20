@@ -134,8 +134,17 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
 7. **10 — painel do Build:** comparar com as capturas 30–34 como no item 4; corrigir;
    commit.
 8. **RayTrace 0x78:** mesma convenção de slot do Look At; teste + sweep; commit.
-9. **12 — 0x7D/0x7E:** RE no exe do PC (handler do aggregate + gate de tipo de objeto),
-   implementar, derrubar os 2.213 `0x7E` do sweep; testes; commit.
+9. **12 - 0x7D/0x7E:** **RE do PC FEITO 20/10, implementação bloqueada no último passo** — no exe
+   do PC (o build do AL) as duas primitivas estão na **classe base** (mesma tabela de despacho
+   do RayTrace 0x78 e do Change Outfit 0x79), e não só no routing aggregate como no Mac: o
+   gate de tipo de objeto é "qualquer objeto". Medidos: os handlers (`FUN_008b9bd0` Follow Sim
+   e `FUN_008b9e00` Run Script), o layout dos parâmetros (id u16, valor u16, byte de flags
+   do escopo Global/Semi-Global/Private e três pares (tipo, valor)), o id empacotado
+   `(op0-1 << 16) | op2-3` e o fallback para `.objLua`; no AL são 2.876 chamadas de 0x7E (id
+   sempre 304) e 21 de 0x7D. **Falta**: a que o pedido é resolvido (o id 304 é um tipo de 16
+   bits, não uma instância de árvore em nenhum escopo) — precisa do RE de `FUN_00407f8a` e do
+   registro de tipos; `docs/re-pc-ghidra.md` §(d) tem o registro completo. As 2.876 chamadas
+   do AL continuam dando erro 0x05 até a implementação.
 10. **6-resto / 5:** só com Mac PPC (não há) ou com a resposta/RE do Artur — ficam por
     último, bloqueados, sem travar a fila.
 
@@ -242,3 +251,20 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   apartamentos sem família) e só esbarra nos 0x7E/Set to Next 38 do item 12; build+ctest
   **39/39**; `test_neighborhood` cobre as versões novas; `data-findings.md` §20 registra
   os layouts. Próximo: item 3 da fila (**12 — 0x7D/0x7E**).
+- (20/10) **RE do item 12 (0x7D/0x7E) no exe do PC** — as strings do binário
+  (" Follow Sim in ", "defined in objLua file", "Semi-Global", "Global", "Primitive not supported
+  for this type of object.") levam aos handlers `FUN_008b9bd0` (Follow Sim) e `FUN_008b9e00`
+  (Run Script); a tabela de despacho por opcode (thunks de 35 B a partir de `0x8ba900`, tabela
+  em `0x8bab34+`) mostra as duas **na classe base** (mesma tabela do RayTrace 0x78 e do Change
+  Outfit 0x79) — no Mac base elas não existem, e no BV são do routing aggregate; o gate de tipo
+  de objeto é "qualquer objeto". Medidos: o layout dos parâmetros (id u16 em op0-1, valor u16
+  em op2-3, byte de flags em op4 com os bits Global/Semi-Global/Private e mais dois de cache,
+  e três pares (tipo u8, valor u16) em op6/op7-8, op9/op10-11 e op12/op13-14), o id empacotado
+  do pedido `(op0-1 << 16) | op2-3` e o fallback do 0x7E para um arquivo `.objLua` (o registro
+  de scripts Lua, `FUN_007fd6c0`). Censo do AL: **2.876** instruções 0x7E (em 567 grupos, id
+  sempre 304) e 21 de 0x7D. **Bloqueio**: o id 304 (`0x130`) não é instância de árvore em
+  nenhum escopo (no grupo do chamador não existe a 0x130; a única é a global "Family -
+  Relationships - Reset") e nenhum op2-3 bate com uma instância do grupo — falta resolver a
+  que o pedido é resolvido (RE de `FUN_00407f8a` e do registro de tipos). Registro completo em
+  `docs/re-pc-ghidra.md` §(d) e nota no `primitives-mac.md` §2; o port continua recusando as
+  duas (erro 0x05) e as 2.876 chamadas do AL continuam falhando.
