@@ -289,7 +289,10 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   slot que o objeto não tem, que é o que o jogo dá. O censo do AL: 47 instruções 0x78 (o
   kind da origem em 3/0/1/255 e o do alvo em 3/2/1/0) e 1.052 SLOTs com no máximo 1
   entrada de cada tipo (2 de contenção), o que confirma o 0x1B nos índices altos. Teste novo
-  `testRayTraceSlots` (o slot, o caso sem slot e o 0x1B); build+ctest **39/39**.
+  `testRayTraceSlots` (o slot, o caso sem slot e o 0x1B); build+ctest **39/39**. No jogo base
+  o mesmo desenho (22.861 árvores): antes 7.234.322 instruções, 11.110 true e 2.458 falhas;
+  depois 7.234.312, 11.107 true e 2.461 falhas, com os mesmos 4 "Slot number out of
+  range" a mais (0x1B).
 - (20/10) **Item 8 FECHADO** — o `N002_Lot32` (stub DBPF de 96 bytes, sem recursos) deixava de
   ser erro de carga: `Lot::load` agora lança `EmptyLotPackage` (novo tipo em `formats/lot.hpp`)
   quando o pacote não tem nenhum recurso, o `s2pkg` responde "empty lot package: the lot
