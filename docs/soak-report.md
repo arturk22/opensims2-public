@@ -1,3 +1,23 @@
+# Soak report (round 19, o pacote de lote vazio)
+
+O item 8: o `N002_Lot32` (o stub de 96 bytes, sem nenhum recurso) deixava de
+ser um erro de carga. `Lot::load` agora distingue o pacote vazio
+(`EmptyLotPackage`, em `formats/lot.hpp`) do erro "no elevation array", e o
+`tools/soak.sh` conta os lotes vazios à parte (`empty|autonomy|...`,
+`empty|lot-save|...`), sem os transformer em `error|`.
+
+Rodada só do lote afetado (`tools/soak.sh --one N002_Lot32`, `SOAK_TICKS=1800`,
+`SOAK_NO_APP=1`):
+
+| Lot | Category | Where | Detail |
+|---|---|---|---|
+| N002_Lot32 | empty | autonomy | empty lot package: the lot package has no resources (the empty lot stub) |
+| N002_Lot32 | empty | lot-save | empty lot package: the lot package has no resources (the empty lot stub) |
+
+A linha "Load errors | 1 (N002_Lot32)" das rodadas 18 e anteriores é o histórico
+de antes da mudança; a rodada completa dos 69 lotes (que a repete) fica para a
+próxima rodada do soak.
+
 # Soak report (round 18, visitors' side effects)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 3bcfe516 (r17-loops merged: the same numbers as its "after"); **after** is the `r18-visitfx` branch. Counts from the kept autonomy logs; "fire outbreaks" counts fires started while none burned.

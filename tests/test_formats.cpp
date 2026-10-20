@@ -2609,6 +2609,29 @@ static void testObjectShadow() {
     check(guobsOn(info.present, true, S | N, w) == ((1 << kGuobGround) | N), "only the planes the model has");
 }
 
+// The empty lot package: the 96-byte stub the game writes for a lot with
+// nothing in it (N002_Lot32 in the base game's N002). The game loads it as a
+// lot; ours says so apart from the load errors.
+static void testEmptyLotPackage() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "os2_test_empty_lot";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    DbpfWriter w;
+    w.save(dir / "empty.package");
+    DbpfPackage pkg(dir / "empty.package");
+    check(pkg.entries().empty(), "empty lot package: the stub has no resources");
+    bool empty = false;
+    try {
+        Lot::load(pkg);
+    } catch (const EmptyLotPackage&) {
+        empty = true;
+    } catch (const std::exception&) {
+    }
+    check(empty, "empty lot package: not a load error");
+    fs::remove_all(dir);
+}
+
 int main() {
     testObjectShadow();
     testLogOnce();
@@ -2634,6 +2657,7 @@ int main() {
     testFloorThickness();
     testFencePieces();
     testDeckFoundationMarkers();
+    testEmptyLotPackage();
     testLotLightMap();
     testLotWater();
     testGameRoofs();

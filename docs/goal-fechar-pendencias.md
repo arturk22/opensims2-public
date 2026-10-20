@@ -120,8 +120,12 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    / 12 falhas** (antes 1.208 ok / 901 falhas; 2.090/19 antes do 0x53) — as 12 são o `X`
    ambíguo (9 + 2) e 1 "693 trailing bytes" (`0x7FB36E92`, grupo `0x80`). `data-findings.md`
    §18 e §19 registram o RE, os layouts e as medições.
-4. **8 — N002_Lot32 / pacote vazio:** `Lot::load` distingue pacote vazio (stub de 96 B) de
-   erro; contagem separada no `soak-report`; teste; commit.
+4. **8 - N002_Lot32 / pacote vazio:** ✅ **FECHADO 20/10** — `Lot::load` distingue o pacote
+   vazio (o stub de 96 bytes sem recursos, `EmptyLotPackage`) do erro "no elevation array", o
+   `s2pkg` responde "empty lot package" (sem "error:") e o `soak.sh` conta os lotes vazios à
+   parte (`empty|autonomy|...`, `empty|lot-save|...`); rodada do lote afetado medida em
+   `docs/soak-report.md` (round 19); teste `testEmptyLotPackage` (o stub de 96 B escrito pelo
+   `DbpfWriter`); build+ctest 39/39.
 5. **14 — vizinhanças/lotes do AL:** ✅ **FECHADO 20/10** — NGBH 0x6F/0x70/0xBE/0xC2/0xCB,
    FAMI 0x4E..0x55 (gates 0x4F/0x50/0x51/0x55), SDSC 0x20..0x36 (com o 0x35 do template
    E002) e a cauda BV, NID 3..0x0A e lot info 18/base 11 (cabeçalho de apartamento, cauda
@@ -152,7 +156,7 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
 
 - [ ] Item 13 completo: 1.177 TTABs do AL lidos (0x4F..0x55) e interações visíveis no app.
 - [ ] Build + ctest 39/39 ao fim de **cada** item (evidência no log).
-- [ ] Item 8 fechado com o soak-report citando o caso; itens 7 e 10 com medição antes/depois.
+- [x] Item 8 fechado com o soak-report citando o caso; itens 7 e 10 com medição antes/depois.
 - [x] Item 14: `E001_Lot127` do AL carrega (ou o residual está documentado com bytes).
 - [ ] RayTrace e 12 fechados com sweep/teste; 5 e 6-resto explicitamente bloqueados.
 - [ ] Nenhum TEMP no diff final; nenhum untracked pré-existente tocado.
@@ -268,3 +272,12 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
   que o pedido é resolvido (RE de `FUN_00407f8a` e do registro de tipos). Registro completo em
   `docs/re-pc-ghidra.md` §(d) e nota no `primitives-mac.md` §2; o port continua recusando as
   duas (erro 0x05) e as 2.876 chamadas do AL continuam falhando.
+- (20/10) **Item 8 FECHADO** — o `N002_Lot32` (stub DBPF de 96 bytes, sem recursos) deixava de
+  ser erro de carga: `Lot::load` agora lança `EmptyLotPackage` (novo tipo em `formats/lot.hpp`)
+  quando o pacote não tem nenhum recurso, o `s2pkg` responde "empty lot package: the lot
+  package has no resources (the empty lot stub)" (sem "error:", sai com 0) e o `tools/soak.sh`
+  conta os lotes vazios à parte (`empty|autonomy|...` e `empty|lot-save|...`, nova categoria
+  "empty" no relatório). Medido: rodada do lote afetado (`soak.sh --one N002_Lot32`,
+  `SOAK_TICKS=1800`, `SOAK_NO_APP=1`) com as duas linhas "empty" e nenhum "error";
+  `docs/soak-report.md` round 19; teste novo `testEmptyLotPackage` (o stub de 96 B escrito
+  pelo `DbpfWriter`); build+ctest **39/39**.

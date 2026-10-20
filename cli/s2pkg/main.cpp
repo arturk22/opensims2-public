@@ -419,6 +419,10 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
                 std::printf("  %s\n", w.c_str());
             for (const auto& w : model.warnings)
                 std::printf("  %s\n", w.c_str());
+        } catch (const EmptyLotPackage& e) {
+            // The empty lot package (the 96-byte stub): the game loads it as a
+            // lot with nothing in it, so it is not an error.
+            std::printf("%s: %s\n", path.filename().string().c_str(), e.what());
         } catch (const std::exception& e) {
             std::printf("%s: error: %s\n", path.filename().string().c_str(), e.what());
             ++failed;
@@ -821,6 +825,10 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         Lot lot;
         try {
             lot = Lot::load(pkg);
+        } catch (const EmptyLotPackage& e) {
+            // The empty lot package (the 96-byte stub): not an error.
+            std::printf("%s: %s\n", path.filename().string().c_str(), e.what());
+            continue;
         } catch (const std::exception& e) {
             std::printf("%s: error: %s\n", path.filename().string().c_str(), e.what());
             ++failed;
@@ -1162,6 +1170,11 @@ int main(int argc, char** argv) {
         if (cmd == "texture" && argc == 5) return cmdTexture(pkg, parseTgi(argv[3]), argv[4]);
         if (cmd == "mesh" && argc == 5) return cmdMesh(pkg, parseTgi(argv[3]), argv[4]);
         return usage();
+    } catch (const EmptyLotPackage& ex) {
+        // The empty lot package (the 96-byte stub): the game loads it as a lot
+        // with nothing in it; the soak counts it apart from the errors.
+        std::fprintf(stderr, "empty lot package: %s\n", ex.what());
+        return 0;
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
         return 1;
