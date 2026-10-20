@@ -30,7 +30,6 @@
 
 #include "engine.hpp"
 #include "errors.hpp"
-#include "formats/semantics.hpp"
 #include "vm.hpp"
 
 #include <cmath>
@@ -46,22 +45,24 @@ TilePos rayPoint(Context& c, const Object& x, uint8_t kind, uint8_t index) {
     if (kind < 1 || kind > 3)
         return VM::tileOf(x);
     const uint16_t type = kind == 1 ? 4 : kind == 2 ? 3 : 0;
-    const Slots::Slot* entry = nullptr;
     size_t count = 0;
+    float ox = 0, oy = 0;
+    bool found = false;
     if (x.definition)
-        if (const Slots* t = c.vm.code().slots(x.group, x.definition->slotId()))
+        if (const auto* t = c.vm.code().slots(x.group, x.definition->slotId()))
             for (const auto& s : t->slots)
                 if (s.type == type && count++ == index) {
-                    entry = &s;
+                    ox = s.offset[0];
+                    oy = s.offset[1];
+                    found = true;
                     break;
                 }
-    if (!entry)
+    if (!found)
         throw gameError(err::SlotOutOfRange,
                         "slot " + std::to_string(index) + " of object " + std::to_string(x.id));
     // The slot's offset is in tiles (the SLOT reader scales it); the level is
     // the object's own (the third component is a height).
-    return {int(std::floor(x.position.x + entry->offset[0])), int(std::floor(x.position.y + entry->offset[1])),
-            x.position.level};
+    return {int(std::floor(x.position.x + ox)), int(std::floor(x.position.y + oy)), x.position.level};
 }
 
 Exit age(Context& c) {
