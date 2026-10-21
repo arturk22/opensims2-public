@@ -345,6 +345,40 @@ exclusivas do BV; no exe do PC elas são da classe base. Implementar exige
 resolver o alvo do pedido (RE de `FUN_00407f8a` e do registro de tipos) — até
 lá ficam recusadas, e as 2.876 chamadas do AL continuam dando erro 0x05.
 
+## (e) A tabela de erros do exe do PC e a análise completa (21/10)
+
+**Por que.** O projeto `pcb` estava com a análise parcial (faltavam funções em
+várias faixas), o que travava o RE das primitivas. Com o Artur liberando a
+máquina, o projeto foi reanalisado **com todos os analisadores**
+(`analyzeHeadless <pcb> rpc -process Sims2EP9RPC.exe`, 1.056 s, 12 GB): a análise
+criou as funções que faltavam e o decomposificador passou a resolver os
+`switch` por tabela de saltos.
+
+**A tabela de erros.** `FUN_008FA650` @ `0x8FA650` é a função que devolve a
+mensagem de um código de erro: um `switch` com **147 casos** (0x00–0x8E e os
+0x3E9/0x44C/0x44D), cada um com o texto do jogo. Ela é a âncora para achar
+quem chama o erro: o código 0x1E é "Search type is invalid. Types are 0: all
+motive, 1:mental motives, 2:physical motives." (o erro do Set to Next com um
+tipo de busca fora da lista), o 0x2B é "Named tree does not exist." e o 0x2C é
+"Bad parameter to call named tree." (o Run Tree by Name).
+
+**Conferência com o port.** Os **55** códigos de erro do `src/vm/errors.hpp`
+batem **um a um** com a tabela do jogo (mesmo número, mesmo texto — o 0x57 e o
+0x6F só diferem na escape do apóstrofo). O port usa o 0x1E no Set to Next com
+um tipo de busca fora da lista e o 0x1C ("Object referred to must be a
+person.") no Want Satisfy, como o jogo. Os 92 códigos que o jogo tem e o port
+não (0x0B "Gosub??", 0x0C "Reference to target object when none exists.",
+0x26 "Divide by zero.", 0x27 "Bad parameter in look towards primitive.", …) são
+os que nenhuma árvore implementada usa ainda.
+
+**O que a análise não resolveu.** O despacho da classe base (o `switch` pelos
+opcodes que chama os handlers das primitivas) não está no módulo 0x008FA–0x008FB
+(onde está a tabela de erros): as buscas por "case 0x1c:"/"case 0x1f:" nesse
+módulo acham só a própria tabela de erros. O handler do Set to Next (e com ele
+os tipos 38/39, que o `primitives-mac.md` §0x1F descreve numa frase só) e o do
+Run Tree by Name (o modo 3, "a árvore do objeto cujo GUID está nos temps 0/1",
+como está no comentário do `primitives.cpp`) continuam sem o RE completo.
+
 ## Cross-check REA (fechado em 17/10, ~22:38)
 
 Critério do goal da noite: o REA (ferramenta independente) confirma ≥1 achado do projeto `pcb`.
