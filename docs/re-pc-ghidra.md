@@ -374,10 +374,22 @@ os que nenhuma árvore implementada usa ainda.
 **O que a análise não resolveu.** O despacho da classe base (o `switch` pelos
 opcodes que chama os handlers das primitivas) não está no módulo 0x008FA–0x008FB
 (onde está a tabela de erros): as buscas por "case 0x1c:"/"case 0x1f:" nesse
-módulo acham só a própria tabela de erros. O handler do Set to Next (e com ele
-os tipos 38/39, que o `primitives-mac.md` §0x1F descreve numa frase só) e o do
-Run Tree by Name (o modo 3, "a árvore do objeto cujo GUID está nos temps 0/1",
-como está no comentário do `primitives.cpp`) continuam sem o RE completo.
+módulo acham só a própria tabela de erros. No módulo 0x008C–0x008F o `switch`
+por opcode é o do **routing aggregate** (`FUN_008CC270`: os casos 0x1F e 0x20
+são o *route to* e o *route failure*, com o hash `0x5A69D3D5` = o array de
+objetos do próprio Sim — o mesmo hash que o executor do 0x7E usa). O handler do
+Set to Next (e com ele os tipos 38/39, que o `primitives-mac.md` §0x1F descreve
+numa frase só) e o do Run Tree by Name continuam sem o RE completo.
+
+**Os rótulos dos modos do Run Tree by Name.** O editor guarda os rótulos no
+STR# `0xDE` do grupo `0x7FE59FD0` ("how to call named tree"): no **jogo base**
+são **três** — "run in my stack" (0), "run in stack object's stack" (1) e "push
+onto my stack" (2). O **modo 3 não existe no jogo base**: ele é do Bon Voyage
+(o AL usa o modo 3 em 648 árvores) e o erro do jogo para um modo fora da lista
+é o **0x2C** ("Bad parameter to call named tree."). No port, o modo 3 continua
+recusado com um `VMError` honesto ("mode 3 not implemented") — o comentário do
+`primitives.cpp` guarda a semântica que o RE do Mac já tinha: "o modo 3 é a
+árvore do objeto cujo GUID está nos temps 0/1".
 
 ## Cross-check REA (fechado em 17/10, ~22:38)
 
