@@ -306,6 +306,30 @@ as 4 "Slot number out of range" a mais são as árvores cuja thread foi morta
 no lugar de continuar com a memória liberada. O `autonomy` do `N001_Lot11` (onde
 não há venda) fica **idêntico** — as 516 linhas.
 
+## Onde o tempo do autonomy vai (Windows, 21/10)
+
+Medido com uma instrumentação temporária no `VM::tick` (revertida depois),
+no `autonomy N001_Lot11 --ticks 43200` (`S2PKG_NO_LIGHT=1`): o tick inteiro
+leva ~13 s dos ~22 s da corrida (o resto é a carga do lote e a preparação).
+
+| parte do tick | tempo |observação |
+|---|---|---|
+| as threads (as árvores rodando) | **11,5 s** | 30.168.912 instruções → **381 ns por instrução** |
+| `tickMotives`/`tickWants`/timers/hurry | 1,05 s | |
+| `tickOverlayEvents` (a varredura de todos os objetos) | 0,58 s | |
+| `notifyRoomChanges` (a varredura de todos os objetos) | 0,36 s | |
+
+Duas conclusões: (1) o custo do tick é a **simulação** (85%), e o custo por
+instrução é o do jogo (a VM do port roda na mesma ordem de grandeza do jogo
+original); (2) as duas varreduras por tick que sobram — `notifyRoomChanges` e
+`tickOverlayEvents` — somam **0,94 s, 4% da corrida**: fechá-las é ganho
+pequeno, o índice por tile (dentro da execução das árvores) é que pesa.
+
+O `bhav-sweep` do AL leva ~10 min para 12,9 M instruções — o custo dele é a
+**carga** (cada árvore roda numa VM nova, com o índice de recursos frio), não a
+simulação; por isso as comparações de fidelidade usam as contagens de
+instruções e não o relógio.
+
 ## What is left (not done)
 
 - An index of the objects by tile (`objectsOnTile`, `tileFree`, the placement tests) needs
