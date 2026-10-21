@@ -4684,6 +4684,15 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   0x100/0x200 desligada propagando/não, 0x1000 para a sub-fila, 0x20/0x40/
   0x80 no modo ícone); texto u16 14; ícone: objeto (dono 11, dado u16 12),
   GUID u32 5, índice byte 10.
+
+  **No port (21/10).** O índice do texto é o **u8 em 4** na versão de nó 0 e o
+  **u16 em 14** na versão de nó 1: o censo (`s2pkg prim-usage <Res> 32`) do jogo
+  base dá 1 ×173, 2 ×135, 3 ×118… no byte 4 e 0 no byte 14, e o do Bon Voyage
+  dá 0 ×2938 no byte 4 e o índice no byte 14 (1 ×475, 2 ×290, 3 ×173…). O port
+  lia sempre o byte 4, então no BV as árvores que montam uma action string não
+  achavam a string: o sweep do AL passa de 364 falhas "Add/Change the Action
+  String: no STR#" para **47**, e no total de **12.915.916 → 12.917.222
+  instruções, 18.712 → 19.007 true e 13.783 → 13.485 falhas**.
 - **0x69/0x6B Animate Object/Overlay** e **0x6A Animate Sim**: animação u16
   0; flags byte 2: 0x01 espelhada, 0x02 velocidade no temp 2, 0x04 índice num
   parâmetro ("anim id in s.v."), 0x08 interrompível, 0x10 começa na tag do

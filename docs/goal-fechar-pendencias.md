@@ -98,14 +98,17 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   AL — o modo 2 empurra a árvore na pilha e o doc diz que o 3 também empurra, mas o port só
   faz 0/1/2), os **tipos de busca do Set to Next sem semântica no doc** (38, 39, 13, 19, 20,
   31 e 34 — o doc descreve os tipos 38/39 em uma frase ("percorre uma lista por índice
-  comparando dois campos com os temps 0 e 1 e devolve o GUID do achado nos temps 2 e 3"), o
-  **Add/Change the Action String** sem a string (364) e o **Want Satisfy** (295). O "Invalid
+  comparando dois campos com os temps 0 e 1 e devolve o GUID do achado nos temps 2 e 3") e o
+  **Want Satisfy** (295). O "Invalid
   global sim call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo
-  (o sweep roda cada árvore sozinha, fora de contexto), não lacuna do port. **Fechado no
-  mesmo dia**: os tipos de espécie (40–45, as pessoas, e 46–51, os vizinhos, pelo dado de
-  pessoa 186) e o tipo 33 (Hauntable) — o sweep do AL passa de 12.894.204 instruções,
-  18.622 true e 14.129 falhas para **12.915.916, 18.712 true e 13.783 falhas**, e as buscas
-  de tipo inválido caem de **888 para 70**.
+  (o sweep roda cada árvore sozinha, fora de contexto), não lacuna do port. **Fechados no
+  mesmo dia**: os tipos de espécie (40-45, as pessoas, e 46-51, os vizinhos, pelo dado de
+  pessoa 186), o tipo 33 (Hauntable) e o **índice do texto do Add/Change the Action String**
+  (o u8 em 4 na versão de nó 0 e o u16 em 14 na versão de nó 1 - o port lia sempre o byte 4,
+  e no BV as árvores que montam uma action string não achavam a string). O sweep do AL passa
+  de 12.894.204 instruções, 18.622 true e 14.129 falhas para **12.917.222, 19.007 true e
+  13.485 falhas**; as buscas de tipo inválido caem de **888 para 70** e as action strings sem
+  índice, de **364 para 47**.
 - **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
   em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
   antes de implementar.
