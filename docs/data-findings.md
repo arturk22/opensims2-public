@@ -822,10 +822,20 @@ medida no AL (com instrumentação temporária, já revertida).
   description" ou "defined in objLua file" — o script definido na descrição do
   objeto ou num arquivo `.objLua` (o registro de scripts Lua, `FUN_007fd6c0`).
 - **Execução.** O pedido empacota o id como `(op0-1 << 16) | op2-3` e o
-  executor procura o recurso de tipo **0x89B7DC8** com o pai informado no
-  escopo; os **parâmetros** são os três pares (tipo u8, valor u16) dos bytes
-  6/7-8, 9/10-11 e 12/13-14, e o resultado da árvore é o resultado da
+  executor (`FUN_00cd3d80`) faz a busca assim:
+  `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, byte[0x25], 0)`
+  — ou seja, **o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo
+  do byte em 0x25**; se achado, o pedido marca o byte 0x24 ("achado") e copia o
+  **texto** do recurso (os vfuncs +0x18/+0x1C dele) para os **argumentos** do
+  pedido (os vfuncs +0x60/+0x6C), e depois libera o recurso (o vfunc +8). Os
+  **parâmetros** são os três pares (tipo u8, valor u16) dos bytes 6/7-8,
+  9/10-11 e 12/13-14, e o resultado da árvore é o resultado da
   primitiva (e vai também para um temp, o log ", output result to ").
+- **Os dois pedidos.** O primeiro (referência `0x2026960B`) é o script "definido
+  na descrição" (o log "defined in description"); o segundo (referência
+  `0x4D45F8E6`) é o "definido num arquivo .objLua" (o log "defined in objLua
+  file") e só acontece quando o byte do objeto em `[ESP+0x12]` é diferente de
+  zero — o mesmo byte que escolhe entre o escopo global e o semi-global.
 - **Censo do AL.** As 2.876 chamadas têm sempre o id 304 (0x130) nos bytes
   0-1 e o byte de flags 0xF9 (1.980), 0xFB (379), 0xFD (201), 0xF1 (171),
   0xF3 (35), 0x03 (24), 0x01 (24), 0xF5 (12), 0xFA (11), 0xF4 (10); o byte 5 é

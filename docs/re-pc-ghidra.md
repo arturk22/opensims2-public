@@ -299,6 +299,17 @@ object.") e quem as referencia; a tabela de despacho por opcode; e o censo das
 - **0x7D** (`FUN_008b9bd0`, "Follow Sim"): pega o array de objetos (o próprio ou
   o do stack object, conforme o byte 9) e chama o mesmo pedido com a referência
   `0x2026960B` (tipo `0x2026`, instância `0x960B`).
+- **O pedido e o executor (21/10)** — `FUN_00cd3fe0` monta o pedido (o id
+  empacotado em `param_1[7]`, a referência em `param_1[5]`, o objeto do escopo em
+  `param_1[6]`, o byte do escopo em 0x25) e `FUN_00cd3d80` o executa: a busca é
+  `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, pedido[0x25], 0)`
+  — **o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo do byte
+  0x25**; achado, o pedido marca o byte 0x24 e copia o **texto** do recurso para
+  os **argumentos** do pedido (os vfuncs +0x60/+0x6C) e o libera (o vfunc +8).
+  O handler do 0x7E faz **dois** pedidos: o de referência `0x2026960B` (o log
+  "defined in description") e o de `0x4D45F8E6` ("defined in objLua file"), e o
+  segundo só sai quando o byte do objeto em `[ESP+0x12]` é ≠ 0 — o mesmo byte
+  que escolhe o escopo global × semi-global.
 - **Layout dos parâmetros** (medido no código; o struct do handler é o bloco de
   16 B dos operandos deslocado em -3): op0-1 = id (u16), op2-3 = valor (u16),
   op4 = flags (bit0 semi-global, bit1 privado, bits 2/3 de cache), e os pares
