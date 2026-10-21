@@ -89,8 +89,18 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
 - **7:** `performance.md` "What is left" — índice por tile, `notifyRoomChanges`/
   `tickOverlayEvents` por tick, "Set to Next" com `std::function`, texturas — com medidor
   antes/depois.
-- **10:** painel do Build vs capturas `30_build_top`..`34_build_pisos` (mesmo método do
-  item 4).
+- **10:** **FECHADO 21/10** pelo método do item 4 (as capturas não estão nesta máquina): a
+  auditoria do painel contra a tabela do `buy-build-mac.md` §7.8 e contra o censo novo do
+  catálogo de construção achou três lacunas, todas fechadas (a jardinagem A800 inteira, as
+  colunas BA20 e os pincéis B751–B753).
+- **Lacunas da VM medidas no AL (21/10, pelo censo do `bhav-sweep`)** — as falhas do port
+  que o jogo não tem, para atacar depois do 0x7E: o **Set to Next tipo 38** (888 árvores — o
+  tipo não está no `primitives-mac.md` §0x1F, que só vai até o 37; o label do jogo está no
+  STR# 0xA4 do Bon Voyage), o **Run Tree by Name modo 3** (346 árvores — o modo 2 empurra a
+  árvore na pilha e o doc diz que o 3 também empurra, mas o port só faz 0/1/2), o **Add/Change
+  the Action String** sem a string (364) e o **Want Satisfy** (295). O "Invalid global sim
+  call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo (o
+  sweep roda cada árvore sozinha, fora de contexto), não lacuna do port.
 - **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
   em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
   antes de implementar.
@@ -199,6 +209,18 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    0x89B7DC8), que é onde o alvo é resolvido; e o 0x7D ("Follow Sim"), cujo handler pede o
    array de objetos e a referência `0x2026960B` (o que ele faz com o array não foi medido).
    `docs/re-pc-ghidra.md` §(d) e `docs/data-findings.md` §21 têm o registro completo.
+   **O formato do pedido (21/10, mais tarde)**: o executor `FUN_00cd3d80` faz a busca
+   `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, pedido[0x25], 0)` —
+   **o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo**; achado, o pedido
+   marca o byte 0x24 e copia o **texto** do recurso para os **argumentos** do pedido (os
+   vfuncs +0x60/+0x6C) e o libera (o vfunc +8). O handler faz **dois** pedidos, o de
+   referência `0x2026960B` ("defined in description") e o de `0x4D45F8E6` ("defined in objLua
+   file"), e o segundo só sai quando o byte do objeto em `[ESP+0x12]` é ≠ 0 — o mesmo byte
+   que escolhe o escopo global × semi-global. O tipo `0x89B7DC8` **não é** um tipo de recurso
+   do conteúdo (censo do `objects.package` do base e do Bon Voyage: nada) — é um *hash* de
+   nome. **Falta**: a implementação do `vfunc +0xC` do gerenciador de recursos (achá-la exige
+   a vtable da classe, que o registro de classes cria por hash — a classe do gerenciador é
+   criada por `FUN_00427217` com os hashes `0x56B906E`/`0x656B8EFC`).
 10. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
     21/10); o item 5 fechou por censo. Ficam por último, sem travar a fila.
 
