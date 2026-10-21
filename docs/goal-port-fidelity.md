@@ -137,9 +137,14 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       Expansão (Vida de Apartamento)**, que antes nem carregava. Os irmãos `JobDataGlobals`
       0x1000/0x1001/0x1002 listam primitivas reais (`Manage Inventory`, `Random Number`,
       `Want Satisfy`). Aberto por isso (fila): 11, 12 e 13.
-- [ ] **10. Painel do Build vs capturas 30-34** (`orig2/`): comparar o painel do Build
-      mode com as capturas `30_build_top`..`34_build_pisos` como no item 4 (pode ter as
-      mesmas sobras de alinhamento).
+- [x] **10. Painel do Build vs capturas 30-34** (`orig2/`): **FEITO 21/10 pelo método do item
+      4** — as capturas não existem nesta máquina (procuradas em C:, D: e E:), então o painel
+      foi auditado contra a tabela do `buy-build-mac.md` §7.8 e contra o censo novo do
+      catálogo de construção (`s2pkg catalog --installation --build`, o build type e o
+      subsort de cada objeto). A auditoria achou **três lacunas**, corrigidas: a categoria
+      **A800 jardinagem** inteira (não havia `case 8`), as **colunas BA20** e os **pincéis
+      B751–B753**; o resto da tabela (portas, pisos, revestimentos, escadas, terreno,
+      telhados, lareiras, piscinas, cercas, portões) bate com o port.
 - [x] **11. Globais dos EPs** (achado do item 9): **FECHADO 18/10 ~03:55** — não era a
       costura das tabelas GLOB: as 17 árvores indexam um só espaço de globais (nada a
       juntar) e o `global 54 out of range` era o **tamanho do conjunto de variáveis** (o port

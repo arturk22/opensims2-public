@@ -65,7 +65,7 @@ void printEntry(const CatalogEntry& e, Catalog& c, bool verbose) {
 int cmdCatalog(const std::vector<std::string>& args) {
     fs::path res;
     int function = -1, room = -1, sub = -1;
-    bool verbose = false, installation = false;
+    bool verbose = false, installation = false, build = false;
     std::string thumbKey, thumbOut;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--function" && i + 1 < args.size())
@@ -78,6 +78,8 @@ int cmdCatalog(const std::vector<std::string>& args) {
             verbose = true;
         else if (args[i] == "--installation")
             installation = true;
+        else if (args[i] == "--build")
+            build = true;
         else if (args[i] == "--thumb" && i + 2 < args.size())
             thumbKey = args[i + 1], thumbOut = args[i + 2], i += 2;
         else
@@ -94,7 +96,7 @@ int cmdCatalog(const std::vector<std::string>& args) {
             owned->addRoot(root);
     }
     ResourceIndex& index = *owned;
-    Catalog c = Catalog::load(index);
+    Catalog c = Catalog::load(index, build);
     c.setThumbnailPackage(res / "UserData/Thumbnails/ObjectThumbnails.package");
     if (!thumbKey.empty()) {
         const CatalogEntry* e = c.find(thumbKey);
@@ -108,6 +110,20 @@ int cmdCatalog(const std::vector<std::string>& args) {
         return 0;
     }
     std::printf("catalog: %zu buyable objects, %zu with a thumbnail\n", c.entries().size(), c.thumbnailCount());
+    if (build) {
+        // The objects of Build mode (OBJD field 69 "build mode type" and field
+        // 74 "build Mode Subsort"; docs/buy-build-mac.md §7.6).
+        std::map<std::pair<uint16_t, uint16_t>, std::vector<const CatalogEntry*>> groups;
+        for (const auto& e : c.entries())
+            if (e.buildModeType)
+                groups[{e.buildModeType, e.buildModeSubsort}].push_back(&e);
+        for (const auto& [key, list] : groups) {
+            std::printf("\nbuild type %u subsort %04X: %zu\n", key.first, key.second, list.size());
+            for (size_t i = 0; i < list.size() && i < 6; ++i)
+                std::printf("    %s\n", list[i]->name.c_str());
+        }
+        return 0;
+    }
     if (function < 0 && room < 0) {
         for (int f = 0; f < kFunctionSortCount; ++f) {
             const auto list = c.byFunction(f);

@@ -1233,6 +1233,23 @@ nos pisos; `"brick"`, `"masonry"`, `"siding"`, `"poured"`, `"paint"`,
 `0xa320bc`/`0xa32238`). O painel de telhados automáticos é o `0xAC` (C100 sem beiral, C200
 triangular curto, C500/C600 mistos, C300 remover, C700 laje, C400 preservar).
 
+**Auditoria do port (21/10).** Sem as capturas (não estão nesta máquina), o
+painel foi conferido contra esta tabela e contra o censo do catálogo de
+construção (`s2pkg catalog <Res> --installation --build`, novo: os objetos por
+campo 69 "build mode type" e campo 74 "build Mode Subsort"). O censo: tipo 1
+→ subsorts 0x08 (24), 0x20 escadas (13), 0x40 (5), 0x100 (7), 0x200 colunas
+(10), 0x400 garagens (7), 0x800 elevadores (4), 0x1000 cornijas (58); tipo 4
+→ 0x01 árvores (35), 0x02 arbustos (13), 0x04 flores (27), 0x10 as ferramentas
+de jardim (11); tipo 8 → 0x01 portas (57), 0x02 janelas de 2 andares (3),
+0x04 janelas (67), 0x08 portões (15), 0x10 arcos (21), 0x100 (4). As três
+lacunas que a tabela denuncia e o port tinha: **a categoria A800 jardinagem
+inteira** (não havia `case 8`), **as colunas BA20** (o subsort 2 do painel de
+diversos) e **os pincéis B751–B753** (o subsort 5 do painel de terreno, as
+ferramentas de jardim). As três foram implementadas; o `B620` (a ferramenta de
+corrimão) já estava no clique do subsort, e o resto da tabela (portas, pisos,
+revestimentos, escadas, terreno, telhados, lareiras, piscinas, cercas e portões)
+bate com o port.
+
 ### 7.9 O resto, resumido
 
 - **Escadas** (`cTSUserToolModularStairs`): `modularstairs.txt` define cada

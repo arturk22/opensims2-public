@@ -158,8 +158,15 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    tile, `notifyRoomChanges`/`tickOverlayEvents` por tick e as texturas. O sub-item do
    "Set to Next sem `std::function`" foi **medido sem ganho** (22,2/22,5 s contra
    22,3/21,3 s) e descartado — o registro está em `performance.md`.
-7. **10 — painel do Build:** comparar com as capturas 30–34 como no item 4; corrigir;
-   commit.
+7. **10 — painel do Build:** **FEITO 21/10 pelo método do item 4** (as capturas 30–34 não
+   existem nesta máquina): o painel foi auditado contra a tabela do `buy-build-mac.md` §7.8 e
+   contra o censo novo do catálogo de construção (`s2pkg catalog --installation --build`), e
+   a auditoria achou **três lacunas**, corrigidas: a categoria **A800 jardinagem** inteira
+   (não havia `case 8` — as árvores, os arbustos e as flores, o build type 4 com os bits
+   0x01/0x02/0x04), as **colunas BA20** (o subsort 2 do painel de diversos, o build type 1
+   com o bit 0x200) e os **pincéis B751–B753** (o subsort 5 do painel de terreno, as
+   ferramentas de jardim, o build type 4 com o bit 0x10). O `B620` (a ferramenta de
+   corrimão) já estava no clique do subsort, e o resto da tabela bate com o port.
 8. **RayTrace 0x78:** ✅ **FECHADO 20/10** — o 0x78 resolve o ponto pelo slot do mesmo
    jeito que o Look At (byte 4 = 1/2/3 → os SLOT de tipo 4/3/0, byte 5 = o índice dentro
    deles, pasto a contagem erro 0x1B; o alvo nos bytes 11/12) e, sem kind, pelo tile do
