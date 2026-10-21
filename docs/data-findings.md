@@ -791,3 +791,65 @@ já enfileirados 0x7E e Set to Next 38 (item 12), não o carregamento.
 0x50/0x55, SDSC 0x35/0x36, NGBH 0xCB, NID 0x0A e lot info 11 (ida e volta);
 build+ctest **39/39**.
 
+## 21. O 0x7E (Run Script) no exe do PC: o escopo, o nome do objeto e a experiência do modelo "índice → nome" (negativa)
+
+**Pergunta.** O 0x7E e o 0x7D são as duas primitivas que o Mac base 1.0 não tem
+(§2 do `primitives-mac.md`); no exe do PC (o build do AL) as duas estão na
+**classe base** (§(d) do `re-pc-ghidra.md`). O que o 0x7E faz?
+
+**Método.** O handler `FUN_008b9e00` @ `0x8b9e00` lido em assembly (0x8b9e26
+a 0x8b9f2c), o pedido `FUN_00cd3fe0` (que empacota o id) e o executor
+`FUN_00cd3d80` (que procura o recurso no escopo); o censo das 2.876 chamadas do
+AL (`s2pkg prim-usage <Res> 7E`) e uma **implementação experimental** do 0x7E
+medida no AL (com instrumentação temporária, já revertida).
+
+**Achados (assembly).**
+
+- **Escopo.** `MOV AL, byte ptr [ESI+8]` e `AND AL,0x1`: do byte de flags só o
+  **bit 0** é lido; os bits 1, 2 e 3 são recomputados a partir desse valor
+  (portanto valem 0), e o teste do bit 1 — o ramo "Private", que chamaria o
+  `vfunc 0x108` do objeto — é **código morto** neste build (`SHR BL,1` sobre um
+  valor já mascarado com 1). O escopo padrão é o **grupo global** (`0x7FD46CD0`);
+  o ramo "Semi-Global" (`vfunc 0x114` do objeto) só é tomado quando o byte em
+  `[ESP+0x12]` — o segundo byte do buffer de 3 bytes que o **vfunc 0x1c do
+  objeto** preenche — é diferente de zero. As strings "Global"/"Semi-Global"/
+  "Private" são o log do escopo, não a fonte dele.
+- **Nome.** O handler monta o nome do script com duas chamadas ao **objeto**
+  (`vfunc 0x1c` e `vfunc 0x18`) por `FUN_00407f8a`: o nome vem do objeto, e
+  não de um índice da lista de nomes de árvore.
+- **Dois pedidos.** O handler chama `FUN_00cd3fe0` duas vezes: a primeira com
+  o pai `0x2026960B`, a segunda com `0x4D45F8E6`, e registra "defined in
+  description" ou "defined in objLua file" — o script definido na descrição do
+  objeto ou num arquivo `.objLua` (o registro de scripts Lua, `FUN_007fd6c0`).
+- **Execução.** O pedido empacota o id como `(op0-1 << 16) | op2-3` e o
+  executor procura o recurso de tipo **0x89B7DC8** com o pai informado no
+  escopo; os **parâmetros** são os três pares (tipo u8, valor u16) dos bytes
+  6/7-8, 9/10-11 e 12/13-14, e o resultado da árvore é o resultado da
+  primitiva (e vai também para um temp, o log ", output result to ").
+- **Censo do AL.** As 2.876 chamadas têm sempre o id 304 (0x130) nos bytes
+  0-1 e o byte de flags 0xF9 (1.980), 0xFB (379), 0xFD (201), 0xF1 (171),
+  0xF3 (35), 0x03 (24), 0x01 (24), 0xF5 (12), 0xFA (11), 0xF4 (10); o byte 5 é
+  0xFF em 2.801 e 0x00 em 75.
+
+**Experimento (resultado negativo).** Implementar o 0x7E como "a árvore cujo
+nome é a entrada (op0-1 − 1) da lista de nomes de árvore do grupo do escopo
+(STR# 0x12F, a mesma do 'Run Tree by Name')" foi medido no AL: o `bhav-sweep`
+passa de 12.894.214 instruções, 18.625 true e 14.126 falhas para **13.175.936,
+19.271 true e 11.604 falhas** (−2.522 falhas: as chamadas deixaram de dar erro
+0x05), **mas** 232 árvores passam a falhar com "Stack overflow (tree has no
+instructions)" (o nome aponta para uma árvore vazia) e 11 com "max stack depth
+exceeded" (recursão). A instrumentação mostrou por quê: 4.994 das 5.000
+primeiras chamadas caem no escopo semi-global do grupo global — que não
+existe (`semiGlobalFor(0x7FD46CD0) = 0`) — e as 6 do escopo global resolvem o
+nome "G - Apartment - Is NIDs Apartment?" sem achar a árvore. Como no binário
+o nome vem do **objeto** (e não de um índice) e o id 304 não é instância de
+árvore em nenhum escopo, o modelo foi **descartado** e o port continua recusando
+o 0x7E (erro 0x05).
+
+**Conclusão.** O que falta para o 0x7E: o sentido do byte em `[ESP+0x12]` (o
+que o `vfunc 0x1c` do objeto escreve) e a implementação do `vfunc +0xC` do
+gerenciador de recursos — a busca do recurso de tipo 0x89B7DC8 com o pai
+informado, que é onde o alvo é resolvido. O 0x7D (Follow Sim) continua recusado
+— o handler dele pede o array de objetos e a referência `0x2026960B`, e o que
+ele faz com o array ainda não foi medido.
+

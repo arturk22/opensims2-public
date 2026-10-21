@@ -144,7 +144,17 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       `- Business - Customer Loyalty` e `- Employee Management` (`Function - Main`); 2.213
       casos no sweep. A §2 do `primitives-mac.md` dá os handlers **de routing aggregate**
       (`TryRunScript`/`TryFollowSim`, "só BV") — implementar com o gate de tipo de objeto do
-      original.
+      original. **RE do exe do PC feito (20/10 e 21/10)**: as duas estão na **classe base**
+      (não só no routing aggregate) e o handler do `0x7E` foi lido em assembly — do byte de
+      flags só o bit 0 vale (o ramo "Private" é código morto neste build), o escopo é o grupo
+      global por padrão e o semi-global quando o byte em `[ESP+0x12]` (que o `vfunc 0x1c` do
+      **objeto** preenche) não é zero, o **nome** do script vem do próprio objeto e o handler
+      faz dois pedidos (pais `0x2026960B` e `0x4D45F8E6`: "defined in description" × "defined
+      in objLua file"). Uma implementação experimental (a árvore pelo índice na lista de
+      nomes do grupo, STR# 0x12F) foi **medida e descartada**: reduzia as falhas do AL em
+      2.522 mas criava 232 "tree has no instructions" e 11 recursões (`data-findings.md` §21).
+      **Falta**: o sentido do byte em `[ESP+0x12]` e o `vfunc +0xC` do gerenciador de
+      recursos (a busca do recurso de tipo 0x89B7DC8), que é onde o alvo é resolvido.
 - [x] **13. TTAB 0x50/0x51/0x54/0x55 dos EPs** (achado do item 9): `interactions (TTAB) …:
       unsupported version 0x50/0x51/0x54/0x55` — as interações desses objetos ficam de fora
       (20 recursos só no `objects.package` do AL). Estender o leitor de TTAB às versões

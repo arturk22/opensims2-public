@@ -277,12 +277,25 @@ object.") e quem as referencia; a tabela de despacho por opcode; e o censo das
   base 1.0 elas não existem) — é o "gate de tipo de objeto" que faltava: no PC
   qualquer objeto pode chamá-las.
 - **0x7E** (`FUN_008b9e00`, "Run Script"): monta o nome do escopo ("Global" /
-  "Semi-Global" / "Private", conforme os bits da flag) e chama o pedido
-  `FUN_00cd3fe0` (construtor do pedido de execução:
-  `param_1[7] = (param_2 << 16) | (param_3 & 0xffff)`), com o id empacotado
-  `(op0-1 << 16) | op2-3`; se a árvore não existir, o jogo procura um arquivo
-  `.objLua` (o registro de scripts Lua, `FUN_007fd6c0`, que varre
-  `*.globalObjLua` e `*.objLua` e indexa por nome).
+  "Semi-Global" / "Private") e chama o pedido `FUN_00cd3fe0` (construtor do
+  pedido de execução: `param_1[7] = (param_2 << 16) | (param_3 & 0xffff)`),
+  com o id empacotado `(op0-1 << 16) | op2-3`; se a árvore não existir, o jogo
+  procura um arquivo `.objLua` (o registro de scripts Lua, `FUN_007fd6c0`, que
+  varre `*.globalObjLua` e `*.objLua` e indexa por nome).
+- **0x7E em assembly (21/10, `0x8b9e26`–`0x8b9f2c`)** — o escopo não sai dos
+  bits da flag como se pensava: `MOV AL, byte ptr [ESI+8]` + `AND AL,0x1` ⇒ só
+  o **bit 0** do byte de flags é lido; os bits 1, 2 e 3 são recomputados a
+  partir desse valor (⇒ 0) e o teste do bit 1 — o ramo "Private", que chamaria
+  o `vfunc 0x108` do objeto — é **código morto** neste build (`SHR BL,1` sobre um
+  valor já mascarado). O escopo padrão é o **grupo global** (`0x7FD46CD0`); o
+  ramo "Semi-Global" (`vfunc 0x114` do objeto) só entra quando o byte em
+  `[ESP+0x12]` — o segundo byte do buffer de 3 B que o **`vfunc 0x1c` do
+  objeto** preenche — é ≠ 0. O **nome** do script é montado com `vfunc 0x1c` +
+  `vfunc 0x18` do objeto por `FUN_00407f8a` (o nome vem do **objeto**, não de
+  um índice). O handler faz **dois pedidos**: o primeiro com o pai
+  `0x2026960B`, o segundo com `0x4D45F8E6` ("defined in description" ×
+  "defined in objLua file"). O executor `FUN_00cd3d80` procura o recurso de
+  tipo **0x89B7DC8** com o pai informado no escopo.
 - **0x7D** (`FUN_008b9bd0`, "Follow Sim"): pega o array de objetos (o próprio ou
   o do stack object, conforme o byte 9) e chama o mesmo pedido com a referência
   `0x2026960B` (tipo `0x2026`, instância `0x960B`).
@@ -293,14 +306,28 @@ object.") e quem as referencia; a tabela de despacho por opcode; e o censo das
 - **Censo no AL** (`objects.package`): **2.876** instruções 0x7E (em 2.876
   recursos de 567 grupos) e **21** instruções 0x7D; o id (op0-1) é **sempre
   304** e op2-3 varia (1, 2, 3, 4, 22, 36, 38, 116, 120, 122, 181, 207).
+  O byte de flags é 0xF9 (1.980×), 0xFB (379), 0xFD (201), 0xF1 (171), 0xF3
+  (35), 0x03 (24), 0x01 (24), 0xF5 (12), 0xFA (11), 0xF4 (10); o byte 5 é 0xFF
+  em 2.801 e 0x00 em 75.
   Nenhum dos dois é instância de árvore: no grupo do chamador não existe a
   árvore 0x130 (só há a global "Family - Relationships - Reset") e nenhum op2-3
   bate com uma instância de árvore do grupo.
 
+**Experimento descartado (21/10).** Implementar o 0x7E como "a árvore cujo
+nome é a entrada (op0-1 − 1) da lista de nomes de árvore do grupo (STR# 0x12F,
+a mesma do 'Run Tree by Name')" foi medido no AL: as falhas caíam 2.522 (de
+14.126 para 11.604) mas apareciam 232 "tree has no instructions" e 11 recursões —
+a instrumentação mostrou que 4.994 das 5.000 primeiras chamadas caem no
+semi-global do grupo global (que não existe: `semiGlobalFor(0x7FD46CD0) = 0`) e
+as do escopo global não acham a árvore. Como no binário o nome vem do objeto, o
+modelo foi revertido (o port segue recusando o 0x7E).
+
 **O que falta.** O id 304 (`0x130`) não é instância de árvore em nenhum escopo
 (global, semi-global ou privado): é um *tipo* de 16 bits. Falta saber a que o
 pedido é resolvido (o nome montado a partir do objeto em `FUN_00407f8a`, o
-registro de tipos do jogo ou o `.objLua`) e o que o jogo faz quando não acha.
+`vfunc +0xC` do gerenciador de recursos — a busca do recurso de tipo 0x89B7DC8
+—, o registro de tipos do jogo ou o `.objLua`) e o que o jogo faz quando não
+acha.
 
 **Conclusão p/ o port.** O port recusa 0x7D/0x7E (erro 0x05) como se fossem
 exclusivas do BV; no exe do PC elas são da classe base. Implementar exige

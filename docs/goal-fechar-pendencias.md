@@ -157,10 +157,24 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    e `FUN_008b9e00` Run Script), o layout dos parâmetros (id u16, valor u16, byte de flags
    do escopo Global/Semi-Global/Private e três pares (tipo, valor)), o id empacotado
    `(op0-1 << 16) | op2-3` e o fallback para `.objLua`; no AL são 2.876 chamadas de 0x7E (id
-   sempre 304) e 21 de 0x7D. **Falta**: a que o pedido é resolvido (o id 304 é um tipo de 16
-   bits, não uma instância de árvore em nenhum escopo) — precisa do RE de `FUN_00407f8a` e do
-   registro de tipos; `docs/re-pc-ghidra.md` §(d) tem o registro completo. As 2.876 chamadas
-   do AL continuam dando erro 0x05 até a implementação.
+   sempre 304) e 21 de 0x7D. **O RE avançou em 21/10 (leitura em assembly do handler
+   `FUN_008b9e00`)**: do byte de flags só o **bit 0** é lido (os bits 1-3 são recomputados
+   a partir dele e valem 0, e o ramo "Private" é código morto neste build); o escopo é o
+   **grupo global** por padrão e o **semi-global** quando o byte em `[ESP+0x12]` — que o
+   `vfunc 0x1c` do **objeto** preenche — é diferente de zero; o **nome** do script vem do
+   objeto (`vfunc 0x1c` e `vfunc 0x18`), não de um índice; e o handler faz **dois pedidos**,
+   com os pais `0x2026960B` e `0x4D45F8E6` ("defined in description" × "defined in objLua
+   file"). **Experimento descartado (21/10)**: implementar o 0x7E como "a árvore pelo índice
+   na lista de nomes do grupo" (STR# 0x12F) até reduzia as falhas do AL em 2.522 (12.894.214 →
+   13.175.936 instruções, 18.625 → 19.271 true, 14.126 → 11.604 falhas), mas criava 232
+   falhas novas ("tree has no instructions") e 11 recursões: a instrumentação mostrou que
+   4.994 das chamadas caem no semi-global do grupo global (que não existe) e as do escopo
+   global não acham a árvore. Como o nome vem do objeto no binário, o modelo foi revertido e
+   o port **continua recusando o 0x7E** (erro 0x05). **Falta**: o sentido do byte em
+   `[ESP+0x12]` e o `vfunc +0xC` do gerenciador de recursos (a busca do recurso de tipo
+   0x89B7DC8), que é onde o alvo é resolvido; e o 0x7D ("Follow Sim"), cujo handler pede o
+   array de objetos e a referência `0x2026960B` (o que ele faz com o array não foi medido).
+   `docs/re-pc-ghidra.md` §(d) e `docs/data-findings.md` §21 têm o registro completo.
 10. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
     21/10); o item 5 fechou por censo. Ficam por último, sem travar a fila.
 
