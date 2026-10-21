@@ -94,13 +94,18 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   catálogo de construção achou três lacunas, todas fechadas (a jardinagem A800 inteira, as
   colunas BA20 e os pincéis B751–B753).
 - **Lacunas da VM medidas no AL (21/10, pelo censo do `bhav-sweep`)** — as falhas do port
-  que o jogo não tem, para atacar depois do 0x7E: o **Set to Next tipo 38** (888 árvores — o
-  tipo não está no `primitives-mac.md` §0x1F, que só vai até o 37; o label do jogo está no
-  STR# 0xA4 do Bon Voyage), o **Run Tree by Name modo 3** (346 árvores — o modo 2 empurra a
-  árvore na pilha e o doc diz que o 3 também empurra, mas o port só faz 0/1/2), o **Add/Change
-  the Action String** sem a string (364) e o **Want Satisfy** (295). O "Invalid global sim
-  call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo (o
-  sweep roda cada árvore sozinha, fora de contexto), não lacuna do port.
+  que o jogo não tem, para atacar depois do 0x7E: o **Run Tree by Name modo 3** (648 usos no
+  AL — o modo 2 empurra a árvore na pilha e o doc diz que o 3 também empurra, mas o port só
+  faz 0/1/2), os **tipos de busca do Set to Next sem semântica no doc** (38, 39, 13, 19, 20,
+  31 e 34 — o doc descreve os tipos 38/39 em uma frase ("percorre uma lista por índice
+  comparando dois campos com os temps 0 e 1 e devolve o GUID do achado nos temps 2 e 3"), o
+  **Add/Change the Action String** sem a string (364) e o **Want Satisfy** (295). O "Invalid
+  global sim call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo
+  (o sweep roda cada árvore sozinha, fora de contexto), não lacuna do port. **Fechado no
+  mesmo dia**: os tipos de espécie (40–45, as pessoas, e 46–51, os vizinhos, pelo dado de
+  pessoa 186) e o tipo 33 (Hauntable) — o sweep do AL passa de 12.894.204 instruções,
+  18.622 true e 14.129 falhas para **12.915.916, 18.712 true e 13.783 falhas**, e as buscas
+  de tipo inválido caem de **888 para 70**.
 - **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
   em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
   antes de implementar.

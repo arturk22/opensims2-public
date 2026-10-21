@@ -502,6 +502,19 @@ Execução (binário):
 - 5 neighbor ID (e 0x2E–0x33, só BV): o próximo vizinho pelo ID, com o
   mesmo filtro do dado 186 (tipo 5: = 0, só BV); se o vizinho está no lote, o
   objeto dele também passa pelo filtro comum.
+
+**No port (21/10).** Os tipos de espécie entraram: o dado de pessoa 186 (0 = o
+humano; o jogo base não tem o campo, então os Sims dele leem 0) filtra o tipo 1
+(as pessoas) e o tipo 5 (o ID de vizinho) pelo humano, e os tipos 40–45
+(0x28–0x2D) e 46–51 (0x2E–0x33) pegam uma espécie cada (0 = o humano,
+< 0, 1–2, 1, 2, 3 nas duas listas). Sem o filtro, o tipo 1 no Bon Voyage
+achava os animais também. O tipo 33 (Hauntable, o campo 0x1C da definição)
+também. O censo do AL (`s2pkg prim-usage <Res> 1F`, byte 4) mostra o uso: 40 ×126,
+41 ×56, 46 ×9, 42 ×5, 47 ×3, 45 ×1 (os de espécie) e 38 ×36, 39 ×3, 31 ×9,
+19 ×1, 20 ×1, 13 ×1, 34 ×1 (os que o port ainda recusa por não terem
+semântica documentada). Medido no AL: o `bhav-sweep` passa de 12.894.204
+instruções, 18.622 true e 14.129 falhas para **12.915.916, 18.712 true e 13.783
+falhas**, e as buscas de tipo inválido caem de **888 para 70**.
 - 7 vizinho do tipo: próximos vizinhos cuja definição tem o GUID u32 0.
 - 8 objeto no mesmo tile: precisa de alvo ≠ 0 (senão falso); objetos do tile
   do alvo, no mesmo nível, depois dele. O iterador do tile (BV `0xe1e8a8`/

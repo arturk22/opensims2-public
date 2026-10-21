@@ -276,9 +276,30 @@ Exit setToNext(Context& c) {
             return false;
         return !where || (whereField >= 0 && size_t(whereField) < x.data.size() && x.data[size_t(whereField)] == whereValue);
     };
+    // The person data 186 "species" (0 = the human; only Bon Voyage has the
+    // field, so in the base game it reads 0): the Set to Next types 40-45
+    // (0x28-0x2D) are the people and 46-51 (0x2E-0x33) the neighbors, each
+    // taking one species; the type 1 (the people) and the type 5 (the neighbor
+    // ID) take only the humans (docs/primitives-mac.md §0x1F).
+    int16_t speciesLo = 0, speciesHi = 0;
     switch (type) {
-    case 5: return nextNeighbor([](int16_t, const Neighbor&) { return true; });                       // neighbor id
+    case 1: case 5: case 40: case 46: speciesLo = 0, speciesHi = 0; break;
+    case 41: case 47: speciesLo = INT16_MIN, speciesHi = -1; break;
+    case 42: case 48: speciesLo = 1, speciesHi = 2; break;
+    case 43: case 49: speciesLo = 1, speciesHi = 1; break;
+    case 44: case 50: speciesLo = 2, speciesHi = 2; break;
+    case 45: case 51: speciesLo = 3, speciesHi = 3; break;
+    default: break;
+    }
+    auto speciesOk = [&](const std::array<int16_t, kPersonDataCount>& pd) {
+        const int16_t s = pd[persondata::Species];
+        return s >= speciesLo && s <= speciesHi;
+    };
+    switch (type) {
+    case 5: return nextNeighbor([&](int16_t id, Neighbor& n) { return speciesOk(neighborData(c.vm, id, n)); }); // neighbor id
     case 7: return nextNeighbor([guid](int16_t, const Neighbor& n) { return n.guid == guid; });      // neighbor of type
+    case 46: case 47: case 48: case 49: case 50: case 51: // the neighbors of one species (0x2E-0x33)
+        return nextNeighbor([&](int16_t id, Neighbor& n) { return speciesOk(neighborData(c.vm, id, n)); });
     case 17: {                                                                                        // neighbor of family in temp 0
         const int16_t family = c.thread.temps[0];
         return nextNeighbor([&](int16_t id, Neighbor& n) { return neighborData(c.vm, id, n)[persondata::FamilyNumber] == family; });
@@ -470,7 +491,10 @@ Exit setToNext(Context& c) {
     uint32_t ofGuid = 0; // types 4 and 18
     switch (type) {
     case 0: matches = [](const Object&) { return true; }; break;                   // object
-    case 1: matches = [](const Object& x) { return x.person.has_value(); }; break;  // person
+    case 1:                                                                        // person (the humans only)
+    case 40: case 41: case 42: case 43: case 44: case 45:                          // the people of one species
+        matches = [&](const Object& x) { return x.person.has_value() && speciesOk(x.person->data); };
+        break;
     case 2: matches = [](const Object& x) { return !x.person; }; break;             // non-person
     case 4:                                                                         // object of type
     case 18: {                                                                      // object of type GUID in temp 0/1
@@ -523,6 +547,9 @@ Exit setToNext(Context& c) {
     case 27:                                                                        // utility using object
         matches = [](const Object& x) { return x.data[76] != 0 || x.data[77] != 0; };
         break;
+    case 33:                                                                        // hauntable (the definition's field 0x1C)
+        matches = [](const Object& x) { return x.definition && x.definition->field(0x1C) != 0; };
+        break;
     case 37: { // want category in temp 0: OBJD field 0x2F (offset 0x9E), as the want trees' categories (BV TrySetToNext 0x25)
         const int16_t category = c.thread.temps[0];
         matches = [category](const Object& x) { return x.definition && int16_t(x.definition->field(0x9E)) == category; };
@@ -533,17 +560,18 @@ Exit setToNext(Context& c) {
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
         throw gameError(err::BadSearchType, "Set to Next type " + std::to_string(type));
     }
-    // People (1) and a definition's instances (4, 18) are their own
-    // vectors in TrySetToNext (GetNextPerson BV 0xe2521c; the selector's
-    // instances): the one after the current one, which must be in it (a
-    // current object that is not, as "Dartboard - Shoo Sims" leaves the
-    // dartboard there between people, ends the search: false); 0 starts
-    // at the first. Their order: Object::appendOrder.
-    if (type == 1 || type == 4 || type == 18) {
+    // People (1, and the species ones 40-45) and a definition's instances
+    // (4, 18) are their own vectors in TrySetToNext (GetNextPerson BV
+    // 0xe2521c; the selector's instances): the one after the current one,
+    // which must be in it (a current object that is not, as "Dartboard -
+    // Shoo Sims" leaves the dartboard there between people, ends the search:
+    // false); 0 starts at the first. Their order: Object::appendOrder.
+    const bool people = type == 1 || (type >= 40 && type <= 45);
+    if (people || type == 4 || type == 18) {
         // The candidates by ID, as a walk over every object would meet them:
         // the people, or the objects of the GUID (both kept by the VM).
         std::vector<const Object*> v;
-        for (const ObjectId id : type == 1 ? c.vm.people() : c.vm.objectsOfGuid(ofGuid))
+        for (const ObjectId id : people ? c.vm.people() : c.vm.objectsOfGuid(ofGuid))
             if (const Object* x = c.vm.object(id); x && matches(*x))
                 v.push_back(x);
         std::sort(v.begin(), v.end(), [](const Object* a, const Object* b) { return a->appendOrder < b->appendOrder; });

@@ -60,7 +60,7 @@ int cmdPrimUsage(const std::string& res, uint16_t opcode, size_t examples) {
             v.emplace_back(n, x);
         std::sort(v.rbegin(), v.rend());
         std::printf("  byte %2zu (%3zu values):", k, v.size());
-        for (size_t j = 0; j < v.size() && j < 10; ++j)
+        for (size_t j = 0; j < v.size(); ++j)
             std::printf(" %02X x%zu", v[j].second, v[j].first);
         std::printf("\n");
     }
