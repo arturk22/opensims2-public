@@ -81,9 +81,22 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       navy em todas as bordas e 1 px de (157,171,241) por dentro nas pontas);
       fechado, o endcap vai ao fim do sort (588) e o repeat (`0x4CC48AA6`) estica
       até lá (265..503); o pod sobe 3 px (a pílula em 516/396) em Buy, Build e Live.
-- [ ] **5. Buy §1.4 — "6 de 53"** (cadeiras B120): `[BLOQUEADO: perguntar ao Artur se a
-      captura do original era de instalação limpa, sem Downloads/CC]`; tentar fechar também
-      por RE (o que o campo 94 & 1 esconde / a leitura do knob da barra). Não trava a fila.
+- [x] **5. Buy §1.4 — "6 de 53"** (cadeiras B120): **FECHADO 21/10, sem depender da memória
+      do Artur** — a captura do jogo mostra 53 cadeiras e o port conta 47; os 6 a mais
+      **não vêm dos mods desta máquina** (censo medido): o `README_MODS.txt` do backup
+      (`_MOD_BACKUP_20261016`) lista o que estava instalado — TS2 Extender (1.0.0 UC),
+      Lighting Mod UC v1.4.0, `userStartup.cheat` e o tema Starship UI — e nenhum deles
+      acrescenta objetos de catálogo: o `ObjectScripts.package` do Extender (instalado no
+      SP9 e o original no backup) tem **0 OBJD** (só scripts: 497 recursos 0x9012468B e 65
+      0x9012468A), o mod de luz só mexe em iluminação (os 4 "cadeiras" dos `Overrides` do
+      SP9 são os GUID 128AC80D, B28AC9D7, 128AD07E e 128AC991 — os mesmos das 47, ou seja
+      *overrides* de textura, não entradas novas), e o tema de UI não tem objetos. Logo os
+      6 extras da captura eram conteúdo que esta máquina **não tem mais**: o `Downloads` do
+      usuário (o Extender instalava `ld_*.package` em `Downloads\Gameplay` e o Starship UI,
+      9 packages, em `Downloads\UI`; o backup guardou só os arquivos substituídos, não o
+      `Downloads`). A leitura do knob da barra já estava feita (§1.4: 304 px de 619 numa
+      lista de 26 por página → 53 itens). O port conta a instalação: 47 cadeiras e 1666
+      compráveis.
 - [x] **6. `inventario-binario.md` §5** — itens portáveis e verificáveis no Windows, em ordem
       de facilidade de verificação (ex.: fila — pessoa 164, evento 4 do ActionSkipped, testes
       `0x214`/`0x2e8`; reset do od 7; slots byte 14 do Look At; NGBH u32 `+0x34`/`+0x38`;

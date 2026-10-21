@@ -138,10 +138,16 @@ O layout está no script (`s2pkg ui-dump … 49060004`). O código
   compráveis da instalação, Conforto 201 = 47+31+45+42+13+23). Conferido: a
   lista do `B120` não muda invertendo a prioridade dos packs, e nenhum
   candidato de `campo 94 & 1` é escondido pelos filtros (recompensa/Sim;
-  nenhum item só-comunitário). **Por conferir**: os 6 que faltam para os 53
-  da captura do jogo em 1280x720 (barra: 304 px de 619, 26 por página) só
-  se explicam por outra instalação (conteúdo próprio/loja?) ou pela leitura
-  do knob da barra.
+  nenhum item só-comunitário). **Resolvido 21/10**: os 6 que faltam para os 53
+  da captura do jogo em 1280x720 (barra: 304 px de 619, 26 por página) não vêm
+  dos mods desta máquina — o `README_MODS.txt` do backup `_MOD_BACKUP_20261016`
+  lista os que estavam instalados (TS2 Extender, Lighting Mod UC,
+  `userStartup.cheat`, Starship UI) e nenhum acrescenta objetos de catálogo: o
+  `ObjectScripts.package` do Extender tem 0 OBJD, os `Overrides` do mod de luz
+  só repetem GUIDs já contados (128AC80D, B28AC9D7, 128AD07E, 128AC991) e o
+  tema de UI não tem objetos. Eram conteúdo do `Downloads` do usuário, que esta
+  máquina não tem mais (o backup guardou só os arquivos substituídos). O port
+  conta a instalação: 47 cadeiras, 1666 compráveis.
 - **Sala** `0xC100…0xC900`: C100 sala de estar = 8, C200 jantar = 0x20,
   C300 exterior = 0x10, C400 diversos = 0x40 (oculto), C500 estudo = 0x80,
   C600 quarto = 2, C700 cozinha = 1, C800 crianças = 0x100, C900 banheiro

@@ -73,11 +73,17 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
 
 ### Outras pendências
 
-- **5 (Buy §1.4, "6 de 53"):** `[BLOQUEADO: Artur — a captura era instalação limpa, sem
-  Downloads/CC?]`; em paralelo, tentar fechar por RE (campo 94 & 1 / leitura do knob).
+- **5 (Buy §1.4, "6 de 53"):** **FECHADO 21/10** — o census provou que os mods desta máquina
+  (TS2 Extender, Lighting Mod UC, `userStartup.cheat`, Starship UI — o `README_MODS.txt` do
+  backup `_MOD_BACKUP_20261016`) **não** acrescentam objetos de catálogo: o
+  `ObjectScripts.package` do Extender tem 0 OBJD, os `Overrides` do mod de luz só repetem
+  GUIDs já contados e o tema de UI não tem objetos. Os 6 a mais da captura eram conteúdo do
+  `Downloads` do usuário, que esta máquina não tem mais (o backup guardou só os arquivos
+  substituídos). O port conta a instalação: 47 cadeiras, 1666 compráveis.
 - **6 (resto):** pessoa 164, ActionSkipped "evento 4", testes `0x214`/`0x2e8`, NGBH u32
   `+0x34`/`+0x38`, registros `+0x60c` e a troca de fila pela vtable `0x1FC` — todos pedem RE
-  do binário **Mac PPC** (indisponível nesta máquina).
+  do binário **Mac PPC**, que fica **com o mantenedor do Mac** (decidido pelo Artur em
+  21/10: "mac é com o mantenedor"). Não bloqueia mais nada aqui.
 - **8:** `soak-report` — erro recorrente do `N002_Lot32` (stub DBPF de 96 bytes, pacote
   vazio); fechar distinguindo/countando pacote vazio.
 - **7:** `performance.md` "What is left" — índice por tile, `notifyRoomChanges`/
@@ -155,8 +161,8 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    bits, não uma instância de árvore em nenhum escopo) — precisa do RE de `FUN_00407f8a` e do
    registro de tipos; `docs/re-pc-ghidra.md` §(d) tem o registro completo. As 2.876 chamadas
    do AL continuam dando erro 0x05 até a implementação.
-10. **6-resto / 5:** só com Mac PPC (não há) ou com a resposta/RE do Artur — ficam por
-    último, bloqueados, sem travar a fila.
+10. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
+    21/10); o item 5 fechou por censo. Ficam por último, sem travar a fila.
 
 ## Critérios de sucesso
 
