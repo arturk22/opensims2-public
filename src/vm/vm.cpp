@@ -1059,15 +1059,16 @@ void VM::tick() {
     tickWants(*this);   // wants.cpp
     handleTimers();
     tickHurry(*this); // animation.hpp: object data 85 hurries the requests (OnPreSimulatorTick)
-    // Objects created or removed during the tick: the IDs are read first;
-    // new objects get their turn from the next tick on.
-    std::vector<ObjectId> ids;
-    for (const auto& [id, _] : threads)
-        ids.push_back(id);
-    for (ObjectId id : ids) {
-        auto it = threads.find(id);
-        if (it == threads.end())
-            continue;
+    // Objects created or removed during the tick: the threads are read first
+    // (the map's nodes are stable, so the iterators stay valid while the
+    // tick runs); new objects get their turn from the next tick on, and the
+    // threads of the removed ones go at the end of it (deadThreads), so that
+    // walking the map does not look every thread up again.
+    threadIt_.clear();
+    for (auto it = threads.begin(); it != threads.end(); ++it)
+        threadIt_.push_back(it);
+    for (auto it : threadIt_) {
+        const ObjectId id = it->first;
         Thread& t = it->second;
         if (t.status == Thread::Status::Finished) {
             const Object* o = object(id);
@@ -1083,6 +1084,12 @@ void VM::tick() {
         if (t.status == Thread::Status::Failed && resetOnError)
             resetAfterError(id, t);
     }
+    // The threads of the objects removed during the tick go now (the ID and
+    // the serial: the ID may belong to a new object by now).
+    for (const auto& [id, serial] : deadThreads)
+        if (auto it = threads.find(id); it != threads.end() && it->second.serial == serial)
+            threads.erase(it);
+    deadThreads.clear();
     tickOverlayEvents(*this); // animation.hpp
     flushKillQueue(*this); // kill.hpp
     flushDestinations(*this); // go_here.hpp

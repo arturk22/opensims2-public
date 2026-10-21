@@ -1102,7 +1102,14 @@ void deleteGroup(VM& vm, ObjectId id) {
             deleteGroup(vm, h);
         runEntry(vm, part, entry::Delete);
         runEntry(vm, part, entry::Cleanup);
-        vm.threads.erase(part);
+        // The thread goes with it: it is killed (the status the run gives a
+        // thread whose object is gone) and dropped at the end of the tick (the
+        // tick walks the map by iterator, and the map's nodes are only stable
+        // while it is not erased).
+        if (auto it = vm.threads.find(part); it != vm.threads.end()) {
+            it->second.status = Thread::Status::Killed;
+            vm.deadThreads.emplace_back(part, it->second.serial);
+        }
         vm.removeObject(part);
     }
     vm.refreshObjectPortals();

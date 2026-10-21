@@ -266,15 +266,58 @@ What was done, each a commit:
   object table, cost more than the walks it saved (+1 G instructions).
   `OS2_CHECK_CONTAINED=1` checks the GUID lists too.
 
+## O tick sem reconsultar o mapa das threads (Windows, 21/10)
+
+O `VM::tick` copiava os IDs das threads para um vetor e depois procurava cada uma
+no `std::map` de novo (`threads.find`): uma busca por thread e por tick. No
+autonomy do `N001_Lot11` isso dava ~15% do tempo.
+
+O mapa é ordenado pelo ID e os nós de um `std::map` são estáveis, então o tick
+passa a guardar os **iteradores** das threads (num vetor que é membro da VM, sem
+alocar a cada tick) e usá-los direto: sem a busca no mapa. O único lugar que
+apaga uma thread durante o tick é o `deleteGroup` (o objeto vendido ou
+demolido): ele agora **mata** a thread (o status `Killed`, o mesmo que o
+`VM::run` dá a uma thread cujo objeto sumiu) e a anota em `VM::deadThreads` (o
+ID e o **serial** da thread: o ID vai para um objeto novo nesse meio tempo, e a
+thread dele não é a que some), e o tick a apaga no fim — assim os nós do mapa
+não somem enquanto o tick os usa. O comportamento é o de antes: as threads
+criadas durante o tick só recebem a vez no tick seguinte, e a thread de um
+objeto removido não roda.
+
+Medido no Windows (esta máquina, `S2PKG_NO_LIGHT=1`, `autonomy N001_Lot11
+--ticks 43200`, a saída comparada linha a linha):
+
+| | tempo | saída |
+| --- | --- | --- |
+| antes | 22,3 s / 21,3 s | — |
+| depois | 19,5 s / 18,2 s (a primeira, 26,7 s, é a do cache frio) | idêntica (as 516 linhas; só o ruído do shell difere) |
+
+`ctest` 39/39.
+
+**O que a mudança também conserta (e por que o sweep do AL muda em 3 árvores).**
+O `deleteGroup` (o objeto vendido ou demolido) apagava a thread do objeto
+**enquanto ela rodava**: o `std::map::erase` destrói o nó, e o `Thread&` que o
+`VM::run` está usando fica pendurado — comportamento indefinido (na prática, a
+thread continuava rodando com a memória liberada). Agora a thread é **morta**
+(o status `Killed`, o mesmo que o `VM::run` dá a uma thread cujo objeto sumiu,
+que é a regra do jogo) e apagada no fim do tick. Com isso o `bhav-sweep` do AL
+muda em 3 das 46.880 árvores: 18.625 → 18.622 true, 14.126 → 14.129 falhas, e
+as 4 "Slot number out of range" a mais são as árvores cuja thread foi morta
+no lugar de continuar com a memória liberada. O `autonomy` do `N001_Lot11` (onde
+não há venda) fica **idêntico** — as 516 linhas.
+
 ## What is left (not done)
 
 - An index of the objects by tile (`objectsOnTile`, `tileFree`, the placement tests) needs
   every write of `Object::position` through a setter: about 25 places in the VM and the app,
   130 in the tests. The hot callers walk the objects once for all their tiles instead.
 - Per tick: `notifyRoomChanges` (object data 29 is written in many places) and
-  `tickOverlayEvents` (the animation code) still walk every object; `VM::tick` copies the
-  threads' IDs and looks each one up in the map again (about 5% of an autonomy run).
+  `tickOverlayEvents` (the animation code) still walk every object.
 - The other Set to Next types walk the object list with a `std::function` test until the
-  next match (all of it when there is none).
+  next match (all of it when there is none). **Medido e sem ganho (21/10)**: trocar esse
+  `std::function` por um `switch` (o tipo e o parâmetro num struct) deu 22,2 s / 22,5 s
+  contra 22,3 s / 21,3 s do código antigo no mesmo workload — a chamada indireta não é
+  o custo (nesse workload os tipos que chegam ao teste genérico são raros), então a
+  mudança foi descartada.
 - Load: the Sims' textures take 45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's (round 11: kept between scenes, see above).
   8% of the resource bytes read at load are the same resource read twice (4.9 of 64 MB).

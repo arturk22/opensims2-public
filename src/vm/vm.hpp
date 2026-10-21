@@ -1386,6 +1386,16 @@ public:
     // what the save carries, not what the game's load trees do after.
     bool runLoadEntries = true;
     std::map<ObjectId, Thread> threads; // the Main threads
+    // The threads of the objects removed while the tick runs (deleteGroup):
+    // they are dropped at the end of it, so that the tick can walk the map
+    // without looking every thread up again. The ID and the thread's serial:
+    // the ID goes to a new object in the meantime, and that one's thread is
+    // not the one to drop.
+    std::vector<std::pair<ObjectId, uint64_t>> deadThreads;
+    // The threads of the tick, by iterator: the map's nodes are stable, so
+    // they stay valid while the tick runs (the vector is kept between ticks,
+    // so that no memory is allocated at each one).
+    std::vector<std::map<ObjectId, Thread>::iterator> threadIt_;
     // Instructions a thread may run in one turn before it fails as an
     // infinite loop: the game's "Too many iterations" (0x44D) after 100000
     // nodes a tick (cTSTreeSim::DoNodeAction BV 0xe1b18c; 300000 when the

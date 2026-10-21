@@ -111,7 +111,16 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       só de leitura 1–15) e a transação do persist system.
 - [ ] **7. `performance.md` "What is left"** — índice por tile, `notifyRoomChanges`/
       `tickOverlayEvents` por tick, "Set to Next" com `std::function`, texturas — com medidor
-      antes/depois.
+      antes/depois. **Um sub-item FEITO 21/10** — o `VM::tick` não reconsulta mais o mapa das
+      threads: guarda os **iteradores** (os nós de um `std::map` são estáveis) num vetor que
+      é membro da VM, e o `deleteGroup` mata a thread do objeto removido e a anota (ID +
+      serial) para o tick a apagar no fim. Medido no Windows (`autonomy N001_Lot11 --ticks
+      43200`): **22,3 s / 21,3 s → 19,5 s / 18,2 s**, com a saída **idêntica**; ctest 39/39.
+      A mudança também conserta um **comportamento indefinido** (o `deleteGroup` apagava a
+      thread do objeto removido enquanto ela rodava: agora ela é morta, como o jogo faz, e
+      apagada no fim do tick) — por isso o `bhav-sweep` do AL muda em 3 das 46.880 árvores
+      (18.625 → 18.622 true; o `autonomy` fica idêntico). O sub-item do "Set to Next sem
+      `std::function`" foi **medido sem ganho** e descartado (`performance.md`).
 - [ ] **8. Rapas pequenas**: `soak-report` (1 load error recorrente N002_Lot32), `audio.md`
       (SFX que soam como ruído — "sem nome para conferir"), itens corrigíveis do
       `live-qa-report.md`.

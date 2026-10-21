@@ -140,7 +140,24 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    `E001_Lot127` por 60 ticks; as versões foram medidas nos 20 pacotes do UC
    (`data-findings.md` §20).
 6. **7 — performance:** um sub-item por vez (índice por tile, notificações por tick, Set to
-   Next, texturas), medidor antes/depois no log; 1 commit por sub-item.
+   Next, texturas), medidor antes/depois no log; 1 commit por sub-item. **Primeiro sub-item
+   FEITO 21/10** — o `VM::tick` não reconsulta mais o mapa das threads: ele guarda os
+   **iteradores** (os nós de um `std::map` são estáveis) num vetor que é membro da VM, e o
+   `deleteGroup` passa a **matar** a thread do objeto removido e a anotá-la (ID + serial)
+   em `VM::deadThreads` para o tick a apagar no fim, em vez de apagar durante (o
+   comportamento é o de antes: as threads criadas no tick só recebem a vez no tick
+   seguinte, e a thread de um objeto removido não roda). Medido no Windows (`autonomy
+   N001_Lot11 --ticks 43200`, `S2PKG_NO_LIGHT=1`): **22,3 s / 21,3 s → 19,5 s / 18,2 s**
+   com a saída **idêntica** (as 516 linhas); build + ctest 39/39. A mudança também
+   conserta um **comportamento indefinido**: o `deleteGroup` apagava a thread do objeto
+   removido *enquanto ela rodava* (o `Thread&` do `VM::run` ficava pendurado); agora a
+   thread é **morta** (o status `Killed`, a regra do jogo) e apagada no fim do tick. Por
+   isso o `bhav-sweep` do AL muda em **3 das 46.880 árvores** (18.625 → 18.622 true,
+   14.126 → 14.129 falhas, e 4 "Slot number out of range" a mais: as árvores cuja thread
+   foi morta no lugar de continuar com a memória liberada). Fica de fora: o índice por
+   tile, `notifyRoomChanges`/`tickOverlayEvents` por tick e as texturas. O sub-item do
+   "Set to Next sem `std::function`" foi **medido sem ganho** (22,2/22,5 s contra
+   22,3/21,3 s) e descartado — o registro está em `performance.md`.
 7. **10 — painel do Build:** comparar com as capturas 30–34 como no item 4; corrigir;
    commit.
 8. **RayTrace 0x78:** ✅ **FECHADO 20/10** — o 0x78 resolve o ponto pelo slot do mesmo
