@@ -173,13 +173,16 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       para **2.090 ok / 19 falhas**; as 19 restantes são os 7 arquivos 0x53 (11 tabelas,
       layout ainda não fechado) e 12 com o `X` do segundo array ambíguo. 0x53 segue recusado
       com erro claro.
-- [ ] **14. Vizinhanças e lotes do AL** (achado do sub-item das contagens): o lote E001 do AL
-      não carrega — `NGBH: unsupported version 0xCB` (o port conhece 0x6F), `FAMI:
-      unsupported version 0x55` (conhece 0x4E), `SDSC: unsupported version 0x36` (conhece
+- [x] **14. Vizinhanças e lotes do AL** (achado do sub-item das contagens): **FECHADO 20/10** —
+      o lote E001 do AL não carregava - `NGBH: unsupported version 0xCB` (o port conhece 0x6F),
+      `FAMI: unsupported version 0x55` (conhece 0x4E), `SDSC: unsupported version 0x36` (conhece
       0x20), `NID: 20 trailing bytes` e `lot info: apartment base version not supported`
-      (`lot-run` de 18/10 em `E001_Lot127`); sem isso o port não lê as vizinhanças nem os
-      lotes salvos pelo UC/AL (o SDSC do AL deve ter mais person data que os 170 do base — o
-      runtime mediu até 230). Estender os leitores, medindo nos arquivos do UC.
+      (`lot-run` de 18/10 em `E001_Lot127`); os leitores foram estendidos medindo nos 20
+      pacotes do UC: o FAMI aceita 0x4E..0x55, o SDSC 0x20..0x36 (com o person data por
+      versão), o NGBH 0x6F/0x70/0xBE/0xC2/0xCB, o NID 3..0x0A e o lot info 18 com a base 11.
+      Medido: o `hood-sweep` do E001 passa de 0 Sims / 0 famílias / 0 lotes / 313 erros para
+      **234 Sims / 21 famílias / 56 lotes / 0 erros**, e o `lot-run` do `E001_Lot127` carrega
+      485 objetos (`data-findings.md` §20).
 
 ## Critérios de sucesso
 
