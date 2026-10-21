@@ -1025,6 +1025,15 @@ int16_t timeOfDay(int hour) {
 }
 
 void VM::tick() {
+    // A nested tick (there is none today: the app's loop, the autonomy loop
+    // and startLotObjects are the only callers) must not drop the dead
+    // threads: the iterators of the outer tick would dangle.
+    const bool outer = !ticking;
+    ticking = true;
+    struct Guard {
+        bool& flag;
+        ~Guard() { flag = false; }
+    } guard{ticking};
     // The calendar is 30-day months, as FreeSO's clock (not confirmed).
     if (++clock.tick >= clock.ticksPerMinute) {
         clock.tick = 0;
@@ -1064,10 +1073,11 @@ void VM::tick() {
     // tick runs); new objects get their turn from the next tick on, and the
     // threads of the removed ones go at the end of it (deadThreads), so that
     // walking the map does not look every thread up again.
-    threadIt_.clear();
+    std::vector<std::map<ObjectId, Thread>::iterator> its;
+    its.reserve(threads.size());
     for (auto it = threads.begin(); it != threads.end(); ++it)
-        threadIt_.push_back(it);
-    for (auto it : threadIt_) {
+        its.push_back(it);
+    for (auto it : its) {
         const ObjectId id = it->first;
         Thread& t = it->second;
         if (t.status == Thread::Status::Finished) {
@@ -1085,11 +1095,15 @@ void VM::tick() {
             resetAfterError(id, t);
     }
     // The threads of the objects removed during the tick go now (the ID and
-    // the serial: the ID may belong to a new object by now).
-    for (const auto& [id, serial] : deadThreads)
-        if (auto it = threads.find(id); it != threads.end() && it->second.serial == serial)
-            threads.erase(it);
-    deadThreads.clear();
+    // the serial: the ID may belong to a new object by now). Only the
+    // outermost tick drops them: a nested one would leave the iterators of
+    // the outer tick dangling.
+    if (outer) {
+        for (const auto& [id, serial] : deadThreads)
+            if (auto it = threads.find(id); it != threads.end() && it->second.serial == serial)
+                threads.erase(it);
+        deadThreads.clear();
+    }
     tickOverlayEvents(*this); // animation.hpp
     flushKillQueue(*this); // kill.hpp
     flushDestinations(*this); // go_here.hpp

@@ -1392,10 +1392,9 @@ public:
     // the ID goes to a new object in the meantime, and that one's thread is
     // not the one to drop.
     std::vector<std::pair<ObjectId, uint64_t>> deadThreads;
-    // The threads of the tick, by iterator: the map's nodes are stable, so
-    // they stay valid while the tick runs (the vector is kept between ticks,
-    // so that no memory is allocated at each one).
-    std::vector<std::map<ObjectId, Thread>::iterator> threadIt_;
+    // The tick is running (a nested one must not drop the dead threads: the
+    // iterators of the outer tick would dangle).
+    bool ticking = false;
     // Instructions a thread may run in one turn before it fails as an
     // infinite loop: the game's "Too many iterations" (0x44D) after 100000
     // nodes a tick (cTSTreeSim::DoNodeAction BV 0xe1b18c; 300000 when the
