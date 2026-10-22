@@ -134,7 +134,19 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   está no `re-pc-ghidra.md` §(e) e no `primitives-mac.md` §0x1F. Medição: o sweep do AL
   fica **idêntico** (**14.025.434 / 19.927 / 10.450**, 46.880 árvores) porque os dois
   tipos não executam no sweep. Fica só o **13** (a pessoa mais próxima, 1 uso, "Reaction -
-  Banter"). O **filtro comum** (`data 56
+  Banter").
+- **Achado novo em 22/10, fora do sweep (num lote de verdade)**: as chamadas **54–84**
+  da Generic Sims Call (0x01). O AL usa até **0x54** (~232 instruções acima de 53) e o
+  port recusava tudo acima de 53; com os dados do AL o **Main de todo Sim** do
+  `N001_Lot11` reiniciava **5.097 vezes** num dia (o `Function - Main - Set Skin` chama a
+  60, e o erro 0x2A matava o Main), com só 31/37/29 buscas e o Main em `Idle #0`; com os
+  dados do base o mesmo lote tem 0 resets e os Sims jogando xadrez/piano. Agora 54–84 são
+  **registradas em `VM::engineRequests` e devolvem verdadeiro** (o mesmo tratamento das
+  chamadas de motor do base; o limite do 0x2A sobe para 0x54). Medido no AL: o Main volta
+  a viver (`Wait For Notify #2`) e as buscas vão a **161/225/201**, com 86/60/109 resets
+  por outras falhas do AL; no base nada muda (**8/5/22/20 buscas, 0 resets**). O
+  `primitives-mac.md` §Generic Sims Call tem o censo e o A/B (devolver falso é muito
+  pior). O **filtro comum** (`data 56
   & 5` e `107`, com as flags 0x01/0x04) entrou no `eligible` no mesmo dia,
   gateado pelo layout de BV (o sweep do AL fica igual: no lote sintético os dois
   dados estão zerados; o jogo base não passa pelo filtro por construção).

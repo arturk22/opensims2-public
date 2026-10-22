@@ -3919,6 +3919,25 @@ volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
   anterior. Remover tira todos os laços entre os dois (confirmado). **Os
   irmãos são laços próprios** (tipo 3, também lidos do bairro), não "um
   pai em comum".
+- **As chamadas 54–84 (0x36–0x54) do AL.** A tabela do editor vai até 53 (a
+  do jogo base, 54 chamadas), mas o conteúdo do AL chama **até 0x54**: o
+  censo do `prim-usage` no AL dá 71 valores no byte 0 e **~232 instruções
+  acima de 53** (0x4E ×57, 0x3E ×34, 0x36 ×18, 0x51 ×11, 0x48 ×11,
+  0x38/0x37 ×10, 0x43 ×9, 0x4F/0x47/0x45/0x35 ×7, …, 0x54 ×2). A que dói é
+  a **60**: o `Function - Main - Set Skin` do semi-global do Sim
+  (`0x7F01EC29:0x22A4`, instrução 2) chama 60, e com o erro 0x2A do port o
+  **Main de todo Sim do lote reiniciava**: no `autonomy N001_Lot11 --ticks
+  24000` com os dados do AL, **5.097 resets por Sim**, o Main em `Idle #0` e
+  só 31/37/29 buscas; com os dados do base o mesmo lote fica com **0 resets**
+  e os Sims jogando xadrez/piano. O PC não tem rótulo para 54–84 (os rótulos
+  ficam no Mac, que para na tabela do base), então o port os trata como as
+  chamadas de motor do base: **registra em `VM::engineRequests` e devolve
+  verdadeiro** (o limite do erro 0x2A sobe para 0x54). Medido: o Main dos
+  Sims volta a viver (`Wait For Notify #2`) e as buscas vão a
+  **161/225/201**, com 86/60/109 resets por outras falhas do AL (orçamento de
+  instruções, break point, atributo). A alternativa (devolver **falso** sem
+  registrar) foi medida e é muito pior: o mesmo lote não terminou 24.000
+  ticks em 30 min, com 32 "too many look_at requests".
 
 ### Set to Next (`TrySetToNext`, BV `0xe47288`)
 

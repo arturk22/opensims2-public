@@ -1912,9 +1912,17 @@ Exit addToFamily(Context& c) {
 Exit genericSimsCall(Context& c) {
     // The call is the u16 at 0 (GenericSimCallParam); one the game does not
     // know is its error 0x2A (Mac binary: "Function - Main" of two objects
-    // passes 0xFFFF).
+    // passes 0xFFFF). The base game's editor labels have 54 calls (0-53);
+    // Apartment Life's content goes up to 0x54 (84): its Sim semi-globals'
+    // "Function - Main - Set Skin" (0x7F01EC29:0x22A4, instruction 2) calls
+    // 60, and the AL's BHAVs use 0x36-0x54 (prim-usage on the AL: ~230
+    // instructions). The PC data has no labels for those, so they are handed
+    // to the engine like the base's engine-only calls: recording the request
+    // and returning true is what lets the AL's Sims' Main run at all (with
+    // the error, every Sim on N001_Lot11 reset ~5,000 times in a day, its
+    // Main livelocked).
     const uint16_t call16 = le16(&c.instruction.operands[0]);
-    if (call16 > 53)
+    if (call16 > 84)
         throw gameError(err::InvalidGlobalSimCall, std::to_string(call16));
     const auto call = uint8_t(call16);
     auto& temps = c.thread.temps;
@@ -1951,6 +1959,11 @@ Exit genericSimsCall(Context& c) {
     case 47: // clear Sim hair override
     case 51: // show info on lot loading screen
     case 53: // set facial overlay state
+        return request();
+    case 54: case 55: case 56: case 57: case 58: case 59: case 60: case 61: case 62: case 63:
+    case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 71: case 72: case 73:
+    case 74: case 75: case 76: case 77: case 78: case 79: case 80: case 81: case 82: case 83:
+    case 84: // the AL calls beyond the base's table (no labels): the engine's
         return request();
     case 39: // force recalc of wants (wants.cpp)
         return wantsGenericCall(c);

@@ -1036,10 +1036,12 @@ static void testGenericSimsCall() {
                       call(25, go(14)),                                   // selected Sim := 2
                       call(48, E, go(15)),                                // no remapped IDs
                       call(52, E, go(16)),                                // wall in front: no world, no wall
-                      call(60, T)}));                                     // no such call
+                      call(60, go(17)),                                   // the AL's calls beyond the base's 54: an engine request
+                      call(85, T)}));                                     // no such call (the AL's table goes to 0x54)
     Thread t = fx.run(0x1000);
     check(t.status == Thread::Status::Failed && t.error.find("Invalid global sim call.") != std::string::npos &&
-              fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 38 &&
+              fx.vm.engineRequests.size() == 2 && fx.vm.engineRequests[0].call == 38 &&
+              fx.vm.engineRequests[1].call == 60 &&
               sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 3 &&
               fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 1 && !fx.vm.buildBuyEnabled &&
               fx.vm.globals[global::Paused] == 1 && fx.vm.globals[global::SelectedPersonId] == 2,
