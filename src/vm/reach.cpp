@@ -473,7 +473,7 @@ std::vector<std::string> carryOverlays(VM& vm, const Object& sim, const std::str
 // direction (docs/seat-mac.md §B).
 void putInSlot(VM& vm, Object& x, const Object& container, int slot) {
     vm.setContainer(x, container.id, int16_t(slot));
-    x.position = container.position;
+    vm.setPosition(x, container.position);
     x.data[objdata::Room] = container.data[objdata::Room];
     x.data[objdata::Direction] = container.data[objdata::Direction];
     x.route.reset();
@@ -568,7 +568,7 @@ Exit reachPut(Context& c) {
                     putInSlot(c.vm, *x, *to, r.slot);
                 } else {
                     c.vm.setContainer(*x, 0, -1);
-                    x->position = {float(r.floor.x) + 0.5f, float(r.floor.y) + 0.5f, r.floor.level};
+                    c.vm.setPosition(*x, {float(r.floor.x) + 0.5f, float(r.floor.y) + 0.5f, r.floor.level});
                     x->data[objdata::Direction] = me.data[objdata::Direction];
                     if (c.vm.world)
                         x->data[objdata::Room] = c.vm.world->room(r.floor);
@@ -916,7 +916,7 @@ Exit snap(Context& c) {
         me.route->loco = Object::Route::Loco{};
     const Position from = me.position;
     const int fromDir = me.data[objdata::Direction];
-    me.position = {px, py, level};
+    c.vm.setPosition(me, {px, py, level});
     // The direction: the slot's only when it "snaps to direction" (flag
     // 0x1000, the slot's vtable 0xE4: the target's direction turned by the
     // bone's or the slot's); otherwise the snapped object keeps its own
@@ -940,9 +940,11 @@ Exit snap(Context& c) {
         for (ObjectId id : parts) {
             Object& part = *c.vm.object(id);
             const float dx = part.position.x - from.x, dy = part.position.y - from.y;
-            part.position.x = me.position.x + float(dx * std::cos(a) - dy * std::sin(a));
-            part.position.y = me.position.y + float(dx * std::sin(a) + dy * std::cos(a));
-            part.position.level = me.position.level;
+            Position moved = part.position;
+            moved.x = me.position.x + float(dx * std::cos(a) - dy * std::sin(a));
+            moved.y = me.position.y + float(dx * std::sin(a) + dy * std::cos(a));
+            moved.level = me.position.level;
+            c.vm.setPosition(part, moved);
             part.data[objdata::Direction] = int16_t(((part.data[objdata::Direction] + turn) % 8 + 8) % 8);
             if (c.vm.world)
                 part.data[objdata::Room] = c.vm.world->room(VM::tileOf(part));

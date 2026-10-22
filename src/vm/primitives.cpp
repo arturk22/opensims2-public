@@ -996,7 +996,7 @@ Exit createObjectInstance(Context& c) {
                              y->position.level, y->data[objdata::Direction]);
     } else if (at) {
         if (Object* y = c.vm.object(created))
-            y->position = *at;
+            c.vm.setPosition(*y, *at);
     }
     if (c.vm.initCreatedObjects && (flags & 0x12))
         if (auto it = c.vm.threads.find(created); it != c.vm.threads.end() && !it->second.stack.empty()) {

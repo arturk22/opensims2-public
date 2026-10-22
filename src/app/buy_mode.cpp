@@ -303,11 +303,11 @@ void BuyMode::preview(const vm::Placement& p) {
         if (!o)
             continue;
         o->data[vm::objdata::Direction] = int16_t(p.direction);
-        o->position = {float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
+        vm_.setPosition(*o, {float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level});
         vm_.setContainer(*o, p.ok ? p.container : vm::ObjectId(0), int16_t(p.ok && p.container ? p.slot : -1));
         if (p.ok && p.container)
             if (const vm::Object* c = vm_.object(p.container))
-                o->position = c->position;
+                vm_.setPosition(*o, c->position);
     }
 }
 
@@ -399,7 +399,7 @@ void BuyMode::holdAt(int x, int y, int direction, bool autoRotate) {
             for (vm::ObjectId part : vm::groupOf(vm_, held_)) {
                 view_.forget(part);
                 if (vm::Object* o = vm_.object(part))
-                    o->position = vm::Position{};
+                    vm_.setPosition(*o, vm::Position{});
             }
             std::swap(held_, twin_);
         }

@@ -330,11 +330,31 @@ O `bhav-sweep` do AL leva ~10 min para 12,9 M instruções — o custo dele é a
 simulação; por isso as comparações de fidelidade usam as contagens de
 instruções e não o relógio.
 
+## O índice por tile (22/10)
+
+`objectsOnTile` era a varredura mais cara da simulação: no `N001_Lot11` com os
+dados do AL, **35.799 chamadas x ~1.300 objetos = 47,1 M verificações** em
+3.600 ticks (e o `objectsAround` mais 4,5 M). O `VM` agora tem um índice
+`TilePos -> ObjectId` (`VM::tiles_`), construído na primeira consulta e mantido
+pelo `VM::setPosition` — todas as escritas de `Object::position` do VM e do app
+passam por ele: o `moveTo` do routing, o `placement`, os teleportes, os
+contêineres (`followContainers`, `PlaceInSlot`) e o buy/build — e pelo
+`removeObject`. A consulta devolve os IDs da tile **em ordem de ID**, como a
+varredura; um passo que não troca de tile (a caminhada) não mexe nos baldes.
+
+Medido no `autonomy N001_Lot11 --ticks 3600` com os dados do AL (os Sims
+trabalhando: 24 a 37 buscas/escolhas por Sim) e `S2PKG_NO_LIGHT=1`:
+**6,71 s → 4,25-4,68 s** (~35% menos), com a saída idêntica (as mesmas
+buscas/escolhas e motivos). O `objectsAround` **continua varrendo**: o raio das
+buscas de "o mais próximo" passa de 20 tiles, e andar (2r+1)² baldes custou 3x
+mais que a varredura (19,4 s contra 6,7 s, medido e revertido).
+
+`OS2_CHECK_TILE_INDEX=1` compara cada `objectsOnTile` com a varredura completa e
+imprime a divergência: rodado no ctest inteiro (39/39) e no `autonomy`, zero
+divergências. O `bhav-sweep` do AL não muda (14.025.434 / 19.927 / 10.335).
+
 ## What is left (not done)
 
-- An index of the objects by tile (`objectsOnTile`, `tileFree`, the placement tests) needs
-  every write of `Object::position` through a setter: about 25 places in the VM and the app,
-  130 in the tests. The hot callers walk the objects once for all their tiles instead.
 - Per tick: `notifyRoomChanges` (object data 29 is written in many places) and
   `tickOverlayEvents` (the animation code) still walk every object.
 - The other Set to Next types walk the object list with a `std::function` test until the

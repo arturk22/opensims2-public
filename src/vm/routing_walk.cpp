@@ -52,7 +52,7 @@ void setDirection(Object& o, int dir) {
 // Puts an object (not in a slot any more) at a point of a level and keeps its
 // room up to date.
 void moveTo(VM& vm, Object& o, float x, float y, int level) {
-    o.position = {x, y, level};
+    vm.setPosition(o, {x, y, level});
     if (vm.world)
         o.data[objdata::Room] = vm.world->room(VM::tileOf(o));
     onRoomChanged(vm, o.id); // SetLocation's FinishEditing
@@ -1470,7 +1470,9 @@ Exit findLocationFor(Context& c) {
     if (mode == 1) { // out of world: out of its container too (the binary's
                      // vtable 0x2ac "remove from world"; the car's "Sub - Send
                      // Passengers Out of World" loops until its slots are empty)
-        obj->position.x = obj->position.y = -1;
+        Position away = obj->position;
+        away.x = away.y = -1;
+        c.vm.setPosition(*obj, away);
         obj->route.reset();
         if (obj->data[objdata::ContainerId] != 0)
             leaveSlot(c.vm, *obj);

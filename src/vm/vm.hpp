@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <random>
 #include <set>
 #include <span>
@@ -1178,8 +1179,14 @@ public:
     // ladder), into World::objectPortals (routing_plan.cpp). Called when the lot
     // loads and when build or buy mode changes it.
     void refreshObjectPortals();
-    // Objects placed on a tile (in the world and not in a slot), by ID.
+    // Objects placed on a tile (in the world and not in a slot), by ID. The
+    // tile index (tiles_) is built on the first query and kept by setPosition
+    // and removeObject; a direct write to Object::position leaves it out of
+    // date, so every move goes through setPosition.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
+    // Sets an object's position and keeps the tile index up to date (the
+    // routing's moveTo, the placement, the teleports and the containers).
+    void setPosition(Object& o, Position p);
     // objectsOnTile of each of the (2r + 1)^2 tiles round `at`, in one walk
     // over the objects: [(dx + r) * (2r + 1) + dy + r].
     std::vector<std::vector<ObjectId>> objectsAround(TilePos at, int r) const;
@@ -1244,6 +1251,7 @@ public:
             it->second.person->objectRecords.clear();
         }
         if (auto it = objects_.find(id); it != objects_.end()) {
+            unindexObject(it->second);
             objectList_.erase(it->second.listOrder);
             if (const uint32_t g = it->second.guid(); g)
                 if (auto b = byGuid_.find(g); b != byGuid_.end())
@@ -1729,6 +1737,25 @@ private:
     // the only places that add or remove entries of objects_.
     std::vector<Object*> byId_;
     uint64_t tableGeneration_ = 0;
+    // Tile -> the objects whose position is on it (every object in the world,
+    // in a slot or not; the queries filter by container). Built by the first
+    // objectsOnTile/objectsAround and kept by setPosition and removeObject:
+    // the two scans over all the objects were 35.799 + 3.414 queries x ~1.300
+    // objects in 3.600 ticks of N001_Lot11 (with the AL data). A direct write
+    // to Object::position leaves it out of date (OS2_CHECK_TILE_INDEX=1
+    // compares every query with the full scan).
+    struct TileHash {
+        size_t operator()(TilePos t) const {
+            return (size_t(uint32_t(t.x)) * 73856093u) ^ (size_t(uint32_t(t.y)) * 19349663u) ^
+                   (size_t(uint32_t(t.level)) * 83492791u);
+        }
+    };
+    mutable std::unordered_map<TilePos, std::vector<ObjectId>, TileHash> tiles_;
+    mutable bool tilesBuilt_ = false;
+    void ensureTileIndex() const;
+    void indexObject(const Object& o) const;
+    void unindexTile(TilePos t, ObjectId id) const;
+    void unindexObject(const Object& o) const;
     // IDs in ID order, with a flag per ID: containedObjects(), the objects
     // with timers, destinationObjects().
     struct IdList {

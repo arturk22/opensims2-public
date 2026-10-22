@@ -302,7 +302,7 @@ int slotPlacementError(VM& vm, const Object& x, const Object& container, int slo
 
 void placeInSlot(VM& vm, Object& x, const Object& container, int slot) {
     vm.setContainer(x, container.id, int16_t(slot));
-    x.position = container.position;
+    vm.setPosition(x, container.position);
     x.data[objdata::Room] = container.data[objdata::Room];
     x.data[objdata::Direction] = container.data[objdata::Direction];
 }
@@ -410,7 +410,7 @@ std::vector<Held> heldParts(VM& vm, const Placement& p) {
             saved.push_back({part.id, o->position, o->data[objdata::Direction]});
             const bool there = !part.at && o->position.inWorld() && !o->data[objdata::ContainerId] && VM::tileOf(*o) == part.tile;
             if (!there)
-                o->position = placeOf(part);
+                vm.setPosition(*o, placeOf(part));
             o->data[objdata::Direction] = int16_t(p.direction);
             places.push_back(o->position);
         }
@@ -425,8 +425,10 @@ std::vector<Held> heldParts(VM& vm, const Placement& p) {
         out.push_back(std::move(h));
     }
     for (const Saved& s : saved)
-        if (Object* o = vm.object(s.id))
-            o->position = s.position, o->data[objdata::Direction] = s.direction;
+        if (Object* o = vm.object(s.id)) {
+            vm.setPosition(*o, s.position);
+            o->data[objdata::Direction] = s.direction;
+        }
     return out;
 }
 
@@ -997,11 +999,12 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
         if (!o)
             continue;
         o->data[objdata::Direction] = int16_t(p.direction);
-        o->position = part.at ? *part.at : Position{float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
+        vm.setPosition(*o, part.at ? *part.at
+                                   : Position{float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level});
         if (p.container) {
             vm.setContainer(*o, p.container, int16_t(p.slot));
             if (const Object* c = vm.object(p.container)) {
-                o->position = c->position;
+                vm.setPosition(*o, c->position);
                 o->data[objdata::Room] = c->data[objdata::Room];
             }
         } else {
@@ -1040,7 +1043,7 @@ void pickUp(VM& vm, ObjectId id) {
         Object* o = vm.object(part);
         if (!o)
             continue;
-        o->position = Position{};
+        vm.setPosition(*o, Position{});
         vm.setContainer(*o, 0, -1);
         runEntry(vm, part, entry::Pickup);
     }
@@ -1056,7 +1059,7 @@ ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance) {
     const ObjectId leadId = lead.id;
     for (ObjectId part : groupOf(vm, leadId)) {
         Object* o = vm.object(part);
-        o->position = Position{};
+        vm.setPosition(*o, Position{});
         vm.setContainer(*o, 0, -1);
     }
     // As cEdithObjectModule::MakeNewOutOfWorldObject (docs/primitives-mac.md

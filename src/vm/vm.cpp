@@ -1333,7 +1333,7 @@ void VM::followContainers() {
                 break;
             top = up;
         }
-        o.position = top->position;
+        setPosition(o, top->position);
         o.data[objdata::Room] = top->data[objdata::Room];
     }
 }

@@ -188,8 +188,18 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    thread é **morta** (o status `Killed`, a regra do jogo) e apagada no fim do tick. Por
    isso o `bhav-sweep` do AL muda em **3 das 46.880 árvores** (18.625 → 18.622 true,
    14.126 → 14.129 falhas, e 4 "Slot number out of range" a mais: as árvores cuja thread
-   foi morta no lugar de continuar com a memória liberada). Fica de fora: o índice por
-   tile, `notifyRoomChanges`/`tickOverlayEvents` por tick e as texturas. O sub-item do
+   foi morta no lugar de continuar com a memória liberada). **Segundo sub-item FEITO
+   22/10 — o índice por tile.** `objectsOnTile` varria os ~1.300 objetos a cada chamada
+   (35.799 chamadas em 3.600 ticks do `N001_Lot11` com o AL: 47,1 M verificações). O
+   `VM` agora mantém `tiles_` (`TilePos -> IDs`), construído na primeira consulta e
+   mantido pelo `VM::setPosition` — todas as escritas de `Object::position` do VM e do
+   app passam por ele — e pelo `removeObject`; a consulta devolve os IDs em ordem de ID,
+   e `OS2_CHECK_TILE_INDEX=1` compara cada uma com a varredura completa (ctest 39/39 e
+   `autonomy`: zero divergências). Medido no `autonomy N001_Lot11 --ticks 3600` com o
+   AL ativo: **6,71 s → 4,25-4,68 s** (~35% menos), saída idêntica; o `bhav-sweep` do
+   AL fica igual (14.025.434 / 19.927 / 10.335). O `objectsAround` fica na varredura:
+   com o índice nele o raio de 20+ tiles das buscas custava 3x mais (19,4 s). Ficam:
+   `notifyRoomChanges`/`tickOverlayEvents` por tick e as texturas. O sub-item do
    "Set to Next sem `std::function`" foi **medido sem ganho** (22,2/22,5 s contra
    22,3/21,3 s) e descartado — o registro está em `performance.md`.
 7. **10 — painel do Build:** **FEITO 21/10 pelo método do item 4** (as capturas 30–34 não
