@@ -379,6 +379,17 @@ hash `0x5A69D3D5` = o array de objetos do próprio Sim — o mesmo que o executo
 0x7E usa); o **Set to Next da classe base** é o `FUN_00938140` ✓ (o outro, com o
 `switch` do tipo de busca ✓).
 
+**O Set to Next da classe base implementa os tipos 0–51** (o `switch` do
+`FUN_00938140` tem um caso para cada número, de 0 a 51 ✓). O port implementa
+0–37 (mais os tipos de espécie 40–51, que entraram em 21/10 ✓); os que faltam
+são o **13, 19, 20, 31, 34, 38 e 39** — o AL usa os 38 e 39 em 39 árvores, e o
+`primitives-mac.md` §0x1F descreve os 38/39 numa frase só ("percorre uma lista
+por índice comparando dois campos com os temps 0 e 1 e devolve o GUID do achado
+nos temps 2 e 3"); o código do PC confirma que os dois percorrem uma **lista**
+(o elemento em +0x40 e a contagem em +0x28 do dono da lista) e comparam o
+elemento com os temps 0 e 1, mas falta saber qual lista e quais campos — por
+isso os tipos 38/39 continuam recusados (sem chute).
+
 **O modo 3 do Run Tree by Name (21/10).** O handler `FUN_008D3510` @ `0x8D3510`
 (escrito no `primitives-mac.md` §0x1C) resolve o nome (o pedido `FUN_00cd3fe0`
 com o id 0x12F) e depois bifurca no **byte 9** (o modo): 0 e 1 rodam a árvore do
