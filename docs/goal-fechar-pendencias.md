@@ -126,9 +126,8 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   & 5` e `107`, com as flags 0x01/0x04) entrou no `eligible` no mesmo dia,
   gateado pelo layout de BV (o sweep do AL fica igual: no lote sintético os dois
   dados estão zerados; o jogo base não passa pelo filtro por construção).
-- **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
-  em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
-  antes de implementar.
+- **12:** primitivas `0x7D`/`0x7E` — **fechado em 22/10**: o RE do PC está no
+  `re-pc-ghidra.md` §(g); sem interpretador de Lua o port devolve **false** (ver o item 9).
 - **14:** lotes/vizinhanças do AL — `NGBH 0xCB`, `FAMI 0x55`, `SDSC 0x36`, `NID +20` bytes e
   `lot info` de apartamento; medir nos arquivos do UC e estender os leitores.
 - **RayTrace (0x78):** usa a mesma convenção de slot do Look At (censo de 35 leituras
@@ -209,7 +208,7 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    `testRayTraceSlots` (o slot, o caso sem slot e o 0x1B) e sweep do AL medido (4 erros
    0x1B a mais, as árvores globais que pedem um slot que o objeto não tem — o que o jogo
    também dá); build+ctest 39/39.
-9. **12 - 0x7D/0x7E: FECHADO 22/10 — o RE do PC está completo e a recusa é a resposta honesta**
+9. **12 - 0x7D/0x7E: FECHADO 22/10 — o RE do PC está completo; a resposta é false desde 22/10**
    — no exe do PC (o build do AL) as duas primitivas estão na **classe base** (mesma tabela de
    despacho do RayTrace 0x78 e do Change Outfit 0x79), e não só no routing aggregate como no
    Mac: o gate de tipo de objeto é "qualquer objeto". Medidos: os handlers (`FUN_008b9bd0` Follow
@@ -230,10 +229,18 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    instrução, o `0x7E` com o id 49, e a entrada 49 da tabela é o mesmo nome). **Logo o
    `0x7E` roda um script Lua** (do `.objLua` do objeto); a árvore de descrição com o
    mesmo nome é o próprio chamador (a 0x0137 chama o próprio nome), então trocá-la
-   pelo script seria recursão. O port (e o upstream) não tê interpretador de Lua → a
-   recusa (erro 0x05) fica, agora com a mensagem dizendo por quê. O `0x7D` também recusa:
-   **1 uso** no AL (a 0x1001 "Function - Main" do grupo 0x7F649DA1) e o sentido do array de
-   objetos continua sem medida.
+   pelo script seria recursão. **O port não tem interpretador de Lua, mas a recusa
+   (erro 0x05) derrubava os lotes do AL**: os controladores do AL (LTA Superpowers,
+   Climate, Business - Customer Loyalty, Fish Pond Effects, Community Lot -
+   Populator...) e a Main dos Sims resetavam a cada poucos ticks — no `N001_Lot11`
+   com os dados do AL os 4 Sims ficaram com **0 buscas e 0 escolhas em 3.600 ticks**,
+   e **3.208 das 13.200 falhas** do sweep do AL eram esse Run Script. Desde 22/10 o
+   `0x7E` (e o `0x7D`) devolve **false** — o mesmo que o handler do jogo quando o
+   `run` do script/tree não acha o que rodar — e o lote volta a rodar (buscas,
+   escolhas, motivos andando), com os recursos de Lua inertes. Sweep do AL:
+   13.170.043 / 19.087 / 13.200 → **14.025.434 / 19.927 / 10.335**. O `0x7D` tem
+   **1 uso** no AL (a 0x1001 "Function - Main" do grupo 0x7F649DA1) e o sentido do
+   array de objetos continua sem medida; false também.
    `docs/re-pc-ghidra.md` §(g) e `docs/data-findings.md` §21 têm o registro completo.
 10. **Set to Next 38/39: FECHADO 22/10** — o 38 é a lista de definições do app filtrada
     pelos campos 75/76 (a categoria/subcategoria do seletor do AL; o GUID vai para os temps

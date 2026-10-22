@@ -292,9 +292,13 @@ static void testYieldAndErrors() {
     fx.vm.run(t);
     check(t.status == Thread::Status::Finished && t.temps[0] == 1, "resumes after yields");
 
-    fx.code.add(kObjGroup, 0x1001, tree({instr(0x7E, T, F)})); // not a primitive of the game
+    fx.code.add(kObjGroup, 0x1001, tree({instr(0x04, T, F)})); // an opcode the port has no handler for
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Failed && t.error.find("not supported") != std::string::npos, "unknown primitive fails");
+
+    fx.code.add(kObjGroup, 0x1007, tree({instr(0x7E, F, F)}));
+    t = fx.run(0x1007);
+    check(t.status == Thread::Status::Finished && !t.result, "Run Script (0x7E) answers false without a Lua interpreter");
 
     fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Div, Lit, 0, T, F)}));
     t = fx.run(0x1002);

@@ -516,10 +516,18 @@ comparar; e as **tabelas STR#** do `objects.package` do AL (`s2pkg dump`).
 
 **Conclusão p/ o port.** O RE do `0x7E` está **fechado** e a resposta é
 inequívoca: o que ele roda é um **script Lua**, e o port (como o upstream) não
-tê interpretador de Lua — e a substituição pela árvore de descrição
-com o mesmo nome seria uma recursão (o chamador é essa árvore). A recusa
-(erro 0x05) fica, agora com a mensagem dizendo o porquê. O `0x7D` também
-(recusa): 1 uso no AL e o sentido do array de objetos continua sem medida.
+tem interpretador de Lua — e a substituição pela árvore de descrição
+com o mesmo nome seria uma recursão (o chamador é essa árvore). **A recusa
+(erro 0x05) foi trocada por `false` em 22/10**: o handler do jogo devolve o que
+o `run` do script/árvore devolve (`vfunc 0x44`), e o erro derrubava os lotes do
+AL — os controladores do AL (LTA Superpowers, Climate, Business, Fish Pond
+Effects, Community Lot - Populator...) e a Main dos Sims resetavam a cada
+poucos ticks. No `N001_Lot11` com os dados do AL os 4 Sims fizeram **0 buscas e
+0 escolhas em 3.600 ticks**; com `false` voltaram a agir (3 a 8 buscas/escolhas
+em 600 ticks) e os controladores param de resetar, com os recursos de Lua
+inertes. Sweep do AL: 13.170.043 / 19.087 / 13.200 → **14.025.434 / 19.927 /
+10.335** (as 3.208 falhas de Run Script somem). O `0x7D` também devolve `false`:
+1 uso no AL e o sentido do array de objetos continua sem medida.
 
 ## (h) Contraprova no Mac 64 bits (a Super Collection): o pedido do `0x7E` é o mesmo, campo a campo (22/10)
 

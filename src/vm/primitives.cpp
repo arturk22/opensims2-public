@@ -1972,19 +1972,25 @@ static Exit noHandler(Context& c) {
 }
 static Exit tutorial(Context&) { return Exit::True; }
 
-// Follow Sim (0x7D) and Run Script (0x7E), the two Bon Voyage primitives the
-// PC executable has in its base class (the RE of 22/10, docs/re-pc-ghidra.md
-// §(g)): the 0x7E reads the name of the script in the STR# 0x130 table
-// ("Lua Scripts", 7.233 entries) and runs the Lua script of the object's
-// objLua file - the port has no Lua interpreter (neither has the upstream), so
-// the tree cannot run; the description tree with the same name is the caller
-// itself (the AL's "NPC - Get Outfit GUID for Type in T[0,1]" is a wrapper of
-// one instruction that calls its own name), so running it instead would be a
-// recursion. The game's error 0x05 is the honest answer.
-static Exit runScriptNoLua(Context& c) {
-    throw gameError(err::NotSupported, c.instruction.opcode == 0x7E ? "Run Script (0x7E): the port has no Lua interpreter"
-                                                                   : "Follow Sim (0x7D): not implemented");
-}
+// Follow Sim (0x7D) and Run Script (0x7E): the two Bon Voyage primitives of
+// the PC executable's base class (docs/re-pc-ghidra.md §(g)). The 0x7E
+// resolves the script name in the STR# 0x130 table ("Lua Scripts", 7.233
+// entries) and runs the object's Lua script (the `.objLua` file or the
+// description); the port has no Lua interpreter (neither has the upstream).
+// The game's handler returns what the run of the tree/script returns
+// (`vfunc 0x44`), so a script the port cannot run answers **false** instead
+// of failing the thread. Failing it reset the AL's controllers (LTA
+// Superpowers, Climate, Business - Customer Loyalty, Fish Pond Effects,
+// Community Lot - Populator...) and the Sims' Main every few ticks: on
+// N001_Lot11 with the AL data the 4 Sims did 0 searches and 0 picks in 3.600
+// ticks, and 3.208 of the AL sweep's 13.200 failures were this primitive.
+// With false the lot runs again (searches and picks, motives moving); the
+// Lua features stay inert. The description tree with the same name is the
+// caller itself (the AL's "NPC - Get Outfit GUID for Type in T[0,1]" is a
+// wrapper of one instruction that calls its own name), so running it instead
+// would be a recursion. The 0x7D has 1 use in the AL and the meaning of the
+// object array is still unmeasured: false as well.
+static Exit runScriptNoLua(Context&) { return Exit::False; }
 
 void registerPrimitives(VM& vm) {
     for (uint16_t op : {0x04, 0x05, 0x06, 0x09, 0x15, 0x18, 0x26, 0x27, 0x28, 0x29, 0x2B, 0x2C, 0x2F})
