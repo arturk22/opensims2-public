@@ -803,45 +803,63 @@ a 0x8b9f2c), o pedido `FUN_00cd3fe0` (que empacota o id) e o executor
 AL (`s2pkg prim-usage <Res> 7E`) e uma **implementação experimental** do 0x7E
 medida no AL (com instrumentação temporária, já revertida).
 
-**Achados (assembly).**
+**Achados (assembly, 22/10 — o handler inteiro, `0x8b9e00`–`0x8ba190`).**
 
-- **Escopo.** `MOV AL, byte ptr [ESI+8]` e `AND AL,0x1`: do byte de flags só o
-  **bit 0** é lido; os bits 1, 2 e 3 são recomputados a partir desse valor
-  (portanto valem 0), e o teste do bit 1 — o ramo "Private", que chamaria o
-  `vfunc 0x108` do objeto — é **código morto** neste build (`SHR BL,1` sobre um
-  valor já mascarado com 1). O escopo padrão é o **grupo global** (`0x7FD46CD0`);
-  o ramo "Semi-Global" (`vfunc 0x114` do objeto) só é tomado quando o byte em
-  `[ESP+0x12]` — o segundo byte do buffer de 3 bytes que o **vfunc 0x1c do
-  objeto** preenche — é diferente de zero. As strings "Global"/"Semi-Global"/
-  "Private" são o log do escopo, não a fonte dele.
-- **Nome.** O handler monta o nome do script com duas chamadas ao **objeto**
-  (`vfunc 0x1c` e `vfunc 0x18`) por `FUN_00407f8a`: o nome vem do objeto, e
-  não de um índice da lista de nomes de árvore.
-- **Dois pedidos.** O handler chama `FUN_00cd3fe0` duas vezes: a primeira com
-  o pai `0x2026960B`, a segunda com `0x4D45F8E6`, e registra "defined in
-  description" ou "defined in objLua file" — o script definido na descrição do
-  objeto ou num arquivo `.objLua` (o registro de scripts Lua, `FUN_007fd6c0`).
-- **Execução.** O pedido empacota o id como `(op0-1 << 16) | op2-3` e o
-  executor (`FUN_00cd3d80`) faz a busca assim:
+- **Layout dos operandos.** O handler recebe o bloco de 16 B dos operandos
+  **deslocado em -4** (`arg1 = &operands[-4]`): os bytes 0-1 são o **id do
+  STR#** (u16), os bytes 2-3 o **id do script** (u16, contado a partir de 1), o
+  byte 4 o **byte de flags**, o byte 5 não é lido, e os três pares (tipo
+  u8, valor u16) estão em 6/7-8, 9/10-11 e 12/13-14 (os mesmos offsets que o
+  `Run Tree by Name` usa para os parâmetros). O alinhamento foi conferido pelo
+  censo do AL: o id do STR# é sempre 304 (0x0130) nos bytes 0-1 ✓ e o byte
+  de flags (18 valores distintos) no byte 4 ✓.
+- **Flags (correção do que foi escrito em 21/10).** O byte é lido **sem
+  máscara**: o `MOV AX, word ptr [ESI+8]` recarrega o byte *antes* dos
+  shifts, então os quatro bits valem — **bit 0** = o segundo pedido (o
+  `.objLua`), **bit 1** = o escopo **privado** (`vfunc 0x108` do objeto),
+  **bit 2** = o escopo **semi-global** (`vfunc 0x114` do objeto) e **bit 3** =
+  o log ", Passing in params where param 0 = " (os parâmetros só vão para
+  o log). Sem bit 1 nem bit 2 o escopo é o **grupo global** (o dono
+  `0x7FD46CD0`). A leitura anterior ("só o bit 0 vale, o ramo Private é
+  código morto") estava errada: o `MOV AX` recarrega o byte sem a máscara
+  do `AND AL,1`.
+- **O pedido.** `FUN_00cd3fe0(this, idDoSTR#, idDoScript, dono, 1, tipo)`
+  empacota o id como `(idDoSTR# << 16) | idDoScript` e o executor
+  (`FUN_00cd3d80`) pergunta ao gerenciador
   `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, byte[0x25], 0)`
-  — ou seja, **o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo
-  do byte em 0x25**; se achado, o pedido marca o byte 0x24 ("achado") e copia o
-  **texto** do recurso (os vfuncs +0x18/+0x1C dele) para os **argumentos** do
-  pedido (os vfuncs +0x60/+0x6C), e depois libera o recurso (o vfunc +8). Os
-  **parâmetros** são os três pares (tipo u8, valor u16) dos bytes 6/7-8,
-  9/10-11 e 12/13-14, e o resultado da árvore é o resultado da
-  primitiva (e vai também para um temp, o log ", output result to ").
-- **Os dois pedidos.** O primeiro (referência `0x2026960B`) é o script "definido
-  na descrição" (o log "defined in description"); o segundo (referência
-  `0x4D45F8E6`) é o "definido num arquivo .objLua" (o log "defined in objLua
-  file") e só acontece quando o byte do objeto em `[ESP+0x12]` é diferente de
-  zero — o mesmo byte que escolhe entre o escopo global e o semi-global.
+  — o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo do dono.
+  **O `Run Tree by Name` (0x1C) usa exatamente o mesmo pedido** (o handler da
+  classe base `FUN_008d3510` chama `FUN_00cd3fe0(0x12F, idDaárvore, dono, 1,
+  0x2026960B)`): o id é o par **(STR# << 16) | id da árvore**, com o STR# do
+  0x1C fixo (0x12F) e o do 0x7E vindo dos dados.
+- **O que o pedido resolve.** O nome do script vem da tabela **STR# do id**,
+  na entrada **idDoScript - 1** (1-based), e a árvore com esse nome é
+  procurada no script do dono. Os dois pedidos são o mesmo par com o pai
+  diferente: `0x2026960B` = o script "definido na descrição" (o log "defined
+  in description") e `0x4D45F8E6` = o "definido num arquivo .objLua" (o log
+  "defined in objLua file"); o segundo só sai quando o bit 0 do byte de flags
+  está ligado.
+- **A tabela STR# 0x130 é "Lua Scripts".** Medido no `objects.package` do AL
+  (grupo global 0x7FD46CD0): o STR# 0x12F se chama **"Call Named Tree prim
+  string set"** (2.823 entradas) e o 0x130 se chama **"Lua Scripts"** (7.233
+  entradas) — é a lista dos scripts Lua do Bon Voyage. E o id do AL bate: a
+  árvore global 0x0137 "NPC - Get Outfit GUID for Type in T[0,1]" é **uma
+  única instrução** (o 0x7E com o id de script 49) e a entrada 49 da
+  tabela "Lua Scripts" é "NPC - Get Outfit GUID for Type in T[0,1]" ✓ (a
+  árvore 0x013A usa o id 50 → "NPC - Get Template GUID for Type in T[0,1]"
+  ✓). **Logo o 0x7E roda um script Lua** (do `.objLua` do objeto), não uma
+  árvore de descrição.
+- **O `run`.** O handler termina com `object->vfunc 0x44(<o nome>)` — o mesmo
+  "rode a árvore/script com este nome" que o 0x7D usa (lá com o valor do
+  parâmetro 0). Os pedidos, portanto, servem ao **log** do jogo (o "defined in
+  description"/"defined in objLua file") e não ao alvo.
 - **Censo do AL.** As 2.876 chamadas têm sempre o id 304 (0x130) nos bytes
   0-1 e o byte de flags 0xF9 (1.980), 0xFB (379), 0xFD (201), 0xF1 (171),
   0xF3 (35), 0x03 (24), 0x01 (24), 0xF5 (12), 0xFA (11), 0xF4 (10); o byte 5 é
-  0xFF em 2.801 e 0x00 em 75.
+  0xFF em 2.801 e 0x00 em 75. O bit 0 (o `.objLua`) está ligado em 2.849 e
+  desligado em 27.
 
-**Experimento (resultado negativo).** Implementar o 0x7E como "a árvore cujo
+**Experimento (resultado negativo, 21/10).** Implementar o 0x7E como "a árvore cujo
 nome é a entrada (op0-1 − 1) da lista de nomes de árvore do grupo do escopo
 (STR# 0x12F, a mesma do 'Run Tree by Name')" foi medido no AL: o `bhav-sweep`
 passa de 12.894.214 instruções, 18.625 true e 14.126 falhas para **13.175.936,
@@ -851,15 +869,21 @@ instructions)" (o nome aponta para uma árvore vazia) e 11 com "max stack depth
 exceeded" (recursão). A instrumentação mostrou por quê: 4.994 das 5.000
 primeiras chamadas caem no escopo semi-global do grupo global — que não
 existe (`semiGlobalFor(0x7FD46CD0) = 0`) — e as 6 do escopo global resolvem o
-nome "G - Apartment - Is NIDs Apartment?" sem achar a árvore. Como no binário
-o nome vem do **objeto** (e não de um índice) e o id 304 não é instância de
-árvore em nenhum escopo, o modelo foi **descartado** e o port continua recusando
-o 0x7E (erro 0x05).
+nome "G - Apartment - Is NIDs Apartment?" sem achar a árvore. O modelo estava
+**errado pelo motivo certo** (a lista é a de árvores, a de scripts Lua é a
+0x130) e foi **descartado**; o port continua recusando o 0x7E (erro 0x05).
 
-**Conclusão.** O que falta para o 0x7E: o sentido do byte em `[ESP+0x12]` (o
-que o `vfunc 0x1c` do objeto escreve) e a implementação do `vfunc +0xC` do
-gerenciador de recursos — a busca do recurso de tipo 0x89B7DC8 com o pai
-informado, que é onde o alvo é resolvido. O 0x7D (Follow Sim) continua recusado
-— o handler dele pede o array de objetos e a referência `0x2026960B`, e o que
-ele faz com o array ainda não foi medido.
+**Conclusão (22/10).** O RE do 0x7E está **fechado**: o pedido é o mesmo do
+0x1C (id = (STR# << 16) | id), o nome vem da tabela **STR# 0x130 = "Lua
+Scripts"** e o que roda é o **script Lua** do `.objLua` do objeto. O port (e o
+upstream) **não tê interpretador de Lua**, e a árvore de descrição com o
+mesmo nome é o próprio chamador (a global 0x0137 "NPC - Get Outfit GUID for
+Type in T[0,1]" é uma única instrução que chama o próprio nome), então
+rodar a árvore de descrição no lugar seria uma recursão. A recusa (erro
+0x05) é a resposta honesta e **não falta de RE**: o item 12 só fecha com
+isso. O 0x7D (Follow Sim) também recusa: no AL ele tem **1 uso** (a árvore
+0x1001 "Function - Main" do grupo 0x7F649DA1) e o handler dele (`FUN_008b9bd0`)
+peçe o array de objetos e a referência `0x2026960B` (o log ", output result to
+my object array") — o que ele faz com o array continua sem medida, e 1 uso não
+compensa um chute.
 

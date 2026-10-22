@@ -449,6 +449,78 @@ nessa porta (o 64 bits é uma reimplementação, não o binário original).
 comportamento** (como o Mac PPC do mantenedor), e o código do OpenSims2 é
 reimplementado a partir dele, nunca copiado.
 
+## (g) O `0x7E` (Run Script) e o `0x7D` (Follow Sim) no exe do PC: o pedido é o mesmo do `0x1C` e a tabela é "Lua Scripts" (22/10)
+
+**Pergunta.** O que faltava para o item 12 (implementar o `0x7E` e o `0x7D`): o
+sentido do byte em `[ESP+0x12]` e a implementação do `vfunc +0xC` do
+gerenciador de recursos.
+
+**Método.** As strings do exe ("defined in objLua file", "Semi-Global",
+"Private", "Global", "( Follow Sim in ", ", output result to ", "Named tree does
+not exist.") e quem as referencia (`FindString`); o handler do `0x7E`
+(`FUN_008b9e00` @ 0x8b9e00) lido **inteiro em assembly** (0x8b9e00–0x8ba190) e
+o do `0x7D` (`FUN_008b9bd0` @ 0x8b9bd0); o pedido (`FUN_00cd3fe0`) e o executor
+(`FUN_00cd3d80`); o handler do `0x1C` da **classe base** (`FUN_008d3510`) para
+comparar; e as **tabelas STR#** do `objects.package` do AL (`s2pkg dump`).
+
+**Achados.**
+
+- **Os handlers.** O `0x7E` = `FUN_008b9e00` (938 B) e o `0x7D` = `FUN_008b9bd0`
+  (554 B), no *routing aggregate* (a tabela de saltos em 0x8bab34 cobre os
+  opcodes 0x6C–0x7F; o `0x7E` é o thunk 0x8baa10 e o `0x7D` o 0x8ba9ed). O
+  `0x1C` da **outra** classe (a base) é o `FUN_008d3510`, e o seu layout de
+  operandos é o do port (flags em o[2], o nome em o[4], o modo em o[5]).
+- **O layout dos operandos do `0x7E`** (o bloco de 16 B dos operandos
+  **deslocado em -4**, `arg1 = &operands[-4]`): os bytes 0-1 = o **id do STR#**
+  (u16), 2-3 = o **id do script** (u16, 1-based), 4 = o **byte de flags**, 5 não
+  é lido, e os três pares (tipo u8, valor u16) em 6/7-8, 9/10-11 e 12/13-14.
+  Conferido pelo censo do AL: o id do STR# é sempre 304 (0x0130) em o[0..1] e o
+  byte de flags (18 valores) em o[4].
+- **O byte de flags (correção do que foi escrito em 21/10).** O byte é
+  recarregado **sem máscara** (`MOV AX, word ptr [ESI+8]`) antes dos shifts, então
+  os quatro bits valem: **bit 0** = o segundo pedido (o `.objLua`), **bit 1** =
+  o escopo **privado** (`vfunc 0x108` do objeto), **bit 2** = o escopo
+  **semi-global** (`vfunc 0x114`) e **bit 3** = o log ", Passing in params where
+  param 0 = ". Sem bit 1 nem bit 2 o escopo é o **grupo global** (o dono
+  `0x7FD46CD0`). A leitura anterior ("só o bit 0 vale, o ramo Private é
+  código morto") errou por causa do `MOV AX`.
+- **O pedido é o mesmo do `0x1C`.** `FUN_00cd3fe0(this, idDoSTR#,
+  idDoScript, dono, 1, tipo)` empacota o id como `(idDoSTR# << 16) | idDoScript`,
+  e o executor (`FUN_00cd3d80`) pergunta ao gerenciador
+  `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, byte[0x25], 0)`
+  — o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo do dono.
+  O `0x1C` da classe base faz o mesmo: `FUN_00cd3fe0(0x12F, idDaárvore, dono,
+  1, 0x2026960B)` — o id é o par **(STR# << 16) | id da árvore**, com o STR#
+  do `0x1C` fixo (0x12F) e o do `0x7E` vindo dos dados. Os dois pedidos do `0x7E`
+  são o mesmo par com o pai diferente: `0x2026960B` (o script "definido na
+  descrição") e `0x4D45F8E6` (o "definido num arquivo .objLua").
+- **A tabela STR# 0x130 é "Lua Scripts".** No `objects.package` do AL (grupo
+  global 0x7FD46CD0): o STR# 0x12F = **"Call Named Tree prim string set"** (2.823
+  entradas) e o 0x130 = **"Lua Scripts"** (7.233 entradas) — a lista dos scripts
+  Lua do Bon Voyage. O id do AL bate: a árvore global 0x0137 "NPC - Get Outfit
+  GUID for Type in T[0,1]" é **uma única instrução** (o `0x7E` com o id
+  de script 49) e a entrada 49 da tabela "Lua Scripts" é "NPC - Get Outfit GUID
+  for Type in T[0,1]" ✓ (a 0x013A usa o id 50 → "NPC - Get Template GUID for
+  Type in T[0,1]" ✓). **Logo o `0x7E` roda um script Lua** (do `.objLua` do
+  objeto), e a árvore de descrição com o mesmo nome é o próprio chamador
+  — a global 0x0137 chama o próprio nome.
+- **O `run`.** O handler termina com `object->vfunc 0x44(<o nome>)` — o mesmo
+  "rode a árvore/script com este nome" que o `0x7D` usa (lá com o valor do
+  parâmetro 0). Os pedidos servem ao **log** do jogo ("defined in
+  description"/"defined in objLua file"), não ao alvo.
+- **O `0x7D`.** O handler peçe o array de objetos (o próprio ou o do stack
+  object, conforme o byte 5) e faz o pedido com o STR# 0x118; o log diz
+  "( Follow Sim in ..., output result to ... my object array: <o nome
+  achado> )". No AL ele tem **1 uso** (a árvore 0x1001 "Function - Main" do
+  grupo 0x7F649DA1, a instrução #2).
+
+**Conclusão p/ o port.** O RE do `0x7E` está **fechado** e a resposta é
+inequívoca: o que ele roda é um **script Lua**, e o port (como o upstream) não
+tê interpretador de Lua — e a substituição pela árvore de descrição
+com o mesmo nome seria uma recursão (o chamador é essa árvore). A recusa
+(erro 0x05) fica, agora com a mensagem dizendo o porquê. O `0x7D` também
+(recusa): 1 uso no AL e o sentido do array de objetos continua sem medida.
+
 ## Cross-check REA (fechado em 17/10, ~22:38)
 
 Critério do goal da noite: o REA (ferramenta independente) confirma ≥1 achado do projeto `pcb`.

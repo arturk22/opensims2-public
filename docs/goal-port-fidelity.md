@@ -152,23 +152,30 @@ avisa quando liberar — "força total"). Untracked pré-existentes (`app_00.png
       do item 6 — globais **60**, object data **114**, person data **231** — com o
       `bhav-sweep` do AL zerado e o lote das 17 árvores (com o diálogo do Vida de
       Apartamento) sem nenhum deles; números no log de 18/10 ~03:55.
-- [ ] **12. Primitivas `0x7E` (Run Script) e `0x7D` (Follow Sim)** (achado do item 9): o port
+- [x] **12. Primitivas `0x7E` (Run Script) e `0x7D` (Follow Sim)** (achado do item 9): o port
       registra as duas como "sem handler" (erro 0x05), mas o AL usa `0x7E` em controladores —
       no lote resetam `Controller - Fish Pond Effects` (`Sub - Remove All Effects` #6),
       `- Business - Customer Loyalty` e `- Employee Management` (`Function - Main`); 2.213
       casos no sweep. A §2 do `primitives-mac.md` dá os handlers **de routing aggregate**
       (`TryRunScript`/`TryFollowSim`, "só BV") — implementar com o gate de tipo de objeto do
-      original. **RE do exe do PC feito (20/10 e 21/10)**: as duas estão na **classe base**
-      (não só no routing aggregate) e o handler do `0x7E` foi lido em assembly — do byte de
-      flags só o bit 0 vale (o ramo "Private" é código morto neste build), o escopo é o grupo
-      global por padrão e o semi-global quando o byte em `[ESP+0x12]` (que o `vfunc 0x1c` do
-      **objeto** preenche) não é zero, o **nome** do script vem do próprio objeto e o handler
-      faz dois pedidos (pais `0x2026960B` e `0x4D45F8E6`: "defined in description" × "defined
-      in objLua file"). Uma implementação experimental (a árvore pelo índice na lista de
-      nomes do grupo, STR# 0x12F) foi **medida e descartada**: reduzia as falhas do AL em
-      2.522 mas criava 232 "tree has no instructions" e 11 recursões (`data-findings.md` §21).
-      **Falta**: o sentido do byte em `[ESP+0x12]` e o `vfunc +0xC` do gerenciador de
-      recursos (a busca do recurso de tipo 0x89B7DC8), que é onde o alvo é resolvido.
+      original. **RE do exe do PC feito (20/10, 21/10 e 22/10)**: as duas estão na **classe base**
+      (não só no routing aggregate) e o handler do `0x7E` foi lido **inteiro em assembly**.
+      O byte de flags (o byte 4 dos operandos) tem quatro bits: o **bit 0** pede também o
+      `.objLua`, o **bit 1** é o escopo **privado** (`vfunc 0x108` do objeto), o **bit 2** o
+      **semi-global** (`vfunc 0x114`) e o **bit 3** só o log dos parâmetros; sem eles o
+      escopo é o grupo global (`0x7FD46CD0`). O pedido é **o mesmo do `Run Tree by Name`**:
+      o id empacotado `(STR# << 16) | id` e a busca
+      `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, byte[0x25], 0)`.
+      **A peça que faltava**: o STR# do id (304 no AL) é a tabela **"Lua Scripts"**
+      (7.233 entradas; o 0x12F é "Call Named Tree prim string set") e o id do script é
+      1-based nela — o AL bate ("NPC - Get Outfit GUID for Type in T[0,1]" é a entrada
+      49). **Logo o `0x7E` roda um script Lua** (do `.objLua` do objeto), e a árvore de
+      descrição com o mesmo nome é o próprio chamador (a global 0x0137 é uma única
+      instrução que chama o próprio nome). O port (e o upstream) não tê interpretador
+      de Lua, e trocar pela árvore de descrição seria recursão — a recusa (erro 0x05)
+      é a resposta honesta. **FECHADO 22/10**: o RE completo está em
+      `docs/re-pc-ghidra.md` §(g) e `docs/data-findings.md` §21, e a mensagem do erro
+      0x05 agora diz por quê (sem Lua).
 - [x] **13. TTAB 0x50/0x51/0x54/0x55 dos EPs** (achado do item 9): `interactions (TTAB) …:
       unsupported version 0x50/0x51/0x54/0x55` — as interações desses objetos ficam de fora
       (20 recursos só no `objects.package` do AL). Estender o leitor de TTAB às versões

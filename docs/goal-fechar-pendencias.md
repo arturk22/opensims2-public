@@ -196,43 +196,32 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    `testRayTraceSlots` (o slot, o caso sem slot e o 0x1B) e sweep do AL medido (4 erros
    0x1B a mais, as árvores globais que pedem um slot que o objeto não tem — o que o jogo
    também dá); build+ctest 39/39.
-9. **12 - 0x7D/0x7E:** **RE do PC FEITO 20/10, implementação bloqueada no último passo** — no exe
-   do PC (o build do AL) as duas primitivas estão na **classe base** (mesma tabela de despacho
-   do RayTrace 0x78 e do Change Outfit 0x79), e não só no routing aggregate como no Mac: o
-   gate de tipo de objeto é "qualquer objeto". Medidos: os handlers (`FUN_008b9bd0` Follow Sim
-   e `FUN_008b9e00` Run Script), o layout dos parâmetros (id u16, valor u16, byte de flags
-   do escopo Global/Semi-Global/Private e três pares (tipo, valor)), o id empacotado
-   `(op0-1 << 16) | op2-3` e o fallback para `.objLua`; no AL são 2.876 chamadas de 0x7E (id
-   sempre 304) e 21 de 0x7D. **O RE avançou em 21/10 (leitura em assembly do handler
-   `FUN_008b9e00`)**: do byte de flags só o **bit 0** é lido (os bits 1-3 são recomputados
-   a partir dele e valem 0, e o ramo "Private" é código morto neste build); o escopo é o
-   **grupo global** por padrão e o **semi-global** quando o byte em `[ESP+0x12]` — que o
-   `vfunc 0x1c` do **objeto** preenche — é diferente de zero; o **nome** do script vem do
-   objeto (`vfunc 0x1c` e `vfunc 0x18`), não de um índice; e o handler faz **dois pedidos**,
-   com os pais `0x2026960B` e `0x4D45F8E6` ("defined in description" × "defined in objLua
-   file"). **Experimento descartado (21/10)**: implementar o 0x7E como "a árvore pelo índice
-   na lista de nomes do grupo" (STR# 0x12F) até reduzia as falhas do AL em 2.522 (12.894.214 →
-   13.175.936 instruções, 18.625 → 19.271 true, 14.126 → 11.604 falhas), mas criava 232
-   falhas novas ("tree has no instructions") e 11 recursões: a instrumentação mostrou que
-   4.994 das chamadas caem no semi-global do grupo global (que não existe) e as do escopo
-   global não acham a árvore. Como o nome vem do objeto no binário, o modelo foi revertido e
-   o port **continua recusando o 0x7E** (erro 0x05). **Falta**: o sentido do byte em
-   `[ESP+0x12]` e o `vfunc +0xC` do gerenciador de recursos (a busca do recurso de tipo
-   0x89B7DC8), que é onde o alvo é resolvido; e o 0x7D ("Follow Sim"), cujo handler pede o
-   array de objetos e a referência `0x2026960B` (o que ele faz com o array não foi medido).
-   `docs/re-pc-ghidra.md` §(d) e `docs/data-findings.md` §21 têm o registro completo.
-   **O formato do pedido (21/10, mais tarde)**: o executor `FUN_00cd3d80` faz a busca
-   `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, pedido[0x25], 0)` —
-   **o recurso de tipo 0x89B7DC8 com a referência do pedido, no escopo**; achado, o pedido
-   marca o byte 0x24 e copia o **texto** do recurso para os **argumentos** do pedido (os
-   vfuncs +0x60/+0x6C) e o libera (o vfunc +8). O handler faz **dois** pedidos, o de
-   referência `0x2026960B` ("defined in description") e o de `0x4D45F8E6` ("defined in objLua
-   file"), e o segundo só sai quando o byte do objeto em `[ESP+0x12]` é ≠ 0 — o mesmo byte
-   que escolhe o escopo global × semi-global. O tipo `0x89B7DC8` **não é** um tipo de recurso
-   do conteúdo (censo do `objects.package` do base e do Bon Voyage: nada) — é um *hash* de
-   nome. **Falta**: a implementação do `vfunc +0xC` do gerenciador de recursos (achá-la exige
-   a vtable da classe, que o registro de classes cria por hash — a classe do gerenciador é
-   criada por `FUN_00427217` com os hashes `0x56B906E`/`0x656B8EFC`).
+9. **12 - 0x7D/0x7E: FECHADO 22/10 — o RE do PC está completo e a recusa é a resposta honesta**
+   — no exe do PC (o build do AL) as duas primitivas estão na **classe base** (mesma tabela de
+   despacho do RayTrace 0x78 e do Change Outfit 0x79), e não só no routing aggregate como no
+   Mac: o gate de tipo de objeto é "qualquer objeto". Medidos: os handlers (`FUN_008b9bd0` Follow
+   Sim e `FUN_008b9e00` Run Script), o **layout dos operandos** (o bloco de 16 B deslocado em
+   -4: o id do STR# em o[0..1], o id do script em o[2..3], o byte de flags em o[4], os três
+   pares (tipo u8, valor u16) em o[6]/o[7..8], o[9]/o[10..11] e o[12]/o[13..14]) e o **byte de
+   flags** (o bit 0 pede também o `.objLua`, o bit 1 é o escopo **privado** (`vfunc 0x108` do
+   objeto), o bit 2 o **semi-global** (`vfunc 0x114`) e o bit 3 só o log dos parâmetros; sem
+   eles o escopo é o grupo global `0x7FD46CD0` — a leitura de 21/10, "só o bit 0 vale e o
+   ramo Private é código morto", estava errada: o `MOV AX, word ptr [ESI+8]` recarrega o byte
+   sem a máscara do `AND AL,1`). **O pedido é o mesmo do `Run Tree by Name`**: o id
+   empacotado `(STR# << 16) | id` e a busca
+   `(**(code **)(*gerenciador + 0xC))(&pedido[5], 0x89B7DC8, &achado, byte[0x25], 0)` — o `0x1C`
+   da classe base (`FUN_008d3510`) pede do mesmo jeito, com o STR# 0x12F fixo. **A peça que
+   faltava (22/10)**: o STR# do id (304 no AL) é a tabela **"Lua Scripts"** (7.233 entradas; o
+   0x12F é "Call Named Tree prim string set") e o id do script é 1-based nela — o AL
+   bate (a global 0x0137 "NPC - Get Outfit GUID for Type in T[0,1]" é uma única
+   instrução, o `0x7E` com o id 49, e a entrada 49 da tabela é o mesmo nome). **Logo o
+   `0x7E` roda um script Lua** (do `.objLua` do objeto); a árvore de descrição com o
+   mesmo nome é o próprio chamador (a 0x0137 chama o próprio nome), então trocá-la
+   pelo script seria recursão. O port (e o upstream) não tê interpretador de Lua → a
+   recusa (erro 0x05) fica, agora com a mensagem dizendo por quê. O `0x7D` também recusa:
+   **1 uso** no AL (a 0x1001 "Function - Main" do grupo 0x7F649DA1) e o sentido do array de
+   objetos continua sem medida.
+   `docs/re-pc-ghidra.md` §(g) e `docs/data-findings.md` §21 têm o registro completo.
 10. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
     21/10); o item 5 fechou por censo. Ficam por último, sem travar a fila.
 

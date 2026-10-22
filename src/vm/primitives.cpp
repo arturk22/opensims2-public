@@ -1907,16 +1907,31 @@ Exit genericSimsCall(Context& c) {
 
 // Opcodes the game has no handler for (cTSObject::OnTryElement in the Mac
 // binary, base 1.0 and Bon Voyage; docs/primitives-mac.md §2): the game's
-// error 0x05. 0x7D Follow Sim and 0x7E Run Script are Bon Voyage only.
-// Tutorial (0x0A) returns true and does nothing.
+// error 0x05. Tutorial (0x0A) returns true and does nothing.
 static Exit noHandler(Context& c) {
     throw gameError(err::NotSupported, "opcode " + hexString(c.instruction.opcode));
 }
 static Exit tutorial(Context&) { return Exit::True; }
 
+// Follow Sim (0x7D) and Run Script (0x7E), the two Bon Voyage primitives the
+// PC executable has in its base class (the RE of 22/10, docs/re-pc-ghidra.md
+// §(g)): the 0x7E reads the name of the script in the STR# 0x130 table
+// ("Lua Scripts", 7.233 entries) and runs the Lua script of the object's
+// objLua file - the port has no Lua interpreter (neither has the upstream), so
+// the tree cannot run; the description tree with the same name is the caller
+// itself (the AL's "NPC - Get Outfit GUID for Type in T[0,1]" is a wrapper of
+// one instruction that calls its own name), so running it instead would be a
+// recursion. The game's error 0x05 is the honest answer.
+static Exit runScriptNoLua(Context& c) {
+    throw gameError(err::NotSupported, c.instruction.opcode == 0x7E ? "Run Script (0x7E): the port has no Lua interpreter"
+                                                                   : "Follow Sim (0x7D): not implemented");
+}
+
 void registerPrimitives(VM& vm) {
-    for (uint16_t op : {0x04, 0x05, 0x06, 0x09, 0x15, 0x18, 0x26, 0x27, 0x28, 0x29, 0x2B, 0x2C, 0x2F, 0x7D, 0x7E})
+    for (uint16_t op : {0x04, 0x05, 0x06, 0x09, 0x15, 0x18, 0x26, 0x27, 0x28, 0x29, 0x2B, 0x2C, 0x2F})
         vm.setPrimitive(op, noHandler);
+    for (uint16_t op : {0x7D, 0x7E})
+        vm.setPrimitive(op, runScriptNoLua);
     for (uint16_t op = 0x34; op <= 0x68; ++op)
         vm.setPrimitive(op, noHandler);
     vm.setPrimitive(0x0A, tutorial);
