@@ -977,8 +977,8 @@ Exit runTreeByName(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t mode = o[5];
     const uint16_t flags = le16(&o[2]);
-    if (mode > 2)
-        throw VMError("Run Tree by Name: mode " + std::to_string(mode) + " not implemented");
+    if (mode > 3)
+        throw gameError(err::BadNamedTreeParameter, "Run Tree by Name: mode " + std::to_string(mode));
 
     auto& code = c.vm.code();
     const Object* owner = c.vm.object(c.frame.codeOwner);
@@ -1030,6 +1030,25 @@ Exit runTreeByName(Context& c) {
     else
         std::copy_n(c.thread.temps.begin(), args.size(), args.begin());
     const ObjectId targetId = target.id;
+    if (mode == 3) {
+        // Mode 3: the tree of the object whose GUID is in the temps 0/1 (the
+        // low word in temp 0), run at once like the mode 0. The Mac's
+        // TryCallNamedTree and the PC's base class (FUN_008D3510, case 3) agree
+        // on this: the GUID is looked up in the world, the object gives its
+        // tree (its Main) and the tree runs in my stack, with the same
+        // arguments the other modes get. A GUID no object has is the game's
+        // error 0x7A ("You sent me a crappy GUID, please fix it.").
+        const uint32_t guid = uint16_t(c.thread.temps[0]) | uint32_t(uint16_t(c.thread.temps[1])) << 16;
+        const auto ids = c.vm.objectsOfGuid(guid);
+        const Object* obj = ids.empty() ? nullptr : c.vm.object(ids.front());
+        const uint16_t objTree = obj ? c.vm.functionTree(*obj, 1) : 0;
+        if (!objTree)
+            throw gameError(err::CrappyGuid, "Run Tree by Name: mode 3");
+        return runOneTickTree(c.vm, c.thread.temps, c.thread.me, obj->id, obj->id, objTree, args,
+                              c.thread.actionStrings)
+                   ? Exit::True
+                   : Exit::False;
+    }
     if (mode == 0)
         return runOneTickTree(c.vm, c.thread.temps, c.thread.me, targetId, targetId, *tree, args, c.thread.actionStrings)
                    ? Exit::True

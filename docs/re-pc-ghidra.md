@@ -371,15 +371,24 @@ não (0x0B "Gosub??", 0x0C "Reference to target object when none exists.",
 0x26 "Divide by zero.", 0x27 "Bad parameter in look towards primitive.", …) são
 os que nenhuma árvore implementada usa ainda.
 
-**O que a análise não resolveu.** O despacho da classe base (o `switch` pelos
-opcodes que chama os handlers das primitivas) não está no módulo 0x008FA–0x008FB
-(onde está a tabela de erros): as buscas por "case 0x1c:"/"case 0x1f:" nesse
-módulo acham só a própria tabela de erros. No módulo 0x008C–0x008F o `switch`
-por opcode é o do **routing aggregate** (`FUN_008CC270`: os casos 0x1F e 0x20
-são o *route to* e o *route failure*, com o hash `0x5A69D3D5` = o array de
-objetos do próprio Sim — o mesmo hash que o executor do 0x7E usa). O handler do
-Set to Next (e com ele os tipos 38/39, que o `primitives-mac.md` §0x1F descreve
-numa frase só) e o do Run Tree by Name continuam sem o RE completo.
+**O despacho da classe base.** O `switch` por opcode que chama os handlers das
+primitivas está em `FUN_008CC270` @ `0x8CC270` (módulo 0x008C–0x008F): os
+casos 0x1C e 0x1F chamam `FUN_008D3510` (Run Tree by Name) e `FUN_00938140`
+(Set to Next). O caso 0x1F do despacho é o *route to* do routing aggregate (o
+hash `0x5A69D3D5` = o array de objetos do próprio Sim — o mesmo que o executor do
+0x7E usa); o **Set to Next da classe base** é o `FUN_00938140` ✓ (o outro, com o
+`switch` do tipo de busca ✓).
+
+**O modo 3 do Run Tree by Name (21/10).** O handler `FUN_008D3510` @ `0x8D3510`
+(escrito no `primitives-mac.md` §0x1C) resolve o nome (o pedido `FUN_00cd3fe0`
+com o id 0x12F) e depois bifurca no **byte 9** (o modo): 0 e 1 rodam a árvore do
+*stack object* na hora, 2 empilha, e o **3** (o caso novo) pega o **GUID nos
+temps 0/1** (a palavra baixa no temp 0), procura o objeto no mundo, pega a
+**árvore do objeto** (o vfunc +0x48) e a roda na hora como o modo 0; um GUID que
+nenhum objeto tem é o erro **0x7A** ("You sent me a crappy GUID, please fix
+it.") e um modo fora de 0–3 é o **0x2C** ("Bad parameter to call named tree.").
+No AL o modo 3 vem logo depois de um **0x7E** (Run Script), que é quem põe o
+GUID nos temps.
 
 **Os rótulos dos modos do Run Tree by Name.** O editor guarda os rótulos no
 STR# `0xDE` do grupo `0x7FE59FD0` ("how to call named tree"): no **jogo base**

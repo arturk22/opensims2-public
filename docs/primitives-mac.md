@@ -4649,6 +4649,19 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
 - **0x1C Run Tree by Name**: flags u16 2 (0x01/0x02 de onde vem o nome,
   0x04 e 0x08 impressos como true/false, 0x10 passa três (dono, dado) em 6,
   9, 12, 0x20 passa os parâmetros da árvore atual); modo byte 5 (STR# 0xDE).
+
+  **O modo 3 (21/10, pelo exe do PC).** Os rótulos do editor (STR# 0xDE do
+  grupo 0x7FE59FD0, "how to call named tree") são três no **jogo base** — "run in
+  my stack" (0), "run in stack object's stack" (1) e "push onto my stack" (2); o
+  **modo 3 é do Bon Voyage** (o AL o usa em 648 árvores) e o erro do jogo para um
+  modo fora da lista é o **0x2C** ("Bad parameter to call named tree."). O handler
+  da classe base do PC (`FUN_008D3510` @ `0x8D3510`, o caso 3) diz o que ele faz:
+  o **GUID nos temps 0/1** (a palavra baixa no temp 0) é procurado no mundo, o
+  objeto achado dá a **própria árvore** (o vfunc +0x48 dele) e ela roda na hora,
+  como o modo 0, com os mesmos argumentos; um GUID que nenhum objeto tem é o
+  erro **0x7A** ("You sent me a crappy GUID, please fix it."). No AL o modo 3
+  vem logo depois de um **0x7E** (Run Script) — que é justamente quem põe o GUID
+  nos temps.
 - **0x1D Set Motive Change**: motivo byte 2 ("motive" n), += (dono byte 0,
   dado u16 4) por hora, até (dono byte 1, dado u16 6); byte 3: 0x01 limpa
   todos, 0x02 zera a "Motive Decay" dos dados de pessoa.

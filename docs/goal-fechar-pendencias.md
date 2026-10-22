@@ -105,10 +105,13 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   mesmo dia**: os tipos de espécie (40-45, as pessoas, e 46-51, os vizinhos, pelo dado de
   pessoa 186), o tipo 33 (Hauntable) e o **índice do texto do Add/Change the Action String**
   (o u8 em 4 na versão de nó 0 e o u16 em 14 na versão de nó 1 - o port lia sempre o byte 4,
-  e no BV as árvores que montam uma action string não achavam a string). O sweep do AL passa
-  de 12.894.204 instruções, 18.622 true e 14.129 falhas para **12.917.222, 19.007 true e
-  13.485 falhas**; as buscas de tipo inválido caem de **888 para 70** e as action strings sem
-  índice, de **364 para 47**.
+  e no BV as árvores que montam uma action string não achavam a string), e o **modo 3 do Run
+  Tree by Name** (o RE do exe do PC: o GUID nos temps 0/1 → o objeto → a árvore dele, rodada
+  na hora como o modo 0; o erro 0x2C para um modo inválido e o 0x7A para um GUID que
+  nenhum objeto tem). O sweep do AL passa de 12.894.204 instruções, 18.622 true e 14.129
+  falhas para **13.124.187, 19.070 true e 13.228 falhas**; as buscas de tipo inválido caem de
+  **888 para 70**, as action strings sem índice, de **364 para 47**, e o modo 3 tira **257
+  falhas**.
 - **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
   em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
   antes de implementar.
