@@ -521,6 +521,41 @@ com o mesmo nome seria uma recursão (o chamador é essa árvore). A recusa
 (erro 0x05) fica, agora com a mensagem dizendo o porquê. O `0x7D` também
 (recusa): 1 uso no AL e o sentido do array de objetos continua sem medida.
 
+## (h) Contraprova no Mac 64 bits (a Super Collection): o pedido do `0x7E` é o mesmo, campo a campo (22/10)
+
+**Método.** O executável x86-64 da Super Collection (o Bon Voyage) importado
+no projeto Ghidra `C:\Users\Artur\sims2-re\mac64` (§(f)): as strings do
+`0x7E` ("defined in objLua file", "defined in description", "Semi-Global", ",
+Passing in params where param 0 = ") e do `0x7D` ("( Follow Sim in ", ", output
+result to "), o handler do `0x7E` (`FUN_10075cc60`) e o do `0x7D`
+(`FUN_10075c9a0`), e o construtor do pedido (`FUN_10120c5e0`).
+
+**Achados (o Mac 64 confirma o PC 32).**
+
+- **O escopo**: o byte privado → o dono `vfunc 0x220` e a string "Private";
+  o byte semi-global → o dono `vfunc 0x238` e "Semi-Global"; sem eles o dono
+  é o **grupo global** `0x7FD46CD0` — no PC são os vfuncs 0x108 e 0x114
+  (os offsets da vtable mudam entre 32 e 64 bits; o sentido não) ✓.
+- **O pedido**: `FUN_10120c670(this, idDoSTR#, idDoScript, dono, 1, 0x2026960B)`
+  e, no ramo do objLua, `FUN_10120c670(this, idDoSTR#, idDoScript, dono, 1,
+  0x4D45F8E6)` — exatamente o par do PC ✓.
+- **O id empacotado**: no construtor do Mac,
+  `FUN_1002b30c0(..., param_6, param_4, param_3 & 0xffff | param_2 << 0x10, 0)`
+  — o mesmo `(STR# << 16) | id` do PC (`param_1[7] = (int)param_2 << 0x10 |
+  param_3 & 0xffff`) ✓✓✓.
+- **Os logs**: "defined in description" no ramo sem o bit do objLua e "defined
+  in objLua file" no ramo com ele (quando o nome do objLua vem vazio), com o
+  nome da descrição e um " - " no meio ✓; e o log dos parâmetros
+  (", Passing in params where param 0 = ") atrás do bit 3 ✓, com os três
+  pares (byte + u16) lidos pelos acessores do bloco de operandos ✓.
+- **O `run`**: nos dois (0x7D e 0x7E) o objeto recebe o vfunc +0x98 (Mac; +0x44
+  no PC) com a string do próprio objeto — o mesmo mecanismo nos dois
+  binários, e o `0x7E` faz os **dois pedidos antes** dele (para o log).
+
+**Conclusão.** A leitura do PC se sustenta sem correção nova: os pedidos
+resolvem o nome do script pela tabela **STR# do id**, e o que o port não tem
+é o interpretador de Lua.
+
 ## Cross-check REA (fechado em 17/10, ~22:38)
 
 Critério do goal da noite: o REA (ferramenta independente) confirma ≥1 achado do projeto `pcb`.

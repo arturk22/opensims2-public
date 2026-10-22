@@ -873,6 +873,15 @@ nome "G - Apartment - Is NIDs Apartment?" sem achar a árvore. O modelo estava
 **errado pelo motivo certo** (a lista é a de árvores, a de scripts Lua é a
 0x130) e foi **descartado**; o port continua recusando o 0x7E (erro 0x05).
 
+**Contraprova no Mac 64 bits (22/10).** O executável x86-64 da Super
+Collection (o Bon Voyage), importado no projeto Ghidra `mac64`, dá o mesmo
+handler do 0x7E em 64 bits (`FUN_10075cc60`): o escopo (os vfuncs 0x220 e 0x238
+lâ o privado e o semi-global, o grupo global `0x7FD46CD0` no resto), o pedido
+`FUN_10120c670(idDoSTR#, idDoScript, dono, 1, 0x2026960B)` e o segundo com
+`0x4D45F8E6`, e o id empacotado do mesmo jeito (`param_3 & 0xffff | param_2 <<
+0x10`) — o que confirma a leitura do PC campo a campo (`re-pc-ghidra.md`
+§(h)).
+
 **Conclusão (22/10).** O RE do 0x7E está **fechado**: o pedido é o mesmo do
 0x1C (id = (STR# << 16) | id), o nome vem da tabela **STR# 0x130 = "Lua
 Scripts"** e o que roda é o **script Lua** do `.objLua` do objeto. O port (e o
