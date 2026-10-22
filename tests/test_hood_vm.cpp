@@ -177,6 +177,17 @@ struct Fixture {
         code.add(kSimGroup, inst, d);
         return vm.instantiatePart(kSimGroup, inst);
     }
+    // A plain (non-person) object of a GUID of its own, in the object list.
+    Object& thing(uint32_t guid) {
+        ObjectDefinition d;
+        d.fields.resize(60);
+        d.fields[(0x5C - 0x44) / 2] = uint16_t(guid);
+        d.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
+        static uint16_t next = 0x300;
+        const uint16_t inst = next++;
+        code.add(kSimGroup, inst, d);
+        return vm.instantiatePart(kSimGroup, inst);
+    }
     Thread run(ObjectId me, uint16_t id, Behavior b, ObjectId stackObject = 0) {
         code.add(kSimGroup, id, std::move(b));
         Thread t = vm.start(me, id, {}, stackObject);
@@ -604,6 +615,66 @@ static void testEvictPlayedLot() {
     check(vm.families[5].house == 0 && vm.evictedLots.count(18), "evict: another lot's family leaves");
 }
 
+// Set to Next 19 / 20 (the AL "Set to Next" / "Set to Prev" wrappers,
+// 0x7FFD4F2D:2006/2007, the fireplace's group): the objects of the multi-tile
+// group of the object in temp 0, in the object module's list order, forward
+// (19) or backward (20). 20's backward walk starts two places before the
+// current object (the binary's off-by-one), so it skips the one just before.
+static void testSetToNextGroup() {
+    Fixture fx;
+    VM& vm = fx.vm;
+    Object& me = fx.sim(kMortimerGuid);
+    Object& lead = fx.thing(0x30000001);
+    Object& p1 = fx.thing(0x30000002);
+    Object& p2 = fx.thing(0x30000003);
+    p1.data[objdata::LeadTileObjectId] = lead.id;
+    p2.data[objdata::LeadTileObjectId] = lead.id;
+    vm.setListOrder(lead, 1);
+    vm.setListOrder(p1, 2);
+    vm.setListOrder(p2, 3);
+    auto step = [&](uint8_t type, int16_t anchor, int16_t target) {
+        static uint16_t id = 0x1020;
+        return fx.run(me.id, id++,
+                      tree({expr(Temp, 0, Assign, Lit, anchor, go(1), E),
+                            expr(Temp, 1, Assign, Lit, target, go(2), E),
+                            instr(0x1F, T, F, {0, 0, 0, 0, uint8_t(0x80 | type), Temp, 0, 1, 0})}));
+    };
+    Thread t = step(19, lead.id, 0);
+    check(ok(t) && t.temps[1] == lead.id, "Set to Next 19: no target gives the group's first object");
+    t = step(19, lead.id, lead.id);
+    check(ok(t) && t.temps[1] == p1.id, "Set to Next 19: the next object of the group");
+    t = step(19, lead.id, p2.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 19: nothing after the last object");
+    t = step(19, lead.id, me.id);
+    check(ok(t) && t.temps[1] == me.id, "Set to Next 19: a target outside the group ends it with true");
+    t = step(20, lead.id, 0);
+    check(ok(t) && t.temps[1] == p2.id, "Set to Prev 20: no target gives the group's last object");
+    t = step(20, lead.id, p2.id);
+    check(ok(t) && t.temps[1] == lead.id, "Set to Prev 20: the walk skips the object before the current one");
+    t = step(20, lead.id, p1.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Prev 20: nothing before the second object");
+    // The anchor: missing (both write 0 and fail); 19 also refuses one queued to
+    // die, 20 does not; an object in no group leaves the target as it is.
+    t = step(19, 0, p1.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 19: no object in temp 0");
+    t = step(20, 0, p1.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Prev 20: no object in temp 0");
+    vm.dyingObjects.insert(p1.id);
+    t = step(19, lead.id, lead.id);
+    check(ok(t) && t.temps[1] == p2.id, "Set to Next 19: a dying part is skipped");
+    vm.dyingObjects.erase(p1.id);
+    vm.dyingObjects.insert(lead.id);
+    t = step(19, lead.id, p1.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 19: an anchor queued to die");
+    t = step(20, lead.id, 0);
+    check(ok(t) && t.temps[1] == p2.id, "Set to Prev 20: a dying anchor still searches");
+    vm.dyingObjects.clear();
+    t = step(19, me.id, p1.id);
+    check(ok(t, false) && t.temps[1] == p1.id, "Set to Next 19: an object in no group");
+    t = step(20, me.id, p1.id);
+    check(ok(t, false) && t.temps[1] == p1.id, "Set to Prev 20: an object in no group");
+}
+
 int main() {
     testNewLot();
     testLotObjectsValue();
@@ -611,6 +682,7 @@ int main() {
     testBedTogether(true);
     testLoad();
     testPrimitives();
+    testSetToNextGroup();
     testEvictPlayedLot();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

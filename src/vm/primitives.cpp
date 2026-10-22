@@ -225,9 +225,10 @@ std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor
 //   neighbors whose relationship from the neighbor in temp 0 has variable 3
 //   non-zero / variable 0 > temp 1 / variable 1 & temp 1 non-zero, 11 lot
 //   ID; 24 visible object within temp 0 tiles (view.cpp); 10 career: false.
-//   32 owner of the object in temp 0 (ownership.hpp).
-// Not done: 13 (nearest person), 33 (hauntable), 37 (want category) and the
-// rest of the base game's types up to 37.
+//   32 owner of the object in temp 0 (ownership.hpp);
+//   19/20 the next/previous object of the multi-tile group of the object in
+//   temp 0 (the module's list per group, walked in its order).
+// Not done: 13 (nearest person) and the rest of the base game's types up to 37.
 Exit setToNext(Context& c) {
     const auto& o = c.instruction.operands;
     const uint32_t guid = le32(&o[0]);
@@ -613,6 +614,73 @@ Exit setToNext(Context& c) {
             return found(id);
         }
         return none();
+    }
+    case 19:   // next object of the multi-tile group of the object in temp 0
+    case 20: { // previous one: "Set to Next" / "Set to Prev" (0x7FFD4F2D:2006/2007, the fireplace's group)
+        // PC 0x939b00.. (type 0x13) and 0x939d81.. (0x14): GetObjectByID(temp
+        // 0) through the object module (+0x74); missing, or for 19 one queued
+        // to die (object flags 0x10000/0x20000), writes 0 to the target and
+        // fails. Then the module's list of the anchor's group, keyed by the
+        // object's +0xe4 (+0x14c: one list per group, none for an object in
+        // no group), walked in the module's list order, forward (19) or
+        // backward (20), skipping objects that are gone or dying. Both
+        // wrappers live in the fireplace's group and a fireplace's parts are
+        // a multi-tile group; the modular stairs' delete handler (0x9234f0)
+        // walks the same list to take a staircase's other parts, which a
+        // per-level or per-room list would not give (it would take the other
+        // stairs with it). Nothing else uses the two types: the AL and the
+        // base game have one use of each, those wrappers.
+        const int16_t anchorId = c.thread.temps[0];
+        const Object* anchor = c.vm.object(anchorId);
+        if (!anchor || (type == 19 && dying(c.vm, anchorId))) {
+            c.set(owner, data, 0);
+            return Exit::False;
+        }
+        const ObjectId lead = multiTileGroup(*anchor);
+        std::vector<const Object*> group;
+        for (const auto& entry : c.vm.objectList()) {
+            const Object* x = c.vm.object(entry.second);
+            if (x && x->data[objdata::LeadTileObjectId] == lead)
+                group.push_back(x);
+        }
+        // No group (the only object under that data): the binary's key is
+        // negative and it returns false with the target left as it is.
+        if (group.size() < 2)
+            return Exit::False;
+        const auto alive = [&](size_t i) { return !dying(c.vm, group[i]->id); };
+        if (current == 0) {
+            if (type == 19) {
+                for (size_t i = 0; i < group.size(); ++i)
+                    if (alive(i))
+                        return found(group[i]->id);
+            } else {
+                for (size_t i = group.size(); i-- > 0;)
+                    if (alive(i))
+                        return found(group[i]->id);
+            }
+            return Exit::False;
+        }
+        // The current target must be in the list: the binary ends there with
+        // (target != 0), i.e. true and the target left as it is.
+        const auto at = std::find_if(group.begin(), group.end(), [&](const Object* x) { return x->id == current; });
+        if (at == group.end())
+            return Exit::True;
+        c.set(owner, data, 0);
+        const size_t i = size_t(at - group.begin());
+        if (type == 19) {
+            for (size_t k = i + 1; k < group.size(); ++k)
+                if (alive(k))
+                    return found(group[k]->id);
+            return Exit::False;
+        }
+        // The backward walk starts two places before the current one (0x939f04
+        // DEC EBX, then 0x939f12 LEA EBP,[EBX-1]): the object just before it
+        // is skipped, a real off-by-one in the game.
+        if (i >= 2)
+            for (size_t k = i - 1; k-- > 0;)
+                if (alive(k))
+                    return found(group[k]->id);
+        return Exit::False;
     }
     default:
         if (type <= 37)

@@ -122,7 +122,19 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   **13.170.043 instruções, 19.087 true e 13.200 falhas** (as 70 buscas de tipo inválido
   somem; +38 "no stack object" são árvores que agora acham um GUID e rodam numa árvore sem
   o objeto no lote sintético do sweep) e o jogo base fica igual (7.234.312 / 11.107 /
-  2.461). Ficam só o **13, 19 e 20** (1 uso cada). O **filtro comum** (`data 56
+  2.461). **Fechados em 22/10**: os tipos **19** e **20** — o próximo/anterior do **grupo
+  multi-tile** do objeto no temp 0: a âncora é `GetObjectByID(temp 0)` (nula: alvo 0 e
+  falso; o 19 também recusa a âncora morrendo), a chave é o grupo (`+0xe4`, negativa para
+  o objeto fora de grupo) e a lista é a do módulo de objetos (`+0x14c`), andada na ordem
+  da lista, pulando os objetos que morreram; o 20 tem o off-by-one do jogo (começa em
+  `i-2`, pulando o anterior). Os únicos usuários no base e no AL são as árvores
+  `0x7FFD4F2D:2006`/`:2007` do grupo da **lareira**, e o handler que apaga uma escada
+  modular (`FUN_009234f0`) usa a mesma lista para achar as outras peças — só uma lista por
+  **grupo** explica isso (por nível ou por sala levaria as outras escadas junto); o RE
+  está no `re-pc-ghidra.md` §(e) e no `primitives-mac.md` §0x1F. Medição: o sweep do AL
+  fica **idêntico** (**14.025.434 / 19.927 / 10.450**, 46.880 árvores) porque os dois
+  tipos não executam no sweep. Fica só o **13** (a pessoa mais próxima, 1 uso, "Reaction -
+  Banter"). O **filtro comum** (`data 56
   & 5` e `107`, com as flags 0x01/0x04) entrou no `eligible` no mesmo dia,
   gateado pelo layout de BV (o sweep do AL fica igual: no lote sintético os dois
   dados estão zerados; o jogo base não passa pelo filtro por construção).

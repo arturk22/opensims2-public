@@ -381,14 +381,67 @@ hash `0x5A69D3D5` = o array de objetos do próprio Sim — o mesmo que o executo
 
 **O Set to Next da classe base implementa os tipos 0–51** (o `switch` do
 `FUN_00938140` tem um caso para cada número, de 0 a 51 ✓). O port implementa
-0–37 (mais os tipos de espécie 40–51, que entraram em 21/10 ✓); os que faltam
-são o **13, 19, 20, 31, 34, 38 e 39** — o AL usa os 38 e 39 em 39 árvores, e o
-`primitives-mac.md` §0x1F descreve os 38/39 numa frase só ("percorre uma lista
-por índice comparando dois campos com os temps 0 e 1 e devolve o GUID do achado
-nos temps 2 e 3"); o código do PC confirma que os dois percorrem uma **lista**
-(o elemento em +0x40 e a contagem em +0x28 do dono da lista) e comparam o
-elemento com os temps 0 e 1, mas falta saber qual lista e quais campos — por
-isso os tipos 38/39 continuam recusados (sem chute).
+todos menos o **13**: os 31 e 34 já estavam feitos, os **38/39** e os **19/20**
+entraram nesta rodada (22/10). O **13** (a pessoa mais próxima do temp 0)
+continua recusado: o único uso no AL é `7F01EC29:20E9` ("Reaction - Banter"), o
+PC guarda a distância e a direção relativa no objeto (lidas pelos temps 4 e 5),
+mas o critério e a ordem do "mais próximo" não saíram do `FUN_0043b996` (que é
+só `return *param_1`, o leitor do operando).
+
+**Os tipos 19 e 20: o grupo multi-tile (22/10).** No `FUN_00938140` o caso
+0x13 (19, o próximo) começa em `0x939b00` e o 0x14 (20, o anterior) em
+`0x939d81`. Nos dois:
+
+1. `âncora = GetObjectByID(temp 0)` pelo módulo de objetos (`[EBX+0x74]`; o
+   mesmo `+0x74` que o `FUN_009350a0` usa depois de `app+0x68`). Âncora nula
+   grava **0** no alvo e devolve **false** (`0x939d51`: `SetTarget(0)` em
+   `0x0092cbe0`; falhou: erro 0x14). O 19 ainda recusa a âncora **morrendo**
+   (`TestFlag` 0x10000 e 0x20000 em `0x939b1f`/`0x939b33`) pelo mesmo caminho;
+   o 20 **não** tem essa checagem (só a nula).
+2. `chave = âncora->+0xe4()` (`CALL [EDX+0xe4]`); negativa → **false sem tocar
+   no alvo** (`0x939b4a` no 19, `0x939dd3` no 20).
+3. `lista = módulo->+0x14c(chave)` (`0x939b55`/`0x939dde`, um argumento só,
+   `ECX` = o módulo). Lista nula (`0x939b5f`/`0x939de8`) ou vazia (a contagem
+   em `+0x20`, `0x939b6e`/`0x939df7`) → **false sem tocar no alvo**.
+4. O alvo atual vem de `FUN_008cbe10` (= o `GetTarget`). Com alvo **0**: o 19
+   varre a lista da frente para o fim e grava o primeiro objeto válido
+   (`GetObjectByID` != nulo e sem as flags 0x10000/0x20000) e devolve true; o
+   20 varre de trás para a frente e grava o último. Nada válido → false.
+5. Com alvo != 0: procura o alvo na lista (o 19 da frente, `0x939c3c`; o 20 de
+   trás, `0x939ea8`). **Não achou** → devolve `alvo != 0` (**true**, alvo
+   intacto, `0x939c71`/`0x939ec3`). **Achou** → grava **0** no alvo e continua
+   no seguinte (19, `i+1`) ou em **`i-2`** (20: `0x939f04 DEC EBX` e
+   `0x939f12 LEA EBP,[EBX-1]`, com o `at` em `+0x1c`) — o 20 **pula o objeto
+   imediatamente anterior ao atual**, um off-by-one real do jogo. Nada válido
+   adiante → false (alvo 0).
+
+**A chave e a lista: o grupo multi-tile.** A chave sai do objeto (`+0xe4`) e a
+lista do módulo de objetos (`+0x14c`), com IDs que vão para `GetObjectByID`.
+Duas âncoras independentes dizem que a lista é **um grupo multi-tile** (o dado
+de objeto 19, o "lead tile object id" do port):
+
+- os **únicos** usuários dos tipos 19/20 no jogo base e no AL são as árvores
+  globais `0x7FFD4F2D:2006` ("Set to Next") e `:2007` ("Set to Prev"), e o grupo
+  `0x7FFD4F2D` é o da **lareira** (`Function - Init - Fireplace - Chimney`,
+  `Function - Link Objects`, `Update - Model (stack object)`); as peças de uma
+  lareira são um grupo multi-tile;
+- o handler que apaga uma escada modular (`FUN_008c6bb0` → `FUN_009234f0`,
+  `0x9234f0`): se o objeto é do tipo 12 (portal de escada modular), pega
+  `chave = obj->+0xe4()`, `lista = (o app do objeto em +0x40)->+0x68 (o
+  módulo)->+0x14c(chave)` e apaga **todos** os objetos da lista dos tipos 11
+  (escada modular) e 12, menos o de ID `obj->+0xbc()` (o próprio). Uma lista por
+  **nível** ou por **sala** levaria junto as outras escadas do andar/sala; só a
+  do **grupo** dá a escada inteira, que é o que o jogo faz.
+- `+0xe4` negativa existe (o `JL` do passo 2): é o objeto **fora de qualquer
+  grupo** (o de um tile só). O port devolve false, sem tocar no alvo, quando o
+  grupo tem menos de dois objetos.
+
+O port usa `multiTileGroup()` (o dado 19) e a lista dos objetos com o **mesmo**
+dado 19, na ordem da lista do módulo (`VM::objectList()`), como os tipos 0/1/2.
+Limite conhecido: o `+0x14c` do jogo pode ser um índice por um **id de grupo**
+atribuído no placement, e não pelo ID do lead; o port não guarda esse id e usa o
+lead, que dá a mesma lista (o lead nasce com o dado 19 = o próprio ID e as peças
+com o do lead).
 
 **O modo 3 do Run Tree by Name (21/10).** O handler `FUN_008D3510` @ `0x8D3510`
 (escrito no `primitives-mac.md` §0x1C) resolve o nome (o pedido `FUN_00cd3fe0`

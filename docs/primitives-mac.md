@@ -3939,6 +3939,18 @@ volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
   flag 0x10000 e com o teste de linha do mundo livre (vtable 0x4C da
   `WorldDB`). Lista por ID, guardada enquanto se itera; um atual que não
   está nela termina a busca (0, falso). Era o "cone de 90°" inferido.
+- **19/20 (o próximo/anterior do grupo multi-tile)**: a âncora é
+  `GetObjectByID(temp 0)` (nula: alvo 0, falso; o 19 também recusa a âncora
+  morrendo, o 20 não); a chave é o grupo da âncora (`+0xe4`, negativa para o
+  objeto fora de grupo: falso sem tocar no alvo) e a lista vem do módulo de
+  objetos (`+0x14c`) — um grupo multi-tile (o dado de objeto 19). Com alvo 0 o
+  19 pega o primeiro objeto válido da lista e o 20 o último; com alvo != 0 o
+  alvo tem de estar na lista (fora: verdadeiro, alvo intacto), é zerado e a
+  busca continua no seguinte (19) ou em **i−2** (20: `0x939f04`/`0x939f12`,
+  pula o objeto imediatamente anterior — um off-by-one do jogo). Lista nula ou
+  vazia: falso sem tocar no alvo. Os únicos usuários no base e no AL são as
+  árvores `0x7FFD4F2D:2006` ("Set to Next") e `:2007` ("Set to Prev"), do grupo
+  da lareira; o RE do PC está no `re-pc-ghidra.md` §(e).
 
 ### Manage Inventory (`TryInventoryAction`, BV `0xe26a40`)
 
