@@ -896,3 +896,45 @@ peçe o array de objetos e a referência `0x2026960B` (o log ", output result to
 my object array") — o que ele faz com o array continua sem medida, e 1 uso não
 compensa um chute.
 
+## 22. O Set to Next do exe do PC: o censo por tipo e a semântica exata dos tipos que faltam (22/10)
+
+**Pergunta.** O port recusa os tipos de busca que não implementa (o erro do
+jogo 0x1E, "Search type is invalid"). No AL, quais são e o que cada um faz?
+
+**Método.** O handler do **Set to Next** da classe base (`FUN_00938140` @
+0x938140, o caso 0x1F do despacho `FUN_008CC270`) lido em assembly (o caso
+0x26 em 0x93b1ee–0x93b2c0), e o censo do AL por tipo (`s2pkg prim-usage <Res>
+1F 1 "4=<valor>"` — o tipo é o byte 4 com a máscara 0x7F).
+
+**Achados.**
+
+- **O censo por tipo (AL, 7.625 instrucciones do 0x1F).** O byte 4 (o tipo com
+  a máscara 0x7F) vale: 4 (3.009), 1 (1.337), 12 (451), 3 (383), 26 (343), 30
+  (318), 8 (217), 17 (184), 5 (173), 6 (169), 40 (126), 18 (124), 29 (122), 25
+  (89), 9 (75), 0 (63), 41 (56), 36 (53), 14 (45), 28 (38), **38 (36)**, 11
+  (20), 7 (18), 35 (16), 21 (14), 16 (14), 2 (11), 46 (9), **31 (9)**, 23 (7),
+  42 (5), 24 (5), 22 (5), 37 (4), 47 (3), **39 (3)**, 32 (3), 127 (2), 15 (2),
+  45 (1), **34 (1)**, 33 (1), **20 (1)**, **19 (1)**, **13 (1)**. Os que o port
+  ainda recusa são, portanto, **52 instruções**: o tipo 38 (36), o 31 (9), o
+  39 (3) e 13/19/20/34 (1 cada).
+- **O tipo 38/39 (o caso 0x26 em assembly).** A lista é o **vfunc +0x74 do
+  objeto atual** (`FUN_00f5c3a0()`), a contagem é o vfunc +0x28 dela e o
+  elemento da vez é o vfunc +0x34(index). O elemento compara **dois campos**:
+  o `vfunc +0x10` do elemento devolve o acesso aos dados e o `vfunc +0xc` deles
+  é lido com os índices **0x4B (75)** e **0x4C (76)** — o primeiro contra o
+  **temp 0** e o segundo contra o **temp 1**; um temp negativo casa com
+  qualquer valor. O achado vai para os temps 2/3 (o `vfunc +0x70` do elemento,
+  o GUID). (A leitura em C do decompiler fundia os dois campos num só — é o
+  assembly que separa: `PUSH 0x4b` e `PUSH 0x4c` em 0x93b263 e 0x93b26e.)
+- **O tipo 38 no AL.** As 36 chamadas estão nas árvores do telefone do BV ("CT
+  - Handle Call", "CT - Phone Call Available?", "Calls - Handle Call (Pet Work
+  Dialog Array)") e em "Interaction - Spawn All" / "Interaction - Spawn
+  Accessory - TEST".
+
+**Conclusão.** O tipo 38/39 é "o próximo item de uma lista que o próprio
+objeto tem", filtrado pelos dois campos 75/76. A lista em si (o que o vfunc
++0x74 do objeto devolve no AL) ainda não está identificada no modelo do
+port, e o port não tem essa estrutura — implementar o tipo sem a lista seria
+um chute, então as 52 instruções ficam recusadas até ela ser medida (o
+tipo 31, com 9 usos, é o único que não depende dessa lista e fica como o
+próximo candidato).

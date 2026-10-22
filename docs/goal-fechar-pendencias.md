@@ -97,7 +97,12 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   que o jogo não tem, para atacar depois do 0x7E: o **Run Tree by Name modo 3** (648 usos no
   AL — o modo 2 empurra a árvore na pilha e o doc diz que o 3 também empurra, mas o port só
   faz 0/1/2), os **tipos de busca do Set to Next sem semântica no doc** (38, 39, 13, 19, 20,
-  31 e 34 — o doc descreve os tipos 38/39 em uma frase ("percorre uma lista por índice
+  31 e 34 — **medido em 22/10**: o AL usa 52 instruções desses tipos (o 38: 36, o 31: 9, o
+  39: 3 e 13/19/20/34: 1 cada) e o caso 0x26 do handler lido em assembly mostra a
+  semântica exata do 38/39 (a lista é o vfunc +0x74 do objeto atual, o elemento é o
+  vfunc +0x34(index) e os dois campos comparados são os índices 0x4B e 0x4C dos
+  dados do elemento, contra os temps 0 e 1; falta a lista em si no modelo do
+  port) - o doc descreve os tipos 38/39 em uma frase ("percorre uma lista por índice
   comparando dois campos com os temps 0 e 1 e devolve o GUID do achado nos temps 2 e 3") e o
   **Want Satisfy** (295) não é lacuna: o port joga o **mesmo** erro do jogo (0x1C, "Object
   referred to must be a person.") — é artefato do sweep. O "Invalid
