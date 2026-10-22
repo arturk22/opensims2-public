@@ -99,7 +99,8 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   faz 0/1/2), os **tipos de busca do Set to Next sem semântica no doc** (38, 39, 13, 19, 20,
   31 e 34 — o doc descreve os tipos 38/39 em uma frase ("percorre uma lista por índice
   comparando dois campos com os temps 0 e 1 e devolve o GUID do achado nos temps 2 e 3") e o
-  **Want Satisfy** (295). O "Invalid
+  **Want Satisfy** (295) não é lacuna: o port joga o **mesmo** erro do jogo (0x1C, "Object
+  referred to must be a person.") — é artefato do sweep. O "Invalid
   global sim call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo
   (o sweep roda cada árvore sozinha, fora de contexto), não lacuna do port. **Fechados no
   mesmo dia**: os tipos de espécie (40-45, as pessoas, e 46-51, os vizinhos, pelo dado de
