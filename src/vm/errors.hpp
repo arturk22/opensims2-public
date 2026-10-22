@@ -61,6 +61,7 @@ constexpr uint16_t BadAnimationType = 0x73;
 constexpr uint16_t TemplateObject = 0x90;
 constexpr uint16_t NoInventory = 0x57;
 constexpr uint16_t TokenIndexOutOfRange = 0x74;
+constexpr uint16_t NoSimInTemp0 = 0x77; // "Temp0 does not point at a Sim ObjectID."
 } // namespace err
 
 inline std::string errorString(uint16_t code) {
@@ -121,6 +122,7 @@ inline std::string errorString(uint16_t code) {
     case 0x71: return "Missing reach animation.";
     case 0x73: return "Invalid animation type specified in animation string";
     case 0x76: return "Request for babies count out of range.";
+    case 0x77: return "Temp0 does not point at a Sim ObjectID.";
     case 0x7A: return "You sent me a crappy GUID, please fix it.";
     case 0x94: return "Attempting to create object type that's been unlinked (ie is dead, and has had data removed from it's .package file).";
     case 0x90: return "Trying to create instance of Template Object";

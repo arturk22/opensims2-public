@@ -182,7 +182,12 @@ constexpr uint32_t kPackageLocalGroup = 0xFFFFFFFF;
 
 void CodeLibrary::indexDefinition(uint32_t group, uint16_t instance, const ObjectDefinition& d) {
     // Keeps the first OBJD of a GUID or name, like the rest of the index.
-    byGuid_.emplace(d.guid(), std::pair{group, instance});
+    if (byGuid_.emplace(d.guid(), std::pair{group, instance}).second) {
+        // The definition list of Set to Next 38, in first-appearance order.
+        // Fields 75 and 76 (offsets 0xD6 and 0xD8) are the selector category
+        // and subcategory the Apartment Life content uses.
+        definitionList_.push_back({d.guid(), int16_t(d.field(0xD6)), int16_t(d.field(0xD8))});
+    }
     byFileName_.emplace(d.fileName, std::pair{group, instance});
     // OBJD field i is at file offset 0x40 + 2i: 9 "type" (0x52), 26 "Ignore
     // GlobalSim field in CAS Lot" (0x74), 42 "is global sim object" (0x94).
@@ -211,6 +216,11 @@ void CodeLibrary::scanDefinitions() {
             continue;
         indexDefinition(tgi.group, uint16_t(tgi.instance), ObjectDefinition::parse(index_->read(loc)));
     }
+}
+
+const std::vector<CodeLibrary::DefinitionRef>& CodeLibrary::definitions() {
+    scanDefinitions();
+    return definitionList_;
 }
 
 std::vector<uint16_t> CodeLibrary::parts(uint32_t group, uint16_t masterId) {
@@ -246,8 +256,22 @@ std::vector<uint16_t> CodeLibrary::addPackage(DbpfPackage& pkg, uint32_t group) 
         case kTypeGlob: semi = semiGlobalGroup(SemiGlobal::parse(pkg.read(e)).semiGlobalName); break;
         case kTypeObjd: {
             auto d = ObjectDefinition::parse(pkg.read(e));
-            byGuid_[d.guid()] = {group, instance};
+            const uint32_t guid = d.guid();
+            // The package's definition takes over the GUID; the list keeps the
+            // first-appearance place (the scan's) and takes the new fields.
+            byGuid_[guid] = {group, instance};
             byFileName_[d.fileName] = {group, instance};
+            bool listed = false;
+            for (auto& r : definitionList_) {
+                if (r.guid != guid)
+                    continue;
+                r.category = int16_t(d.field(0xD6));
+                r.subcategory = int16_t(d.field(0xD8));
+                listed = true;
+                break;
+            }
+            if (!listed)
+                definitionList_.push_back({guid, int16_t(d.field(0xD6)), int16_t(d.field(0xD8))});
             add(group, instance, std::move(d));
             added.push_back(instance);
             break;

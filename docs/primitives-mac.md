@@ -471,7 +471,8 @@ Operandos (binário): GUID u32 0; tipo de busca = byte 4 & 0x7F (STR# 0xA4);
 **byte 4 bit 7: alvo explícito** = (dono byte 5, dado **byte 7**) — sem ele o
 alvo é o stack object; local u8 6 (tipos 9 e 0x22); flags u8 8: 0x01 "including
 disabled objects", 0x02 "where" object data (u16 9, rótulo STR# 0x8D) ==
-valor u16 11. A versão de nó 0 não tinha as flags nem o filtro (zerados no
+valor u16 11, 0x04 pula o teste do object data 107 (não impressa pelo
+editor). A versão de nó 0 não tinha as flags nem o filtro (zerados no
 load).
 
 Execução (binário):
@@ -503,7 +504,7 @@ Execução (binário):
   mesmo filtro do dado 186 (tipo 5: = 0, só BV); se o vizinho está no lote, o
   objeto dele também passa pelo filtro comum.
 
-**No port (21/10).** Os tipos de espécie entraram: o dado de pessoa 186 (0 = o
+**No port (21/10; tipos 38 e 39 em 22/10).** Os tipos de espécie entraram: o dado de pessoa 186 (0 = o
 humano; o jogo base não tem o campo, então os Sims dele leem 0) filtra o tipo 1
 (as pessoas) e o tipo 5 (o ID de vizinho) pelo humano, e os tipos 40–45
 (0x28–0x2D) e 46–51 (0x2E–0x33) pegam uma espécie cada (0 = o humano,
@@ -511,10 +512,24 @@ humano; o jogo base não tem o campo, então os Sims dele leem 0) filtra o tipo 
 achava os animais também. O tipo 33 (Hauntable, o campo 0x1C da definição)
 também. O censo do AL (`s2pkg prim-usage <Res> 1F`, byte 4) mostra o uso: 40 ×126,
 41 ×56, 46 ×9, 42 ×5, 47 ×3, 45 ×1 (os de espécie) e 38 ×36, 39 ×3, 31 ×9,
-19 ×1, 20 ×1, 13 ×1, 34 ×1 (os que o port ainda recusa por não terem
-semântica documentada). Medido no AL: o `bhav-sweep` passa de 12.894.204
+19 ×1, 20 ×1, 13 ×1, 34 ×1; **o 31 (cônjuge do temp 0) e o 34 (o grupo de
+multi-tile vizinho) já estavam implementados**, e os **38/39 entraram em
+22/10** (eram as 39 instruções que faltavam). O **38** percorre a **lista de
+definições do app** (não a do objeto): o elemento é a definição OBJD, os
+campos **75/76** (offsets **0xD6/0xD8**) são a **categoria e a subcategoria do
+seletor** do AL (117 = as rádios, 121 = os badges/tokens, 153 = os acessórios,
+2 = os balcões) e o **GUID** do achado vai para os **temps 2/3**, com o
+**índice + 1** no alvo. O **39** é a busca do próximo **vizinho** com o
+relacionamento **vitalício ≥ 0** com o vizinho do **temp 0** (a tabela dele;
+sem vizinho, erro **0x77**; sem tabela, **0x68**), pulando o próprio e os que
+não têm objeto no lote; o filtro comum vale (morte, `data 56 & 5`,
+`data 107`, o "where"). Medido no AL: o `bhav-sweep` passa de 12.894.204
 instruções, 18.622 true e 14.129 falhas para **12.915.916, 18.712 true e 13.783
-falhas**, e as buscas de tipo inválido caem de **888 para 70**.
+falhas** (as espécies e o 33), e depois para **13.170.043, 19.087 true e 13.200
+falhas** (os 38/39: as 70 buscas de tipo inválido somem); o jogo base fica
+**igual** (7.234.312 / 11.107 / 2.461). `data-findings.md` §22 tem o assembly,
+o censo dos 10.952 OBJDs do AL e a conferência da árvore
+`0x7F067AA0:2003`.
 - 7 vizinho do tipo: próximos vizinhos cuja definição tem o GUID u32 0.
 - 8 objeto no mesmo tile: precisa de alvo ≠ 0 (senão falso); objetos do tile
   do alvo, no mesmo nível, depois dele. O iterador do tile (BV `0xe1e8a8`/

@@ -96,14 +96,10 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
 - **Lacunas da VM medidas no AL (21/10, pelo censo do `bhav-sweep`)** — as falhas do port
   que o jogo não tem, para atacar depois do 0x7E: o **Run Tree by Name modo 3** (648 usos no
   AL — o modo 2 empurra a árvore na pilha e o doc diz que o 3 também empurra, mas o port só
-  faz 0/1/2), os **tipos de busca do Set to Next sem semântica no doc** (38, 39, 13, 19, 20,
-  31 e 34 — **medido em 22/10**: o AL usa 52 instruções desses tipos (o 38: 36, o 31: 9, o
-  39: 3 e 13/19/20/34: 1 cada) e o caso 0x26 do handler lido em assembly mostra a
-  semântica exata do 38/39 (a lista é o vfunc +0x74 do objeto atual, o elemento é o
-  vfunc +0x34(index) e os dois campos comparados são os índices 0x4B e 0x4C dos
-  dados do elemento, contra os temps 0 e 1; falta a lista em si no modelo do
-  port) - o doc descreve os tipos 38/39 em uma frase ("percorre uma lista por índice
-  comparando dois campos com os temps 0 e 1 e devolve o GUID do achado nos temps 2 e 3") e o
+  faz 0/1/2), os **tipos de busca do Set to Next sem semântica no doc** (13, 19 e 20 —
+  **medido em 22/10**: o AL usa **39 instruções** dos tipos que faltavam de fato (o 38:
+  36 e o 39: 3); o 31 (cônjuge do temp 0) e o 34 (o grupo de multi-tile vizinho) já
+  estavam implementados, então a leitura anterior de 52 estava errada), e o
   **Want Satisfy** (295) não é lacuna: o port joga o **mesmo** erro do jogo (0x1C, "Object
   referred to must be a person.") — é artefato do sweep. O "Invalid
   global sim call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo
@@ -117,7 +113,17 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   nenhum objeto tem). O sweep do AL passa de 12.894.204 instruções, 18.622 true e 14.129
   falhas para **13.124.187, 19.070 true e 13.228 falhas**; as buscas de tipo inválido caem de
   **888 para 70**, as action strings sem índice, de **364 para 47**, e o modo 3 tira **257
-  falhas**.
+  falhas**. **Fechados em 22/10**: os tipos **38** e **39** — o 38 percorre a lista de
+  definições do app (o elemento é a definição OBJD; os campos 75/76, offsets 0xD6/0xD8, são
+  a categoria/subcategoria do seletor do AL: 117 rádios, 121 badges/tokens, 153 acessórios;
+  o GUID vai para os temps 2/3 e o índice+1 no alvo) e o 39 é o próximo vizinho com
+  relacionamento vitalício ≥ 0 com o vizinho do temp 0 (pulando o próprio e os sem objeto
+  no lote; erro 0x77 sem vizinho e 0x68 sem tabela). Medição: o sweep do AL vai a
+  **13.170.043 instruções, 19.087 true e 13.200 falhas** (as 70 buscas de tipo inválido
+  somem; +38 "no stack object" são árvores que agora acham um GUID e rodam numa árvore sem
+  o objeto no lote sintético do sweep) e o jogo base fica igual (7.234.312 / 11.107 /
+  2.461). Ficam só o **13, 19 e 20** (1 uso cada) e o filtro comum do `data 56`/`107`, que
+  o PC aplica em todos os tipos e o `eligible` ainda não.
 - **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
   em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
   antes de implementar.
@@ -227,7 +233,15 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
    **1 uso** no AL (a 0x1001 "Function - Main" do grupo 0x7F649DA1) e o sentido do array de
    objetos continua sem medida.
    `docs/re-pc-ghidra.md` §(g) e `docs/data-findings.md` §21 têm o registro completo.
-10. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
+10. **Set to Next 38/39: FECHADO 22/10** — o 38 é a lista de definições do app filtrada
+    pelos campos 75/76 (a categoria/subcategoria do seletor do AL; o GUID vai para os temps
+    2/3 e o índice+1 no alvo) e o 39 é o próximo vizinho com relacionamento vitalício ≥ 0
+    com o vizinho do temp 0 (erro 0x77 sem vizinho, 0x68 sem tabela). As 70 buscas de tipo
+    inválido do sweep do AL somem: 13.124.187 / 19.070 / 13.228 → **13.170.043 / 19.087 /
+    13.200**, o jogo base igual; build+ctest 39/39; `data-findings.md` §22 e
+    `primitives-mac.md` §0x1F registram o assembly, o censo dos 10.952 OBJDs e a
+    conferência da árvore `0x7F067AA0:2003` (117/4 → GUID `0x1071F92F`).
+11. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
     21/10); o item 5 fechou por censo. Ficam por último, sem travar a fila.
 
 ## Critérios de sucesso

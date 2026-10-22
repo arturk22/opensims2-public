@@ -896,45 +896,110 @@ peçe o array de objetos e a referência `0x2026960B` (o log ", output result to
 my object array") — o que ele faz com o array continua sem medida, e 1 uso não
 compensa um chute.
 
-## 22. O Set to Next do exe do PC: o censo por tipo e a semântica exata dos tipos que faltam (22/10)
+## 22. O Set to Next do exe do PC: o censo por tipo e a semântica dos tipos 38 e 39 (22/10)
 
 **Pergunta.** O port recusa os tipos de busca que não implementa (o erro do
 jogo 0x1E, "Search type is invalid"). No AL, quais são e o que cada um faz?
 
 **Método.** O handler do **Set to Next** da classe base (`FUN_00938140` @
-0x938140, o caso 0x1F do despacho `FUN_008CC270`) lido em assembly (o caso
-0x26 em 0x93b1ee–0x93b2c0), e o censo do AL por tipo (`s2pkg prim-usage <Res>
-1F 1 "4=<valor>"` — o tipo é o byte 4 com a máscara 0x7F).
+0x938140, o caso 0x1F do despacho `FUN_008CC270`), com os casos **0x26 (tipo
+38)** e **0x27 (tipo 39)** lidos em assembly e no decompilado; o censo do AL
+por tipo (`s2pkg prim-usage <Res> 1F 1 "4=<valor>"` — o tipo é o byte 4 com a
+máscara 0x7F); o censo dos OBJDs do AL (um script sobre o `objects.package`:
+DBPF + QFS + os campos 75/76 no offset `0x40 + 2*i`); e a lista das árvores que
+usam cada tipo (`s2pkg bhav <Res> <grupo> <instância>`).
 
 **Achados.**
 
-- **O censo por tipo (AL, 7.625 instrucciones do 0x1F).** O byte 4 (o tipo com
-  a máscara 0x7F) vale: 4 (3.009), 1 (1.337), 12 (451), 3 (383), 26 (343), 30
+- **O censo por tipo (AL, 7.625 instruções do 0x1F).** O byte 4 (o tipo com a
+  máscara 0x7F) vale: 4 (3.009), 1 (1.337), 12 (451), 3 (383), 26 (343), 30
   (318), 8 (217), 17 (184), 5 (173), 6 (169), 40 (126), 18 (124), 29 (122), 25
   (89), 9 (75), 0 (63), 41 (56), 36 (53), 14 (45), 28 (38), **38 (36)**, 11
   (20), 7 (18), 35 (16), 21 (14), 16 (14), 2 (11), 46 (9), **31 (9)**, 23 (7),
   42 (5), 24 (5), 22 (5), 37 (4), 47 (3), **39 (3)**, 32 (3), 127 (2), 15 (2),
-  45 (1), **34 (1)**, 33 (1), **20 (1)**, **19 (1)**, **13 (1)**. Os que o port
-  ainda recusa são, portanto, **52 instruções**: o tipo 38 (36), o 31 (9), o
-  39 (3) e 13/19/20/34 (1 cada).
-- **O tipo 38/39 (o caso 0x26 em assembly).** A lista é o **vfunc +0x74 do
-  objeto atual** (`FUN_00f5c3a0()`), a contagem é o vfunc +0x28 dela e o
-  elemento da vez é o vfunc +0x34(index). O elemento compara **dois campos**:
-  o `vfunc +0x10` do elemento devolve o acesso aos dados e o `vfunc +0xc` deles
-  é lido com os índices **0x4B (75)** e **0x4C (76)** — o primeiro contra o
-  **temp 0** e o segundo contra o **temp 1**; um temp negativo casa com
-  qualquer valor. O achado vai para os temps 2/3 (o `vfunc +0x70` do elemento,
-  o GUID). (A leitura em C do decompiler fundia os dois campos num só — é o
-  assembly que separa: `PUSH 0x4b` e `PUSH 0x4c` em 0x93b263 e 0x93b26e.)
-- **O tipo 38 no AL.** As 36 chamadas estão nas árvores do telefone do BV ("CT
-  - Handle Call", "CT - Phone Call Available?", "Calls - Handle Call (Pet Work
-  Dialog Array)") e em "Interaction - Spawn All" / "Interaction - Spawn
-  Accessory - TEST".
+  45 (1), **34 (1)**, 33 (1), **20 (1)**, **19 (1)**, **13 (1)**. **Correção da
+  leitura de 21/10:** o tipo 31 (cônjuge do temp 0) e o 34 (o grupo de
+  multi-tile vizinho) **já estavam implementados** — o censo antigo somou 52
+  instruções recusadas contando os dois; os que faltavam de fato eram **39
+  instruções**: o tipo 38 (36) e o 39 (3). O port também já implementa 33 e 37.
+  Os únicos que continuam recusados são **13, 19 e 20 (1 uso cada)**.
+- **O tipo 38 é a lista de definições do aplicativo, não a do objeto.** O caso
+  0x26 pega a lista no **vfunc +0x60 do app** (`[ESP+0x34]`; contagem em
+  `+0x28`, elemento em `+0x34(i)`), e o elemento é uma **definição OBJD**: o
+  `vfunc +0x10` dele devolve o acesso aos dados e o `vfunc +0xc` é lido com os
+  índices **0x4B (75)** e **0x4C (76)** — no arquivo, os offsets **0xD6** e
+  **0xD8**. O primeiro é comparado com o **temp 0** (a categoria) e o segundo
+  com o **temp 1** (a subcategoria); um temp negativo casa com qualquer valor,
+  e um temp 0 negativo **não lê** o temp 1 (o `JL` salta os dois testes). O
+  achado é o **GUID** do elemento (`vfunc +0x70`), gravado nos **temps 2 (palavra
+  baixa) e 3 (alta)**; o alvo recebe **índice + 1** (o cursor 1-based da próxima
+  chamada), e a busca começa no valor atual do alvo (0 = do começo), como as
+  outras listas. O decompilado em C fundia os dois campos num só porque o
+  `PUSH 0x4b`/`PUSH 0x4c` ficam em registradores diferentes; o assembly separa
+  (`0x93b263`/`0x93b26e`).
+- **Os campos 75/76 são a categoria e a subcategoria do seletor no AL.** Os
+  rótulos do jogo base (STR# `0x7FE59FD0`/`0xCC` do `objects.package` do base)
+  chamam os dois de "Unused - thumbnail graphic (Sims1)" e "Unused - shadow
+  flags (Sims1)", mas os dados do AL os repurposam. O censo dos 10.952 OBJDs do
+  `objects.package` do AL (10.948 GUIDs únicos; 9.103 com 75/76 ≠ 0) casa com
+  todos os filtros das árvores: **117** = as 20 rádios (`117/1` Techno … `117/20`
+  Radio), **121** = os tokens e badges (`121/1` Toy Making, `121/2` Flower
+  Arranging, `121/3` Robotery, `121/4` Sales, `121/5` Cash Register, `121/6`
+  Stocking, `121/7` Cosmetology, `121/8` Gardening `0x1215A8C1`, `121/9` Fishing,
+  `121/10` Pottery, `121/11` Sewing; `121/5` também "Garden Club Member"),
+  **153** = os acessórios (`153/0` "Accessory - …": Easel - Painting, Glasses -
+  Unisex, Food - Utensil - Cooking Knife, …), **2** = os balcões, **12/7** =
+  "Social - Play - Play Catch". As 36 chamadas do tipo 38 estão em "Get in
+  Temp 0 & 1 - Object GUID by Selector Category" (`0x7F067AA0:2003`), "Radio
+  Station - Get Guids" (`0x7F4F06CA:204C`), "Interaction - Spawn Accessory -
+  TEST" (`0x7F461C50:1004`), "Sub - Boost Badge - Add Tokens"
+  (`0x7FCECBBD:1007`), "CT - Handle Call", "Calls - Handle Call (Pet Work
+  Dialog Array)", "Learned Behavior - Start Tracker - Sim in Temp2", "Call -
+  Check Type Availability", "Calls - Phone Call Available?" e "Badge - All
+  Gold?". O modelo de execução por árvore (conferido na `0x7F067AA0:2003`):
+  `temp0 := param0`, `temp1 := param1`, o alvo (dado 0 do stack object) :=
+  `param2`, Set to Next 38; no achado, `temp0 := temp2`, `temp1 := temp3` (o
+  GUID) e `temp2 :=` o alvo (o índice seguinte).
+- **O tipo 39 é a busca de um vizinho com relacionamento, não uma lista de
+  definições.** O caso 0x27 lê o **temp 0** como um **neighbor ID**
+  (`vfunc +0x4c(0)`); sem vizinho → **erro 0x77** ("Temp0 does not point at a
+  Sim ObjectID."); sem a tabela de relacionamentos dele (`vizinho +0x30`) →
+  **erro 0x68**. A caminhada usa o **próximo neighbor ID** (`app +0x3c(n)`),
+  começando depois do alvo, e grava o ID achado no alvo. Um candidato é pulado
+  se for o próprio vizinho do temp 0 (o `vizinho +0x20` é o ID dele) ou se o
+  **relacionamento vitalício** (`tabela->GetValue(candidato, 1)`, o vfunc
+  `+0x24`; fora da tabela lê 0) for **negativo** — o `TEST AH,AH; JNS` testa o
+  sinal do short. O objeto do candidato é `vizinho +0x3c` (o ID do objeto) →
+  `gerenciador +0xa8` (GetObjectByID); um vizinho **sem objeto no lote**
+  **para** a caminhada (o `break`, não pula). O filtro é o comum, inline:
+  objeto válido, sem as flags de morte (`0x10000`/`0x20000`), `object data 56 &
+  5` = 0 e `object data 107` = 0 (os bits 0 e 2 do byte de flags pulam cada
+  teste) e, com o bit 1, o campo "where" (`u16 9` = `u16 11`). As 3 chamadas
+  estão em "Sub - Find Match" (`0x7FF6C5C8:1006`), "Sub - Chance Cards -
+  Determine" (`0x7F45ED00:100D`) e `0x7F4E0092:100D`.
 
-**Conclusão.** O tipo 38/39 é "o próximo item de uma lista que o próprio
-objeto tem", filtrado pelos dois campos 75/76. A lista em si (o que o vfunc
-+0x74 do objeto devolve no AL) ainda não está identificada no modelo do
-port, e o port não tem essa estrutura — implementar o tipo sem a lista seria
-um chute, então as 52 instruções ficam recusadas até ela ser medida (o
-tipo 31, com 9 usos, é o único que não depende dessa lista e fica como o
-próximo candidato).
+**No port (22/10).** O tipo 38 entrou em `setToNext` com a lista nova do
+`CodeLibrary` (`definitions()`): o `scanDefinitions` guarda a **primeira
+aparição de cada GUID** (a mesma regra do resto do índice) com os campos
+`0xD6`/`0xD8`, e os OBJDs de um pacote de lote atualizam os campos da entrada
+(o lugar da primeira aparição fica). O tipo 39 usa o mapa de vizinhos
+(`upper_bound`), a tabela de relacionamentos do port (`relationships`, a
+variável 1) e o `neighborSim`; o erro 0x77 ganhou constante e texto no
+`errors.hpp`. **Medição no AL (`bhav-sweep`, `S2PKG_NO_LIGHT=1`): 13.124.187
+instruções, 19.070 true e 13.228 falhas → 13.170.043, 19.087 true e 13.200
+falhas** (as 70 "Search type is invalid" somem; +38 "No stack object present
+(Run Tree by Name)" são as árvores que agora acham um GUID e mandam rodar uma
+árvore num objeto que o lote sintético do sweep não tem — artefato do mesmo
+tipo dos outros erros de stand-in, não uma regressão; +17 true). O jogo base
+fica **igual** (7.234.312 / 11.107 / 2.461). Conferência direta da árvore
+`0x7F067AA0:2003`: com `param0=117, param1=4, param2=0` ela devolve o GUID
+`0x1071F92F` ("Stereo - RadioStation - Pop") nos temps 0/1 e **1041** no temp 2
+(o índice seguinte); com `param1=4` e `param2=1041` devolve falso (a
+subcategoria 4 só tem essa definição); `121/8` devolve `0x1215A8C1` (Gardening)
+e `153/0` um "Accessory". Build + ctest **39/39**.
+
+**Conclusão.** Os tipos 38 e 39 deixam de ser recusados (as 39 instruções do
+AL). Ficam só **13, 19 e 20** (1 uso cada) e uma pendência separada: o **filtro
+comum** do PC testa `object data 56 & 5` e `object data 107` em **todos** os
+tipos de objeto, e o `eligible` do port ainda não os aplica (só o "where") —
+é o próximo item do Set to Next, com medição própria.

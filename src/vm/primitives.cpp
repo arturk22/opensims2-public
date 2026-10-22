@@ -555,6 +555,63 @@ Exit setToNext(Context& c) {
         matches = [category](const Object& x) { return x.definition && int16_t(x.definition->field(0x9E)) == category; };
         break;
     }
+    case 38: { // object definition of the selector category in temp 0 and the
+               // subcategory in temp 1: OBJD fields 75/76, which the Apartment
+               // Life content uses ("Stereo - RadioStation - Pop" 117/4,
+               // "Token - Badge - Gardening" 121/8, accessories 153/0-4). The
+               // binary walks its definition list by index (the first
+               // appearance of each GUID, as the OBJD scan here), keeps the
+               // next index (1-based) in the target and writes the GUID to
+               // temps 2 (low) and 3 (high). A negative temp matches anything
+               // (temp 0 negative: the subcategory is not read).
+        const int16_t category = c.thread.temps[0], subcategory = c.thread.temps[1];
+        const auto& defs = c.vm.code().definitions();
+        for (int32_t at = current < 1 ? 0 : current; at < int32_t(defs.size()); ++at) {
+            const auto& d = defs[size_t(at)];
+            if (category >= 0 && (d.category != category || (subcategory >= 0 && d.subcategory != subcategory)))
+                continue;
+            if (at >= 0x7FFF)
+                throw gameError(err::ValueOutOfRange, "Set to Next 38: definition " + std::to_string(at + 1));
+            c.set(owner, data, int16_t(at + 1));
+            c.thread.temps[2] = int16_t(uint16_t(d.guid));
+            c.thread.temps[3] = int16_t(uint16_t(d.guid >> 16));
+            return Exit::True;
+        }
+        return none();
+    }
+    case 39: { // next neighbor the neighbor in temp 0 has a relationship with:
+               // its relationship table's variable 1 (lifetime) >= 0, skipping
+               // the neighbor itself and the Sims the common filter rejects
+               // (dying, object data 56 bits 0/2, data 107, the "where" field;
+               // flags bits 0 and 2 of the operand skip the data 56 and 107
+               // tests). The walk stops at a neighbor with no object in the
+               // lot, as the binary does (its object id is 0). The type only
+               // exists from Bon Voyage on, so the flags are always the BV
+               // layout and the two tests are not gated by the node version.
+        const int16_t from = c.thread.temps[0];
+        if (!c.vm.neighbor(from))
+            throw gameError(err::NoSimInTemp0, "Set to Next 39: temp 0 is not a neighbor id: " + std::to_string(from));
+        auto& neighbors = c.vm.neighbors;
+        for (auto it = neighbors.upper_bound(current); it != neighbors.end(); ++it) {
+            const int16_t id = it->first;
+            if (id == from)
+                continue;
+            const auto* rel = relationFromTemp0(id);
+            if (rel && rel->size() > 1 && (*rel)[1] < 0)
+                continue;
+            const Object* sim = c.vm.neighborSim(id);
+            if (!sim)
+                break;
+            if (!eligible(*sim))
+                continue;
+            if (!(o[8] & 0x01) && (sim->data[56] & 5) != 0)
+                continue;
+            if (!(o[8] & 0x04) && sim->data[107] != 0)
+                continue;
+            return found(id);
+        }
+        return none();
+    }
     default:
         if (type <= 37)
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");

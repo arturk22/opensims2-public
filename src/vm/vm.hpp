@@ -337,6 +337,18 @@ public:
         bool notInCas = false;
     };
     std::vector<GlobalSimObject> globalSimObjects(uint16_t mask = 1);
+    // The object definitions in the order the GUID scan finds them (the
+    // first OBJD of each GUID, as the rest of the index), with OBJD fields
+    // 75 and 76. The Apartment Life content uses those two "unused" fields
+    // as the selector category and subcategory ("Stereo - RadioStation -
+    // Pop" is 117/4, "Accessory - ..." 153/0-4, "Token - Badge - ..." 121/1-
+    // 11), and Set to Next 38 walks this list by index.
+    struct DefinitionRef {
+        uint32_t guid = 0;
+        int16_t category = 0;
+        int16_t subcategory = 0;
+    };
+    const std::vector<DefinitionRef>& definitions();
     // OBJf with the same (group, instance) as an OBJD: the object's function table.
     const ObjectFunctions* functions(uint32_t group, uint16_t instance);
     // OBJD instance of the master of a multi-tile object of `group` (the OBJD
@@ -406,6 +418,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
     std::unordered_map<uint32_t, size_t> labelCounts_;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint16_t>> byGuid_;
+    std::vector<DefinitionRef> definitionList_; // first GUID scan order
     bool guidsScanned_ = false;
 };
 

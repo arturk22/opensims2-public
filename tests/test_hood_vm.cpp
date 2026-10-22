@@ -1,4 +1,4 @@
-// The neighborhood in the VM (vm/hood_bridge): loading a hand-built
+﻿// The neighborhood in the VM (vm/hood_bridge): loading a hand-built
 // hood::Neighborhood and the primitives and data owners that read it.
 #include "formats/neighborhood.hpp"
 #include "formats/hood_lots.hpp"
@@ -290,6 +290,29 @@ static void testPrimitives() {
                      expr(Temp, 4, Assign, Temp, 3, go(6), E), expr(Temp, 7, Assign, Lit, 0, T, E)}));
     check(ok(t) && t.temps[2] == 15 && t.temps[4] == 47, "Set to Next 36 and 11");
 
+    // Set to Next 39: the next neighbor with a lifetime relationship
+    // (variable 1 >= 0) with the neighbor in temp 0, skipping the candidates
+    // the common filter rejects (object data 56 bits 0/2 and 107).
+    Object& townie = fx.sim(kTownieGuid);
+    townie.person->data[persondata::NeighborId] = 14;
+    vm.relationships[VM::RelationshipPair{{true, 1}, {true, 14}}][1] = 50;
+    t = fx.run(me.id, 0x1010,
+               tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
+                     instr(0x1F, T, F, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0})}));
+    check(ok(t) && t.temps[1] == 14, "Set to Next 39: the neighbor with a lifetime relationship");
+    townie.data[107] = 1;
+    t = fx.run(me.id, 0x1011,
+               tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
+                     instr(0x1F, F, F, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0})}));
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 39: object data 107 rejects the candidate");
+    townie.data[107] = 0;
+    townie.data[56] = 1;
+    t = fx.run(me.id, 0x1012,
+               tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
+                     instr(0x1F, F, F, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0})}));
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 39: object data 56 bit 0 rejects the candidate");
+    townie.data[56] = 0;
+
     // Neighbor data (0x18) of Bella (15) as the stack object; neighborhood data (0x22).
     vm.neighborhoodData[2] = 11;
     t = fx.run(me.id, 0x1008,
@@ -312,11 +335,11 @@ static void testPrimitives() {
 }
 
 // With the game's data (OS2_DATA): the lot objects' value of the Lots &
-// Houses bin's "Ranch Retreat" (cx_00000001) as the game saved it, §1090:
-// its five doors (§80) count as Build mode objects through their master's
+// Houses bin's "Ranch Retreat" (cx_00000001) as the game saved it, Â§1090:
+// its five doors (Â§80) count as Build mode objects through their master's
 // build mode type (field 0x45 = 8; the parts have 0), with the windows'
-// §690. The value missed the doors (§690), so the lot's price dropped after
-// a save (live QA 14: §10.857 for sale, §10.387 after the save).
+// Â§690. The value missed the doors (Â§690), so the lot's price dropped after
+// a save (live QA 14: Â§10.857 for sale, Â§10.387 after the save).
 static void testLotObjectsValue() {
     const char* data = std::getenv("OS2_DATA");
     if (!data)
