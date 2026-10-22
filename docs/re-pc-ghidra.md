@@ -411,6 +411,44 @@ recusado com um `VMError` honesto ("mode 3 not implemented") — o comentário d
 `primitives.cpp` guarda a semântica que o RE do Mac já tinha: "o modo 3 é a
 árvore do objeto cujo GUID está nos temps 0/1".
 
+## (f) A Super Collection do Mac (64 bits) como referência (22/10)
+
+**Por que.** O exe do PC (o build do AL) é x86 de 32 bits e o Mac base 1.0 que
+o mantenedor analisou é PowerPC; a "Super Collection" (Aspyr, 1.2.5) é o **jogo em
+x86-64**, com a mesma lógica (é o Bon Voyage) e, portanto, **o mesmo 0x7E/0x7D**
+que o PC tem — a peça que faltava para fechar a implementação.
+
+**O `.dmg` que o Artur baixou** (`The.Sims.2.Super.Collection.v1.2.5.dmg`, 6,9 GB)
+é um UDIF **comprimido com bzip2** (o `koly` no fim diz: data fork no offset 0,
+7.266 GB; o plist XML no fim tem só o mapa de partições). O caminho que funcionou,
+sem 7-Zip e sem root:
+
+1. ler o `koly` (os últimos 512 bytes) e o plist XML (offset/len em 216/232) — o
+   plist é o *mapa* de partições, não o catálogo HFS+;
+2. descomprimir o fork de dados com `bz2.BZ2File` em streaming → a imagem do
+   disco (9,3 GB), que começa com os boot blocks "ER" (o Apple driver
+   descriptor) e tem o mapa de partições no setor 1;
+3. procurar o **Mach-O** varrendo a imagem (o `0xCFFAEDFE` de 64 bits e o
+   `0xCAFEBABE` do universal): 53 candidatos, e o **executável do jogo** é o
+   maior `MH_EXECUTE` (35,8 MB, x86-64, 4 segmentos) — os outros são dylibs e
+   helpers;
+4. extrair o Mach-O (os segmentos dizem o tamanho todo) e importar no Ghidra
+   (o loader Mach-O do Ghidra lê x86-64 ✓).
+
+**A prova de utilidade passou**: o binário do Mac tem **as mesmas strings e as
+mesmas constantes** do exe do PC — `Named tree does not exist`, `defined in
+objLua`, `defined in description`, `Follow Sim in`, `Semi-Global`, `crappy GUID`,
+`Bad parameter to call named tree`, `Set To Next`, `Passing in params`, e os
+hashes `0x2026960B` (1076×), `0x89B7DC8` (61×), `0x4D45F8E6` (13×),
+`0x5A69D3D5` (214×). Então o mesmo RE do 0x7E é possível lá — e lá o código é
+**de 64 bits**, o que deixa a leitura do `vfunc +0xC` do gerenciador de recursos
+(mais simples que no x86 de 32 bits) e mostra as *correções* que a Aspyr fez
+nessa porta (o 64 bits é uma reimplementação, não o binário original).
+
+**Licença.** O binário da Aspyr é proprietário: ele serve de **referência de
+comportamento** (como o Mac PPC do mantenedor), e o código do OpenSims2 é
+reimplementado a partir dele, nunca copiado.
+
 ## Cross-check REA (fechado em 17/10, ~22:38)
 
 Critério do goal da noite: o REA (ferramenta independente) confirma ≥1 achado do projeto `pcb`.
