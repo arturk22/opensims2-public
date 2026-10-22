@@ -122,8 +122,10 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   **13.170.043 instruções, 19.087 true e 13.200 falhas** (as 70 buscas de tipo inválido
   somem; +38 "no stack object" são árvores que agora acham um GUID e rodam numa árvore sem
   o objeto no lote sintético do sweep) e o jogo base fica igual (7.234.312 / 11.107 /
-  2.461). Ficam só o **13, 19 e 20** (1 uso cada) e o filtro comum do `data 56`/`107`, que
-  o PC aplica em todos os tipos e o `eligible` ainda não.
+  2.461). Ficam só o **13, 19 e 20** (1 uso cada). O **filtro comum** (`data 56
+  & 5` e `107`, com as flags 0x01/0x04) entrou no `eligible` no mesmo dia,
+  gateado pelo layout de BV (o sweep do AL fica igual: no lote sintético os dois
+  dados estão zerados; o jogo base não passa pelo filtro por construção).
 - **12:** primitivas `0x7D`/`0x7E` — os docs só dão os handlers BV ("só BV"); o AL usa `0x7E`
   em 2.213 casos, então o comportamento tem de sair do **exe do PC** (routing aggregate)
   antes de implementar.
@@ -240,7 +242,9 @@ Cada item só fecha com **build + ctest 39/39**, evidência medida no log e **1 
     inválido do sweep do AL somem: 13.124.187 / 19.070 / 13.228 → **13.170.043 / 19.087 /
     13.200**, o jogo base igual; build+ctest 39/39; `data-findings.md` §22 e
     `primitives-mac.md` §0x1F registram o assembly, o censo dos 10.952 OBJDs e a
-    conferência da árvore `0x7F067AA0:2003` (117/4 → GUID `0x1071F92F`).
+    conferência da árvore `0x7F067AA0:2003` (117/4 → GUID `0x1071F92F`). O **filtro comum**
+    (`data 56 & 5` e `107`, flags 0x01/0x04) entrou no `eligible` no mesmo dia, gateado pelo
+    layout de BV; o sweep do AL fica igual (no lote sintético os dados estão zerados).
 11. **6-resto:** só com o binário **Mac PPC**, que fica com o mantenedor do Mac (decidido em
     21/10); o item 5 fechou por censo. Ficam por último, sem travar a fila.
 

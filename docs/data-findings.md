@@ -998,8 +998,20 @@ fica **igual** (7.234.312 / 11.107 / 2.461). Conferência direta da árvore
 subcategoria 4 só tem essa definição); `121/8` devolve `0x1215A8C1` (Gardening)
 e `153/0` um "Accessory". Build + ctest **39/39**.
 
-**Conclusão.** Os tipos 38 e 39 deixam de ser recusados (as 39 instruções do
-AL). Ficam só **13, 19 e 20** (1 uso cada) e uma pendência separada: o **filtro
-comum** do PC testa `object data 56 & 5` e `object data 107` em **todos** os
-tipos de objeto, e o `eligible` do port ainda não os aplica (só o "where") —
-é o próximo item do Set to Next, com medição própria.
+**O filtro comum (22/10).** O handler do PC aplica `object data 56 & 5` (sem a
+flag 0x01) e `object data 107` (sem a flag 0x04) em **todos** os tipos de
+objeto — é o `0x38`/`0x6b` no `vfunc +0x34` do elemento, nos casos 0x26/0x27 e
+nos demais. O `eligible` do port só tinha o "where"; agora aplica os dois,
+gateados pelo **layout de BV** (`nodeVersion != 0`): na versão de nó 0 o dado 56
+é o "dry clothes value" do jogo base e o 107 não existe. No nó 0 o jogo zera o
+`SetToNextParam` (as flags), mas a árvore do jogo base foi escrita para o filtro
+dele, então manter os dois fora é o que preserva o comportamento do base.
+Medição: o sweep do AL fica **igual** (13.170.043 / 19.087 / 13.200 — no lote
+sintético do sweep os objetos têm os dois dados zerados, então o filtro só
+aparece no jogo de verdade); o jogo base fica igual por construção (as árvores
+de nó 0 não passam pelo filtro). Build + ctest 39/39, com o teste do tipo 39
+(relacionamento vitalício, data 107 e data 56) no `test_hood_vm`, que usa o
+layout de BV (`nodeVersion = 1`) para o filtro valer.
+
+**Conclusão.** Os tipos 38 e 39 e o filtro comum estão fechados. Ficam só
+**13, 19 e 20** (1 uso cada).

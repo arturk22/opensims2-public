@@ -523,7 +523,9 @@ seletor** do AL (117 = as rádios, 121 = os badges/tokens, 153 = os acessórios,
 relacionamento **vitalício ≥ 0** com o vizinho do **temp 0** (a tabela dele;
 sem vizinho, erro **0x77**; sem tabela, **0x68**), pulando o próprio e os que
 não têm objeto no lote; o filtro comum vale (morte, `data 56 & 5`,
-`data 107`, o "where"). Medido no AL: o `bhav-sweep` passa de 12.894.204
+`data 107`, o "where") e o port o aplica no `eligible` desde 22/10, gateado
+pelo layout de BV (no nó 0 o dado 56 é o "dry clothes value" e o 107 não
+existe). Medido no AL: o `bhav-sweep` passa de 12.894.204
 instruções, 18.622 true e 14.129 falhas para **12.915.916, 18.712 true e 13.783
 falhas** (as espécies e o 33), e depois para **13.170.043, 19.087 true e 13.200
 falhas** (os 38/39: as 70 buscas de tipo inválido somem); o jogo base fica

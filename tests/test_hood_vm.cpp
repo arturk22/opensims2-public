@@ -296,20 +296,25 @@ static void testPrimitives() {
     Object& townie = fx.sim(kTownieGuid);
     townie.person->data[persondata::NeighborId] = 14;
     vm.relationships[VM::RelationshipPair{{true, 1}, {true, 14}}][1] = 50;
+    auto next39 = [&](Target onTrue, Target onFalse) {
+        Behavior::Instruction in = instr(0x1F, onTrue, onFalse, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0});
+        in.nodeVersion = 1; // the Bon Voyage parameter layout: the flags and the common filter
+        return in;
+    };
     t = fx.run(me.id, 0x1010,
                tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
-                     instr(0x1F, T, F, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0})}));
+                     next39(T, F)}));
     check(ok(t) && t.temps[1] == 14, "Set to Next 39: the neighbor with a lifetime relationship");
     townie.data[107] = 1;
     t = fx.run(me.id, 0x1011,
                tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
-                     instr(0x1F, F, F, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0})}));
+                     next39(F, F)}));
     check(ok(t, false) && t.temps[1] == 0, "Set to Next 39: object data 107 rejects the candidate");
     townie.data[107] = 0;
     townie.data[56] = 1;
     t = fx.run(me.id, 0x1012,
                tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
-                     instr(0x1F, F, F, {0, 0, 0, 0, 0xA7, Temp, 0, 1, 0})}));
+                     next39(F, F)}));
     check(ok(t, false) && t.temps[1] == 0, "Set to Next 39: object data 56 bit 0 rejects the candidate");
     townie.data[56] = 0;
 

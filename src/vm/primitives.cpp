@@ -263,16 +263,25 @@ Exit setToNext(Context& c) {
     // object, which an object Remove Object Instance queued to die at the
     // end of the tick is not (ValidateObject: object flag 0x10000 or 0x20000;
     // the reaper found the Sim it had just turned into an urn and reaped
-    // it again), and with flag 0x02 object data u16 9 equal to u16 11. The
-    // object data 56 bit 0 and 107 tests are Bon Voyage's (§ Set to Next).
+    // it again), without flag 0x01 an object data 56 bit 0 or 2 set (the
+    // game's "disabled" bits; the doc's BV filter names bit 0), without flag
+    // 0x04 an object data 107 other than 0 (the flag is not printed by the
+    // editor), and with flag 0x02 object data u16 9 equal to u16 11.
     // Node version 0 had neither the flags nor the filter (SetToNextParam
     // zeroes them on load): the base game's trees keep other bytes there
     // (the debug tombstone's "New Baby" filtered every object out, so no
-    // one cared for the baby).
-    const bool where = c.instruction.nodeVersion != 0 && o.size() > 12 && (o[8] & 0x02);
+    // one cared for the baby). That version is also where object data 56 is
+    // the "dry clothes value" and 107 does not exist, so the two data tests
+    // are the BV layout's, like the flags.
+    const bool bvFilter = c.instruction.nodeVersion != 0 && o.size() > 12;
+    const bool where = bvFilter && (o[8] & 0x02);
     const int16_t whereField = where ? int16_t(le16(&o[9])) : 0, whereValue = where ? int16_t(le16(&o[11])) : 0;
     auto eligible = [&](const Object& x) {
         if (dying(c.vm, x.id))
+            return false;
+        if (bvFilter && !(o[8] & 0x01) && (x.data[56] & 5) != 0)
+            return false;
+        if (bvFilter && !(o[8] & 0x04) && x.data[107] != 0)
             return false;
         return !where || (whereField >= 0 && size_t(whereField) < x.data.size() && x.data[size_t(whereField)] == whereValue);
     };
@@ -581,13 +590,10 @@ Exit setToNext(Context& c) {
     }
     case 39: { // next neighbor the neighbor in temp 0 has a relationship with:
                // its relationship table's variable 1 (lifetime) >= 0, skipping
-               // the neighbor itself and the Sims the common filter rejects
-               // (dying, object data 56 bits 0/2, data 107, the "where" field;
-               // flags bits 0 and 2 of the operand skip the data 56 and 107
-               // tests). The walk stops at a neighbor with no object in the
-               // lot, as the binary does (its object id is 0). The type only
-               // exists from Bon Voyage on, so the flags are always the BV
-               // layout and the two tests are not gated by the node version.
+               // the neighbor itself and the ones the common filter rejects
+               // (dying, object data 56 bits 0/2, data 107, the "where" field).
+               // The walk stops at a neighbor with no object in the lot, as
+               // the binary does (its object id is 0).
         const int16_t from = c.thread.temps[0];
         if (!c.vm.neighbor(from))
             throw gameError(err::NoSimInTemp0, "Set to Next 39: temp 0 is not a neighbor id: " + std::to_string(from));
@@ -603,10 +609,6 @@ Exit setToNext(Context& c) {
             if (!sim)
                 break;
             if (!eligible(*sim))
-                continue;
-            if (!(o[8] & 0x01) && (sim->data[56] & 5) != 0)
-                continue;
-            if (!(o[8] & 0x04) && sim->data[107] != 0)
                 continue;
             return found(id);
         }
