@@ -319,6 +319,15 @@ public:
     // Instance of the BHAV of `group` with this file name; the first call reads
     // the name of every BHAV.
     std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
+    // The ObjectScripts' Lua 5.0 chunks (docs/lua-scripts.md), by script name:
+    // the EPs' resources (0x9012468B, the `.objLua`, and 0x9012468A, the
+    // `.globalObjLua`) hold "u32 0, u32 length, the name, then the chunk". Their
+    // TGI hashes the name in a way this port's nameInstanceHash does not
+    // reproduce, so the first call scans the index once and maps the names.
+    // luaPreludes() is the `.globalObjLua` set (Global first, then by name): what
+    // the game loads before a script.
+    const std::vector<uint8_t>* luaScript(const std::string& name);
+    const std::vector<std::vector<uint8_t>>& luaPreludes();
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
     // A GUID none has goes to the fallback once (the neighbourhood's
     // character files: every neighbor's Sim has its definition in the game,
@@ -416,6 +425,10 @@ private:
     void scanDefinitions();
     std::unordered_map<uint32_t, std::unordered_map<std::string, uint16_t>> byName_;
     bool namesScanned_ = false;
+    void scanLuaScripts();
+    bool luaScanned_ = false;
+    std::unordered_map<std::string, std::vector<uint8_t>> luaScripts_;
+    std::vector<std::vector<uint8_t>> luaPreludeChunks_;
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
     std::unordered_map<uint32_t, size_t> labelCounts_;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint16_t>> byGuid_;

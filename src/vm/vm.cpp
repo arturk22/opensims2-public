@@ -158,8 +158,7 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, Slots sl) {
     slots_[key(group, instance)] = std::make_unique<Slots>(std::move(sl));
 }
 
-std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::string& name) {
-    if (!namesScanned_ && index_) {
+std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::string& name) {    if (!namesScanned_ && index_) {
         namesScanned_ = true;
         for (const auto& loc : index_->ofType(kTypeBhav)) {
             const auto& tgi = loc.entry->tgi;
@@ -179,6 +178,59 @@ std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::s
 // Group of the resources a package keeps for itself (Sims' character files,
 // lots): the index cannot address them, since they all share it.
 constexpr uint32_t kPackageLocalGroup = 0xFFFFFFFF;
+
+void CodeLibrary::scanLuaScripts() {
+    if (luaScanned_)
+        return;
+    luaScanned_ = true;
+    if (!index_)
+        return;
+    // The ObjectScripts resources of the EPs: "u32 0, u32 length, the name, then
+    // the Lua 5.0 chunk" (docs/lua-scripts.md). 0x9012468B are the .objLua
+    // scripts, 0x9012468A the .globalObjLua preludes.
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> preludes;
+    for (const uint32_t type : {0x9012468Bu, 0x9012468Au}) {
+        for (const auto& loc : index_->ofType(type)) {
+            std::vector<uint8_t> bytes;
+            try {
+                bytes = index_->read(loc);
+            } catch (const std::exception&) {
+                continue;
+            }
+            static const uint8_t signature[4] = {0x1B, 'L', 'u', 'a'};
+            const auto at = std::search(bytes.begin(), bytes.end(), signature, signature + 4);
+            if (at == bytes.end() || at - bytes.begin() < 8)
+                continue;
+            std::string name(bytes.begin() + 8, at);
+            if (name.empty())
+                continue;
+            std::vector<uint8_t> chunk(at, bytes.end());
+            if (type == 0x9012468Au)
+                preludes.emplace_back(std::move(name), std::move(chunk));
+            else
+                luaScripts_.emplace(std::move(name), std::move(chunk)); // the first of two wins, as everywhere
+        }
+    }
+    // The preludes: Global first (the base classes and the scopes), then by name.
+    std::sort(preludes.begin(), preludes.end(), [](const auto& a, const auto& b) {
+        if ((a.first == "Global") != (b.first == "Global"))
+            return a.first == "Global";
+        return a.first < b.first;
+    });
+    for (auto& p : preludes)
+        luaPreludeChunks_.push_back(std::move(p.second));
+}
+
+const std::vector<uint8_t>* CodeLibrary::luaScript(const std::string& name) {
+    scanLuaScripts();
+    const auto it = luaScripts_.find(name);
+    return it == luaScripts_.end() ? nullptr : &it->second;
+}
+
+const std::vector<std::vector<uint8_t>>& CodeLibrary::luaPreludes() {
+    scanLuaScripts();
+    return luaPreludeChunks_;
+}
 
 void CodeLibrary::indexDefinition(uint32_t group, uint16_t instance, const ObjectDefinition& d) {
     // Keeps the first OBJD of a GUID or name, like the rest of the index.
