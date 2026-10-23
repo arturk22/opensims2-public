@@ -154,10 +154,19 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   a viver (`Wait For Notify #2`) e as buscas vão a **161/225/201**, com 86/60/109 resets
   por outras falhas do AL; no base nada muda (**8/5/22/20 buscas, 0 resets**). O
   `primitives-mac.md` §Generic Sims Call tem o censo e o A/B (devolver falso é muito
-  pior). O **filtro comum** (`data 56
-  & 5` e `107`, com as flags 0x01/0x04) entrou no `eligible` no mesmo dia,
-  gateado pelo layout de BV (o sweep do AL fica igual: no lote sintético os dois
-  dados estão zerados; o jogo base não passa pelo filtro por construção).
+  pior).
+- **Ferramenta de teste (22/10)**: o `autonomy` indexava só a pasta do EP dado, não a
+  instalação (o app indexa a instalação inteira). Com o AL o lote rodava **sem as
+  animações do base e dos outros EPs**: o laço do "Pass Out" girava até o orçamento de
+  instruções, o Main dos Sims reiniciava **116 vezes** em 29.600 ticks e **o ônibus
+  escolar não ia embora** (27 peças às 09:27); agora indexa os mesmos roots do app:
+  **91 resets**, 1 animação faltando, os Sims em "Routing - Goto Head of Bed"
+  (**17/94/25 buscas** contra 185/253/229) e **o ônibus vai embora**. Detalhe em
+  `performance.md`.
+- **Filtro comum do Set to Next** (`data 56 & 5` e `107`, com as flags 0x01/0x04): entrou
+  no `eligible` em 22/10, gateado pelo layout de BV (o sweep do AL fica igual: no lote
+  sintético os dois dados estão zerados; o jogo base não passa pelo filtro por
+  construção).
 - **12:** primitivas `0x7D`/`0x7E` — **fechado em 22/10**: o RE do PC está no
   `re-pc-ghidra.md` §(g); sem interpretador de Lua o port devolve **false** (ver o item 9).
 - **14:** **FECHADO** (`data-findings.md` §20): `NGBH 0xCB`, `FAMI 0x55`, `SDSC 0x36`,

@@ -353,6 +353,22 @@ mais que a varredura (19,4 s contra 6,7 s, medido e revertido).
 imprime a divergência: rodado no ctest inteiro (39/39) e no `autonomy`, zero
 divergências. O `bhav-sweep` do AL não muda (14.025.434 / 19.927 / 10.335).
 
+## A instalação nos comandos de lote (22/10)
+
+O `autonomy` indexava só a pasta do EP dado (`ResourceIndex(resRoot(lot))`), enquanto o
+app indexa a instalação inteira (`installationResRoots`, `src/app/win_main.cpp`). Com o
+AL o lote rodava **sem os recursos do base e dos outros EPs**: 6.052 plays de
+`a-heatstroke-slump-breathe` e `o-door-open-CCW` faltando, os laços de espera que
+dependem da duração de uma animação girando até o orçamento de instruções (100.000) e o
+Main dos Sims reiniciando — **116 resets** em 29.600 ticks no `N001_Lot11`, e **o ônibus
+escolar parado na rua às 09:27** (27 peças). Agora o `autonomy` indexa os mesmos roots do
+app: **1** animação faltando (2 plays), **91 resets**, os Sims em "Routing - Goto Head of
+Bed" com **17/94/25 buscas** (antes 185/253/229) e **o ônibus vai embora** (0 peças às
+09:27). O mesmo sintoma do live-qa da rodada 11 ("o veículo chega e nunca vai embora")
+reaparecia no comando de teste por outro motivo (faltavam as animações), o que esconderia
+uma regressão de verdade. O custo fixo do comando é o `CodeLibrary` (~35 s tanto com um
+root quanto com a instalação; as medições de tick comparam o total com o `--ticks 0`).
+
 ## What is left (not done)
 
 - Per tick: `notifyRoomChanges` (object data 29 is written in many places) and
