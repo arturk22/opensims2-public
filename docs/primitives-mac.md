@@ -3926,18 +3926,19 @@ volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
   0x38/0x37 ×10, 0x43 ×9, 0x4F/0x47/0x45/0x35 ×7, …, 0x54 ×2). A que dói é
   a **60**: o `Function - Main - Set Skin` do semi-global do Sim
   (`0x7F01EC29:0x22A4`, instrução 2) chama 60, e com o erro 0x2A do port o
-  **Main de todo Sim do lote reiniciava**: no `autonomy N001_Lot11 --ticks
-  24000` com os dados do AL, **5.097 resets por Sim**, o Main em `Idle #0` e
-  só 31/37/29 buscas; com os dados do base o mesmo lote fica com **0 resets**
-  e os Sims jogando xadrez/piano. O PC não tem rótulo para 54–84 (os rótulos
-  ficam no Mac, que para na tabela do base), então o port os trata como as
-  chamadas de motor do base: **registra em `VM::engineRequests` e devolve
-  verdadeiro** (o limite do erro 0x2A sobe para 0x54). Medido: o Main dos
-  Sims volta a viver (`Wait For Notify #2`) e as buscas vão a
-  **161/225/201**, com 86/60/109 resets por outras falhas do AL (orçamento de
-  instruções, break point, atributo). A alternativa (devolver **falso** sem
-  registrar) foi medida e é muito pior: o mesmo lote não terminou 24.000
-  ticks em 30 min, com 32 "too many look_at requests".
+  **Main de todo Sim do lote reiniciava** — e cada reinício reabria o pedido de
+  look_at, que estourava o limite por turno: no `autonomy N001_Lot11 --ticks
+  24000`, com a instalação inteira (como o app), **5.914 resets** do Mortimer, o
+  Main em `Idle #0` e o dos outros dois parado no "Motive Failure - Pass Out -
+  Loop". O PC não tem rótulo para 54–84 (os rótulos ficam no Mac, que para na
+  tabela do base), então o port os trata como as chamadas de motor do base:
+  **registra em `VM::engineRequests` e devolve verdadeiro** (o limite do erro
+  0x2A sobe para 0x54). Medido no mesmo lote: **15 resets** do Mortimer (9 e 62
+  dos outros, por outras falhas do AL: orçamento de instruções, break point,
+  atributo), o Main em "Routing - Goto Head of Bed" e as buscas em
+  **17/94/25** (antes 58/109/38, com os Sims travados). A alternativa (devolver
+  **falso** sem registrar) foi medida e é muito pior: o mesmo lote não terminou
+  24.000 ticks em 30 min, com 32 "too many look_at requests".
 
 ### Set to Next (`TrySetToNext`, BV `0xe47288`)
 

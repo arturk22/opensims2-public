@@ -1919,8 +1919,9 @@ Exit genericSimsCall(Context& c) {
     // instructions). The PC data has no labels for those, so they are handed
     // to the engine like the base's engine-only calls: recording the request
     // and returning true is what lets the AL's Sims' Main run at all (with
-    // the error, every Sim on N001_Lot11 reset ~5,000 times in a day, its
-    // Main livelocked).
+    // the error, the Sims of N001_Lot11 reset thousands of times in a day —
+    // 5,914 for one of them in 29,600 ticks —, the Main livelocked and the
+    // look_at limit tripped by the restarts).
     const uint16_t call16 = le16(&c.instruction.operands[0]);
     if (call16 > 84)
         throw gameError(err::InvalidGlobalSimCall, std::to_string(call16));

@@ -145,15 +145,15 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   Banter").
 - **Achado novo em 22/10, fora do sweep (num lote de verdade)**: as chamadas **54–84**
   da Generic Sims Call (0x01). O AL usa até **0x54** (~232 instruções acima de 53) e o
-  port recusava tudo acima de 53; com os dados do AL o **Main de todo Sim** do
-  `N001_Lot11` reiniciava **5.097 vezes** num dia (o `Function - Main - Set Skin` chama a
-  60, e o erro 0x2A matava o Main), com só 31/37/29 buscas e o Main em `Idle #0`; com os
-  dados do base o mesmo lote tem 0 resets e os Sims jogando xadrez/piano. Agora 54–84 são
-  **registradas em `VM::engineRequests` e devolvem verdadeiro** (o mesmo tratamento das
-  chamadas de motor do base; o limite do 0x2A sobe para 0x54). Medido no AL: o Main volta
-  a viver (`Wait For Notify #2`) e as buscas vão a **161/225/201**, com 86/60/109 resets
-  por outras falhas do AL; no base nada muda (**8/5/22/20 buscas, 0 resets**). O
-  `primitives-mac.md` §Generic Sims Call tem o censo e o A/B (devolver falso é muito
+  port recusava tudo acima de 53; o `Function - Main - Set Skin` do Sim chama a **60**,
+  e com o erro 0x2A o Main de todo Sim reiniciava (e cada reinício reabria o look_at, que
+  estourava o limite por turno): no `N001_Lot11` com a instalação inteira, **5.914
+  resets** do Mortimer e os outros dois travados no "Motive Failure - Pass Out - Loop".
+  Agora 54–84 são **registradas em `VM::engineRequests` e devolvem verdadeiro** (o mesmo
+  tratamento das chamadas de motor do base; o limite do 0x2A sobe para 0x54). Medido no
+  mesmo lote: **15 resets** do Mortimer (9/62 dos outros, por outras falhas do AL), Main
+  em "Routing - Goto Head of Bed" e buscas em **17/94/25** (antes 58/109/38, travados).
+  O `primitives-mac.md` §Generic Sims Call tem o censo e o A/B (devolver falso é muito
   pior).
 - **Ferramenta de teste (22/10)**: o `autonomy` indexava só a pasta do EP dado, não a
   instalação (o app indexa a instalação inteira). Com o AL o lote rodava **sem as
