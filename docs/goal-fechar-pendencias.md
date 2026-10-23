@@ -172,6 +172,11 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   no `eligible` em 22/10, gateado pelo layout de BV (o sweep do AL fica igual: no lote
   sintético os dois dados estão zerados; o jogo base não passa pelo filtro por
   construção).
+- **O "attribute 8 of 8" do controlador do assistente social (22/10, não é bug do
+  port)**: o OBJD `0x7F029114/0x41A7` diz `numAttributes = 10` e o objeto **nasce com
+  10**, mas o **save do lote** traz 8 e o `cTSObject::Read` adota a contagem salva (o port
+  faz `assign`); a árvore do AL "Function - Update" #88 lê o atributo 8 e erra 0x06 como o
+  jogo erraria com esse save. É estado do lote, não do motor — não mexer.
 - **12:** primitivas `0x7D`/`0x7E` — **fechado em 22/10**: o RE do PC está no
   `re-pc-ghidra.md` §(g); sem interpretador de Lua o port devolve **false** (ver o item 9).
 - **14:** **FECHADO** (`data-findings.md` §20): `NGBH 0xCB`, `FAMI 0x55`, `SDSC 0x36`,
