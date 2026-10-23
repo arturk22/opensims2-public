@@ -4,6 +4,7 @@
 #include "prim_cmds.hpp"
 #include "effects_cmds.hpp"
 #include "shadow_cmds.hpp"
+#include "script_cmds.hpp"
 #include "simlook_cmds.hpp"
 #include "material_cmds.hpp"
 #include "audio_cmds.hpp"
@@ -1065,6 +1066,7 @@ int usage() {
                          "       s2pkg lot <Res-dir> <lot.package>...\n"
                          "       s2pkg lot-walls <lot.package> [x0,y0,x1,y1]\n"
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
+                         "       s2pkg lua <file.objLua>\\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
                          "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), hoodPlayUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage(), tutorialUsage(), shadowUsage());
@@ -1099,6 +1101,8 @@ int main(int argc, char** argv) {
         if (int rc = shadowCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = simLookCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = scriptCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = tutorialCommand(cmd, argc, argv); rc >= 0)
             return rc;

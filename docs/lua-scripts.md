@@ -61,6 +61,25 @@ Com o `0x7E` devolvendo false, **nenhum** desses sistemas roda:
 - o **init dos multi-tile** (`MTInit`), o `MoveObjectToLocation`, o
   `TransitionsEnabled`/`SaveEnabled`, o `GetValidDowntown`, o `InteractionQueue`…
 
+## O `s2pkg lua` (23/10)
+
+`src/formats/lua50.cpp` + `cli/s2pkg/script_cmds.cpp`: o leitor do chunk (o formato do
+`lundump.c`/`lopcodes.h` do 5.0.3, com os tamanhos que o header declara: int 4, size_t 4,
+Instruction 4, Number 8) e o desmonte de cada instrução com a linha e os constantes
+(RK ≥ 250 = `Kst`). `s2pkg lua <file.objLua>` no `NPC_IsType.objLua` (85 instruções,
+debug já removido: 0 linhas/locais/upvalues) mostra a lógica do pool:
+
+- `npc = GetTreeParameter(0)`, `tipo = GetTreeParameter(1)`;
+- `CachedNeighbor.new(npc)` e `GlobalObjManager:getPersonIdFromGUID(pessoa:getGUID())`;
+- com pessoa: `GetPersonData(id, "Person Age") <= 0` → false; `GetPersonData(id, "NPC
+  Type") ~= tipo` → false; a família 32767 (sem família) ou ≠ 0 → false; senão
+  `SetScriptReturnValue(true)`;
+- sem pessoa (id 0): o mesmo pelo `pessoa:getPersonData` e
+  `GetObjectDefinitionField(guid, 203) == NPCTypeToGUID[tipo]`.
+
+É a referência para o primeiro alvo do VM (o pool de NPCs → o motorista do carro da
+empregada).
+
 ## O plano
 
 1. Vendorizar o **Lua 5.0.3** (MIT, ~9 mil linhas de C) em `third_party/lua50` e carregar o
