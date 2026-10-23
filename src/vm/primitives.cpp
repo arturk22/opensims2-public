@@ -11,8 +11,10 @@
 #include "placement.hpp"
 #include "errors.hpp"
 #include "sound.hpp"
+#include "lua_scripts.hpp"
 
 #include "formats/binreader.hpp"
+#include "formats/log_once.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -2124,35 +2126,53 @@ static Exit noHandler(Context& c) {
 static Exit tutorial(Context&) { return Exit::True; }
 
 // Follow Sim (0x7D) and Run Script (0x7E): the two Bon Voyage primitives of
-// the PC executable's base class (docs/re-pc-ghidra.md §(g)). The 0x7E
-// resolves the script name in the STR# 0x130 table ("Lua Scripts", 7.233
-// entries) and runs the object's Lua script (the `.objLua` file or the
-// description); the port has no Lua interpreter (neither has the upstream).
-// The game's handler returns what the run of the tree/script returns
-// (`vfunc 0x44`), so a script the port cannot run answers **false** instead
-// of failing the thread. Failing it reset the AL's controllers (LTA
-// Superpowers, Climate, Business - Customer Loyalty, Fish Pond Effects,
-// Community Lot - Populator...) and the Sims' Main every few ticks: on
-// N001_Lot11 with the AL data the 4 Sims did 0 searches and 0 picks in 3.600
-// ticks, and 3.208 of the AL sweep's 13.200 failures were this primitive.
-// With false the lot runs again (searches and picks, motives moving); the
-// Lua features stay inert — and with them the AL's **NPC pool**: "NPC - Is
-// Type?" (0x7FD46CD0:0x3AD) is one 0x7E, so no NPC is ever of a type, the
-// pool's array stays empty and the service cars get no driver (the maid's
-// car resets at 07:16 and the maid never comes; docs/data-findings.md §21
-// and the soak round 20). Closing that needs a Lua interpreter and the API
-// the .objLua scripts call. The description tree with the same name is the
-// caller itself (the AL's "NPC - Get Outfit GUID for Type in T[0,1]" is a
-// wrapper of one instruction that calls its own name), so running it instead
-// would be a recursion. The 0x7D has 1 use in the AL and the meaning of the
-// object array is still unmeasured: false as well.
-static Exit runScriptNoLua(Context&) { return Exit::False; }
+// the PC executable's base class (docs/re-pc-ghidra.md sec (g)).
+//
+// Run Script (0x7E): the operands' bytes 0-1 are the STR# id (0x130, "Lua
+// Scripts") and bytes 2-3 the script id counted from 1; entry id - 1 is the
+// script's name, the text before " -- " being its file name
+// (docs/lua-scripts.md). The engine asks the same entry for the description
+// tree (the "defined in description" request) and for the `.objLua` chunk
+// (0x4D45F8E6, "defined in objLua file"); the 0x7E runs the *Lua* chunk of
+// that name, never a tree (the AL's "NPC - Get Outfit GUID for Type in
+// T[0,1]" is a tree that wraps a one-instruction 0x7E of the same name, so
+// running the tree would be a recursion), and the result is the value
+// SetScriptReturnValue left it (vm/lua_scripts.cpp).
+//
+// Follow Sim (0x7D) has 1 use in the AL and what it does with the object array
+// is still unmeasured: false.
+static Exit runScript(Context& c) {
+    const auto& o = c.instruction.operands;
+    const uint16_t table = uint16_t(le16(&o[0]));
+    const uint16_t id = uint16_t(le16(&o[2]));
+    if (id == 0)
+        return Exit::False;
+    const StringTable* names = c.vm.code().strings(kGlobalGroup, table);
+    std::string name;
+    if (names && size_t(id - 1) < names->count(lang::EnglishUS))
+        name = names->get(size_t(id - 1), lang::EnglishUS);
+    // "Name  -- the comment" (the entry's text; the name is before " -- ").
+    if (const size_t cut = name.find(" -- "); cut != std::string::npos)
+        name.resize(cut);
+    while (!name.empty() && (name.back() == ' ' || name.back() == '\t' || name.back() == '\r' || name.back() == '\n'))
+        name.pop_back();
+    while (!name.empty() && (name.front() == ' ' || name.front() == '\t'))
+        name.erase(name.begin());
+    if (name.empty()) {
+        logOnce("0x7E", "name " + std::to_string(table) + "/" + std::to_string(id),
+                "Run Script: no script name at STR# " + hexString(table) + " entry " + std::to_string(id - 1));
+        return Exit::False;
+    }
+    return runLuaScript(c, name) ? Exit::True : Exit::False;
+}
+
+static Exit runFollowSim(Context&) { return Exit::False; }
 
 void registerPrimitives(VM& vm) {
     for (uint16_t op : {0x04, 0x05, 0x06, 0x09, 0x15, 0x18, 0x26, 0x27, 0x28, 0x29, 0x2B, 0x2C, 0x2F})
         vm.setPrimitive(op, noHandler);
-    for (uint16_t op : {0x7D, 0x7E})
-        vm.setPrimitive(op, runScriptNoLua);
+    vm.setPrimitive(0x7D, runFollowSim);
+    vm.setPrimitive(0x7E, runScript);
     for (uint16_t op = 0x34; op <= 0x68; ++op)
         vm.setPrimitive(op, noHandler);
     vm.setPrimitive(0x0A, tutorial);

@@ -2,7 +2,7 @@
 
 O `0x7E` (Run Script) do jogo roda **scripts Lua** presos aos objetos (o RE do PC está no
 `re-pc-ghidra.md` §(g)/(h), e o custo da recusa no `data-findings.md` §21). Este doc é o
-inventário do que existe nos dados e o plano para tirar o port do `false`.
+inventário do que existe nos dados, a API que o port implementou e o que ela já move.
 
 ## Onde estão
 
@@ -12,13 +12,13 @@ inventário do que existe nos dados e o plano para tirar o port do `false`.
   `NPC_Constants`, `ObjectData`, `ObjectDefinition`, `OutfitData`, `ConnectedColumns`,
   `PersonData`, `DrivewayGlobals`, `GarageGlobals`, …).
 - Os EPs seguintes trazem `TSData\Res\ObjectScripts\ObjectScripts.package` (o AL:
-  **561 recursos**), com os tipos `0x9012468A` e `0x9012468B` e o TGI **hasheado pelo
-  nome** (`nameInstanceHash`/`nameInstanceHiHash` do `resindex`): as versões que
-  substituem as da Nightlife.
+  **496** recursos `0x9012468B` e **64** `0x9012468A`) com o TGI **hasheado pelo nome**
+  (`nameInstanceHash`/`nameInstanceHiHash` do `resindex`): as versões que substituem as da
+  Nightlife.
 - **O nome do script**: o `0x7E` pega o id do script **1-based** no STR# 0x130 ("Lua
-  Scripts", 7.233 entradas) e a entrada (id − 1) é o nome do arquivo. O "NPC - Is Type?"
-  do pool de NPCs usa o id 11 → a entrada `#10` = `NPC_IsType` → `NPC_IsType.objLua`
-  (conferido nos dados).
+  Scripts", 7.233 entradas) e a entrada (id − 1) é o nome do arquivo, com o comentário
+  depois de `" -- "`. O "NPC - Is Type?" do pool de NPCs usa o id 11 → a entrada `#10` =
+  `NPC_IsType` → `NPC_IsType.objLua` (conferido nos dados).
 
 ## O formato: bytecode, não texto
 
@@ -26,56 +26,111 @@ Os arquivos começam com `1B 4C 75 61 50` — o chunk **pré-compilado do Lua 5.
 (`ESC "Lua"`, versão 0x50 = 5.0; formato 1; `int` 4; `size_t` 4; `Instruction` 4;
 `Number` 8 = double). Não dá para "ler o script" como texto: ou se porta um
 **interpretador de Lua 5.0** (a 5.4 não lê bytecode 5.0) ou se traduz cada script à mão.
-As constantes dos chunks dão o que cada um faz e quais funções de motor chama.
+
+**O `size_t` de 32 bits (23/10).** O jogo foi compilado em 32 bits, então o header do chunk
+declara `sizeof(size_t) = 4` e cada tamanho de string vem em 4 bytes. O build de 64 bits do
+port tem `sizeof(size_t) = 8`, e o `lundump.c` do 5.0.3 recusava todo chunk do jogo com
+"virtual machine mismatch … size of size_t is 4 but read 8". O `third_party/lua50` foi
+**patcheado** (só isso): `LUA_SIZE_T_SIZE = 4` no `lundump.h`, `LoadSize`/`DumpSize` leem e
+escrevem 4 bytes e o header espera 4. Assim os chunks do jogo carregam sem conversão, e um
+dump deste build carrega num build de 32 bits (o `test_lua50` cobre o caminho dump → load).
 
 ## A API que os scripts chamam
 
-Das constantes dos 37 arquivos (o resto são nomes de campos de dados):
+Das constantes dos 627 chunks do AL (os 37 da Nightlife e os prelúdios dos EPs):
 
-- chamadas: `GetTreeParameter`, `SetScriptReturnValue`, `GetPersonData`,
-  `GetObjectDefinitionField`, `NPCTypeToGUID`, `ConstantAccess`, `getGUID`,
-  `getPersonIdFromGUID`, `MoveObjectToLocation`, `GetObjectLocation`,
-  `BitShiftRight`/`BitwiseAnd`/`BitwiseOr`, `CalculateTurnOnOffCount`/
-  `CalculateTurnOnOffScore`, `countProperties`, `CheckForwards`/`CheckBackwards`,
-  `CanConnectDir`/`ConnectByDir`, `DaysTillBreak`;
-- tabelas de nomes: `PersonData` ("Person Age", "NPC Type", "family number", …),
-  `ObjectDefinition`, `ObjectData`, `OutfitData`, `Neighbor`, `ConstantAccess`;
-- o prelúdio (`.globalObjLua`): as classes `GlobalObjManager`, `ObjectManager`,
-  `CachedNeighbor`, `CachedPerson`, `new`, `__index` — tudo em Lua, por cima da API.
+- **thread/frame**: `GetTreeParameter`, `SetTreeParameter`, `GetPrimitiveParameter`,
+  `GetTemp`/`SetTemp`, `GetLocal`/`SetLocal`, `GetStackObjectId`, `GetRunningObjectId`,
+  `GetRunningOnObjectId`, `SetScriptReturnValue`;
+- **objetos/pessoas**: `GetPersonData`/`SetPersonData`, `GetNeighborPersonData`,
+  `GetObjectData`/`SetObjectData`, `GetObjectAttribute`/`SetObjectAttribute`,
+  `GetObjectSemiAttribute`/`SetObjectSemiAttribute`, `GetObjectDefinitionField`,
+  `GetObjectIdInSlot`, `GetNumObjectArrays`, `GetObjectArrayCopy`, `SetObjectArray`,
+  `GetConstant` (as tabelas de constantes ainda sem uso medido);
+- **bits**: `BitwiseAnd`, `BitwiseOr`, `BitwiseXOr`, `BitShiftLeft`, `BitShiftRight`,
+  `SetBit`, `ClearBit`, `IsBitSet`;
+- **objetos do motor**: `CachedNeighbor` (`new`/`getGUID`/`getPersonData`/`getOutfitProperty`),
+  `CachedPerson`, `ObjectManager` (`new`, `getPersonIdFromGUID`, `getObjectIdFromGUID`,
+  `getObjectGUIDFromObjectId`, `getObjectIds`, `getNeighborIds`, `getPersonIds`,
+  `verifyObjectId`, `verifyNeighborId`), `Neighborhood`, `Inventory`, `nWorld`, `nGameState`;
+- **tabelas de nomes**: `PersonData`, `ObjData`, `ObjDef`, `OutfitData`/`OutfitType`/…,
+  `NPCTypeToGUID`, `NPCTypeToOutfitGUID`, `Aspiration`, `Scope` — **são prelúdios**, não
+  API: os `.globalObjLua` as definem em Lua por cima da API.
 
 **O que é prelúdio e o que é do motor (23/10).** `CachedNeighbor` e `CachedPerson` **não**
 estão em nenhum `.globalObjLua` (as strings dos 37 arquivos só os mostram nos scripts): são
 **globais do motor**, como `GlobalObjManager`/`ObjectManager`/`nWorld`/`nGameState`. O
-binding tem de fornecer: `CachedNeighbor` (`.new(objeto)` → `:getGUID()`, `:getPersonData`),
-`GlobalObjManager` (`:getPersonIdFromGUID(guia)` = o vizinho pelo GUID do personagem) e as
-funções puras; os prelúdios (`Global`, `Neighbor`, `PersonData`, `ObjDef`, `OutfitData`, …)
-definem só as tabelas/classes em cima disso.
+binding fornece: `CachedNeighbor` (`.new(nID)` → `:getGUID()`, `:getPersonData(field)`) —
+o `nID` é o vizinho da vizinhança; `ObjectManager` (`:getPersonIdFromGUID(guia)` = o `nID`
+do Sim vivo com esse GUID, 0 se não está no lote) e as funções puras. Os prelúdios
+(`Global`, `Neighbor`, `PersonData`, `ObjDef`, `OutfitData`, …) definem só as
+tabelas/classes em cima disso.
 
-São ~20 funções de motor mais as tabelas de nomes que o port **já tem** nos STR# (os dados
-de pessoa 0xC8, os dados de objeto 0x8D, os campos do OBJD, as constantes).
+**O ponto de virada do `getPersonIdFromGUID` (FUN_00904590).** O engine percorre os objetos
+vivos com aquele GUID, fica com o que é pessoa e devolve o **nID** (vfunc 0xBC); sem
+nenhum, 0. O script então usa `CachedPerson.new(nID)` (o Sim do lote) ou cai no
+`CachedNeighbor` (o vizinho, fora do lote). O port faz o mesmo com
+`VM::objectsOfGuid` + `o->person->data[persondata::NeighborId]`.
 
-## O que fica inerte hoje (o custo do `false`)
+## O `0x7E` e o binding (23/10)
 
-Com o `0x7E` devolvendo false, **nenhum** desses sistemas roda:
+`src/vm/lua_scripts.cpp` (`LuaRuntime`, um `lua_State` por VM):
 
-- o **pool de NPCs do AL** ("NPC_IsType") → os carros de serviço sem motorista, a
-  empregada que não chega (`soak-report.md` round 20);
-- a **pontuação de atração** da Nightlife (`AttractionScore`, `TurnOnOffCount`,
-  `PersonalTraits`);
-- o **pôquer** (`PokerCompareHands`, `PokerScoreHand`);
-- as **entradas de garagem** (`DrivewayAdjacency`, `GaragePlacement`, `CarBlockingStreet`,
-  `DrivewayGlobals`);
-- a **ordenação de mesas** (`TableSort`, `DiningSort`);
-- o **init dos multi-tile** (`MTInit`), o `MoveObjectToLocation`, o
-  `TransitionsEnabled`/`SaveEnabled`, o `GetValidDowntown`, o `InteractionQueue`…
+- abre a biblioteca padrão que os scripts usam (`base`, `table`, `string`, `math` — o `#`
+  não existe no 5.0) e carrega os **627 prelúdios** do índice da instalação
+  (`CodeLibrary::luaPreludes()`, `Global` primeiro e depois por nome);
+- registra a API acima (cada função é a do engine: `FUN_0090eeb0`, `FUN_00911470`,
+  `FUN_0090e1c0`, `FUN_0090faa0`, `FUN_00911180`); o contexto corrente é o do `0x7E` que está
+  rodando (`frame.params`, `thread.temps`, `frame.locals`, `frame.stackObject`);
+- roda o chunk do nome (`luaL_loadbuffer` + `lua_pcall`) e devolve o byte que
+  `SetScriptReturnValue` gravou (o `0x7E` vira `Exit::True`/`False`);
+- um erro de script (ou de um prelúdio, ou de um pacote malformado lido pela API) **não
+  derruba a thread**: `logOnce` e `false`, como a recusa anterior. Nenhuma função da API
+  pode lançar através dos frames C do Lua (a primeira versão lançava em
+  `GetPrimitiveParameter` sem stack object e o `bhav-sweep` morria com 0xC0000409).
 
-## O `s2pkg lua` (23/10)
+O `0x7E` em `primitives.cpp`: bytes 0-1 = o STR# (0x130), bytes 2-3 = o id (1-based); o
+nome é a entrada (id − 1) até o `" -- "`. Os três pares do operando (bytes 6/9/12) são só o
+log do jogo (`GetPrimitiveParameter`), não os parâmetros do script: `GetTreeParameter` lê os
+parâmetros da **árvore que chamou** o `0x7E`. O `0x7D` (Follow Sim) continua `false` (1 uso
+no AL e o array ainda sem semântica medida).
+
+## O que mudou de comportamento (medido, 23/10)
+
+- **O pool de NPCs do AL funciona.** Antes, "NPC - Is Type?" (`0x7FD46CD0:0x3AD`) devolvia
+  sempre false: o array do pool ficava vazio, o `Snap Into` do motorista recebia o stack
+  object 0 e o carro da empregada resetava **30 vezes às 07:16**, e a empregada nunca
+  chegava (`soak-report.md` round 20). Agora o `NPC_IsType` recebe os `nID`s do
+  `Set to Next 17` (os vizinhos de família 0), responde **true para 3 dos 333 candidatos**
+  do `N001_Lot68` e a **Kaylynn (#452) chega** (400 ticks: `Interaction - Get Out #3`, no
+  lote às 07:22) **sem nenhum reset** e sem nenhum erro de SimAntics.
+- **O `bhav-sweep` do AL** vai de **14.093.824 / 23.864 true / 6.385 falhas** para
+  **14.508.719 / 23.937 true / 6.376 falhas** (+414.895 instruções: os scripts agora rodam;
+  −9 falhas). O do **jogo base fica igual** (7.234.312 / 11.107 / 2.461): o base não tem
+  `ObjectScripts`, então o `0x7E` continua false.
+- Os sistemas da Nightlife (atração, pôquer), a garagem e a ordenação de mesas passam a
+  rodar; os que ainda falham pedem os globais que faltam (ver abaixo).
+
+## O que ainda falta (por script, do `bhav-sweep` do AL)
+
+- `Inventory`/`InventoryToken` (a classe do FUN_0090d830: `addToken`, `getTokensByGUID`,
+  `countTokens…`) — o `AttractionScore` e o `ShoppingSetValueByPercent` a usam;
+- `Neighborhood` (FUN_0090db40: `getLotType`, `isRoommate`, `getLotIds`, …);
+- `nGameState.IsEPInstalled`/`GetInstalledEps`/`GetCurrentState` (FUN_0090d3c0);
+- `GetNeighborRelationship`/`SetNeighborRelationship`, `GetSimulatorGlobal`/
+  `SetSimulatorGlobal`, as tabelas de constantes por GUID
+  (`GetNumConstantsWithGuid`/`GetConstantWithGuid`/`GetConstantsTableByGuid`) e
+  `GetUserDirectory` (o prelúdio "LuaLoader" do pacote chama);
+- `CachedNeighbor:getOutfitProperty` (o método existe: LAB_009022e0);
+- o `0x7D` (Follow Sim).
+
+## O `s2pkg lua` e o `lua-script` (23/10)
 
 `src/formats/lua50.cpp` + `cli/s2pkg/script_cmds.cpp`: o leitor do chunk (o formato do
 `lundump.c`/`lopcodes.h` do 5.0.3, com os tamanhos que o header declara: int 4, size_t 4,
 Instruction 4, Number 8) e o desmonte de cada instrução com a linha e os constantes
-(RK ≥ 250 = `Kst`). `s2pkg lua <file.objLua>` no `NPC_IsType.objLua` (85 instruções,
-debug já removido: 0 linhas/locais/upvalues) mostra a lógica do pool:
+(RK ≥ 250 = `Kst`). `s2pkg lua <file.objLua>` no `NPC_IsType.objLua` (85 instruções, debug
+já removido: 0 linhas/locais/upvalues) mostra a lógica do pool:
 
 - `npc = GetTreeParameter(0)`, `tipo = GetTreeParameter(1)`;
 - `CachedNeighbor.new(npc)` e `GlobalObjManager:getPersonIdFromGUID(pessoa:getGUID())`;
@@ -83,36 +138,27 @@ debug já removido: 0 linhas/locais/upvalues) mostra a lógica do pool:
   Type") ~= tipo` → false; a família 32767 (sem família) ou ≠ 0 → false; senão
   `SetScriptReturnValue(true)`;
 - sem pessoa (id 0): o mesmo pelo `pessoa:getPersonData` e
-  `GetObjectDefinitionField(guid, 203) == NPCTypeToGUID[tipo]`.
+  `GetObjectDefinitionField(guia, 203) == NPCTypeToGUID[tipo]`.
 
-É a referência para o primeiro alvo do VM (o pool de NPCs → o motorista do carro da
-empregada).
+`s2pkg lua-script <Res-dir> <nome>` acha o script no `ObjectScripts.package` do EP pelo
+nome e desmonta (o `NPC_IsType` do AL = 731 bytes, igual ao arquivo solto da Nightlife).
 
 ## O recurso empacotado (23/10)
 
 As versões dos EPs não são o chunk puro: `0x9012468B` (os `.objLua`) e `0x9012468A` (os
 `.globalObjLua`) trazem `u32 0 + u32 tamanho + o nome` e **o chunk em seguida** (ex.:
 `NPC_IsType` + `LuaP...`). O TGI é o hash do nome, mas **não** é o `nameInstanceHash` do
-port (`NPC_IsType` = `FF9573E2` no pacote e `FFB38405` na função do port) — o lookup do
-`0x7E` tem de montar um **mapa nome → TGI** varrendo esses recursos uma vez (como o
-`byName_` dos BHAVs) e ler o chunk depois do nome. O `s2pkg dump` de um recurso
-`0x9012468A`/`0x9012468B` já imprime `script "<nome>"` e o desmonte.
+port (`NPC_IsType` = `FF9573E2` no pacote e `FFB38405` na função do port) — por isso o
+`CodeLibrary` varre os dois tipos uma vez e monta o mapa nome → chunk
+(`CodeLibrary::luaScript`/`scanLuaScripts`).
 
-## O plano
+## O estado (fim de 23/10)
 
-1. ~~Vendorizar o Lua 5.0.3~~ **FEITO (23/10)**: `third_party/lua50` (`src/`, `include/` e o
-   `COPYRIGHT`; a lib `os2_lua50` no CMake) e o `test_lua50`: um chunk de **fonte**, o
-   **dump**, o dump **carregado e rodado** (o caminho dos scripts do jogo) e a biblioteca
-   padrão que eles usam (`ipairs`, `table.sort`, `math`, `table.getn` — o `#` só veio no
-   5.1). **40/40** no ctest. Falta o `0x7E`: resolver o nome (STR# 0x130 → o recurso
-   `0x9012468B` no pacote do EP ou o arquivo solto da Nightlife), carregar os prelúdios
-   (`.globalObjLua`) + o script e registrar a API.
-2. Registrar a **API** (as ~20 funções) sobre o `Context`/`VM`, com os nomes dos campos
-   resolvidos pelos STR# (`PersonData["NPC Type"]` → o número do campo no STR# 0xC8, que o
-   port lê hoje com `persondata::` só para os que o motor usa).
-3. Carregar os **prelúdios** (`Global.globalObjLua` e os do EP) antes do script, como o
-   jogo; os scripts dos EPs vêm do `ObjectScripts.package` (hash do nome) e os da Nightlife
-   dos arquivos soltos.
-4. Primeiro alvo medível: o **`NPC_IsType`** (o pool de NPCs → o motorista do carro da
-   empregada; o antes/depois está no `soak-report.md` round 20), depois os sistemas da
-   Nightlife (atração, pôquer, garagem).
+| peça | estado |
+|---|---|
+| VM (Lua 5.0.3, MIT) | vendorizada, com o `size_t` de 32 bits do jogo (`test_lua50`) |
+| leitor/desmontador | `s2pkg lua` e `s2pkg lua-script` |
+| prelúdios | 627 chunks carregados por VM (5 falham: `Inventory`, `GetNumConstantsWithGuid`, `LuaLoader`/`GetUserDirectory`) |
+| API | as ~35 funções; faltam os globais listados acima |
+| `0x7E` | roda o script e devolve o `SetScriptReturnValue` |
+| NPC pool | **medido**: 3/333 true, a empregada chega, 0 resets |

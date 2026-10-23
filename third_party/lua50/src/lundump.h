@@ -26,6 +26,10 @@ void luaU_print (const Proto* Main);
 #define	LUA_SIGNATURE	"\033Lua"	/* binary files start with "<esc>Lua" */
 #define	VERSION		0x50		/* last format change was in 5.0 */
 #define	VERSION0	0x50		/* last major  change was in 5.0 */
+/* OpenSims2: the size fields of the chunk (string lengths, and the header's
+   "size of size_t") are always 4 bytes, as the game's 32-bit builds wrote
+   them; the host may be 64-bit (lundump.c and ldump.c use this). */
+#define	LUA_SIZE_T_SIZE	4
 
 /* a multiple of PI for testing native format */
 /* multiplying by 1E7 gives non-trivial integer values */

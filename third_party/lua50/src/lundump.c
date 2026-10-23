@@ -18,6 +18,14 @@
 
 #define	LoadByte	(lu_byte) ezgetc
 
+/*
+** OpenSims2: the game's chunks are 32-bit Lua 5.0 builds, which wrote
+** sizeof(size_t) = 4 in the header and every string length as 4 bytes; this
+** port runs 64-bit, where the host's size_t is 8. The chunk's own size is
+** read and written as LUA_SIZE_T_SIZE bytes, so the game's chunks load
+** unchanged (and a dump from this build loads here and in a 32-bit build).
+*/
+
 typedef struct {
  lua_State* L;
  ZIO* Z;
@@ -83,9 +91,9 @@ static int LoadInt (LoadState* S)
 
 static size_t LoadSize (LoadState* S)
 {
- size_t x;
- LoadBlock(S,&x,sizeof(x));
- return x;
+ unsigned int x;			/* the chunk's 4-byte size (LUA_SIZE_T_SIZE) */
+ LoadBlock(S,&x,LUA_SIZE_T_SIZE);
+ return (size_t)x;
 }
 
 static lua_Number LoadNumber (LoadState* S)
@@ -239,7 +247,7 @@ static void LoadHeader (LoadState* S)
 	S->name,V(version),V(VERSION0));
  S->swap=(luaU_endianness()!=LoadByte(S));	/* need to swap bytes? */
  TESTSIZE(sizeof(int),"int");
- TESTSIZE(sizeof(size_t), "size_t");
+ TESTSIZE(LUA_SIZE_T_SIZE, "size_t");
  TESTSIZE(sizeof(Instruction), "Instruction");
  TESTSIZE(SIZE_OP, "OP");
  TESTSIZE(SIZE_A, "A");

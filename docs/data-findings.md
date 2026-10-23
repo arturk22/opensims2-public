@@ -908,6 +908,20 @@ carro às 07:16, e a empregada nunca chega). O rastro (`OS2_TRACE_NAMED=1` e
 API que os scripts chamam** (o `.objLua` do objeto): é a maior peça que resta do AL, e
 não é RE — é implementação.
 
+**Fechado em 23/10 (o binding do Lua 5.0).** O `0x7E` agora resolve o nome no STR# 0x130,
+carrega os 627 prelúdios (`*.globalObjLua` de toda a instalação, `Global` primeiro) e roda o
+chunk do script com a API do motor (`src/vm/lua_scripts.cpp`; `docs/lua-scripts.md` tem a
+lista e o que falta). O `CachedNeighbor`/`CachedPerson`/`ObjectManager` são globais do
+motor, e o `GlobalObjManager:getPersonIdFromGUID(guia)` devolve o `nID` do Sim vivo com
+aquele GUID (0 fora do lote). **Medido no `N001_Lot68`, 400 ticks:** o `NPC_IsType` responde
+true para **3 dos 333** candidatos (os vizinhos de família 0 que o `Set to Next 17` percorre),
+a **Kaylynn (#452) chega** (`Interaction - Get Out #3`, às 07:22) e **nenhum** reset de
+SimAntics acontece — antes eram **30 resets do `Snap Into` do carro da empregada às 07:16** e
+a empregada nunca vinha. O `bhav-sweep` do AL vai de **14.093.824 / 23.864 true / 6.385
+falhas** para **14.508.719 / 23.937 true / 6.376 falhas** (as +414.895 instruções são os
+scripts rodando; −9 falhas); o do **base fica igual** (7.234.312 / 11.107 / 2.461 — o base
+não tem `ObjectScripts`, então o `0x7E` continua false). O `0x7D` (Follow Sim) segue false.
+
 ## 22. O Set to Next do exe do PC: o censo por tipo e a semântica dos tipos 38 e 39 (22/10)
 
 **Pergunta.** O port recusa os tipos de busca que não implementa (o erro do

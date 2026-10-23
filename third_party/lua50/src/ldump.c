@@ -44,7 +44,9 @@ static void DumpInt(int x, DumpState* D)
 
 static void DumpSize(size_t x, DumpState* D)
 {
- DumpBlock(&x,sizeof(x),D);
+ /* OpenSims2: the chunk's size fields are 4 bytes (lundump.c) */
+ unsigned int y=(unsigned int)x;
+ DumpBlock(&y,LUA_SIZE_T_SIZE,D);
 }
 
 static void DumpNumber(lua_Number x, DumpState* D)
@@ -145,7 +147,7 @@ static void DumpHeader(DumpState* D)
  DumpByte(VERSION,D);
  DumpByte(luaU_endianness(),D);
  DumpByte(sizeof(int),D);
- DumpByte(sizeof(size_t),D);
+ DumpByte(LUA_SIZE_T_SIZE,D);
  DumpByte(sizeof(Instruction),D);
  DumpByte(SIZE_OP,D);
  DumpByte(SIZE_A,D);

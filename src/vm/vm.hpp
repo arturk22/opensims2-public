@@ -136,6 +136,9 @@ constexpr int16_t SemiAttributeCount = 79;
 // Person data fields the engine reads (names as in STR# 0xC8).
 namespace persondata {
 constexpr int16_t NeighborId = 31;
+// "NPC Type" (STR# 0xC8, the label the Lua scripts' PersonData table gives 155):
+// the pool of NPCs of the AL reads it (docs/lua-scripts.md).
+constexpr int16_t NpcType = 155;
 // "route status": 1 while the person's route is on (base 1.0 router:
 // docs/primitives-mac.md §4j); the shoo trees only shoo who has 0.
 constexpr int16_t RouteStatus = 39;
@@ -1073,6 +1076,10 @@ enum class Exit : uint8_t { True, False, Error, Yield, Call };
 
 class VM;
 
+// The 0x7E's Lua 5.0 state (vm/lua_scripts.cpp): one per VM, built at the
+// first script.
+class LuaRuntime;
+
 // What a primitive sees while it runs.
 struct Context {
     VM& vm;
@@ -1094,9 +1101,14 @@ using Primitive = std::function<Exit(Context&)>;
 class VM {
 public:
     explicit VM(CodeLibrary& code);
+    // Defined in vm/lua_scripts.cpp, where LuaRuntime is complete.
+    ~VM();
     VM(const VM&) = delete; // byId_ points into objects_
 
     CodeLibrary& code() { return code_; }
+
+    // The 0x7E's Lua 5.0 state: made at the first script, kept for the VM.
+    LuaRuntime& lua();
 
     // Objects get the lowest free id from 1 up, or `id` (a lot's saved
     // objects keep theirs; throws if it is taken). Attributes start with
@@ -1814,6 +1826,7 @@ private:
     mutable uint64_t peopleTick_ = ~uint64_t(0), peopleGeneration_ = ~uint64_t(0);
     std::unordered_map<uint32_t, std::vector<ObjectId>> byGuid_;
     std::unordered_map<uint16_t, Primitive> primitives_;
+    LuaRuntime* lua_ = nullptr; // owned; deleted by ~VM (vm/lua_scripts.cpp)
 
     int initDepth_ = 0;
     void push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::span<const int16_t> args);

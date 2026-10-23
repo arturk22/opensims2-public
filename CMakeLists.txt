@@ -202,6 +202,7 @@ add_library(os2_vm
   src/vm/person_prims.cpp
   src/vm/placement.cpp
   src/vm/primitives.cpp
+  src/vm/lua_scripts.cpp
   src/vm/queue.cpp
   src/vm/reach.cpp
   src/vm/routing.cpp
@@ -218,7 +219,7 @@ add_library(os2_vm
 )
 target_include_directories(os2_vm PUBLIC src)
 os2_warnings(os2_vm)
-target_link_libraries(os2_vm PUBLIC os2_formats)
+target_link_libraries(os2_vm PUBLIC os2_formats PRIVATE os2_lua50)
 # vm/routing.cpp and vm/build_edit.cpp split by area (round 26, docs/ideias/DEBITOS-TECNICOS.md 1.2).
 target_sources(os2_vm PRIVATE src/vm/routing_plan.cpp src/vm/routing_loco.cpp src/vm/routing_walk.cpp src/vm/build_edit_walls.cpp src/vm/build_edit_ground.cpp src/vm/build_edit_stairs.cpp src/vm/build_edit_fireplace.cpp)
 # The environment motive, cTSEnvironmentScoreManager (round n33).
