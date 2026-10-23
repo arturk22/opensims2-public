@@ -387,16 +387,18 @@ buscas, 9/62/15 resets, os mesmos Mains).
 
 ## What is left (not done)
 
-- Per tick: `tickOverlayEvents` (the animation code) still walks every object (0.58 s
-  of a 43,200-tick run; com a instalação ~0,4 s, 0,5% de um dia no `N001_Lot11` — o
-  índice teria de marcar os seis sítios que somam e apagam overlays e a passagem também
-  mexe nas poses, então o ganho não paga o risco). A outra, `notifyRoomChanges`, foi
-  fechada em 23/10 (ver acima).
-- The other Set to Next types walk the object list with a `std::function` test until the
-  next match (all of it when there is none). **Medido e sem ganho (21/10)**: trocar esse
-  `std::function` por um `switch` (o tipo e o parâmetro num struct) deu 22,2 s / 22,5 s
-  contra 22,3 s / 21,3 s do código antigo no mesmo workload — a chamada indireta não é
-  o custo (nesse workload os tipos que chegam ao teste genérico são raros), então a
-  mudança foi descartada.
-- Load: the Sims' textures take 45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's (round 11: kept between scenes, see above).
-  8% of the resource bytes read at load are the same resource read twice (4.9 of 64 MB).
+- Por tick: o `tickOverlayEvents` ainda varre todos os objetos. **Remedido em 23/10**
+  (instrumentação temporária no `VM::tick` com `OS2_PERF_TICK=1`, já revertida;
+  `autonomy N001_Lot11 --ticks 29600`): **0,235 s de 10,25 s de simulação** até os 20.000
+  ticks (2,3%; ~0,35 s a 29.600 ticks), e ~0,235 s de 30 s de parede (0,8%). O índice teria
+  de marcar os **seis sítios** que somam e apagam overlays (Animate Overlay/Object, o fim de
+  cada loop, o `Stop`, a remoção do objeto e o save) e a passagem também mexe nas poses; o
+  ganho (~0,8% do relógio) **não paga o risco** — fechado com este critério. A outra
+  varredura, `notifyRoomChanges`, foi fechada em 23/10 (acima).
+- Carga (do app, não do VM headless): as texturas dos Sims custam **~45 ms cada** para subir
+  (0,9 s dos 2,3 s do load de um lote) e o `Catalog::load` relê **47 recursos** depois do lote
+  (8% dos bytes lidos, 4,9 de 64 MB) — os números da rodada 11 seguem valendo (o catálogo já
+  fica entre cenas; o que resta é o primeiro load a frio). **Fechado com este critério**: o
+  custo é do app/render (o host sem janela não o paga), o ganho medido (~0,2 s no load a
+  frio) não paga mexer no cache de texturas nem no índice, que é o caminho do render — e o
+  `lua_State` do `0x7E` é criado no primeiro script, então o load do VM não mudou.
