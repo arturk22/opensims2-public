@@ -1188,13 +1188,16 @@ Exit runTreeByName(Context& c) {
         throw gameError(err::NoStackObject, "Run Tree by Name");
     const Object& target = c.stackObject();
     std::optional<uint16_t> tree;
+    uint32_t treeGroup = 0;
     for (uint32_t group : {target.group, target.semiGroup, kGlobalGroup}) {
         if (!group)
             continue;
         // Only trees a call opcode reaches (not the private trees of a library).
         tree = code.behaviorByName(group, name);
-        if (tree && c.vm.resolveTree(target, *tree).first == group)
+        if (tree && c.vm.resolveTree(target, *tree).first == group) {
+            treeGroup = group;
             break;
+        }
         tree.reset();
     }
     if (!tree)
@@ -1204,8 +1207,8 @@ Exit runTreeByName(Context& c) {
     // nothing).
     static const bool traceNamed = std::getenv("OS2_TRACE_NAMED") != nullptr;
     if (traceNamed)
-        std::fprintf(stderr, "named tree: mode %u index %zu name \"%s\" stack object %d -> %s %u\n", unsigned(mode), index,
-                     name.c_str(), int(c.frame.stackObject), tree ? "found" : "not found", tree ? unsigned(*tree) : 0u);
+        std::fprintf(stderr, "named tree: mode %u index %zu name \"%s\" stack object %d -> group %08X instance %u\n",
+                     unsigned(mode), index, name.c_str(), int(c.frame.stackObject), treeGroup, tree ? unsigned(*tree) : 0u);
 
     std::array<int16_t, 8> args{};
     if (flags & 0x20)

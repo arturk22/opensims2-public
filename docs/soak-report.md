@@ -30,16 +30,18 @@ inteira (o que o `autonomy` passou a indexar em 22/10, `b720d14`).
   (sala) em 0 (instruções 2/3 e 22/23); o laço não termina no port — ver o `Set to Next 2`
   com esse alvo num lote com muitos objetos fora de sala (o 68).
 - o **carro da empregada** (`Car - MaidMobile - 0,8`): "Sub - Create Driver"
-  (`0x7F793929/0x101D`) falha no **`Snap Into` #4** porque o **stack object está 0** ali: a
-  instrução 10 o põe em "o objeto no meu slot 0" (dono 0x14, `slotContent(me, 0)`), o slot
-  está vazio e a árvore cai no 16 (o global 0x14B) → 8 (o global 0x185 "NPC - Create OOW -
-  ID in T[0]") → 9 (`stack object := temp 0`) → 3 (`my attribute 0 := o stack object`) → 4.
-  O `OS2_TRACE_NAMED=1` (novo) mostra o global 0x185 resolvendo e chamando "CT - Generate
-  NPC From Pool" (instância 0x1008, no grupo do NPC criado) com o stack object = o NPC —
-  falta é o que essa árvore deixa no **temp 0**, que segue 0 na #9. Conferir o **modo 2** do
-  "Run Tree by Name" (o doc diz que o jogo **empilha**; o port roda na hora) e o que a
-  árvore do pool grava: precisa do Mac ou de um run do jogo com o mesmo bairro. São 30
-  reinícios das peças do carro em ~1 minuto às 07:16.
+  (`0x7F793929/0x101D`) falha no **`Snap Into` #4** com o stack object 0. A cadeia: #10 põe o
+  stack object em "o objeto no meu slot 0" (dono 0x14), que está vazio → #16 (global 0x14B)
+  → #8 (global 0x185 "NPC - Create OOW - ID in T[0]") → #9 (`stack object := temp 0`) → #3
+  (`my attribute 0 := o stack object`) → #4. O `OS2_TRACE_NAMED=1` (novo, mostra grupo e
+  instância) mostra o global 0x185 chamando "CT - Generate NPC From Pool"
+  (`0x7FB55274:0x1008`), que despacha por uma **constante** (dono 0x1A, tabela 50 do global,
+  entradas 43/54/55/68/76) e cai no privado **"NPC - Create Out Of World - ID in T[0]"**
+  (`0x1019`): esse mexe no inventário do pool (Manage Inventory, o token `0x4CB4FDC6`), cria
+  o NPC e na **#28 (`temp 0 := o stack object`)** é que o ID iria para o temp 0. No port o
+  caminho termina na **#18 com `false`** (a árvore volta false) e o stack object segue 0 —
+  o NPC não é criado: é aí que a divergência está (inventário do pool ou o Create New
+  Object), não no `Snap Into`. São 30 reinícios das peças do carro em ~1 minuto às 07:16.
 - **"attribute 8 of 8"** (assistente social) e **"stack object attribute 10 of 9"**
   (telefone): contagens de atributos **menores** no estado do que as árvores do AL leem. O
   `cTSObject::Read` adota a contagem salva (o port faz `assign`); falta um save do jogo
