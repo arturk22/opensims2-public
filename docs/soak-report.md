@@ -24,8 +24,14 @@ Nenhum crash e nenhum hang. O `bhav-sweep` do AL fica **igual** (14.093.824 / 23
   **não-pessoa** com `Set to Next 2` (alvo = o stack object, dono 0x0A) e testa o dado 29
   (sala) em 0 (instruções 2/3 e 22/23); o laço não termina no port — ver o `Set to Next 2`
   com esse alvo num lote com muitos objetos fora de sala (o 68).
-- o **carro da empregada**: "Sub - Create Driver" (`0x7F793929/0x101D`) não acha a
-  referência do objeto ("Snap Into") e as peças do carro reiniciam a cada 4 ticks às 07:16.
+- o **carro da empregada** (`Car - MaidMobile - 0,8`): "Sub - Create Driver"
+  (`0x7F793929/0x101D`) falha no **`Snap Into` #4** porque o **stack object está 0** ali:
+  a instrução 10 o põe em "o objeto no meu slot 0" (dono 0x14, `slotContent(me, 0)`) e o
+  slot está vazio; a árvore cai no 13 (Remove Object Instance do stack object), 8 (o global
+  0x185) e 9 (`stack object := temp 0`, que ninguém pôs) → 3 (`my attribute 0 := o stack
+  object`) → 4, e o `Snap Into` acha a referência nula (erro 0x17). São 30 reinícios das
+  peças do carro em ~1 minuto às 07:16. O par de instruções é o mesmo no base; falta ver
+  por que com os dados do base a empregada chegava (rodada 12) e com os da instalação não.
 - **"attribute 8 of 8"** (assistente social) e **"stack object attribute 10 of 9"**
   (telefone): contagens de atributos **menores** no estado do que as árvores do AL leem. O
   `cTSObject::Read` adota a contagem salva (o port faz `assign`); falta um save do jogo
