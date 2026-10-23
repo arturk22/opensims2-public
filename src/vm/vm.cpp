@@ -217,8 +217,10 @@ void CodeLibrary::scanLuaScripts() {
             return a.first == "Global";
         return a.first < b.first;
     });
-    for (auto& p : preludes)
+    for (auto& p : preludes) {
         luaPreludeChunks_.push_back(std::move(p.second));
+        luaPreludeNames_.push_back(std::move(p.first));
+    }
 }
 
 const std::vector<uint8_t>* CodeLibrary::luaScript(const std::string& name) {
@@ -230,6 +232,11 @@ const std::vector<uint8_t>* CodeLibrary::luaScript(const std::string& name) {
 const std::vector<std::vector<uint8_t>>& CodeLibrary::luaPreludes() {
     scanLuaScripts();
     return luaPreludeChunks_;
+}
+
+const std::vector<std::string>& CodeLibrary::luaPreludeNames() {
+    scanLuaScripts();
+    return luaPreludeNames_;
 }
 
 void CodeLibrary::indexDefinition(uint32_t group, uint16_t instance, const ObjectDefinition& d) {

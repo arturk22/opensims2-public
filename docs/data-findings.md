@@ -918,8 +918,8 @@ true para **3 dos 333** candidatos (os vizinhos de família 0 que o `Set to Next
 a **Kaylynn (#452) chega** (`Interaction - Get Out #3`, às 07:22) e **nenhum** reset de
 SimAntics acontece — antes eram **30 resets do `Snap Into` do carro da empregada às 07:16** e
 a empregada nunca vinha. O `bhav-sweep` do AL vai de **14.093.824 / 23.864 true / 6.385
-falhas** para **14.508.719 / 23.937 true / 6.376 falhas** (as +414.895 instruções são os
-scripts rodando; −9 falhas); o do **base fica igual** (7.234.312 / 11.107 / 2.461 — o base
+falhas** para **14.509.577 / 23.949 true / 6.381 falhas** (as +415.753 instruções são os
+scripts rodando; −4 falhas); o do **base fica igual** (7.234.312 / 11.107 / 2.461 — o base
 não tem `ObjectScripts`, então o `0x7E` continua false). O `0x7D` (Follow Sim) segue false.
 
 ## 22. O Set to Next do exe do PC: o censo por tipo e a semântica dos tipos 38 e 39 (22/10)

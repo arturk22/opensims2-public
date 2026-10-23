@@ -49,6 +49,30 @@ int cmdLuaScript(const std::filesystem::path& res, const std::string& name) {
     return 0;
 }
 
+// A `.globalObjLua` prelude by name: the game loads all of them before a script.
+int cmdLuaPrelude(const std::filesystem::path& res, const std::string& name, const std::string& search) {
+    os2::ResourceIndex index;
+    s2pkgAddInstallation(index, res);
+    os2::vm::CodeLibrary code(&index);
+    const auto& chunks = code.luaPreludes();
+    const auto& names = code.luaPreludeNames();
+    int found = 0;
+    for (size_t i = 0; i < chunks.size() && i < names.size(); ++i) {
+        if (names[i] != name && name != "*")
+            continue;
+        std::string text = os2::describeLua50(os2::parseLua50(chunks[i]),
+                                              "prelude \"" + names[i] + "\" #" + std::to_string(found) + " (" +
+                                                  std::to_string(chunks[i].size()) + " bytes)");
+        if (!search.empty() && text.find(search) == std::string::npos)
+            continue;
+        std::printf("%s", text.c_str());
+        ++found;
+    }
+    if (!found)
+        throw std::runtime_error("no prelude \"" + name + "\" in " + res.string() + (search.empty() ? "" : " with " + search));
+    return 0;
+}
+
 } // namespace
 
 int scriptCommand(const std::string& cmd, int argc, char** argv) {
@@ -65,6 +89,13 @@ int scriptCommand(const std::string& cmd, int argc, char** argv) {
             return 2;
         }
         return cmdLuaScript(argv[2], argv[3]);
+    }
+    if (cmd == "lua-prelude") {
+        if (argc < 4) {
+            std::fprintf(stderr, "usage: s2pkg lua-prelude <Res-dir> <name|*> [text]\n");
+            return 2;
+        }
+        return cmdLuaPrelude(argv[2], argv[3], argc > 4 ? argv[4] : "");
     }
     return -1;
 }

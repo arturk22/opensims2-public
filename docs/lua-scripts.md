@@ -105,24 +105,43 @@ no AL e o array ainda sem semântica medida).
   do `N001_Lot68` e a **Kaylynn (#452) chega** (400 ticks: `Interaction - Get Out #3`, no
   lote às 07:22) **sem nenhum reset** e sem nenhum erro de SimAntics.
 - **O `bhav-sweep` do AL** vai de **14.093.824 / 23.864 true / 6.385 falhas** para
-  **14.508.719 / 23.937 true / 6.376 falhas** (+414.895 instruções: os scripts agora rodam;
-  −9 falhas). O do **jogo base fica igual** (7.234.312 / 11.107 / 2.461): o base não tem
-  `ObjectScripts`, então o `0x7E` continua false.
+  **14.509.577 / 23.949 true / 6.381 falhas** (+415.753 instruções: os scripts agora rodam;
+  +85 true, −4 falhas) e **nenhuma das falhas que restam é de Lua**. O do **jogo base fica
+  igual** (7.234.312 / 11.107 / 2.461): o base não tem `ObjectScripts`, então o `0x7E`
+  continua false.
 - Os sistemas da Nightlife (atração, pôquer), a garagem e a ordenação de mesas passam a
   rodar; os que ainda falham pedem os globais que faltam (ver abaixo).
 
 ## O que ainda falta (por script, do `bhav-sweep` do AL)
 
-- `Inventory`/`InventoryToken` (a classe do FUN_0090d830: `addToken`, `getTokensByGUID`,
-  `countTokens…`) — o `AttractionScore` e o `ShoppingSetValueByPercent` a usam;
-- `Neighborhood` (FUN_0090db40: `getLotType`, `isRoommate`, `getLotIds`, …);
-- `nGameState.IsEPInstalled`/`GetInstalledEps`/`GetCurrentState` (FUN_0090d3c0);
-- `GetNeighborRelationship`/`SetNeighborRelationship`, `GetSimulatorGlobal`/
-  `SetSimulatorGlobal`, as tabelas de constantes por GUID
-  (`GetNumConstantsWithGuid`/`GetConstantWithGuid`/`GetConstantsTableByGuid`) e
-  `GetUserDirectory` (o prelúdio "LuaLoader" do pacote chama);
-- `CachedNeighbor:getOutfitProperty` (o método existe: LAB_009022e0);
-- o `0x7D` (Follow Sim).
+Depois da rodada de 23/10 o `bhav-sweep` do AL **não tem nenhuma falha de Lua** (as 6.381
+falhas restantes são do VM/dados, como antes). O que ficou como stub, e por quê:
+
+- **`Inventory`/`InventoryToken`**: as classes e as **constantes** (`kType*`, `kFlag*`) estão
+  registradas (o prelúdio "Tokens" as lê), mas os métodos sobre o modelo de inventário do
+  port (`VM::inventory`: `addToken`, `getTokensByGUID`, `countTokens…`) ainda **não** têm a
+  semântica medida — cada um loga e responde 0 pelo fallback da classe. É o que falta para
+  os scripts de negócio/loja (ShoppingSetValue…), que hoje degradam como se o token não
+  existisse.
+- **`Neighborhood`**: `isValidLot`, `getLotType`, `getLotName` e `getLotIds` são reais (vêm de
+  `VM::lots`); os de apartamento (`isRoommate`, `isApartmentResident`, `getRoommateId`,
+  os `getApartmentLinked…`) são stub — o port não modela apartamento/roommate ainda.
+- **`nDataTable`/`ObjectDataTable`/`NeighborDataTable`**: registrados; o port não guarda as
+  tabelas genéricas, então `has*` é false, `getTableValue` é nil e as listas vêm vazias (é o
+  que o jogo devolve para uma tabela ausente; o `ShoppingGetPrice` testa exatamente isso).
+- **`nGameState`**: `IsEPInstalled`/`GetInstalledEps` (máscara 0x3FF = a Ultimate Collection,
+  base + 8 EPs + M&G; **inferido** da coleção instalada), `GetCurrentState` 0 e
+  `GetProperty` stub.
+- **`GetConstant`/`GetNumConstants`** = os BCON do stack object (privado, semi-global, global);
+  **`Get*WithGuid`** = o BCON do grupo do OBJD com aquele GUID. O `GetDefinitionField` 204,
+  205 e 210 são inferidos dos nomes do `ObjDef` (o 203, o do NPC, é medido).
+- **`GetNeighborRelationship`/`SetNeighborRelationship`** sobre `VM::relationships` (o par do
+  Relation), **`GetSimulatorGlobal`/`SetSimulatorGlobal`** sobre `VM::globals`,
+  `CreateObjectGUID`/`SplitObjectGUID`/`RoundFloat` e `math.round` (o 5.0 não tem `round`,
+  e o jogo tem: `ShoppingSetValueByPercent` o usa).
+- **`CachedNeighbor:getOutfitProperty`** e o `GetUserDirectory` do prelúdio "LuaLoader" são
+  stub (o port não carrega mods nem guarda as propriedades de cada parte do outfit).
+- O **`0x7D`** (Follow Sim) segue false (1 uso no AL, o array sem semântica medida).
 
 ## O `s2pkg lua` e o `lua-script` (23/10)
 
@@ -142,6 +161,9 @@ já removido: 0 linhas/locais/upvalues) mostra a lógica do pool:
 
 `s2pkg lua-script <Res-dir> <nome>` acha o script no `ObjectScripts.package` do EP pelo
 nome e desmonta (o `NPC_IsType` do AL = 731 bytes, igual ao arquivo solto da Nightlife).
+`s2pkg lua-prelude <Res-dir> <nome|*> [texto]` desmonta um `.globalObjLua` (ou todos, com
+`*`, filtrando pelo texto) — foi o que mostrou que o `ObjectDataTable`/`NeighborDataTable`
+são classes do motor, não prelúdios.
 
 ## O recurso empacotado (23/10)
 
@@ -158,7 +180,8 @@ port (`NPC_IsType` = `FF9573E2` no pacote e `FFB38405` na função do port) — 
 |---|---|
 | VM (Lua 5.0.3, MIT) | vendorizada, com o `size_t` de 32 bits do jogo (`test_lua50`) |
 | leitor/desmontador | `s2pkg lua` e `s2pkg lua-script` |
-| prelúdios | 627 chunks carregados por VM (5 falham: `Inventory`, `GetNumConstantsWithGuid`, `LuaLoader`/`GetUserDirectory`) |
-| API | as ~35 funções; faltam os globais listados acima |
+| prelúdios | 627 chunks carregados por VM; **0 falham** (as classes do motor que eles leem estão registradas) |
+| API | as ~45 funções; a cauda (Inventory, apartamento, nDataTable) tem os métodos como stub logado |
 | `0x7E` | roda o script e devolve o `SetScriptReturnValue` |
 | NPC pool | **medido**: 3/333 true, a empregada chega, 0 resets |
+| `bhav-sweep` AL | 14.509.577 / 23.949 true / 6.381 falhas, **0 falhas de Lua** |

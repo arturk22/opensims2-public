@@ -1068,6 +1068,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg lua <file.objLua>\n"
                          "       s2pkg lua-script <Res-dir> <name>\n"
+                         "       s2pkg lua-prelude <Res-dir> <name|*> [text]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
                          "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), hoodPlayUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage(), tutorialUsage(), shadowUsage());

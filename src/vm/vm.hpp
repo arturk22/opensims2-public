@@ -331,6 +331,9 @@ public:
     // the game loads before a script.
     const std::vector<uint8_t>* luaScript(const std::string& name);
     const std::vector<std::vector<uint8_t>>& luaPreludes();
+    // The file names of luaPreludes(), in the same order (the log's "prelude
+    // <name> failed").
+    const std::vector<std::string>& luaPreludeNames();
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
     // A GUID none has goes to the fallback once (the neighbourhood's
     // character files: every neighbor's Sim has its definition in the game,
@@ -432,6 +435,7 @@ private:
     bool luaScanned_ = false;
     std::unordered_map<std::string, std::vector<uint8_t>> luaScripts_;
     std::vector<std::vector<uint8_t>> luaPreludeChunks_;
+    std::vector<std::string> luaPreludeNames_;
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
     std::unordered_map<uint32_t, size_t> labelCounts_;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint16_t>> byGuid_;
