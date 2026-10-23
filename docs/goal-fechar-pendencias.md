@@ -6,8 +6,9 @@
   (performance, parcial: o `tickOverlayEvents` e a carga), as três âncoras do **soak
   round 20** (o gambá do AL gastando o orçamento, o carro da empregada no "Snap Into" e a
   contagem de atributos que o save traz menor — ver `soak-report.md`) **e o
-  interpretador de Lua** (a raiz do pool de NPCs do AL, `data-findings.md` §21: sem ele
-  nenhum NPC é "do tipo" e os carros de serviço não têm motorista); o 6 fica parcial e o
+  interpretador de Lua** (a raiz do pool de NPCs do AL, `data-findings.md` §21 e
+  `lua-scripts.md`: sem ele nenhum NPC é "do tipo" e os carros de serviço não têm
+  motorista); o 6 fica parcial e o
   6-resto com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre
   passos, até a fila zerar ou só restarem itens bloqueados com critério escrito.
 - **Mandato:** Artur — "Faça um goal para resolver próximos passos e pendências"
