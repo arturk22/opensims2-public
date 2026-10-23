@@ -2,6 +2,7 @@
 
 #include "binreader.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 namespace os2 {
@@ -230,6 +231,58 @@ std::string disassembleLua50(uint32_t i, const std::vector<LuaConstant>& constan
     default:
         return out + " " + std::to_string(a) + " " + std::to_string(b) + " " + std::to_string(c);
     }
+}
+
+} // namespace os2
+
+namespace {
+
+std::string constantText(const os2::LuaConstant& c) {
+    char buf[64];
+    switch (c.kind) {
+    case os2::LuaConstant::Nil: return "nil";
+    case os2::LuaConstant::Boolean: return c.boolean ? "true" : "false";
+    case os2::LuaConstant::Number:
+        std::snprintf(buf, sizeof buf, "%.14g", c.number);
+        return buf;
+    case os2::LuaConstant::String: return "\"" + c.string + "\"";
+    }
+    return "?";
+}
+
+void describeProto(const os2::LuaProto& f, int depth, std::string& out) {
+    const std::string pad(size_t(depth) * 2, ' ');
+    char head[512];
+    std::snprintf(head, sizeof head, "%sfunction %s (defined at line %d): %d params, %d upvalues, %d stack, %zu instructions\n",
+                  pad.c_str(), f.source.empty() ? "?" : f.source.c_str(), f.lineDefined, f.numparams, f.nups, f.maxStack,
+                  f.code.size());
+    out += head;
+    if (!f.constants.empty()) {
+        out += pad + "  constants:";
+        for (const auto& c : f.constants)
+            out += " " + constantText(c);
+        out += "\n";
+    }
+    for (size_t i = 0; i < f.code.size(); ++i) {
+        const int line = i < f.lines.size() ? f.lines[i] : 0;
+        std::snprintf(head, sizeof head, "%s  %3zu  %-34s ; line %d\n", pad.c_str(), i,
+                      os2::disassembleLua50(f.code[i], f.constants).c_str(), line);
+        out += head;
+    }
+    for (const auto& p : f.protos)
+        describeProto(p, depth + 1, out);
+}
+
+} // namespace
+
+namespace os2 {
+
+std::string describeLua50(const LuaProto& chunk, const std::string& what) {
+    std::string out;
+    if (!what.empty())
+        out += what + "\n";
+    describeProto(chunk, 0, out);
+    return out;
 }
 
 } // namespace os2

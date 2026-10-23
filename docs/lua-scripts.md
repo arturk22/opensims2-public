@@ -80,6 +80,16 @@ debug já removido: 0 linhas/locais/upvalues) mostra a lógica do pool:
 É a referência para o primeiro alvo do VM (o pool de NPCs → o motorista do carro da
 empregada).
 
+## O recurso empacotado (23/10)
+
+As versões dos EPs não são o chunk puro: `0x9012468B` (os `.objLua`) e `0x9012468A` (os
+`.globalObjLua`) trazem `u32 0 + u32 tamanho + o nome` e **o chunk em seguida** (ex.:
+`NPC_IsType` + `LuaP...`). O TGI é o hash do nome, mas **não** é o `nameInstanceHash` do
+port (`NPC_IsType` = `FF9573E2` no pacote e `FFB38405` na função do port) — o lookup do
+`0x7E` tem de montar um **mapa nome → TGI** varrendo esses recursos uma vez (como o
+`byName_` dos BHAVs) e ler o chunk depois do nome. O `s2pkg dump` de um recurso
+`0x9012468A`/`0x9012468B` já imprime `script "<nome>"` e o desmonte.
+
 ## O plano
 
 1. ~~Vendorizar o Lua 5.0.3~~ **FEITO (23/10)**: `third_party/lua50` (`src/`, `include/` e o

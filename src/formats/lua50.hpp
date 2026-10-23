@@ -47,4 +47,9 @@ const char* lua50OpcodeName(uint32_t op);
 // `Kst "NPC Type"` instead of the bare number.
 std::string disassembleLua50(uint32_t instruction, const std::vector<LuaConstant>& constants = {});
 
+// The whole chunk as text: each function with its constants and every
+// instruction disassembled, indented by nesting (a nested function is a CLOSURE
+// with its own prototype). `what` is a prefix line, e.g. the file name.
+std::string describeLua50(const LuaProto& chunk, const std::string& what = {});
+
 } // namespace os2
