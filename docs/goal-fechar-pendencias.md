@@ -1,11 +1,11 @@
 # Goal — Fechar as pendências do port (item 13 e a fila restante)
 
 - **Status:** **aberto em 18/10/2026** — continua o `goal-port-fidelity.md`. **Fechados:**
-  1–4, 9, 11, **5, 8, 10, 12, 13 (TTAB)** e os **tipos 19/20 do Set to Next**. **Abertos:**
-  **7** (performance, parcial: só as duas varreduras por tick e a carga), o **tipo 13 do Set
-  to Next**, o **14** (formatos do AL) e o **RayTrace 0x78**; o 6 fica parcial e o 6-resto
-  com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre passos, até a
-  fila zerar ou só restarem itens bloqueados com critério escrito.
+  1–4, 9, 11, **5, 8, 10, 12, 13 (TTAB), 14 (formatos do AL), o RayTrace 0x78** e os
+  **tipos 19/20 do Set to Next**. **Abertos:** **7** (performance, parcial: só as duas
+  varreduras por tick e a carga) e o **tipo 13 do Set to Next**; o 6 fica parcial e o
+  6-resto com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre
+  passos, até a fila zerar ou só restarem itens bloqueados com critério escrito.
 - **Mandato:** Artur — "Faça um goal para resolver próximos passos e pendências"
   (18/10/2026).
 - **Branch:** `windows-x64-fidelity` — os 21 commits do nosso trabalho rebased sobre o
@@ -160,10 +160,15 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   dados estão zerados; o jogo base não passa pelo filtro por construção).
 - **12:** primitivas `0x7D`/`0x7E` — **fechado em 22/10**: o RE do PC está no
   `re-pc-ghidra.md` §(g); sem interpretador de Lua o port devolve **false** (ver o item 9).
-- **14:** lotes/vizinhanças do AL — `NGBH 0xCB`, `FAMI 0x55`, `SDSC 0x36`, `NID +20` bytes e
-  `lot info` de apartamento; medir nos arquivos do UC e estender os leitores.
-- **RayTrace (0x78):** usa a mesma convenção de slot do Look At (censo de 35 leituras
-  tipadas no AL); o port ainda aproxima a linha de tile.
+- **14:** **FECHADO** (`data-findings.md` §20): `NGBH 0xCB`, `FAMI 0x55`, `SDSC 0x36`,
+  `NID` 0x0A (+20 bytes) e o *lot info* 11 de apartamento entraram em
+  `neighborhood.cpp`/`.hpp` e nos writers; `hood-sweep` do E001 com **234 Sims, 21
+  famílias, 56 lotes, 1.051 SREL, 0 erros** (antes 0/0/0/313) e o `test_neighborhood`
+  cobrindo a ida e volta.
+- **RayTrace (0x78):** **FECHADO em 20/10** — o 0x78 resolve o ponto pelo slot do mesmo
+  modo que o Look At (censo de 35 leituras tipadas no AL), com o `testRayTraceSlots` (o
+  slot, o caso sem slot e o 0x1B) e o sweep do AL medido; o detalhe está na entrada 8 da
+  fila abaixo.
 
 ## Fila (ordem de ataque)
 
