@@ -475,6 +475,7 @@ void putInSlot(VM& vm, Object& x, const Object& container, int slot) {
     vm.setContainer(x, container.id, int16_t(slot));
     vm.setPosition(x, container.position);
     x.data[objdata::Room] = container.data[objdata::Room];
+    vm.noteRoomChanged(x.id);
     x.data[objdata::Direction] = container.data[objdata::Direction];
     x.route.reset();
 }
@@ -570,8 +571,10 @@ Exit reachPut(Context& c) {
                     c.vm.setContainer(*x, 0, -1);
                     c.vm.setPosition(*x, {float(r.floor.x) + 0.5f, float(r.floor.y) + 0.5f, r.floor.level});
                     x->data[objdata::Direction] = me.data[objdata::Direction];
-                    if (c.vm.world)
+                    if (c.vm.world) {
                         x->data[objdata::Room] = c.vm.world->room(r.floor);
+                        c.vm.noteRoomChanged(x->id);
+                    }
                 }
             }
         }
@@ -946,12 +949,16 @@ Exit snap(Context& c) {
             moved.level = me.position.level;
             c.vm.setPosition(part, moved);
             part.data[objdata::Direction] = int16_t(((part.data[objdata::Direction] + turn) % 8 + 8) % 8);
-            if (c.vm.world)
+            if (c.vm.world) {
                 part.data[objdata::Room] = c.vm.world->room(VM::tileOf(part));
+                c.vm.noteRoomChanged(part.id);
+            }
         }
     }
-    if (c.vm.world)
+    if (c.vm.world) {
         me.data[objdata::Room] = c.vm.world->room(VM::tileOf(me));
+        c.vm.noteRoomChanged(me.id);
+    }
     return Exit::True;
 }
 

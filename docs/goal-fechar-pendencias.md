@@ -93,9 +93,14 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
 - **7:** **índice por tile FECHADO em 22/10** (`ff0fabb`: `N001_Lot11 --ticks 3600` de
   6,71 s para **4,25–4,68 s**, saída idêntica; `OS2_CHECK_TILE_INDEX=1` sem divergências no
   ctest e no `autonomy`) e o **`std::function` do Set to Next medido e descartado** (21/10:
-  22,2/22,5 s contra 22,3/21,3 s, sem ganho). Ficam abertas só as duas varreduras por tick
-  (`notifyRoomChanges` 0,36 s + `tickOverlayEvents` 0,58 s ≈ 4% da corrida) e a carga
-  (texturas dos Sims 45 ms cada, `Catalog::load` relendo 47 recursos).
+  22,2/22,5 s contra 22,3/21,3 s, sem ganho). **`notifyRoomChanges` FECHADO em 23/10**: o
+  `VM` guarda só os objetos com a sala escrita desde o último tick (`noteRoomChanged`, os
+  12 escritores + `Context::set` + `createObject`/`restoreState`), com o
+  `OS2_CHECK_ROOM_DIRTY=1` sem divergências no ctest (39/39) e no `N001_Lot11 --ticks
+  29600` com a instalação, saída idêntica (era 0,36 s de uma corrida de 43.200 ticks).
+  Fica só o `tickOverlayEvents` (0,58 s no lote pequeno, ~0,4 s com a instalação, 0,5%: o
+  índice exigiria marcar os seis sítios de add/erase e a passagem mexe nas poses) e a
+  carga (texturas dos Sims 45 ms cada, `Catalog::load` relendo 47 recursos).
 - **10:** **FECHADO 21/10** pelo método do item 4 (as capturas não estão nesta máquina): a
   auditoria do painel contra a tabela do `buy-build-mac.md` §7.8 e contra o censo novo do
   catálogo de construção achou três lacunas, todas fechadas (a jardinagem A800 inteira, as

@@ -304,6 +304,7 @@ void placeInSlot(VM& vm, Object& x, const Object& container, int slot) {
     vm.setContainer(x, container.id, int16_t(slot));
     vm.setPosition(x, container.position);
     x.data[objdata::Room] = container.data[objdata::Room];
+    vm.noteRoomChanged(x.id);
     x.data[objdata::Direction] = container.data[objdata::Direction];
 }
 
@@ -1006,12 +1007,15 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
             if (const Object* c = vm.object(p.container)) {
                 vm.setPosition(*o, c->position);
                 o->data[objdata::Room] = c->data[objdata::Room];
+                vm.noteRoomChanged(o->id);
             }
         } else {
             vm.setContainer(*o, 0, -1);
             // SetLocation: the room (definition 2) where it now stands.
-            if (vm.world)
+            if (vm.world) {
                 o->data[objdata::Room] = vm.world->room(VM::tileOf(*o));
+                vm.noteRoomChanged(o->id);
+            }
         }
     }
     // The pool ladder's and diving board's portals follow it (build mode

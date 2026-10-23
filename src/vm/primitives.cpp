@@ -1038,6 +1038,7 @@ Exit createObjectInstance(Context& c) {
         return Exit::False;
     }
     x->data[objdata::Room] = -1; // out of the world while its Init runs
+    c.vm.noteRoomChanged(x->id);
     if (materialSource)
         x->materials = materialSource->materials;
     if (neighbor && x->person) {

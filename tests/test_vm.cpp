@@ -2260,8 +2260,9 @@ static void testRoomChanged() {
           "room changed: a door portal gets its front and back rooms, other parts their room and -1");
     fx.vm.tick();
     check(front.attributes[5] == 1 && back.attributes[5] == 1 && toy.attributes[5] == 1, "room changed runs once while the room stays");
-    toy.position = {7.5f, 1.5f, 1};
+    fx.vm.setPosition(toy, {7.5f, 1.5f, 1});
     toy.data[objdata::Room] = fx.vm.world->room(VM::tileOf(toy));
+    fx.vm.noteRoomChanged(toy.id); // the writer's mark: the per-tick pass uses it instead of scanning
     fx.vm.tick();
     check(toy.attributes[3] == 2 && toy.attributes[5] == 2, "room changed runs again when the object's room changes");
 }

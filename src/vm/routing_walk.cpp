@@ -1477,6 +1477,7 @@ Exit findLocationFor(Context& c) {
         if (obj->data[objdata::ContainerId] != 0)
             leaveSlot(c.vm, *obj);
         obj->data[objdata::Room] = -1; // as every out-of-world object of a saved lot; "Get Out TEST" reads it
+        c.vm.noteRoomChanged(obj->id);
         return Exit::True;
     }
     if ((mode == 3 || mode == 4) && !ref)

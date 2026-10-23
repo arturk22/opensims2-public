@@ -704,6 +704,8 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
         *v = value;
         if ((owner == 0x03 || owner == 0x04) && data == objdata::ContainerId) // my / the stack object's container
             vm.noteContainer(owner == 0x03 ? me() : stackObject());
+        if ((owner == 0x03 || owner == 0x04) && data == objdata::Room) // my / the stack object's room
+            vm.noteRoomChanged(owner == 0x03 ? me().id : stackObject().id);
         return;
     }
     switch (owner) {
@@ -769,6 +771,7 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     o.data[objdata::ObjectId] = id;
     o.data[objdata::LeadTileObjectId] = id;
     o.data[objdata::SlotNumber] = -1;
+    noteRoomChanged(id); // a new object is told its room (the pass that used to scan for it)
     o.data[objdata::SemiAttributeCount] = int16_t(o.semiAttributes.size());
     // Object data 45-47, 24 and 21 "birth year/month/day/hour/minute": when
     // the object came to be (a saved object's own come back with its state).
@@ -1335,6 +1338,7 @@ void VM::followContainers() {
         }
         setPosition(o, top->position);
         o.data[objdata::Room] = top->data[objdata::Room];
+        noteRoomChanged(o.id);
     }
 }
 

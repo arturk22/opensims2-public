@@ -1270,6 +1270,17 @@ public:
     // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
     std::vector<ObjectId> killQueue;
     std::set<ObjectId> dyingObjects;
+    // The objects whose room (object data 29) was written since the last
+    // notifyRoomChanges (rooms.cpp): that pass used to scan every object every
+    // tick (0.36 s of a 43,200-tick run). The port's room writers and
+    // Context::set call noteRoomChanged; createObject and the lot's
+    // restoreState mark the new and loaded ones (the scan notified those too,
+    // their notified room still being the constructor's). OS2_CHECK_ROOM_DIRTY=1
+    // compares the set with the full scan.
+    void noteRoomChanged(ObjectId id) { roomDirty_.insert(id); }
+    const std::set<ObjectId>& roomDirty() const { return roomDirty_; }
+    void clearRoomDirty() { roomDirty_.clear(); }
+    std::set<ObjectId> roomDirty_;
     // Objects in the middle of their Cleanup (cTSObject flag 0x40000,
     // cTSPerson 0x800): a cascade of resets does not come back to them.
     std::set<ObjectId> cleaningUp;

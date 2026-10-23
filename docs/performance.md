@@ -373,10 +373,25 @@ então um recurso que ele tem continua ganhando dos outros pacotes e os outros s
 que falta. O custo fixo do comando é o `CodeLibrary` (~35 s tanto com um
 root quanto com a instalação; as medições de tick comparam o total com o `--ticks 0`).
 
+## A sala por tick sem varrer os objetos (23/10)
+
+`notifyRoomChanges` varria **todos** os objetos comparando o dado 29 com o último avisado
+(0,36 s de uma corrida de 43.200 ticks). Agora o `VM` guarda só os objetos cuja sala foi
+escrita desde o último tick (`noteRoomChanged`): os escritores de sala do port (12
+sítios), o `Context::set` (uma árvore escrevendo o dado 29 por dono 3/4), o
+`createObject` e o `restoreState` do lote (objeto novo/carregado também é avisado uma
+vez, como a varredura fazia). `OS2_CHECK_ROOM_DIRTY=1` roda a varredura antiga junto e
+acusa um objeto não marcado: **0 divergências** no ctest inteiro (39/39) e no
+`autonomy N001_Lot11 --ticks 29600` com a instalação, com a **saída idêntica** (17/94/25
+buscas, 9/62/15 resets, os mesmos Mains).
+
 ## What is left (not done)
 
-- Per tick: `notifyRoomChanges` (object data 29 is written in many places) and
-  `tickOverlayEvents` (the animation code) still walk every object.
+- Per tick: `tickOverlayEvents` (the animation code) still walks every object (0.58 s
+  of a 43,200-tick run; com a instalação ~0,4 s, 0,5% de um dia no `N001_Lot11` — o
+  índice teria de marcar os seis sítios que somam e apagam overlays e a passagem também
+  mexe nas poses, então o ganho não paga o risco). A outra, `notifyRoomChanges`, foi
+  fechada em 23/10 (ver acima).
 - The other Set to Next types walk the object list with a `std::function` test until the
   next match (all of it when there is none). **Medido e sem ganho (21/10)**: trocar esse
   `std::function` por um `switch` (o tipo e o parâmetro num struct) deu 22,2 s / 22,5 s
