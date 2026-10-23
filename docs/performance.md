@@ -367,7 +367,10 @@ app: **1** animação faltando (2 plays), **91 resets**, os Sims em "Routing - G
 Bed" com **17/94/25 buscas** (antes 185/253/229) e **o ônibus vai embora** (0 peças às
 09:27). O mesmo sintoma do live-qa da rodada 11 ("o veículo chega e nunca vai embora")
 reaparecia no comando de teste por outro motivo (faltavam as animações), o que esconderia
-uma regressão de verdade. O custo fixo do comando é o `CodeLibrary` (~35 s tanto com um
+uma regressão de verdade. Os comandos de lote que rodam a VM (`autonomy`, `pie`, `route`,
+`wants`, `tutorial`) usam o mesmo `cli/s2pkg/data_index.hpp`; o `res` dado vai primeiro,
+então um recurso que ele tem continua ganhando dos outros pacotes e os outros só enchem o
+que falta. O custo fixo do comando é o `CodeLibrary` (~35 s tanto com um
 root quanto com a instalação; as medições de tick comparam o total com o `--ticks 0`).
 
 ## What is left (not done)
