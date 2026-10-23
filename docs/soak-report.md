@@ -17,6 +17,11 @@ jogo** cada (43.200 ticks, `--every 1800`, `--name-babies`, `S2PKG_ERRORS=1`), c
 Nenhum crash e nenhum hang. O `bhav-sweep` do AL fica **igual** (14.093.824 / 23.864 true
 / 6.385 falhas) e o do base também (7.234.312 / 11.107 / 2.461); build + ctest 39/39.
 
+**Cuidado ao comparar com os dados do base**: um lote com objetos de EP (o 68 tem os
+controladores do Seasons, do AL) rodado só com o `Double Deluxe\Base` acusa "Invalid
+constant" neles (as BCONs do EP não estão lá) — a comparação válida é com a instalação
+inteira (o que o `autonomy` passou a indexar em 22/10, `b720d14`).
+
 **O que a rodada deixa aberto** (âncoras para a próxima):
 
 - o **gambá** (`NPC - Unique - Skunk`, grupo 0x7FFC7F75) gasta o orçamento de 100.000 em
