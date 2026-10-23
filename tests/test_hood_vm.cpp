@@ -675,6 +675,46 @@ static void testSetToNextGroup() {
     check(ok(t, false) && t.temps[1] == p1.id, "Set to Prev 20: an object in no group");
 }
 
+// Set to Next 13 (the AL "Reaction - Banter", its only user): the nearest
+// person to the person in temp 0, then the next nearest after the target, its
+// distance in temp 4 and its 0-7 direction in temp 5.
+static void testSetToNextNearest() {
+    Fixture fx;
+    VM& vm = fx.vm;
+    Object& me = fx.sim(kMortimerGuid);
+    Object& near = fx.sim(kBellaGuid);
+    Object& far = fx.sim(kTownieGuid);
+    vm.setPosition(me, {10.f, 10.f, 0});
+    vm.setPosition(near, {11.f, 12.f, 0});
+    vm.setPosition(far, {13.f, 14.f, 0});
+    auto step = [&](int16_t anchor, int16_t target) {
+        static uint16_t id = 0x1040;
+        Behavior::Instruction in = instr(0x1F, T, F, {0, 0, 0, 0, 0x80 | 13, Temp, 0, 1, 0});
+        in.nodeVersion = 1; // the Bon Voyage layout: the common filter
+        return fx.run(me.id, id++,
+                      tree({expr(Temp, 0, Assign, Lit, anchor, go(1), E),
+                            expr(Temp, 1, Assign, Lit, target, go(2), E), in}));
+    };
+    Thread t = step(me.id, 0);
+    check(ok(t) && t.temps[1] == near.id && t.temps[4] == 2 && t.temps[5] == directionOf(1.f, 2.f),
+          "Set to Next 13: the nearest person, its distance and direction");
+    t = step(me.id, near.id);
+    check(ok(t) && t.temps[1] == far.id && t.temps[4] == 5, "Set to Next 13: the next nearest after the target");
+    t = step(me.id, far.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 13: no one after the farthest");
+    far.data[107] = 1;
+    t = step(me.id, near.id);
+    check(ok(t, false) && t.temps[1] == 0, "Set to Next 13: object data 107 rejects the candidate");
+    far.data[107] = 0;
+    t = step(0, 0);
+    check(t.status == Thread::Status::Failed && t.error.find("does not exist") != std::string::npos,
+          "Set to Next 13: no object in temp 0");
+    Object& table = fx.thing(0x30000010);
+    t = step(table.id, 0);
+    check(t.status == Thread::Status::Failed && t.error.find("person") != std::string::npos,
+          "Set to Next 13: the anchor must be a person");
+}
+
 int main() {
     testNewLot();
     testLotObjectsValue();
@@ -683,6 +723,7 @@ int main() {
     testLoad();
     testPrimitives();
     testSetToNextGroup();
+    testSetToNextNearest();
     testEvictPlayedLot();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

@@ -556,8 +556,22 @@ o censo dos 10.952 OBJDs do AL e a conferência da árvore
   tile com o tipo 8 entre um e outro, voltava a uma cadeira já vista e
   estourava o orçamento de instruções: `N002_Lot22`).
 - 10 carreira: sempre falso. 11 Lot ID: o próximo lote.
-- 13 pessoa mais perto da pessoa do temp 0: grava a distância e a direção
-  relativa no objeto (lidas pelos temps 4 e 5, pelo rótulo).
+- **13 a pessoa mais perto** (o único uso no base e no AL é "Reaction - Banter",
+  `7F01EC29:20E9`, que a enumera num laço): a âncora é `GetObjectByID(temp 0)` —
+  nula: erro 0x17 — e **tem de ser pessoa** (`QueryInterface` do IID
+  `0x5A69D3D5`, senão erro 0x1C); as candidatas são as pessoas, da mais perto
+  para a mais longe da âncora (a consulta espacial do módulo; aqui a ordem da
+  lista do módulo desempata), cada uma passando pelo filtro comum (morrendo,
+  dados 56/107 e o "where"). O alvo é o **cursor**: a próxima chamada continua
+  na pessoa seguinte, 0 começa na mais perto; a distância vai para o **temp 4**
+  (a mesma de `Get Distance To`: tiles inteiros, 10 por andar) e a direção 0–7
+  para o **temp 5** (a de `Get Direction To`). Evidência: PC
+  `0x9393b2..0x93960d` — a âncora, o filtro em `0x9394f0`, e as conversões
+  `0x00e5c948` (distância) e `0x00c3e7b0` (ângulo) em `0x9395ec..0x93960d`
+  gravando `+0x92`/`+0x94` = temps 4/5. Inferido: a âncora não é candidata (um
+  Sim não papeia consigo) e o caminho do alvo 0 (o binário só grava os temps
+  zerados) começa na mais perto, como o único usuário espera; o detalhe está no
+  `re-pc-ghidra.md` §(e).
 - 14/15 instância do "job object" pelo GUID nos dados de pessoa 89/90 do Sim
   no stack object / do vizinho (vizinho inexistente: erro 0x37).
 - 16 veículo: a lista de veículos do lote (o GUID não é usado — confirma o
@@ -3938,7 +3952,9 @@ volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
   atributo), o Main em "Routing - Goto Head of Bed" e as buscas em
   **17/94/25** (antes 58/109/38, com os Sims travados). A alternativa (devolver
   **falso** sem registrar) foi medida e é muito pior: o mesmo lote não terminou
-  24.000 ticks em 30 min, com 32 "too many look_at requests".
+  24.000 ticks em 30 min, com 32 "too many look_at requests". No `bhav-sweep` do
+  AL as **3.982** falhas "Invalid global sim call" somem: 14.025.434 / 19.927
+  true / 10.335 falhas → **14.093.824 / 23.864 true / 6.385 falhas**.
 
 ### Set to Next (`TrySetToNext`, BV `0xe47288`)
 

@@ -227,8 +227,11 @@ std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor
 //   ID; 24 visible object within temp 0 tiles (view.cpp); 10 career: false.
 //   32 owner of the object in temp 0 (ownership.hpp);
 //   19/20 the next/previous object of the multi-tile group of the object in
-//   temp 0 (the module's list per group, walked in its order).
-// Not done: 13 (nearest person) and the rest of the base game's types up to 37.
+//   temp 0 (the module's list per group, walked in its order);
+//   13 the nearest person to the person in temp 0, then the next nearest after
+//   the target, with its distance and direction in temps 4 and 5.
+// Not done: none of the base game's types up to 37 (the AL's 38/39 and the
+// species ones 40-51 are above).
 Exit setToNext(Context& c) {
     const auto& o = c.instruction.operands;
     const uint32_t guid = le32(&o[0]);
@@ -614,6 +617,54 @@ Exit setToNext(Context& c) {
             return found(id);
         }
         return none();
+    }
+    case 13: { // nearest person to the person in temp 0 ("Reaction - Banter", its only user)
+        // PC case 0xD @ 0x9393b2: the anchor is GetObjectByID(temp 0) (missing:
+        // error 0x17) and must be a person (QueryInterface cITSPerson
+        // 0x5A69D3D5; else error 0x1C). The candidates are the people, nearest
+        // to the anchor first (the module's spatial query; here the module's
+        // list order breaks the ties), each passing the common filter (dying,
+        // object data 56 bits 0/2, 107, the "where" pair; 0x9394f0..0x939591).
+        // The found one goes to the target, its distance and direction from the
+        // anchor to temps 4 and 5 (the binary rounds a float distance,
+        // 0x00e5c948, and an angle, 0x00c3e7b0, at 0x9395ec..0x93960d; here the
+        // same whole-tile distance and 0-7 face as Get Distance To / Get
+        // Direction To). The target is the cursor: the next call goes on from
+        // the person after it, 0 starts at the nearest (the binary's target-0
+        // path only writes zeroed temps; the only user enumerates from 0 and
+        // the label is "the nearest person"). The anchor itself is not a
+        // candidate (inferred: a Sim does not banter with itself).
+        const int16_t anchorId = c.thread.temps[0];
+        const Object* anchor = c.vm.object(anchorId);
+        if (!anchor)
+            throw gameError(err::NoObject, "Set to Next 13: object " + std::to_string(anchorId) + " does not exist");
+        if (!anchor->person)
+            throw gameError(err::NotAPerson, "Set to Next 13");
+        auto distanceTo = [&](const Object& x) {
+            const double dx = x.position.x - anchor->position.x, dy = x.position.y - anchor->position.y;
+            const double dz = 10.0 * (x.position.level - anchor->position.level);
+            return long(std::trunc(std::sqrt(dx * dx + dy * dy + dz * dz)));
+        };
+        std::vector<std::pair<long, const Object*>> people;
+        for (const auto& entry : c.vm.objectList())
+            if (const Object* x = c.vm.object(entry.second); x && x->person && x->id != anchorId && eligible(*x))
+                people.emplace_back(distanceTo(*x), x);
+        std::stable_sort(people.begin(), people.end(),
+                         [](const auto& a, const auto& b) { return a.first < b.first; });
+        size_t at = 0;
+        if (current != 0) {
+            const auto found = std::find_if(people.begin(), people.end(),
+                                            [&](const auto& p) { return p.second->id == current; });
+            at = found == people.end() ? people.size() : size_t(found - people.begin()) + 1;
+        }
+        if (at >= people.size())
+            return none();
+        const Object& next = *people[at].second;
+        c.set(owner, data, next.id);
+        c.thread.temps[4] = int16_t(std::min(32767L, people[at].first));
+        c.thread.temps[5] = int16_t(directionOf(next.position.x - anchor->position.x,
+                                               next.position.y - anchor->position.y));
+        return Exit::True;
     }
     case 19:   // next object of the multi-tile group of the object in temp 0
     case 20: { // previous one: "Set to Next" / "Set to Prev" (0x7FFD4F2D:2006/2007, the fireplace's group)

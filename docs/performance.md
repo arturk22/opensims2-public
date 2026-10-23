@@ -351,7 +351,8 @@ mais que a varredura (19,4 s contra 6,7 s, medido e revertido).
 
 `OS2_CHECK_TILE_INDEX=1` compara cada `objectsOnTile` com a varredura completa e
 imprime a divergência: rodado no ctest inteiro (39/39) e no `autonomy`, zero
-divergências. O `bhav-sweep` do AL não muda (14.025.434 / 19.927 / 10.335).
+divergências. O `bhav-sweep` do AL não muda (14.025.434 / 19.927 / 10.335 — o número
+daquele dia; depois das chamadas 54–84 o sweep vai a 14.093.824 / 23.864 / 6.385).
 
 ## A instalação nos comandos de lote (22/10)
 

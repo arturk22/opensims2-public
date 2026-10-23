@@ -381,22 +381,22 @@ hash `0x5A69D3D5` = o array de objetos do próprio Sim — o mesmo que o executo
 
 **O Set to Next da classe base implementa os tipos 0–51** (o `switch` do
 `FUN_00938140` tem um caso para cada número, de 0 a 51 ✓). O port implementa
-todos menos o **13**: os 31 e 34 já estavam feitos, os **38/39** e os **19/20**
-entraram nesta rodada (22/10). O **13** (a pessoa mais próxima do temp 0)
-continua recusado: o único uso no AL é `7F01EC29:20E9` ("Reaction - Banter").
-No PC (caso 0xD, `0x9393b2`) já está lido: a âncora é `GetObjectByID(temp 0)`
-(nula: erro 0x17) e **tem de ser uma pessoa** — o `QueryInterface` do IID
-`0x5A69D3D5` (`cITSPerson`) sem pessoa é o **erro 0x1C** ("Object referred to
-must be a person."); o laço anda pela lista do módulo a partir do alvo atual
-(`FUN_008cbe10` = `GetTarget`, `while (alvo != 0)`), testa cada um com o
-**filtro comum** (flags 0x10000/0x20000, dado 56 & 5, dado 107 e o campo do
-"where") e, no fim, grava **temp 4** (`+0x92`, `FUN_00e5c948`) e **temp 5**
-(`+0x94`, `FUN_00c3e7b0`) e devolve true — a distância e a direção relativa do
-rótulo. Falta o passo que escolhe o **mais próximo** (o corpo do laço mexe no
-alvo por `FUN_008dcf40`, com o `throw 0x14` do `SetTarget`, e o `FUN_00935a90`
-é só um clamp de um short entre dois limites, 41 bytes) e a codificação dos
-temps 4/5: é RE de mais duas funções (`FUN_00e5c948` e `FUN_00c3e7b0`), não um
-chute.
+**todos**: os 31 e 34 já estavam feitos, os **38/39**, os **19/20** e o **13**
+entraram nesta rodada (22/10). O **13** (a pessoa mais próxima do temp 0, cujo
+único uso no AL é `7F01EC29:20E9` "Reaction - Banter") no PC (caso 0xD,
+`0x9393b2`): a âncora é `GetObjectByID(temp 0)` (nula: erro 0x17) e **tem de
+ser uma pessoa** — o `QueryInterface` do IID `0x5A69D3D5` (`cITSPerson`) sem
+pessoa é o **erro 0x1C** ("Object referred to must be a person."); o laço anda
+pelas pessoas da mais perto para a mais longe (a consulta espacial do módulo:
+`+0x64` avança o cursor e `FUN_00935a90`/`FUN_008dcf40` são escritores com
+conferência de faixa que lançam 0x14), testa cada uma com o **filtro comum**
+(flags 0x10000/0x20000, dado 56 & 5, dado 107 e o campo do "where") e, no fim,
+grava **temp 4** (`+0x92`, `FUN_00e5c948` = o `float` da distância arredondado)
+e **temp 5** (`+0x94`, `FUN_00c3e7b0` = o ângulo em 0–7) e devolve true. O port
+usa a mesma distância do `Get Distance To` (tiles inteiros, 10 por andar) e a
+mesma direção 0–7 do `Get Direction To`; a âncora fica fora das candidatas e o
+alvo 0 começa na mais perto (inferido: com o alvo 0 o binário só grava os
+temps zerados e não acha ninguém, e o laço do único usuário não terminaria).
 
 **Os tipos 19 e 20: o grupo multi-tile (22/10).** No `FUN_00938140` o caso
 0x13 (19, o próximo) começa em `0x939b00` e o 0x14 (20, o anterior) em

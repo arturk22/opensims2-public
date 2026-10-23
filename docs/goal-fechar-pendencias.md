@@ -1,9 +1,9 @@
 # Goal — Fechar as pendências do port (item 13 e a fila restante)
 
 - **Status:** **aberto em 18/10/2026** — continua o `goal-port-fidelity.md`. **Fechados:**
-  1–4, 9, 11, **5, 8, 10, 12, 13 (TTAB), 14 (formatos do AL), o RayTrace 0x78** e os
-  **tipos 19/20 do Set to Next**. **Abertos:** **7** (performance, parcial: só as duas
-  varreduras por tick e a carga) e o **tipo 13 do Set to Next**; o 6 fica parcial e o
+  1–4, 9, 11, **5, 8, 10, 12, 13 (TTAB), 14 (formatos do AL), o RayTrace 0x78** e
+  **todos os tipos do Set to Next (13, 19/20 e os do AL)**. **Aberto:** só o **7**
+  (performance, parcial: as duas varreduras por tick e a carga); o 6 fica parcial e o
   6-resto com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre
   passos, até a fila zerar ou só restarem itens bloqueados com critério escrito.
 - **Mandato:** Artur — "Faça um goal para resolver próximos passos e pendências"
@@ -140,9 +140,12 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   modular (`FUN_009234f0`) usa a mesma lista para achar as outras peças — só uma lista por
   **grupo** explica isso (por nível ou por sala levaria as outras escadas junto); o RE
   está no `re-pc-ghidra.md` §(e) e no `primitives-mac.md` §0x1F. Medição: o sweep do AL
-  fica **idêntico** (**14.025.434 / 19.927 / 10.450**, 46.880 árvores) porque os dois
-  tipos não executam no sweep. Fica só o **13** (a pessoa mais próxima, 1 uso, "Reaction -
-  Banter").
+  fica **idêntico** (**14.025.434 / 19.927 true / 10.335 falhas**, 46.880 árvores; era o número
+  daquele dia) porque os dois tipos não executam no sweep. O **13** (a pessoa mais próxima, 1 uso, "Reaction -
+  Banter") **fechou em 22/10**: a âncora é pessoa (erros 0x17/0x1C), as candidatas são
+  as pessoas da mais perto para a mais longe com o filtro comum, o alvo é o cursor, e a
+  distância no **temp 4** e a direção 0–7 no **temp 5** (`re-pc-ghidra.md` §(e) e
+  `primitives-mac.md` §0x1F). Com isso o Set to Next está completo nos tipos 0–51.
 - **Achado novo em 22/10, fora do sweep (num lote de verdade)**: as chamadas **54–84**
   da Generic Sims Call (0x01). O AL usa até **0x54** (~232 instruções acima de 53) e o
   port recusava tudo acima de 53; o `Function - Main - Set Skin` do Sim chama a **60**,
@@ -154,7 +157,9 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   mesmo lote: **15 resets** do Mortimer (9/62 dos outros, por outras falhas do AL), Main
   em "Routing - Goto Head of Bed" e buscas em **17/94/25** (antes 58/109/38, travados).
   O `primitives-mac.md` §Generic Sims Call tem o censo e o A/B (devolver falso é muito
-  pior).
+  pior). No `bhav-sweep` do AL as **3.982** falhas "Invalid global sim call" somem e as
+  contagens vão de 14.025.434 / 19.927 true / 10.335 falhas para **14.093.824 / 23.864
+  true / 6.385 falhas** (as árvores que paravam na chamada agora seguem e terminam true).
 - **Ferramenta de teste (22/10)**: o `autonomy` indexava só a pasta do EP dado, não a
   instalação (o app indexa a instalação inteira). Com o AL o lote rodava **sem as
   animações do base e dos outros EPs**: o laço do "Pass Out" girava até o orçamento de
