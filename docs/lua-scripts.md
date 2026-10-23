@@ -82,8 +82,13 @@ empregada).
 
 ## O plano
 
-1. Vendorizar o **Lua 5.0.3** (MIT, ~9 mil linhas de C) em `third_party/lua50` e carregar o
-   chunk com `lua_dobuffer`/`lua_pcall`, um `lua_State` por execução.
+1. ~~Vendorizar o Lua 5.0.3~~ **FEITO (23/10)**: `third_party/lua50` (`src/`, `include/` e o
+   `COPYRIGHT`; a lib `os2_lua50` no CMake) e o `test_lua50`: um chunk de **fonte**, o
+   **dump**, o dump **carregado e rodado** (o caminho dos scripts do jogo) e a biblioteca
+   padrão que eles usam (`ipairs`, `table.sort`, `math`, `table.getn` — o `#` só veio no
+   5.1). **40/40** no ctest. Falta o `0x7E`: resolver o nome (STR# 0x130 → o recurso
+   `0x9012468B` no pacote do EP ou o arquivo solto da Nightlife), carregar os prelúdios
+   (`.globalObjLua`) + o script e registrar a API.
 2. Registrar a **API** (as ~20 funções) sobre o `Context`/`VM`, com os nomes dos campos
    resolvidos pelos STR# (`PersonData["NPC Type"]` → o número do campo no STR# 0xC8, que o
    port lê hoje com `persondata::` só para os que o motor usa).

@@ -62,6 +62,17 @@ endif()
 
 add_library(os2_port src/port/process.cpp src/port/files.cpp)
 target_include_directories(os2_port PUBLIC src)
+
+# Lua 5.0.3 (MIT, third_party/lua50/COPYRIGHT): the game's ObjectScripts are
+# Lua 5.0 bytecode (docs/lua-scripts.md); the 0x7E (Run Script) runs them.
+file(GLOB OS2_LUA50_SRC third_party/lua50/src/*.c third_party/lua50/src/lib/*.c)
+add_library(os2_lua50 STATIC ${OS2_LUA50_SRC})
+target_include_directories(os2_lua50 PUBLIC third_party/lua50/src third_party/lua50/include)
+if(MSVC)
+  # Lua 5.0 is C89; MSVC warns about the C runtime's "unsafe" functions it uses.
+  target_compile_definitions(os2_lua50 PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(os2_lua50 PRIVATE /W0)
+endif()
 os2_warnings(os2_port)
 
 add_library(os2_formats
@@ -559,6 +570,9 @@ add_test(NAME tv_program COMMAND test_tv_program)
 # The compat <simd/simd.h> (src/port/compat) off Apple; Apple's own vector
 # types have no simd_float4(...) constructor, so the check is not built there.
 if(NOT APPLE OR OS2_WINDOWS_CHECK)
+  add_executable(test_lua50 tests/test_lua50.cpp)
+  target_link_libraries(test_lua50 PRIVATE os2_lua50)
+  add_test(NAME lua50 COMMAND test_lua50)
   add_executable(test_simd tests/test_simd.cpp)
   target_include_directories(test_simd PRIVATE src)
   add_test(NAME simd COMMAND test_simd)

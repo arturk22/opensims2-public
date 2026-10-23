@@ -173,10 +173,28 @@ std::string disassembleLua50(uint32_t i, const std::vector<LuaConstant>& constan
         return "Kst" + std::to_string(k);
     };
     std::string out = lua50OpcodeName(op);
+    // LOADK/GETGLOBAL/SETGLOBAL take a constant index: show what it holds.
+    auto kst = [&](int index) -> std::string {
+        if (index < 0 || size_t(index) >= constants.size())
+            return {};
+        const auto& v = constants[size_t(index)];
+        switch (v.kind) {
+        case LuaConstant::String: return " \"" + v.string + "\"";
+        case LuaConstant::Number: {
+            char buf[40];
+            std::snprintf(buf, sizeof buf, " %g", v.number);
+            return buf;
+        }
+        case LuaConstant::Boolean: return v.boolean ? " true" : " false";
+        case LuaConstant::Nil: return " nil";
+        }
+        return {};
+    };
     switch (op) {
     case 1:  // LOADK
     case 5:  // GETGLOBAL
     case 7:  // SETGLOBAL
+        return out + " R" + std::to_string(a) + " " + std::to_string(bx) + kst(bx);
     case 31: // SETLIST
     case 32: // SETLISTO
     case 34: // CLOSURE
