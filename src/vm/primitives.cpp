@@ -1199,6 +1199,13 @@ Exit runTreeByName(Context& c) {
     }
     if (!tree)
         return Exit::False;
+    // OS2_TRACE_NAMED=1: the named trees the lot's trees call (a mode 2 push
+    // that does not resolve looks exactly like a tree that runs and does
+    // nothing).
+    static const bool traceNamed = std::getenv("OS2_TRACE_NAMED") != nullptr;
+    if (traceNamed)
+        std::fprintf(stderr, "named tree: mode %u index %zu name \"%s\" stack object %d -> %s %u\n", unsigned(mode), index,
+                     name.c_str(), int(c.frame.stackObject), tree ? "found" : "not found", tree ? unsigned(*tree) : 0u);
 
     std::array<int16_t, 8> args{};
     if (flags & 0x20)

@@ -25,13 +25,16 @@ Nenhum crash e nenhum hang. O `bhav-sweep` do AL fica **igual** (14.093.824 / 23
   (sala) em 0 (instruções 2/3 e 22/23); o laço não termina no port — ver o `Set to Next 2`
   com esse alvo num lote com muitos objetos fora de sala (o 68).
 - o **carro da empregada** (`Car - MaidMobile - 0,8`): "Sub - Create Driver"
-  (`0x7F793929/0x101D`) falha no **`Snap Into` #4** porque o **stack object está 0** ali:
-  a instrução 10 o põe em "o objeto no meu slot 0" (dono 0x14, `slotContent(me, 0)`) e o
-  slot está vazio; a árvore cai no 13 (Remove Object Instance do stack object), 8 (o global
-  0x185) e 9 (`stack object := temp 0`, que ninguém pôs) → 3 (`my attribute 0 := o stack
-  object`) → 4, e o `Snap Into` acha a referência nula (erro 0x17). São 30 reinícios das
-  peças do carro em ~1 minuto às 07:16. O par de instruções é o mesmo no base; falta ver
-  por que com os dados do base a empregada chegava (rodada 12) e com os da instalação não.
+  (`0x7F793929/0x101D`) falha no **`Snap Into` #4** porque o **stack object está 0** ali: a
+  instrução 10 o põe em "o objeto no meu slot 0" (dono 0x14, `slotContent(me, 0)`), o slot
+  está vazio e a árvore cai no 16 (o global 0x14B) → 8 (o global 0x185 "NPC - Create OOW -
+  ID in T[0]") → 9 (`stack object := temp 0`) → 3 (`my attribute 0 := o stack object`) → 4.
+  O `OS2_TRACE_NAMED=1` (novo) mostra o global 0x185 resolvendo e chamando "CT - Generate
+  NPC From Pool" (instância 0x1008, no grupo do NPC criado) com o stack object = o NPC —
+  falta é o que essa árvore deixa no **temp 0**, que segue 0 na #9. Conferir o **modo 2** do
+  "Run Tree by Name" (o doc diz que o jogo **empilha**; o port roda na hora) e o que a
+  árvore do pool grava: precisa do Mac ou de um run do jogo com o mesmo bairro. São 30
+  reinícios das peças do carro em ~1 minuto às 07:16.
 - **"attribute 8 of 8"** (assistente social) e **"stack object attribute 10 of 9"**
   (telefone): contagens de atributos **menores** no estado do que as árvores do AL leem. O
   `cTSObject::Read` adota a contagem salva (o port faz `assign`); falta um save do jogo
