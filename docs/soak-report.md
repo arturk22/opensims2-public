@@ -40,8 +40,13 @@ inteira (o que o `autonomy` passou a indexar em 22/10, `b720d14`).
   (`0x1019`): esse mexe no inventário do pool (Manage Inventory, o token `0x4CB4FDC6`), cria
   o NPC e na **#28 (`temp 0 := o stack object`)** é que o ID iria para o temp 0. No port o
   caminho termina na **#18 com `false`** (a árvore volta false) e o stack object segue 0 —
-  o NPC não é criado: é aí que a divergência está (inventário do pool ou o Create New
-  Object), não no `Snap Into`. São 30 reinícios das peças do carro em ~1 minuto às 07:16.
+  o NPC não é criado. O `OS2_TRACE_INV=1` (novo, mostra cada Manage Inventory) mostra que a
+  árvore **não chega** ao `Manage Inventory` do token do pool (`kind 3`, `op 0`, GUID
+  `0x4CB4FDC6`): as únicas chamadas do run são `kind 1`/`op 3, 6, 7` no GUID `0x4CB2BCF7`.
+  Então o `false` vem antes (a cadeia `#0..#35`, a `#10 param 0 == 1`, e o despacho do pool
+  pelas constantes do dono 0x1A, tabela 50 do global). Próximo passo: a instrução exata (o
+  `--trace` do `autonomy` só cobre Sim) e o que `#1009`/`#100C` do pool devolvem. São 30
+  reinícios das peças do carro em ~1 minuto às 07:16.
 - **"attribute 8 of 8"** (assistente social) e **"stack object attribute 10 of 9"**
   (telefone): contagens de atributos **menores** no estado do que as árvores do AL leem. O
   `cTSObject::Read` adota a contagem salva (o port faz `assign`); falta um save do jogo

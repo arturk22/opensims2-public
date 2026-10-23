@@ -1612,6 +1612,13 @@ Exit manageInventory(Context& c) {
     };
     Inventory& inventory = c.vm.inventory(kind, id);
     auto& tokens = counted ? inventory.counted : inventory.singular;
+    // OS2_TRACE_INV=1: every Manage Inventory call (which inventory, which
+    // operation and GUID, how many tokens before it) — the NPC pool's tokens
+    // and the service cars' drivers are behind these.
+    static const bool traceInv = std::getenv("OS2_TRACE_INV") != nullptr;
+    if (traceInv)
+        std::fprintf(stderr, "manage inventory: kind %u id %d %s op %u guid %08X tokens %zu\n", unsigned(kind), int(id),
+                     counted ? "counted" : "singular", unsigned(op), le32(&o[5]), tokens.size());
     auto at = [&](int16_t index) -> InventoryToken* { // index from 1
         return index >= 1 && size_t(index) <= tokens.size() ? &tokens[size_t(index) - 1] : nullptr;
     };
