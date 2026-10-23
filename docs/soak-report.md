@@ -46,7 +46,11 @@ inteira (o que o `autonomy` passou a indexar em 22/10, `b720d14`).
   Então o `false` vem antes (a cadeia `#0..#35`, a `#10 param 0 == 1`, e o despacho do pool
   pelas constantes do dono 0x1A, tabela 50 do global). Próximo passo: a instrução exata (o
   `--trace` do `autonomy` só cobre Sim) e o que `#1009`/`#100C` do pool devolvem. São 30
-  reinícios das peças do carro em ~1 minuto às 07:16.
+  reinícios das peças do carro em ~1 minuto às 07:16. **A causa raiz é o `0x7E`** (ver
+  `data-findings.md` §21): "Array - Fill With Valid NPCs" pergunta "NPC - Is Type?"
+  (`0x3AD`, uma instrução só, o `0x7E`) e com a recusa **nenhum** NPC é do tipo — o array
+  fica vazio, a árvore volta `false` e o pool não cria o motorista. Fechar isso é o
+  interpretador de Lua + a API dos scripts (`.objLua`), a maior peça que resta do AL.
 - **"attribute 8 of 8"** (assistente social) e **"stack object attribute 10 of 9"**
   (telefone): contagens de atributos **menores** no estado do que as árvores do AL leem. O
   `cTSObject::Read` adota a contagem salva (o port faz `assign`); falta um save do jogo

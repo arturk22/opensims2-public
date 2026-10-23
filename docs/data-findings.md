@@ -896,6 +896,18 @@ peçe o array de objetos e a referência `0x2026960B` (o log ", output result to
 my object array") — o que ele faz com o array continua sem medida, e 1 uso não
 compensa um chute.
 
+**O custo da recusa, medido em 23/10 (`soak-report.md` round 20).** O 0x7E não é só
+conteúdo decorativo: o **pool de NPCs do AL** depende dele. O carro da empregada
+(`Car - MaidMobile`) chama "Sub - Create Driver" → o global 0x185 → "CT - Generate NPC
+From Pool" → o privado "Array - Fill With Valid NPCs" (0x1009), que para cada NPC chama
+o global "NPC - Is Type?" (0x3AD) — uma instrução só, o **0x7E** com o id 48 do STR#
+0x130 — e, com a recusa, **nenhum** NPC é do tipo: o array fica vazio, a árvore volta
+`false` e o `Snap Into` do motorista recebe o stack object 0 (30 resets das peças do
+carro às 07:16, e a empregada nunca chega). O rastro (`OS2_TRACE_NAMED=1` e
+`OS2_TRACE_INV=1`) mostra a cadeia inteira. Fechar isso é o **interpretador de Lua + a
+API que os scripts chamam** (o `.objLua` do objeto): é a maior peça que resta do AL, e
+não é RE — é implementação.
+
 ## 22. O Set to Next do exe do PC: o censo por tipo e a semântica dos tipos 38 e 39 (22/10)
 
 **Pergunta.** O port recusa os tipos de busca que não implementa (o erro do

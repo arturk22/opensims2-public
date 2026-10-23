@@ -2136,7 +2136,12 @@ static Exit tutorial(Context&) { return Exit::True; }
 // N001_Lot11 with the AL data the 4 Sims did 0 searches and 0 picks in 3.600
 // ticks, and 3.208 of the AL sweep's 13.200 failures were this primitive.
 // With false the lot runs again (searches and picks, motives moving); the
-// Lua features stay inert. The description tree with the same name is the
+// Lua features stay inert — and with them the AL's **NPC pool**: "NPC - Is
+// Type?" (0x7FD46CD0:0x3AD) is one 0x7E, so no NPC is ever of a type, the
+// pool's array stays empty and the service cars get no driver (the maid's
+// car resets at 07:16 and the maid never comes; docs/data-findings.md §21
+// and the soak round 20). Closing that needs a Lua interpreter and the API
+// the .objLua scripts call. The description tree with the same name is the
 // caller itself (the AL's "NPC - Get Outfit GUID for Type in T[0,1]" is a
 // wrapper of one instruction that calls its own name), so running it instead
 // would be a recursion. The 0x7D has 1 use in the AL and the meaning of the
