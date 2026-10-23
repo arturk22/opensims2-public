@@ -1,3 +1,36 @@
+# Soak report (round 20, o subconjunto com o índice da instalação)
+
+Rodada curta (23/10) para conferir as mudanças da véspera — o `autonomy` passando a
+indexar a **instalação** inteira (como o app), as chamadas **54–84** da Generic Sims Call,
+o **tipo 13** do Set to Next e o `notifyRoomChanges` por conjunto —: 4 lotes, **1 dia de
+jogo** cada (43.200 ticks, `--every 1800`, `--name-babies`, `S2PKG_ERRORS=1`), com
+`OS2_DATA=...\Apartment Life` (o índice pega todos os packs). Não é a rodada dos 69 lotes:
+é a verificação de regressão destas mudanças, e o que ela deixa aberto está no fim.
+
+| Lote | Resets / orçamento | Detalhe |
+|---|---|---|
+| N001_Lot11 | 106 / 0 | 21 "no stack object" (Run Tree by Name), 20 "attribute 8 of 8" (o controlador do assistente social), 11 "stack object 0 does not exist", 5 break points; os Sims agem (17/94/25 buscas) |
+| N001_Lot68 | 103 / 20 | 30 "Snap Into" no carro da empregada (`Car - MaidMobile - 0,8`, "Sub - Create Driver"), 20 orçamento no **gambá** do AL (0x7FFC7F75), 20 "attribute 8 of 8", 20 "no stack object"; os Sims agem (76/47/39/63 buscas) |
+| N002_Lot10 | 111 / 0 | break points (6x cada), 20 "attribute 8 of 8", 20 "no stack object"; os Sims agem (61/78/52/12 buscas) |
+| E001_Lot127 | **0 / 0** | o prédio de apartamentos do AL roda um dia inteiro limpo |
+
+Nenhum crash e nenhum hang. O `bhav-sweep` do AL fica **igual** (14.093.824 / 23.864 true
+/ 6.385 falhas) e o do base também (7.234.312 / 11.107 / 2.461); build + ctest 39/39.
+
+**O que a rodada deixa aberto** (âncoras para a próxima):
+
+- o **gambá** (`NPC - Unique - Skunk`, grupo 0x7FFC7F75) gasta o orçamento de 100.000 em
+  "Skunk - Wander Like An Idiot" e "Find Something To Eat": a árvore anda pelos objetos
+  **não-pessoa** com `Set to Next 2` (alvo = o stack object, dono 0x0A) e testa o dado 29
+  (sala) em 0 (instruções 2/3 e 22/23); o laço não termina no port — ver o `Set to Next 2`
+  com esse alvo num lote com muitos objetos fora de sala (o 68).
+- o **carro da empregada**: "Sub - Create Driver" (`0x7F793929/0x101D`) não acha a
+  referência do objeto ("Snap Into") e as peças do carro reiniciam a cada 4 ticks às 07:16.
+- **"attribute 8 of 8"** (assistente social) e **"stack object attribute 10 of 9"**
+  (telefone): contagens de atributos **menores** no estado do que as árvores do AL leem. O
+  `cTSObject::Read` adota a contagem salva (o port faz `assign`); falta um save do jogo
+  nunca tocado para separar "o jogo cresce o array" (bug do port) de "estado do lote".
+
 # Soak report (round 19, o pacote de lote vazio)
 
 O item 8: o `N002_Lot32` (o stub de 96 bytes, sem nenhum recurso) deixava de

@@ -2,9 +2,11 @@
 
 - **Status:** **aberto em 18/10/2026** — continua o `goal-port-fidelity.md`. **Fechados:**
   1–4, 9, 11, **5, 8, 10, 12, 13 (TTAB), 14 (formatos do AL), o RayTrace 0x78** e
-  **todos os tipos do Set to Next (13, 19/20 e os do AL)**. **Aberto:** só o **7**
-  (performance, parcial: as duas varreduras por tick e a carga); o 6 fica parcial e o
-  6-resto com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre
+  **todos os tipos do Set to Next (13, 19/20 e os do AL)**. **Aberto:** o **7**
+  (performance, parcial: o `tickOverlayEvents` e a carga) e as três âncoras do **soak
+  round 20** (o gambá do AL gastando o orçamento, o carro da empregada no "Snap Into" e a
+  contagem de atributos que o save traz menor — ver `soak-report.md`); o 6 fica parcial e
+  o 6-resto com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre
   passos, até a fila zerar ou só restarem itens bloqueados com critério escrito.
 - **Mandato:** Artur — "Faça um goal para resolver próximos passos e pendências"
   (18/10/2026).
