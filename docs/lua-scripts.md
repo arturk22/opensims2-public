@@ -43,6 +43,14 @@ Das constantes dos 37 arquivos (o resto são nomes de campos de dados):
 - o prelúdio (`.globalObjLua`): as classes `GlobalObjManager`, `ObjectManager`,
   `CachedNeighbor`, `CachedPerson`, `new`, `__index` — tudo em Lua, por cima da API.
 
+**O que é prelúdio e o que é do motor (23/10).** `CachedNeighbor` e `CachedPerson` **não**
+estão em nenhum `.globalObjLua` (as strings dos 37 arquivos só os mostram nos scripts): são
+**globais do motor**, como `GlobalObjManager`/`ObjectManager`/`nWorld`/`nGameState`. O
+binding tem de fornecer: `CachedNeighbor` (`.new(objeto)` → `:getGUID()`, `:getPersonData`),
+`GlobalObjManager` (`:getPersonIdFromGUID(guia)` = o vizinho pelo GUID do personagem) e as
+funções puras; os prelúdios (`Global`, `Neighbor`, `PersonData`, `ObjDef`, `OutfitData`, …)
+definem só as tabelas/classes em cima disso.
+
 São ~20 funções de motor mais as tabelas de nomes que o port **já tem** nos STR# (os dados
 de pessoa 0xC8, os dados de objeto 0x8D, os campos do OBJD, as constantes).
 
