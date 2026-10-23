@@ -1,9 +1,11 @@
 # Goal — Fechar as pendências do port (item 13 e a fila restante)
 
-- **Status:** **aberto em 18/10/2026** — continua o `goal-port-fidelity.md` (itens 1–4, 9 e
-  11 fechados; 6 parcial; 5, 6-resto, 7, 8, 10, 12, 13 e 14 abertos). Roda em **loop
-  autônomo**, sem pedir licença entre passos, até a fila zerar ou só restarem itens
-  bloqueados com critério escrito.
+- **Status:** **aberto em 18/10/2026** — continua o `goal-port-fidelity.md`. **Fechados:**
+  1–4, 9, 11, **5, 8, 10, 12, 13 (TTAB)** e os **tipos 19/20 do Set to Next**. **Abertos:**
+  **7** (performance, parcial: só as duas varreduras por tick e a carga), o **tipo 13 do Set
+  to Next**, o **14** (formatos do AL) e o **RayTrace 0x78**; o 6 fica parcial e o 6-resto
+  com o mantenedor do Mac. Roda em **loop autônomo**, sem pedir licença entre passos, até a
+  fila zerar ou só restarem itens bloqueados com critério escrito.
 - **Mandato:** Artur — "Faça um goal para resolver próximos passos e pendências"
   (18/10/2026).
 - **Branch:** `windows-x64-fidelity` — os 21 commits do nosso trabalho rebased sobre o
@@ -84,11 +86,16 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   `+0x34`/`+0x38`, registros `+0x60c` e a troca de fila pela vtable `0x1FC` — todos pedem RE
   do binário **Mac PPC**, que fica **com o mantenedor do Mac** (decidido pelo Artur em
   21/10: "mac é com o mantenedor"). Não bloqueia mais nada aqui.
-- **8:** `soak-report` — erro recorrente do `N002_Lot32` (stub DBPF de 96 bytes, pacote
-  vazio); fechar distinguindo/countando pacote vazio.
-- **7:** `performance.md` "What is left" — índice por tile, `notifyRoomChanges`/
-  `tickOverlayEvents` por tick, "Set to Next" com `std::function`, texturas — com medidor
-  antes/depois.
+- **8:** **FECHADO** (rodada 19 do soak, `fdf29d3`): o `N002_Lot32` (stub DBPF de 96 bytes,
+  sem recursos) deixou de ser erro de carga — o `Lot::load` lança `EmptyLotPackage`
+  (`formats/lot.hpp`) e o `tools/soak.sh` conta `empty|autonomy` / `empty|lot-save` à
+  parte; medido em `docs/soak-report.md` (rodada 19) e coberto pelo `testEmptyLotPackage`.
+- **7:** **índice por tile FECHADO em 22/10** (`ff0fabb`: `N001_Lot11 --ticks 3600` de
+  6,71 s para **4,25–4,68 s**, saída idêntica; `OS2_CHECK_TILE_INDEX=1` sem divergências no
+  ctest e no `autonomy`) e o **`std::function` do Set to Next medido e descartado** (21/10:
+  22,2/22,5 s contra 22,3/21,3 s, sem ganho). Ficam abertas só as duas varreduras por tick
+  (`notifyRoomChanges` 0,36 s + `tickOverlayEvents` 0,58 s ≈ 4% da corrida) e a carga
+  (texturas dos Sims 45 ms cada, `Catalog::load` relendo 47 recursos).
 - **10:** **FECHADO 21/10** pelo método do item 4 (as capturas não estão nesta máquina): a
   auditoria do painel contra a tabela do `buy-build-mac.md` §7.8 e contra o censo novo do
   catálogo de construção achou três lacunas, todas fechadas (a jardinagem A800 inteira, as
@@ -101,9 +108,10 @@ vizinhanças/lotes do AL, performance, painel do Build, `RayTrace` e as primitiv
   36 e o 39: 3); o 31 (cônjuge do temp 0) e o 34 (o grupo de multi-tile vizinho) já
   estavam implementados, então a leitura anterior de 52 estava errada), e o
   **Want Satisfy** (295) não é lacuna: o port joga o **mesmo** erro do jogo (0x1C, "Object
-  referred to must be a person.") — é artefato do sweep. O "Invalid
-  global sim call" (3.972) e o "stack object does not exist" (1.345) são erro do próprio jogo
-  (o sweep roda cada árvore sozinha, fora de contexto), não lacuna do port. **Fechados no
+  referred to must be a person.") — é artefato do sweep. O "stack object does not exist"
+  (1.345) é erro do próprio jogo (o sweep roda cada árvore sozinha, fora de contexto). O
+  **"Invalid global sim call" (3.972) NÃO era artefato**: era o port recusando as chamadas
+  54–84 que o AL usa (abaixo), e num lote de verdade isso reiniciava o Main de todo Sim. **Fechados no
   mesmo dia**: os tipos de espécie (40-45, as pessoas, e 46-51, os vizinhos, pelo dado de
   pessoa 186), o tipo 33 (Hauntable) e o **índice do texto do Add/Change the Action String**
   (o u8 em 4 na versão de nó 0 e o u16 em 14 na versão de nó 1 - o port lia sempre o byte 4,
